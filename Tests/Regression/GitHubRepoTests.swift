@@ -272,7 +272,7 @@ final class GitHubRepoTests: XCTestCase {
         }
         _ = try await put(isNew: true)
         try "Counts by twos now\n".write(to: wish.dir.appendingPathComponent("APP.md"), atomically: true, encoding: .utf8)
-        let release = GitHubRelease.Version(count: 2, lines: ["Counts by twos now", "Bigger numbers"])
+        let release = GitHubRelease.Version(number: 2, lines: ["Counts by twos now", "Bigger numbers"])
         let released = try await put(isNew: false, release: release)
 
         let message = TestShell.run("git --git-dir \(Sandbox.quoted(bare.path)) log -1 --format=%B main")
@@ -287,6 +287,12 @@ final class GitHubRepoTests: XCTestCase {
         try await GitHubRelease.tag(release, of: "someone/tally", at: released.commit ?? "", gh: gh.path)
         let again = try String(contentsOf: URL(fileURLWithPath: gh.path + ".calls"), encoding: .utf8)
         XCTAssertEqual(again.components(separatedBy: "release create").count, 2, again)
+
+        // A tag made by hand is often annotated: its own object, on the same commit, is still this release's.
+        XCTAssertEqual(TestShell.run("git --git-dir \(Sandbox.quoted(bare.path)) -c user.name=x -c user.email=x@x tag -a v3 -m v3 \(released.commit ?? "")").status, 0)
+        try await GitHubRelease.tag(GitHubRelease.Version(number: 3, lines: []), of: "someone/tally", at: released.commit ?? "", gh: gh.path)
+        let annotated = try String(contentsOf: URL(fileURLWithPath: gh.path + ".calls"), encoding: .utf8)
+        XCTAssertFalse(annotated.contains("release create v3"), annotated)
     }
 
     /// An account's own site (owner.github.io, in any case) is served at the account's root; any other repository's

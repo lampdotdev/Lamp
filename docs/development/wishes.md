@@ -394,13 +394,17 @@ it was opened from, `GitHubRepo.ownOrigin`) is released there too, from the same
 (owner/name)", ticked each time the card opens, and shown only once `gh` is signed in (else one gray line saying so). The
 link always goes first; GitHub follows only once the link went through, with the same release: the wish staged and
 uploaded as Put on GitHub does (`GitHubRepo.stage`, `upload`: the same checks, the README and page as before), the
-release's lines as the commit's message, then a GitHub release tagged `v<n>`, n counting the wish's releases in
-`.lamp/releases.json` (the first share is v1), with the lines as its notes (`GitHubRelease.tag`: one already there on
-the same commit is the one made by a try that failed later; one on another commit is refused, never moved). The card
-stays busy until everything is pushed, then only GitHub Pages' build is waited for with the card free. GitHub says
-how it went in a line of its own (`WishLinkCard.GitHubStage`), so a failure there never hides the link's, which works
-whatever GitHub does; Try GitHub Again runs that half alone with the same version and lines. A link that fails sends
-nothing to GitHub, and says so. The first link of a wish that's on GitHub makes the link and releases there too, as v1
+release's lines as the commit's message, then a GitHub release tagged `v<n>`, n the release's number, kept on it in
+`.lamp/releases.json` (`Release.number`, one more than the latest's, so it keeps counting past the 200 releases the
+history keeps; the first share is v1), with the lines as its notes (`GitHubRelease.tag`: one already there on the same
+commit, peeled when it's annotated, is the one made by a try that failed later; one on another commit is refused, never
+moved). A press waits for the repository to be found (`gitHubFinding`) before it decides where the release goes. The
+card stays busy until everything is pushed, then only GitHub Pages' build is waited for with the card free; a release
+that's still waiting then neither speaks on the card once a newer one started (`gitHubOperation`) nor writes its record
+over a newer push's. GitHub says how it went in a line of its own (`WishLinkCard.GitHubStage`), so a failure there never
+hides the link's, which works whatever GitHub does; Try GitHub Again runs that half alone with the same version and
+lines, and only while the wish is still at the version released (else the card says to release again). A link that
+fails sends nothing to GitHub, and says so. The first link of a wish that's on GitHub makes the link and releases there too, as v1
 (or the next number), with no lines, the commit's message then the old "Update <name> from Lamp". The wish's shared file carries what its app
 shows (`releases.json` at its root, dates and lines only), and a copy opened or updated from it keeps that apart
 (`.lamp/releases-received.json`), so the copy's What's New… shows the original's releases beside its own, while its own

@@ -9,9 +9,8 @@ import Foundation
 /// Putting a wish on GitHub the first time stays Put on GitHub's own card (`GitHubRepoCards`), which asks the choices
 /// GitHub takes once; after that, a release is how the repository is updated.
 enum GitHubRelease {
-    /// The release as GitHub gets it. Its tag counts the wish's releases ("v1" for its first, which is its link's first
-    /// share): simple, the same on every Mac the wish's releases were recorded on, and never reused, since releases are
-    /// only ever added (`WishReleases.record`).
+    /// The release as GitHub gets it. Its tag is the release's number ("v1" for its first, which is its link's first
+    /// share; `WishReleases.Release.number`): simple, and never reused, since each release is numbered after the last.
     struct Version: Equatable, Sendable {
         var tag: String
         var lines: [String]
@@ -21,9 +20,9 @@ enum GitHubRelease {
             self.lines = lines
         }
 
-        /// The release just recorded in the wish, with its lines.
-        init(count: Int, lines: [String]) {
-            self.init(tag: "v\(max(1, count))", lines: lines)
+        /// The release just recorded in the wish, by its number, with its lines.
+        init(number: Int, lines: [String]) {
+            self.init(tag: "v\(max(1, number))", lines: lines)
         }
 
         /// The commit's message: the lines, the first as its subject; nil for a release that says nothing.
@@ -93,15 +92,25 @@ enum GitHubRelease {
                                                    expected: before?.commit ?? target.openedAt, isPrivate: !isPublic,
                                                    license: before?.license ?? false, picture: before?.picture,
                                                    release: version, pushed: pushed, step: step)
+        // A newer release may have pushed while this one waited for its page (the card is free by then): its record
+        // stands, and this older one's is left out.
+        guard GitHubRepo.kept(for: project)?.commit == uploaded.repo.commit else { return }
         await GitHubRepo.settle(uploaded.repo, before: before, of: project, gh: target.gh)
     }
 
     /// Makes the release on GitHub at `commit`, tagged with its version, unless it's there already from a try that
     /// failed after it: a tag of the same name on another commit is someone else's, and is said so rather than taken.
     static func tag(_ version: Version, of repo: String, at commit: String, gh: String) async throws {
-        let existing = await Subprocess.run(GitHubRepo.git, GitHubRepo.signedIn(gh: gh) + ["ls-remote", "https://github.com/\(repo).git", "refs/tags/\(version.tag)"],
+        let tagRef = "refs/tags/\(version.tag)"
+        let existing = await Subprocess.run(GitHubRepo.git, GitHubRepo.signedIn(gh: gh) + ["ls-remote", "https://github.com/\(repo).git", tagRef, tagRef + "^{}"],
                                             mergeErrors: false, timeout: 60)
-        if existing.ok, let at = existing.output.split(whereSeparator: \.isWhitespace).first.map(String.init) {
+        // An annotated tag names a tag object; the line for its peeled ref names the commit it's on.
+        let refs = existing.output.split(whereSeparator: \.isNewline).compactMap { line -> (String, String)? in
+            let parts = line.split(whereSeparator: \.isWhitespace).map(String.init)
+            return parts.count == 2 ? (parts[1], parts[0]) : nil
+        }
+        let at = refs.first { $0.0 == tagRef + "^{}" }?.1 ?? refs.first { $0.0 == tagRef }?.1
+        if existing.ok, let at {
             guard at == commit else {
                 throw TagFailure(message: "\(repo) already has a tag \(version.tag) on another commit, so no release was made.")
             }

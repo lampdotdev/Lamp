@@ -100,8 +100,8 @@ public struct WishLinkCard: View {
     /// Why the app's repository can't be updated from here (no sign-in to GitHub), in place of the box.
     let gitHubNote: String?
     let gitHubStage: GitHubStage?
-    /// Tries the GitHub half of the last release again, after it failed.
-    let retryGitHub: () -> Void
+    /// Tries the GitHub half of the last release again, after it failed; nil when it can't be (the app changed since).
+    let retryGitHub: (() -> Void)?
     /// Copy Link the first time, Release Update after: shares what's on the card and copies the link.
     let share: () -> Void
     let copy: () -> Void
@@ -113,7 +113,7 @@ public struct WishLinkCard: View {
     public init(icon: NSImage?, picture: NSImage?, values: Binding<Values>, limits: Limits, link: String?, changed: Bool,
                 stage: Stage, copied: Bool, retake: (() -> Void)?, retaking: Bool, canIncludeFile: Bool = false, noLicense: String? = nil,
                 writingNotes: Bool = false, gitHub: String? = nil, gitHubNote: String? = nil, gitHubStage: GitHubStage? = nil,
-                retryGitHub: @escaping () -> Void = {},
+                retryGitHub: (() -> Void)? = nil,
                 share: @escaping () -> Void, copy: @escaping () -> Void, stop: @escaping () -> Void, close: @escaping () -> Void,
                 width: CGFloat? = 480) {
         self.noLicense = noLicense
@@ -287,7 +287,7 @@ public struct WishLinkCard: View {
         case .failed(let message):
             VStack(alignment: .leading, spacing: 8) {
                 problem(message)
-                Button("Try GitHub Again", action: retryGitHub).disabled(sending)
+                if let retryGitHub { Button("Try GitHub Again", action: retryGitHub).disabled(sending) }
             }
         case nil:
             EmptyView()

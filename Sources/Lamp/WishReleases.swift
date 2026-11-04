@@ -30,6 +30,9 @@ enum WishReleases {
         /// Empty for a release that said nothing (the first share, or one whose lines were all taken off the card): it's
         /// still where the next one's changes start.
         var lines: [String]
+        /// Which release of the wish it is, counting from 1 (its GitHub release's tag, `GitHubRelease.Version`): kept,
+        /// since the history keeps only the latest 200. Nil in releases recorded before it was.
+        var number: Int? = nil
     }
 
     /// Newest first.
@@ -38,11 +41,21 @@ enum WishReleases {
         return ((try? decoder.decode([Release].self, from: data)) ?? []).sorted { $0.date > $1.date }
     }
 
-    static func record(_ release: Release, in project: LampProject) {
+    /// The number the latest release has: its own, or for one recorded before numbers were kept, how many there are.
+    static func latestNumber(_ project: LampProject) -> Int {
+        let all = load(project)
+        return all.first?.number ?? all.count
+    }
+
+    /// Records a release, numbering it after the latest. Answers its number.
+    @discardableResult static func record(_ release: Release, in project: LampProject) -> Int {
+        var release = release
+        release.number = latestNumber(project) + 1
         let all = [release] + load(project)
-        guard let data = try? encoder.encode(Array(all.prefix(200))) else { return }
+        guard let data = try? encoder.encode(Array(all.prefix(200))) else { return release.number ?? 0 }
         try? FileManager.default.createDirectory(at: project.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
         try? data.write(to: project.dir.appendingPathComponent(file), options: .atomic)
+        return release.number ?? 0
     }
 
     /// The releases that say something, as the link shows them: newest first, at most `WishLink.Limit.releases`.

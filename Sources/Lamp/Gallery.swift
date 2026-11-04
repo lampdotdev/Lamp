@@ -966,6 +966,7 @@ enum Gallery {
                 limits: WishLink.cardLimits, link: link ? "https://lamp.dev/w/AyTkit4xCc" : nil, changed: !link || changed,
                 stage: stage, copied: copied, retake: retake ? {} : nil, retaking: false, canIncludeFile: canIncludeFile, noLicense: noLicense,
                 writingNotes: writingNotes, gitHub: gitHub ? "someone/disk-map" : nil, gitHubNote: gitHubNote, gitHubStage: gitHubStage,
+                retryGitHub: { if case .failed = gitHubStage { return {} } else { return nil } }(),
                 share: {}, copy: {}, stop: {}, close: {}, width: width)
             return AnyView(card
                 .background(Paper.page, in: RoundedRectangle(cornerRadius: 16))
