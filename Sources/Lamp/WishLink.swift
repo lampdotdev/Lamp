@@ -201,10 +201,12 @@ enum WishLink {
         return Shared(id: id, url: link, secret: secret, shown: words)
     }
 
-    /// What a followed link has now (`latest` in lib/shared-wishes.js): its name, its file's version (0 with no file),
-    /// and the file's address. Nil when it can't be asked, or is gone. Asked with nothing of the person's.
+    /// What a followed link has now (`latest` in lib/shared-wishes.js): its name, who it's by (nil for nobody, and from
+    /// a site from before it said), its file's version (0 with no file), and the file's address. Nil when it can't be
+    /// asked, or is gone. Asked with nothing of the person's.
     struct Latest: Equatable {
         let name: String?
+        var by: String? = nil
         let version: Int
         let file: URL?
     }
@@ -217,7 +219,8 @@ enum WishLink {
         let file = (answer["file"] as? String).flatMap(URL.init(string:)).flatMap { url in
             url.scheme == "https" || (url.scheme == "data" && endpoint.scheme == "http") ? url : nil
         }
-        return Latest(name: answer["name"] as? String, version: version, file: file)
+        let by = (answer["by"] as? String).map { clip($0.trimmed, Limit.by) }?.nilIfEmpty
+        return Latest(name: answer["name"] as? String, by: by, version: version, file: file)
     }
 
     /// Where the wish's file goes: beside the link's API (`site/api/wish-file.js`). `page` is its playable page instead.

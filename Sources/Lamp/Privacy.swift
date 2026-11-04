@@ -45,6 +45,8 @@ enum Privacy {
             }
             return .allow
         }
+        // Someone's shared app Lamp fetched for this wish (`SharedCopies`): read, never changed, whatever the settings say.
+        if let copies = SharedCopies.verdict(reading: readers.contains(tool), path: path, project: project) { return copies }
         // Lamp's keys, its agent's sign-ins and the user's other apps: never, whatever the settings say.
         // Both Lamps' folders (the installed one and the development build, Edition), whichever this is.
         if lampFolders.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {

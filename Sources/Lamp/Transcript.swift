@@ -4,7 +4,7 @@ import LampSidebarKit
 /// A tool call as logged by the engines ("Read App.swift", "Bash: ./build.sh", "Run: ls"), split into
 /// what the agent did and what it did it to.
 struct ToolCall {
-    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, learn, remember, art, assets, offer, kind, remove, rename, icon, connectors, network, ask, progress, result, wish, other }
+    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, learn, remember, art, assets, offer, kind, remove, rename, icon, connectors, shared, network, ask, progress, result, wish, other }
 
     let name: String
     let argument: String
@@ -36,7 +36,7 @@ struct ToolCall {
         "ls": .list, "list": .list,
         "webfetch": .web, "web_fetch": .web, "websearch": .web,
         "todowrite": .plan, "plan": .plan, "task": .delegate,
-        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "read_skill": .learn, "tool_search": .learn, "save_notes": .remember, "make_art": .art, "assets": .assets, "offer_setup": .offer, "make_app_for": .kind, "remove_app": .remove, "rename_app": .rename, "use_icon_picture": .icon, "connectors": .connectors, "lampify": .kind, "network_devices": .network, "device_permission": .ask, "ask": .ask, "progress": .progress, "show_result": .result, "write_wish": .wish,
+        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "read_skill": .learn, "tool_search": .learn, "save_notes": .remember, "make_art": .art, "assets": .assets, "offer_setup": .offer, "make_app_for": .kind, "remove_app": .remove, "rename_app": .rename, "use_icon_picture": .icon, "connectors": .connectors, "lampify": .kind, "shared_copy": .shared, "network_devices": .network, "device_permission": .ask, "ask": .ask, "progress": .progress, "show_result": .result, "write_wish": .wish,
     ]
 
     var icon: String {
@@ -64,6 +64,7 @@ struct ToolCall {
         case .rename: "character.cursor.ibeam"
         case .icon: "app.badge"
         case .connectors: "link"
+        case .shared: "square.on.square"
         case .network: "wifi"
         case .ask: "questionmark.bubble"
         case .progress: "text.bubble"
@@ -98,6 +99,7 @@ struct ToolCall {
         case .rename: "Renamed it"
         case .icon: "Changed the icon"
         case .connectors: "Looked up a connector"
+        case .shared: "Looked at a shared copy"
         case .network: "Looked around your network"
         case .ask: "Asked you"
         case .progress: "Said how it's going"
@@ -134,6 +136,7 @@ struct ToolCall {
         case .rename: "renamed it"
         case .icon: "changed the icon"
         case .connectors: "looked up \(n("connector", "connectors"))"
+        case .shared: "looked at \(n("shared copy", "shared copies"))"
         case .network: "looked around your network"
         case .ask: "asked you"
         case .progress: "said how it's going"
