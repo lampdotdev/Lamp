@@ -238,23 +238,28 @@ test("a link's page plays only from the play host, framed by the site, and Remix
 
   const env = { LAMP_PLAY_ORIGIN: "https://play.lamp.dev", LAMP_SITE_ORIGIN: "https://lamp.dev" };
   const play = createPlayHandler({ store, env });
-  const served = await play(new Request(`https://play.lamp.dev/api/wish-play?id=${id}&v=1&path=index.html`));
+  const own = `${Buffer.from(id).toString("hex")}.play.lamp.dev`;
+  const served = await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=index.html`));
   assert.equal(served.status, 200);
   assert.match(served.headers.get("content-type"), /^text\/html/);
   assert.equal(served.headers.get("content-security-policy"), "frame-ancestors https://lamp.dev");
   assert.deepEqual(Buffer.from(await served.arrayBuffer()), html);
   assert.equal((await play(new Request(`https://lamp.dev/api/wish-play?id=${id}&v=1&path=index.html`))).status, 404, "never on the site's own host");
-  assert.equal((await play(new Request(`https://play.lamp.dev/api/wish-play?id=${id}&v=2&path=index.html`))).status, 404, "only the version it has");
+  assert.equal((await play(new Request(`https://play.lamp.dev/api/wish-play?id=${id}&v=1&path=index.html`))).status, 404, "only on the link's own host");
+  assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=2&path=index.html`))).status, 404, "only the version it has");
 
   const ideas = "<html><head><title>Ideas</title></head><body></body></html>";
   const page = await (await createPageHandler({ store, env, template: async () => ideas })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
-  assert.match(page, new RegExp(`<iframe src="https://play.lamp.dev/w/${id}/play/1/index.html"`));
+  assert.match(page, new RegExp(`<iframe src="https://${own}/w/${id}/play/1/index.html"`));
   assert.match(page, /data-remix-shared/);
   assert.match(page, /"play":true/);
   const without = await (await createPageHandler({ store, env: {}, template: async () => ideas })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
   assert.doesNotMatch(without, /<iframe/, "with no play host, nothing plays");
 
-  // The page goes with the wish itself.
+  // The page goes with the wish itself, and one sent again later plays at a new address.
   assert.equal((await send_("", "DELETE")).status, 204);
   assert.equal(store.records.get(id).page, undefined);
+  assert.equal((await send_("&what=page", "PUT", zip("index.html", html), "&part=0&of=1")).status, 204);
+  assert.equal((await send_("&what=page", "POST")).status, 200);
+  assert.equal(store.records.get(id).page.version, 2);
 });

@@ -13,8 +13,10 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   GitHub Pages, what it saves kept under the link), zipped, in parts to `api/wish-file.js` with `what=page`; the site
   unpacks it (`readPage`: index.html at its root, never a link or a path that steps up, at most 3,000 files) into Blob,
   each version in a folder of its own, and drops the last one. Blob hands HTML out as a download and refuses frames, so
-  the files are served by `api/wish-play.js` (`/w/<id>/play/<version>/<path>`, `createPlayHandler`) on the play host
-  only (`LAMP_PLAY_ORIGIN`), never on lamp.dev itself, framed only by the site (`frame-ancestors`). The page goes with
+  the files are served by `api/wish-play.js` (`/w/<id>/play/<version>/<path>`, `createPlayHandler`) only on the link's
+  own host under the play host (`playOrigin`: `<id in hex>.play.lamp.dev`), so one shared page can never read what
+  another saved in the browser, and never on lamp.dev itself; framed only by the site (`frame-ancestors`). A page's
+  version counts up for the link (`pageVersion`), so an address never plays two different pages. The page goes with
   the wish's file: taking the file away takes the page too. Without a play host, the card shows as before.
 - The page (`/w/<id>`, `lib/shared-wish-page.js`, served by `api/wish-page.js` through a rewrite in `vercel.json`):
   the ideas page with the shared wish's card open on it, the same card (`WishDialog.astro`) the
@@ -56,10 +58,11 @@ In the **lamp** Vercel project:
    when `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` aren't set. Preview's records and counters are kept
    apart from production's.
 
-3. A host of its own for the pages people play: add a domain (say **play.lamp.dev**) to the **lamp** project and
-   set `LAMP_PLAY_ORIGIN` to it (`https://play.lamp.dev`), and `LAMP_SITE_ORIGIN` to the site's (`https://lamp.dev`)
-   if it isn't that. A shared page runs there, apart from lamp.dev's cookies and API. Until it's set, links show
-   their card and nothing plays.
+3. Hosts of their own for the pages people play: add the wildcard domain **\*.play.lamp.dev** to the **lamp** project
+   (Vercel serves a wildcard only for a domain on its nameservers) and set `LAMP_PLAY_ORIGIN` to
+   `https://play.lamp.dev` for Production, and `LAMP_SITE_ORIGIN` to the site's (`https://lamp.dev`) if it isn't that.
+   Each link's page runs on a host of its own there, apart from every other link's and from lamp.dev's cookies and
+   API. Until it's set, links show their card and nothing plays.
 
 Without the first two, sharing answers 503 and Lamp says it couldn't share; links already made still open.
 

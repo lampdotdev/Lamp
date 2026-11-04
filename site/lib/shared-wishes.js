@@ -439,17 +439,28 @@ export function pageType(path) {
 }
 
 /**
- * The page a link plays, one file at a time (`/w/<id>/play/<version>/<path>`): only on the play host
- * (`LAMP_PLAY_ORIGIN`, a host of its own, so nothing a shared page runs is ever lamp.dev's), only into a frame on the
- * site's own pages, and only the version the link has now. Each version's files never change, so the CDN keeps them.
+ * Where a link's page plays: a host of its own under the play host (`LAMP_PLAY_ORIGIN`, say https://play.lamp.dev),
+ * one for each link, so no shared page can read what another saved in the browser, nor anything of lamp.dev's. The id
+ * is written in hex, since a host name doesn't keep the id's upper and lower case apart. Null without a play host.
+ */
+export function playOrigin(base, id) {
+  if (!base || !isID(id)) return null;
+  const url = new URL(base);
+  return `${url.protocol}//${Buffer.from(id).toString("hex")}.${url.host}`;
+}
+
+/**
+ * The page a link plays, one file at a time (`/w/<id>/play/<version>/<path>`): only on that link's own play host
+ * (`playOrigin`), only into a frame on the site's own pages, and only the version the link has now. Each version's
+ * files never change, so the CDN keeps them.
  */
 export function createPlayHandler({ env = process.env, fetcher = fetch, store, anyHost = false } = {}) {
   return async (request) => {
     if (request.method !== "GET" && request.method !== "HEAD") return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
     const url = new URL(request.url);
-    const play = env.LAMP_PLAY_ORIGIN ? new URL(env.LAMP_PLAY_ORIGIN) : null;
-    if (!anyHost && (!play || url.host !== play.host)) return new Response(null, { status: 404 });
     const id = url.searchParams.get("id"), version = Number(url.searchParams.get("v"));
+    const own = playOrigin(env.LAMP_PLAY_ORIGIN, id);
+    if (!anyHost && (!own || url.host !== new URL(own).host)) return new Response(null, { status: 404 });
     const path = url.searchParams.get("path") || "index.html";
     const missing = () => new Response(null, { status: 404, headers: { "Cache-Control": "no-store" } });
     if (!isID(id) || !Number.isInteger(version)) return missing();
@@ -561,7 +572,8 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
           ...(page ? [] : [record.file?.url, ...Object.values(record.parts?.urls ?? {})])].filter(Boolean);
         const { page: _page, pageParts: _pageParts, ...rest } = record;
         // The count stays with the link, so a file sent again later is newer to its followers than any before.
-        const next = page ? rest : { ...rest, file: null, parts: undefined, fileVersion: record.file?.version ?? record.fileVersion };
+        const next = { ...(page ? rest : { ...rest, file: null, parts: undefined, fileVersion: record.file?.version ?? record.fileVersion }),
+          pageVersion: record.page?.version ?? record.pageVersion };
         await kept.replace({ ...next, updated: now().toISOString() });
         await kept.removeImages(gone);
         await kept.forget(id);
@@ -586,9 +598,10 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
             uploaded.push(urls[file.path]);
           }));
         }
-        const version = (record.page?.version ?? 0) + 1;
+        // The count is the link's (`pageVersion`), so a page taken away and sent again never reuses a play address.
+        const version = (record.page?.version ?? record.pageVersion ?? 0) + 1;
         const { pageParts: _pageParts, ...rest } = record;
-        if (!(await kept.replace({ ...rest, page: { version, files: urls }, updated: now().toISOString() }))) {
+        if (!(await kept.replace({ ...rest, page: { version, files: urls }, pageVersion: version, updated: now().toISOString() }))) {
           await kept.removeImages([...uploaded, ...Object.values(parts.urls)]);
           uploaded = [];
           return reply(404, { error: "not_found" });

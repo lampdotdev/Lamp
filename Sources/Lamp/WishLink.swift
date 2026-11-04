@@ -251,9 +251,10 @@ enum WishLink {
         [400, 409, 413].contains(status) ? Failure(message: "lamp.dev couldn't take this wish's file. Share the link without it, or try again.") : failure(status)
     }
 
-    /// Takes the wish's file away from its link, which keeps showing the idea.
-    static func removeFile(for shared: Shared) async throws {
-        var request = URLRequest(url: fileAddress(for: shared.id))
+    /// Takes the wish's file away from its link, which keeps showing the idea, and its page with it. `page` takes only
+    /// the page away.
+    static func removeFile(for shared: Shared, page: Bool = false) async throws {
+        var request = URLRequest(url: fileAddress(for: shared.id, page: page))
         request.httpMethod = "DELETE"
         request.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
         let (_, status) = try await send(request)
@@ -413,6 +414,9 @@ enum WishLink {
                     let id = shared.id
                     if let page = try await Task.detached(priority: .userInitiated, operation: { try WishLink.playablePage(of: project, id: id) }).value {
                         try await WishLink.uploadFile(page, for: shared, page: true)
+                    } else {
+                        // No page now (an app added to the wish, say): the link goes back to its card.
+                        try await WishLink.removeFile(for: shared, page: true)
                     }
                 } else if card.shared?.shown.file == true {
                     try await WishLink.removeFile(for: shared)

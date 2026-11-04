@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { cacheTags, findWish, isID } from "./shared-wishes.js";
+import { cacheTags, findWish, isID, playOrigin as playOriginFor } from "./shared-wishes.js";
 
 // The page a shared wish's link opens (lamp.dev/w/<id>): the wish itself to play or use, when Lamp sent its page, with
 // Remix… opening its card; else the ideas page with that wish's card open on it, the same
@@ -60,8 +60,8 @@ function previewTags(wish, origin) {
  * page, framed from the play host (`createPlayHandler`), with a slim bar under it naming the wish and offering Remix…,
  * which opens the card. So whoever has the link tries the wish first, and remixes it after.
  */
-function playView(wish, playOrigin) {
-  const src = `${playOrigin}/w/${wish.id}/play/${wish.page.version}/index.html`;
+function playView(wish, origin) {
+  const src = `${origin}/w/${wish.id}/play/${wish.page.version}/index.html`;
   return `<div id="shared-play" class="shared-play">
 <iframe src="${escape(src)}" title="${escape(wish.name)}" allow="fullscreen; gamepad; autoplay; clipboard-write"
   sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-popups allow-modals allow-downloads"></iframe>
@@ -82,7 +82,8 @@ function playView(wish, playOrigin) {
 }
 
 /** The ideas page with the shared wish's card open on it, or its page to play with the card behind Remix…. Null when the
- * page isn't the shape this expects. `playOrigin` is the play host; without one, nothing is played. */
+ * page isn't the shape this expects. `playOrigin` is the link's own play host (`playOrigin` in shared-wishes.js);
+ * without one, nothing is played. */
 export function wishPage(template, wish, { origin, playOrigin = null }) {
   if (!template || !template.includes("</head>") || !template.includes("</body>")) return null;
   // Only the head's own: the page's icons carry titles of their own.
@@ -144,13 +145,14 @@ const gonePolicy = (nonce) => `default-src 'none'; style-src 'nonce-${nonce}'; i
  * `template` gives the ideas page as built: by default the one bundled with the function; `npm run dev` passes its
  * own server's.
  */
-export function createPageHandler({ env = process.env, fetcher = fetch, store, template = async () => builtIdeasPage(), playOrigin = env.LAMP_PLAY_ORIGIN || null } = {}) {
+export function createPageHandler({ env = process.env, fetcher = fetch, store, template = async () => builtIdeasPage(),
+  playOrigin = (_url, id) => playOriginFor(env.LAMP_PLAY_ORIGIN, id) } = {}) {
   return async (request) => {
     if (request.method !== "GET" && request.method !== "HEAD") return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
     const url = new URL(request.url);
     const id = url.searchParams.get("id");
     const wish = isID(id) ? await findWish(id, { env, fetcher, store }) : null;
-    const page = wish && wishPage(await template(url.origin), wish, { origin: url.origin, playOrigin: typeof playOrigin === "function" ? playOrigin(url) : playOrigin });
+    const page = wish && wishPage(await template(url.origin), wish, { origin: url.origin, playOrigin: playOrigin(url, id) });
     if (!page) {
       const nonce = randomBytes(16).toString("base64");
       const unavailable = wish !== null;
