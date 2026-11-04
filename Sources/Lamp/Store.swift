@@ -14219,8 +14219,8 @@ final class Store: ObservableObject {
         guard !turn.look.inProgress else { return (200, ["text": "Lamp is already looking at the app. Wait for that result."]) }
         turn.look.inProgress = true
         progress[project.id]?.looking = true
-        // Told at the end how long the look took: the agent is asked to look after each part of a change, and
-        // a cost it has seen is one it allows for, where "takes a while" had it putting looks off.
+        // Told at the end how long the look took: a cost the agent has seen is one it allows for, where "takes a
+        // while" had it putting looks off.
         let began = Date()
         await turn.early?.value
         // A fresh launch asked for while the person has the app open waits for them to say so, like a change that

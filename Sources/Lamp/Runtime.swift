@@ -482,9 +482,20 @@ enum Runtime {
     /// The last lines of the latest launch's output.
     static func logTail(_ project: LampProject, lines: Int = 30) -> String? {
         guard let data = AppFile.read(logURL(project), in: project, last: 8_000) else { return nil }
-        let tail = String(decoding: data.suffix(8_000), as: UTF8.self)
-            .split(separator: "\n", omittingEmptySubsequences: false).suffix(lines).joined(separator: "\n").trimmed
+        let tail = newestOfEach(String(decoding: data.suffix(8_000), as: UTF8.self)
+            .split(separator: "\n", omittingEmptySubsequences: false).suffix(lines)).joined(separator: "\n").trimmed
         return tail.isEmpty ? nil : tail
+    }
+
+    /// Lines that differ only in their numbers (a game's frame rate every ten seconds, a timer's tick) kept once, the
+    /// newest, where it stands: the agent reads every look's log tail again with each request, and thirty lines of the same
+    /// report said nothing the last one didn't.
+    static func newestOfEach<Lines: Collection>(_ lines: Lines) -> [Substring] where Lines.Element == Substring {
+        let shapes = lines.map { $0.replacingOccurrences(of: "[0-9]+([.,:][0-9]+)*", with: "#", options: .regularExpression) }
+        var seen = Set<String>()
+        var kept: [Substring] = []
+        for (line, shape) in zip(lines, shapes).reversed() where line.isEmpty || seen.insert(shape).inserted { kept.append(line) }
+        return kept.reversed()
     }
 
     /// How much the app has printed so far, to tell later what's new.
@@ -495,8 +506,8 @@ enum Runtime {
     /// What the app has printed since its log was `offset` bytes long, at most the last 30 lines. nil if nothing.
     static func log(of project: LampProject, from offset: Int) -> String? {
         guard let data = AppFile.read(logURL(project), in: project), data.count > offset else { return nil }
-        let lines = String(decoding: data.dropFirst(offset).suffix(8_000), as: UTF8.self)
-            .split(separator: "\n", omittingEmptySubsequences: false).suffix(30).joined(separator: "\n").trimmed
+        let lines = newestOfEach(String(decoding: data.dropFirst(offset).suffix(8_000), as: UTF8.self)
+            .split(separator: "\n", omittingEmptySubsequences: false).suffix(30)).joined(separator: "\n").trimmed
         return lines.isEmpty ? nil : lines
     }
 
