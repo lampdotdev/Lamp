@@ -658,7 +658,7 @@ enum Contribute {
             guard let gh = await Publish.gh() else { return set(project, .needsGitHub(.install)) }
             guard let login = await Publish.login(gh: gh) else { return set(project, .needsGitHub(.signIn)) }
             guard login.lowercased() != source.owner.lowercased() else {
-                return set(project, .refused("github.com/\(source.owner)/\(source.name) is your own repository: Put on GitHub updates it."))
+                return set(project, .refused("github.com/\(source.owner)/\(source.name) is your own repository: Release Update on its link puts your changes there."))
             }
             let fork = await Contribute.fork(of: source, login: login, gh: gh)
             do {

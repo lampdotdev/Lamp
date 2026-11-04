@@ -891,7 +891,7 @@ struct ChatBar: View {
             .disabled(!toolbar.canShare)
             .help("Share this app")
             .popover(isPresented: $sharingOpen, arrowEdge: .bottom) {
-                SharePopover(link: shareLink, canContribute: toolbar.canContribute == true) { shareAction($0, link: shareLink) }
+                SharePopover(link: shareLink, canContribute: toolbar.canContribute == true, onGitHub: toolbar.onGitHub == true) { shareAction($0, link: shareLink) }
             }
     }
 

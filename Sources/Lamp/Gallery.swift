@@ -894,11 +894,12 @@ enum Gallery {
         share("With a link", link: true),
         share("No link yet"),
         share("From a repository", link: true, canContribute: true),
+        share("On GitHub", link: true, onGitHub: true),
     ]
 
-    private static func share(_ name: String, link: Bool = false, canContribute: Bool = false) -> Entry {
+    private static func share(_ name: String, link: Bool = false, canContribute: Bool = false, onGitHub: Bool = false) -> Entry {
         Entry(group: "Share", name: name) {
-            AnyView(SharePopover(link: link ? URL(string: "https://lamp.dev/w/AyTkit4xCc") : nil, canContribute: canContribute) { _ in }
+            AnyView(SharePopover(link: link ? URL(string: "https://lamp.dev/w/AyTkit4xCc") : nil, canContribute: canContribute, onGitHub: onGitHub) { _ in }
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
@@ -926,7 +927,27 @@ enum Gallery {
         wishLink("Carrying the app", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includeFile: true), canIncludeFile: true),
         wishLink("No license", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includeFile: true),
                  canIncludeFile: true, noLicense: "Found Code by Someone came with no license. Make sure you're comfortable sharing it."),
+        // An app that's on GitHub: the release goes there too while its box is ticked, and says how it went apart from the link.
+        wishLink("Release, also to GitHub", values: releaseValues(), link: true, changed: true, gitHub: true),
+        wishLink("Release, not to GitHub", values: releaseValues(alsoGitHub: false), link: true, changed: true, gitHub: true),
+        wishLink("First link, also to GitHub", gitHub: true),
+        wishLink("Release, updating GitHub", values: releaseValues(), stage: .sending, link: true, changed: true, gitHub: true,
+                 gitHubStage: .working("Uploading to GitHub…")),
+        wishLink("Release, waiting for GitHub's page", values: releaseValues(), link: true, changed: true, gitHub: true,
+                 gitHubStage: .working("Waiting for GitHub to put the page up…")),
+        wishLink("Released on both", link: true, copied: true, gitHub: true, gitHubStage: .done("v4")),
+        wishLink("Released, GitHub failed", link: true, gitHub: true,
+                 gitHubStage: .failed("The link is updated, but someone/disk-map on GitHub isn't: GitHub didn't take it: the connection was lost.")),
+        wishLink("Release failed, GitHub not tried", values: releaseValues(),
+                 stage: .failed("Lamp couldn't reach lamp.dev. Try again in a moment. GitHub wasn't updated either."), link: true, changed: true, gitHub: true),
+        wishLink("On GitHub, not signed in", values: releaseValues(), link: true, changed: true,
+                 gitHubNote: "To update someone/disk-map on GitHub too, sign in to GitHub with gh."),
     ]
+
+    private static func releaseValues(alsoGitHub: Bool = true) -> WishLinkCard.Values {
+        .init(name: "Disk Map", line: diskMapLine, words: diskMapWish,
+              notes: "Rings show how much each folder grew this week\nClick a ring's middle to go back up", alsoGitHub: alsoGitHub)
+    }
 
     private static let diskMapLine = "Shows where your disk space goes, as rings that fill in while it measures."
     private static let diskMapWish = "A Mac app that shows where my disk space goes, as rings that fill in while it measures. Clicking a ring opens that folder."
@@ -934,6 +955,7 @@ enum Gallery {
     private static func wishLink(_ name: String, values: WishLinkCard.Values? = nil, picture: Bool = true, retake: Bool = true,
                                  stage: WishLinkCard.Stage = .editing, link: Bool = false, copied: Bool = false,
                                  changed: Bool = false, canIncludeFile: Bool = false, noLicense: String? = nil, writingNotes: Bool = false,
+                                 gitHub: Bool = false, gitHubNote: String? = nil, gitHubStage: WishLinkCard.GitHubStage? = nil,
                                  width: CGFloat? = 440) -> Entry {
         Entry(group: "Share Link", name: name) {
             let folder = Starters.folder?.appendingPathComponent("diskmap")
@@ -943,7 +965,8 @@ enum Gallery {
                 values: .constant(values ?? .init(name: "Disk Map", line: diskMapLine, words: diskMapWish)),
                 limits: WishLink.cardLimits, link: link ? "https://lamp.dev/w/AyTkit4xCc" : nil, changed: !link || changed,
                 stage: stage, copied: copied, retake: retake ? {} : nil, retaking: false, canIncludeFile: canIncludeFile, noLicense: noLicense,
-                writingNotes: writingNotes, share: {}, copy: {}, stop: {}, close: {}, width: width)
+                writingNotes: writingNotes, gitHub: gitHub ? "someone/disk-map" : nil, gitHubNote: gitHubNote, gitHubStage: gitHubStage,
+                share: {}, copy: {}, stop: {}, close: {}, width: width)
             return AnyView(card
                 .background(Paper.page, in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
@@ -964,12 +987,11 @@ enum Gallery {
         repo("Ready, public", stage: .ready, remix: true),
         repo("Ready, with a share link", stage: .ready, link: true),
         repo("Ready, share-alike", stage: .ready, notes: ["Engine is GPL-3.0-or-later, so this remix is too: anyone may share it on under the same license."], canChooseLicense: false),
-        repo("Working", stage: .working("Uploading…")),
+        repo("Working", stage: .working("Uploading to GitHub…")),
         repo("Couldn't put it up", stage: .failed("GitHub didn't take it: the connection was lost.")),
         repo("Up", stage: .done(unchanged: false), up: true),
         repo("Up and copied", stage: .done(unchanged: false), up: true, copied: true),
         repo("Up, unchanged", stage: .done(unchanged: true), up: true),
-        repo("Up, changed since", stage: .ready, up: true),
         repo("Up, wide", stage: .done(unchanged: false), up: true, width: 480),
         // A web game, whose page goes up beside its code.
         repo("Game, ready", stage: .ready, remix: true, game: true),
@@ -980,7 +1002,7 @@ enum Gallery {
              remix: true, game: true),
         repo("Game, private", stage: .ready, isPrivate: true, game: true),
         repo("Game, putting up its page", stage: .working("Waiting for GitHub to put the page up…"), remix: true, game: true),
-        repo("Game, page didn't go up", stage: .failed("GitHub is still putting the page up. It should be at https://someone.github.io/new-york/ in a few minutes; Put on GitHub again if it isn't."),
+        repo("Game, page didn't go up", stage: .failed("GitHub is still putting the page up. It should be at https://someone.github.io/new-york/ in a few minutes; try again if it isn't."),
              remix: true, game: true),
         repo("Game, up", stage: .done(unchanged: false), up: true, remix: true, game: true),
         repo("Game, up and copied", stage: .done(unchanged: false), up: true, copied: true, remix: true, game: true),
@@ -997,7 +1019,7 @@ enum Gallery {
         contribute("Checking", stage: .preparing),
         contribute("Needs GitHub's tool", stage: .needsGitHub(.install)),
         contribute("Needs a sign-in", stage: .needsGitHub(.signIn)),
-        contribute("Own repository", stage: .refused("github.com/someone/new-york is your own repository: Put on GitHub updates it.")),
+        contribute("Own repository", stage: .refused("github.com/someone/new-york is your own repository: Release Update on its link puts your changes there.")),
         contribute("Ready", stage: .ready),
         contribute("Ready, no fork yet", stage: .ready, fork: false,
                    notes: ["You have no fork of someone/new-york yet: Lamp makes one on your account (else/new-york) first."]),

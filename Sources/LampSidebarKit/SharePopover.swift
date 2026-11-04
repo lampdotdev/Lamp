@@ -24,12 +24,15 @@ public struct SharePopover: View {
 
     let link: URL?
     let canContribute: Bool
+    /// It's on GitHub already: a release on its link updates it there, so Put on GitHub isn't offered.
+    let onGitHub: Bool
     let act: (Action) -> Void
     @State private var copied = false
 
-    public init(link: URL?, canContribute: Bool, act: @escaping (Action) -> Void) {
+    public init(link: URL?, canContribute: Bool, onGitHub: Bool = false, act: @escaping (Action) -> Void) {
         self.link = link
         self.canContribute = canContribute
+        self.onGitHub = onGitHub
         self.act = act
     }
 
@@ -39,7 +42,7 @@ public struct SharePopover: View {
             ways
             Rectangle().fill(Paper.rule).frame(height: 1)
             VStack(alignment: .leading, spacing: 0) {
-                Row("Put on GitHub…", "chevron.left.forwardslash.chevron.right") { act(.github) }
+                if !onGitHub { Row("Put on GitHub…", "chevron.left.forwardslash.chevron.right") { act(.github) } }
                 if canContribute { Row("Send Changes Back…", "arrow.triangle.branch") { act(.contribute) } }
                 Row("Copy App File", "doc.on.doc") { act(.copyFile) }
                 Row("Export…", "square.and.arrow.down") { act(.export) }

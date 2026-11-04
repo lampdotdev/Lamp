@@ -454,6 +454,7 @@ final class SidebarServer {
             var toolbar = SidebarToolbar(canUndo: !busy && (history?.undoable ?? false), canShare: store.canShare(project) && made,
                                          hasVersions: history?.saved ?? false, details: details)
             toolbar.canContribute = Contribute.canContribute(project) && made ? true : nil
+            toolbar.onGitHub = GitHubRepo.isUp(project) ? true : nil
             toolbar.shareLink = WishLink.kept(for: project)?.url.absoluteString
             // Play and Stop where the wish isn't a Mac window beside this chat (that one is open, and quits as a window does).
             // Only once there's something to play: a first build opens the app itself.

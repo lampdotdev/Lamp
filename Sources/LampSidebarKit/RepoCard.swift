@@ -39,7 +39,8 @@ public struct RepoCard: View {
     let notes: [String]
     let size: String?
     let copied: Bool
-    /// It's up already: Put on GitHub adds the wish as it is now as a new commit.
+    /// The repository is made already (a first try that failed after making it): its one-time choices are settled. Once
+    /// the wish is up, a release on its link updates it (Release Update), not this card.
     let update: Bool
     /// Put on GitHub can be pressed now (ready, or after a failed try).
     let canPut: Bool
@@ -268,7 +269,7 @@ public struct RepoCard: View {
             Button("Done", action: close).keyboardShortcut(.defaultAction)
         default:
             Button("Cancel", role: .cancel, action: close).keyboardShortcut(.cancelAction).disabled(busy && stage != .preparing)
-            Button(update ? "Update on GitHub" : "Put on GitHub", action: put)
+            Button("Put on GitHub", action: put)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canPut)
         }

@@ -18,14 +18,19 @@ public struct WishLinkCard: View {
         /// What's new in this release, a line each, for the link's page and the app's What's New: written by Lamp, the
         /// person's to change or clear. Only for a link that's out.
         public var notes: String
+        /// The release goes to the app's repository on GitHub too, with the same version and what's new: ticked unless
+        /// the person unticks it, and only for an app that's on GitHub.
+        public var alsoGitHub: Bool
 
-        public init(name: String, by: String = "", line: String, words: String, includeFile: Bool = false, notes: String = "") {
+        public init(name: String, by: String = "", line: String, words: String, includeFile: Bool = false, notes: String = "",
+                    alsoGitHub: Bool = true) {
             self.name = name
             self.by = by
             self.line = line
             self.words = words
             self.includeFile = includeFile
             self.notes = notes
+            self.alsoGitHub = alsoGitHub
         }
 
         /// The card can share only a wish with a name, and something to make one's own version from: what it does,
@@ -60,6 +65,15 @@ public struct WishLinkCard: View {
         case failed(String)
     }
 
+    /// How the release's GitHub half went, said apart from the link's, so one failing never hides the other.
+    public enum GitHubStage: Equatable {
+        /// What it's doing now ("Uploading to GitHub…", "Waiting for GitHub to put the page up…").
+        case working(String)
+        /// Up, as this release's version ("v3").
+        case done(String)
+        case failed(String)
+    }
+
     let icon: NSImage?
     let picture: NSImage?
     @Binding var values: Values
@@ -74,12 +88,20 @@ public struct WishLinkCard: View {
     /// Takes the picture again, while the app is open on this Mac; nil otherwise.
     let retake: (() -> Void)?
     let retaking: Bool
-    /// The wish goes with its link as a file (its kind can be shared as one).
+    /// The wish goes with its link as a file (its kind can be shared as one), or to GitHub: what it carries is passed on.
     let canIncludeFile: Bool
     /// Said while the wish goes with its link: the work in the wish that came with no license.
     let noLicense: String?
     /// Lamp is writing what's new for the release.
     let writingNotes: Bool
+    /// The app's repository ("owner/name") when it's on GitHub and can be updated from here: the card offers to release
+    /// there too. Nil otherwise.
+    let gitHub: String?
+    /// Why the app's repository can't be updated from here (no sign-in to GitHub), in place of the box.
+    let gitHubNote: String?
+    let gitHubStage: GitHubStage?
+    /// Tries the GitHub half of the last release again, after it failed.
+    let retryGitHub: () -> Void
     /// Copy Link the first time, Release Update after: shares what's on the card and copies the link.
     let share: () -> Void
     let copy: () -> Void
@@ -90,11 +112,16 @@ public struct WishLinkCard: View {
 
     public init(icon: NSImage?, picture: NSImage?, values: Binding<Values>, limits: Limits, link: String?, changed: Bool,
                 stage: Stage, copied: Bool, retake: (() -> Void)?, retaking: Bool, canIncludeFile: Bool = false, noLicense: String? = nil,
-                writingNotes: Bool = false,
+                writingNotes: Bool = false, gitHub: String? = nil, gitHubNote: String? = nil, gitHubStage: GitHubStage? = nil,
+                retryGitHub: @escaping () -> Void = {},
                 share: @escaping () -> Void, copy: @escaping () -> Void, stop: @escaping () -> Void, close: @escaping () -> Void,
                 width: CGFloat? = 480) {
         self.noLicense = noLicense
         self.writingNotes = writingNotes
+        self.gitHub = gitHub
+        self.gitHubNote = gitHubNote
+        self.gitHubStage = gitHubStage
+        self.retryGitHub = retryGitHub
         self.icon = icon
         self.picture = picture
         self._values = values
@@ -157,15 +184,18 @@ public struct WishLinkCard: View {
                 if canIncludeFile, let noLicense {
                     Text(noLicense).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
-                if let link { linkRow(link) }
-                if case .failed(let message) = stage {
-                    Label {
-                        Text(message).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    } icon: {
-                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    }
-                    .font(.callout)
+                // Shown where it's chosen: the release goes to the app's repository too while it's ticked.
+                if let gitHub {
+                    Toggle("Also update GitHub (\(gitHub))", isOn: $values.alsoGitHub)
+                        .toggleStyle(.checkbox)
+                        .font(.callout)
+                        .help("Puts this version on GitHub too, as a commit and a release with what's new")
+                } else if let gitHubNote {
+                    Text(gitHubNote).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
+                if let link { linkRow(link) }
+                if case .failed(let message) = stage { problem(message) }
+                gitHubStatus
             }
             .padding(.leading, Self.indent)
             buttons.cardButtons()
@@ -244,6 +274,33 @@ public struct WishLinkCard: View {
                 .keyboardShortcut(.defaultAction)
                 .disabled(!values.isComplete)
         }
+    }
+
+    /// The GitHub half of a release, under the link's own: what it's doing, that it's up, or why not with a way to try again.
+    @ViewBuilder private var gitHubStatus: some View {
+        switch gitHubStage {
+        case .working(let step):
+            HStack(spacing: 8) { ProgressView().controlSize(.small); Text(step).foregroundStyle(.secondary) }.font(.callout)
+        case .done(let version):
+            Label("Released on GitHub too, as \(version).", systemImage: "checkmark.circle.fill")
+                .font(.callout).foregroundStyle(.secondary)
+        case .failed(let message):
+            VStack(alignment: .leading, spacing: 8) {
+                problem(message)
+                Button("Try GitHub Again", action: retryGitHub).disabled(sending)
+            }
+        case nil:
+            EmptyView()
+        }
+    }
+
+    private func problem(_ message: String) -> some View {
+        Label {
+            Text(message).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+        }
+        .font(.callout)
     }
 
     private var notesField: some View {
