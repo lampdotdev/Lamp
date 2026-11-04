@@ -1,7 +1,7 @@
 # Wishes shared as links
 
 The chat's Share Wish popover has **Make a Link…** (a gear beside the link, to change it, once it has one): the person reviews what the link will show (the wish's name, what it
-does, who it's by (their name on the Mac until they change it, which Lamp remembers) and, if they keep it, a picture of the app, which they can leave out or take again), and Copy Link puts it
+does, who it's by (their name on the Mac until they change it, which Lamp remembers) and a picture of the app, which they can take again), and Copy Link puts it
 on lamp.dev and copies `https://lamp.dev/w/<id>`. Whoever opens the link makes their own version from the words, which Lamp sends as what the wish does (its first request when that's empty). The
 wish's shared file (`<name>.lampapp`, made as Share… makes it, with its
 license and key checks) goes too, whenever its kind can go as a file, and the page offers that exact wish to anyone with Lamp (Open in Lamp, on a Mac), which reviews it

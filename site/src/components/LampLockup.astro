@@ -1,0 +1,17 @@
+---
+import { Image } from "astro:assets";
+import icon from "../assets/AppIcon.png";
+
+interface Props {
+  /** The icon's side, in pixels; the name is set to match it. */
+  size?: number;
+}
+
+const { size = 36 } = Astro.props;
+---
+
+<!-- Lamp's icon and its name beside it: the one way the site writes Lamp's own name as a mark. -->
+<span class="inline-flex items-center gap-[0.3em] font-black tracking-[-0.04em] text-tape" style={`font-size: ${size * 0.78}px`}>
+  <Image src={icon} alt="" width={size} height={size} densities={[1, 2]} class="shrink-0" style={`width: ${size}px; height: ${size}px`} />
+  Lamp
+</span>

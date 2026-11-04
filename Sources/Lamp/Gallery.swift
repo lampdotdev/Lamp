@@ -901,17 +901,16 @@ enum Gallery {
     /// The card that says what a wish's link will show, before and after it's shared, as its window shows it.
     private static let wishLinkEntries: [Entry] = [
         wishLink("New link"),
-        wishLink("New link, picture left out", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: false)),
         wishLink("New link, no picture", picture: false),
         wishLink("New link, nothing to take again", retake: false),
         wishLink("Sharing", stage: .sending),
         wishLink("Couldn't share", stage: .failed("Lamp couldn't reach lamp.dev. Try again in a moment.")),
-        wishLink("Wish itself can't go", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true),
+        wishLink("Wish itself can't go", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includeFile: true),
                  stage: .failed("Disk Map can't be shared. The license of Engine is missing from it. Ask Lamp to put LICENSE-engine back."), canIncludeFile: true),
         wishLink("Shared and copied", link: true, copied: true),
         wishLink("Shared, changed since", link: true, changed: true),
-        wishLink("Carrying the wish", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true), canIncludeFile: true),
-        wishLink("No license", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true),
+        wishLink("Carrying the wish", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includeFile: true), canIncludeFile: true),
+        wishLink("No license", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includeFile: true),
                  canIncludeFile: true, noLicense: "Found Code by Someone came with no license. Make sure you're comfortable sharing it."),
     ]
 
@@ -926,7 +925,7 @@ enum Gallery {
             let card = WishLinkCard(
                 icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) },
                 picture: picture ? folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("preview.png")) } : nil,
-                values: .constant(values ?? .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: picture)),
+                values: .constant(values ?? .init(name: "Disk Map", line: diskMapLine, words: diskMapWish)),
                 limits: WishLink.cardLimits, link: link ? "https://lamp.dev/w/AyTkit4xCc" : nil, changed: !link || changed,
                 stage: stage, copied: copied, retake: retake ? {} : nil, retaking: false, canIncludeFile: canIncludeFile, noLicense: noLicense,
                 share: {}, copy: {}, stop: {}, close: {}, width: width)

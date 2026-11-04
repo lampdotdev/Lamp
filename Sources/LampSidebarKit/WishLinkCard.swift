@@ -3,7 +3,7 @@ import AppKit
 
 /// Share Link: what a wish's link will show anyone who has it (its name, its picture, what it does and who it's by),
 /// laid out to be read and changed before anything leaves the Mac (the picture, which may show the person's own things,
-/// can be left out or taken again), then the link and what can be done with it. Drawn from plain values, so its window
+/// can be taken again), then the link and what can be done with it. Drawn from plain values, so its window
 /// (`WishLinkWindows`) and the gallery show the same card.
 public struct WishLinkCard: View {
     /// What the person can change on the card.
@@ -13,16 +13,14 @@ public struct WishLinkCard: View {
         public var by: String
         public var line: String
         public var words: String
-        public var includePicture: Bool
         /// The wish itself goes with the link, for anyone with Lamp to open that exact one: always, when it can.
         public var includeFile: Bool
 
-        public init(name: String, by: String = "", line: String, words: String, includePicture: Bool, includeFile: Bool = false) {
+        public init(name: String, by: String = "", line: String, words: String, includeFile: Bool = false) {
             self.name = name
             self.by = by
             self.line = line
             self.words = words
-            self.includePicture = includePicture
             self.includeFile = includeFile
         }
 
@@ -165,8 +163,9 @@ public struct WishLinkCard: View {
 
     private func pictureRow(_ picture: NSImage) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            // The picture always goes with the link; the person can take it again if it shows something of theirs.
             HStack {
-                Toggle("Include this picture", isOn: $values.includePicture).toggleStyle(.switch).controlSize(.small)
+                Text("Picture").font(.callout.weight(.medium)).foregroundStyle(.secondary).accessibilityHidden(true)
                 Spacer(minLength: 8)
                 if let retake {
                     Button("Take Again", action: retake).disabled(retaking)
@@ -178,7 +177,6 @@ public struct WishLinkCard: View {
                 .frame(maxHeight: 180)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
-                .opacity(values.includePicture ? 1 : 0.3)
                 .overlay { if retaking { ProgressView().controlSize(.small) } }
                 .accessibilityLabel("Picture of the wish")
         }

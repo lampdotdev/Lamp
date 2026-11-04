@@ -252,11 +252,11 @@ function sleeveFront(sleeve: Sleeve, img: HTMLImageElement | undefined, pointed?
     const said = lines(ctx, sleeve.line, 688, 2);
     said.forEach((line, i) => ctx.fillText(line, 56, (said.length > 1 ? 972 : 990) + i * 50));
   }
-  // Where it plays: each place's icon over its name (a shared wish's page may not know, and then says nothing).
+  // Where it plays: each place's icon over its name.
   const [plays, icon] = remix ? [1078, 76] : [1004, 92];
   ctx.fillStyle = RED;
   font(ctx, "700", 24, MONO);
-  if (sleeve.places.length) ctx.fillText("PLAYS ON", 58, plays);
+  ctx.fillText("PLAYS ON", 58, plays);
   sleeve.places.forEach((place, i) => {
     const x = 56 + i * 170;
     ctx.save();

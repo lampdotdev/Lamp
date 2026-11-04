@@ -1,106 +1,105 @@
 ---
 import Base from "../../layouts/Base.astro";
+import LampLockup from "../../components/LampLockup.astro";
 import { DOWNLOAD_URL } from "../../lib/download";
 import { together } from "../../lib/text";
-import browserFill from "@phosphor-icons/core/assets/fill/browser-fill.svg?raw";
-
-// Where a wish that plays on its page plays, as the homepage's sleeves print it: the `d` of each path in the icon.
-const browserIcon = [...browserFill.matchAll(/ d="([^"]+)"/g)].map((match) => match[1]).join(" ");
 ---
 
 <!--
   A wish shared as a link (lamp.dev/w/<id>): the wish itself, as big as the window allows, playing when Lamp sent its
   page, else its picture; under it its name and what it does, and the ways to make one's own. It's on the homepage's
-  paper, under its menu bar and over its footer, with the wish's own sleeve beside the ways to remix it, lying on a
-  blank one, as the homepage's shelf has them. The site is static and the wish is only known when the page is asked
-  for, so this is built empty and the server puts the wish in as #shared-wish (lib/shared-wish-page.js).
+  paper, with Lamp only a line at the top and the bottom and the stripes along the page's foot: the page is about the
+  thing someone made. The site is static and the wish is only known when the page is asked for, so this is built
+  empty and the server puts the wish in as #shared-wish (lib/shared-wish-page.js).
 -->
-<Base title="A wish · Lamp" description="A wish made with Lamp.">
-  <main class="shared-page overflow-x-clip bg-paper text-tape">
-    <!-- The thing itself. Playing, it fills the window but for the bar above and the line about it below. -->
-    <section data-stage class="px-3 pt-[calc(var(--menu-height)+1rem)] sm:px-6 sm:pt-[calc(var(--menu-height)+1.5rem)]" aria-label="The wish">
-      <div data-play hidden class="relative mx-auto h-[calc(100dvh-var(--menu-height)-8rem)] min-h-[22rem] max-w-[100rem] overflow-hidden rounded-[10px] border-2 border-tape bg-[#111] shadow-[6px_6px_0_var(--color-tape)] sm:shadow-[10px_10px_0_var(--color-tape)]">
-        <button
-          type="button"
-          data-fullscreen
-          aria-label="Full screen"
-          class="absolute top-3 right-3 z-10 grid size-9 cursor-pointer place-items-center rounded-full bg-black/45 text-white/90 backdrop-blur transition hover:bg-black/65 focus-visible:outline-2 focus-visible:outline-white"
-        >
-          <svg aria-hidden="true" viewBox="0 0 16 16" class="size-4 fill-none stroke-current stroke-[1.6] [stroke-linecap:round] [stroke-linejoin:round]"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" /></svg>
-        </button>
-      </div>
-      <div data-shot hidden class="relative mx-auto max-w-[72rem] overflow-hidden rounded-[10px] border-2 border-tape bg-[#26241f] shadow-[6px_6px_0_var(--color-tape)] sm:shadow-[10px_10px_0_var(--color-tape)]">
-        <img data-backdrop alt="" class="absolute inset-0 size-full scale-125 object-cover opacity-55 blur-3xl" />
-        <div class="relative flex justify-center p-4 sm:p-8">
-          <img data-picture alt="" class="max-h-[58dvh] w-auto max-w-full rounded-md shadow-[0_30px_60px_-25px_rgba(0,0,0,0.6)]" />
-        </div>
-      </div>
-    </section>
+<Base title="A wish · Lamp" description="A wish made with Lamp." bare>
+  <div class="shared-page flex min-h-dvh flex-col overflow-x-clip bg-paper text-tape">
+    <header class="flex h-16 items-center justify-between gap-4 px-4 sm:px-6">
+      <a href="/" class="inline-flex items-center gap-[0.4em] rounded-sm text-[17px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-tape">
+        Made with <LampLockup size={26} />
+      </a>
+      <a href="/" class="rounded-sm text-[16px] font-bold underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-tape">Learn more</a>
+    </header>
 
-    <!-- What it is and the ways to make one's own; on a wide window, its sleeve under what it is, beside them. -->
-    <section class="mx-auto grid w-full max-w-[72rem] gap-x-14 gap-y-10 px-5 pt-12 pb-20 sm:px-8 md:grid-cols-[1fr_minmax(18rem,25rem)]">
-      <div class="flex min-w-0 flex-col">
-        <span class="stripe-tab" aria-hidden="true"></span>
-        <div class="flex items-start gap-4">
-          <img data-icon alt="" width="72" height="72" class="size-[72px] shrink-0 drop-shadow-[0_8px_14px_rgba(0,0,0,0.18)]" hidden />
+    <main class="flex flex-1 flex-col">
+      <!-- The thing itself, only as big as it is: a playing page takes the shape of its picture (the app as it looked
+           when it was shared), as large as the window allows; without a picture it fills the window but for the bar
+           above and the line about it below. -->
+      <section data-stage class="flex justify-center px-3 pt-2 sm:px-6" aria-label="The wish">
+        <div data-play hidden class="play-frame relative overflow-hidden rounded-[10px] bg-[#111] ring-1 ring-tape/15">
+          <button
+            type="button"
+            data-fullscreen
+            aria-label="Full screen"
+            class="absolute top-3 right-3 z-10 grid size-9 cursor-pointer place-items-center rounded-full bg-black/45 text-white/90 backdrop-blur transition hover:bg-black/65 focus-visible:outline-2 focus-visible:outline-white"
+          >
+            <svg aria-hidden="true" viewBox="0 0 16 16" class="size-4 fill-none stroke-current stroke-[1.6] [stroke-linecap:round] [stroke-linejoin:round]"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" /></svg>
+          </button>
+        </div>
+        <img data-picture hidden alt="" class="block max-h-[calc(100dvh-12rem)] w-auto max-w-full rounded-[10px] ring-1 ring-tape/15" />
+      </section>
+
+      <section class="mx-auto grid w-full max-w-[72rem] gap-x-14 gap-y-10 px-5 pt-12 pb-16 sm:px-8 md:grid-cols-[1fr_minmax(18rem,25rem)] md:items-start">
+        <div class="flex min-w-0 items-start gap-4">
+          <img data-icon alt="" width="72" height="72" class="size-[72px] shrink-0" hidden />
           <div class="min-w-0 pt-1">
             <h1 data-name class="text-[clamp(2.5rem,6vw,4.25rem)] leading-[0.95] font-black tracking-[-0.04em] text-balance"></h1>
             <p data-by hidden class="mt-2 text-xl font-extrabold italic"></p>
+            <p data-about class="mt-4 max-w-[40rem] text-xl leading-normal text-[#4a463c]"></p>
           </div>
         </div>
-        <p data-about class="mt-4 max-w-[40rem] text-xl leading-normal text-[#4a463c]"></p>
-      </div>
 
-      <!-- On a Mac: Lamp opens this wish (the exact one, when it came with the link), with what to change in its box. -->
-      <div class="flex flex-col gap-3 self-start rounded-[10px] border-2 border-tape bg-[#f7f2e3] p-5 shadow-[6px_6px_0_var(--color-tape)] md:row-span-2">
-        <div data-mac hidden class="flex flex-col gap-3">
-          <label for="change" class="text-[1.375rem] leading-tight font-black tracking-[-0.02em]">Make your own version</label>
-          <!-- The changes Lamp suggests for it, as it suggests them beside the app: one puts its words in the box. -->
-          <div data-ideas hidden class="flex flex-col gap-2">
-            <p class="font-mono text-xs font-bold text-[#a8361f]">IDEAS FOR YOUR REMIX</p>
-            <div data-chips class="flex flex-wrap gap-2"></div>
+        <div class="flex flex-col gap-3 rounded-[10px] border-2 border-tape bg-[#f7f2e3] p-5">
+          <h2 id="make-own" class="text-[1.375rem] leading-tight font-black tracking-[-0.02em]">Make this your own using Lamp</h2>
+          <!-- On a Mac: Lamp opens this wish (the exact one, when it came with the link), with what to change in its box. -->
+          <div data-mac hidden class="flex flex-col gap-3">
+            <!-- The changes Lamp suggests for it, as it suggests them beside the app: one puts its words in the box. -->
+            <div data-ideas hidden class="flex flex-wrap gap-2"></div>
+            <textarea
+              id="change"
+              data-change
+              rows="2"
+              aria-labelledby="make-own"
+              placeholder="What would you change? You can say later, too."
+              class="w-full resize-none rounded-[6px] bg-white p-3 text-[16px] leading-relaxed ring-2 ring-tape/80 transition placeholder:text-[#6f6857] focus:ring-tape focus:outline-none"
+            ></textarea>
+            <a data-open href="/" class="shared-button">Open in Lamp</a>
           </div>
-          <textarea
-            id="change"
-            data-change
-            rows="2"
-            placeholder="What would you change? You can say later, too."
-            class="w-full resize-none rounded-[6px] bg-white p-3 text-[16px] leading-relaxed ring-2 ring-tape/80 transition placeholder:text-[#6f6857] focus:ring-tape focus:outline-none"
-          ></textarea>
-          <a data-open href="/" class="shared-button">Open in Lamp</a>
+          <a href={DOWNLOAD_URL} data-download data-download-place="shared" class="shared-button shared-button-outline">
+            <span data-download-label>Download Lamp</span>
+          </a>
+          <p data-next class="text-center text-sm text-[#4a463c]">{together("Free, for Macs with Apple Silicon and macOS 14 or later")}</p>
         </div>
-        <a href={DOWNLOAD_URL} data-download data-download-place="shared" class="shared-button shared-button-outline">
-          <span data-download-label>Download Lamp</span>
-        </a>
-        <p data-next class="text-center text-sm text-[#4a463c]">{together("Free, for Macs with Apple Silicon and macOS 14 or later")}</p>
-      </div>
+      </section>
+    </main>
 
-      <!-- The wish's sleeve, as the homepage's shelf draws its tapes (lib/tapes.ts), lying on a blank one: one that's
-           clicked stands up, and turns over to the changes Lamp suggests (the blank one's back is about Lamp). It
-           repeats what the page says beside it, so it's only for the eye, and without WebGL there's nothing here. Its
-           box is a little taller than wide: with only two tapes, a wider one leaves a chosen tape no room to stand in
-           front of the other. -->
-      <div data-tapes data-icon-browser={browserIcon} class="tape-host aspect-[9/10] w-full max-w-[30rem] min-w-0 justify-self-center md:justify-self-start" aria-hidden="true">
-        <div class="tape-fallback"></div>
-      </div>
-    </section>
-  </main>
+    <footer class="px-5 pb-8 text-center text-[15px] font-semibold">
+      Made with <a href="/" class="underline underline-offset-4">Lamp</a>
+    </footer>
+    <div class="stripe-foot h-6" aria-hidden="true"></div>
+  </div>
 </Base>
 
 <style>
-  /* The homepage's paper and the sleeve's colors, green to magenta, always in that order (index.astro). */
+  /* The homepage's paper (index.astro). */
   .shared-page {
-    --stripe-0: #1f8a4a; --stripe-1: #7cbf3a; --stripe-2: #f6b81c; --stripe-3: #f08a1c; --stripe-4: #e2402a;
-    --stripe-5: #d23778;
     background-image: radial-gradient(rgb(60 40 10 / 0.07) 1px, transparent 1.4px), radial-gradient(rgb(60 40 10 / 0.05) 1px, transparent 1.4px);
     background-size: 5px 5px, 9px 9px;
     background-position: 0 0, 3px 4px;
   }
-  /* A tab cut from the sleeve, above the name: the stripes never go on a heading's letters. */
-  .stripe-tab {
-    display: block; width: 5.5rem; height: 1.25rem; margin-bottom: 1.25rem;
-    background: linear-gradient(150deg, var(--stripe-0) 0 16.6%, var(--stripe-1) 0 33.3%, var(--stripe-2) 0 50%, var(--stripe-3) 0 66.6%,
-      var(--stripe-4) 0 83.3%, var(--stripe-5) 0);
+  /* The sleeve's stripes, green to magenta, across the foot of the page. */
+  .stripe-foot {
+    background: linear-gradient(180deg, #1f8a4a 0 16.6%, #7cbf3a 0 33.3%, #f6b81c 0 50%, #f08a1c 0 66.6%, #e2402a 0 83.3%, #d23778 0);
+  }
+
+  /* A playing page's frame. With its picture's shape (--ratio, set by the script), it's as wide as the page allows and
+     no taller than the window leaves room for; without one, it fills that room. */
+  .play-frame {
+    --room: max(22rem, calc(100dvh - 12rem));
+    width: 100%; max-width: 100rem; height: var(--room);
+  }
+  .play-frame[style*="--ratio"] {
+    width: min(100%, calc(var(--room) * var(--ratio))); height: auto; aspect-ratio: var(--ratio);
   }
 
   /* The homepage's buttons: ink with paper-colored words, or outlined in ink. */
@@ -110,28 +109,27 @@ const browserIcon = [...browserFill.matchAll(/ d="([^"]+)"/g)].map((match) => ma
     transition: translate 0.2s ease;
   }
   .shared-button:hover { translate: 0 -2px; }
-  .shared-button:focus-visible { outline: 3px solid var(--stripe-0); outline-offset: 3px; }
+  .shared-button:focus-visible { outline: 3px solid #1f8a4a; outline-offset: 3px; }
   .shared-button-outline { background: transparent; color: var(--color-tape); box-shadow: inset 0 0 0 2px var(--color-tape); }
-
-  /* The tapes run past their box and let the pointer through (lib/tapes.ts). The box only takes room once they're
-     drawn. */
-  .tape-host { position: relative; }
-  .tape-host:not(:global(.is-3d)) { display: none; }
-  .tape-host :global(.tape-canvas) { position: absolute; pointer-events: none; }
-  .tape-host > .tape-fallback { display: none; }
 </style>
 
 <script>
   import { askFrom, copyWish, sharedWishLink, withAsk, wishLink } from "../../../lib/wish.js";
   import { track } from "../../lib/analytics";
-  import { mountStack, type Sleeve } from "../../lib/tapes";
-  import { DOWNLOAD_URL } from "../../lib/download";
 
   type Shared = { id: string; name: string; by?: string; ideas?: string[]; about: string; wish: string; picture: string; icon: string; file?: string; shared?: string; play?: string };
   const json = document.getElementById("shared-wish")?.textContent;
   // Only ever a shared wish's page: on its own, there's nothing to show.
   if (!json) location.replace("/ideas");
   const wish = json ? (JSON.parse(json) as Shared) : null;
+
+  /** A picture's width over its height, once it's loaded; nothing if it won't load. */
+  const shapeOf = (src: string) => new Promise<number | undefined>((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img.naturalHeight ? img.naturalWidth / img.naturalHeight : undefined);
+    img.onerror = () => resolve(undefined);
+    img.src = src;
+  });
 
   if (wish) {
     const $ = <T extends Element>(selector: string) => document.querySelector<T>(selector)!;
@@ -156,12 +154,18 @@ const browserIcon = [...browserFill.matchAll(/ d="([^"]+)"/g)].map((match) => ma
       frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-popups allow-modals allow-downloads");
       frame.className = "absolute inset-0 size-full border-0 bg-white";
       stage.prepend(frame);
-      stage.hidden = false;
       $<HTMLButtonElement>("[data-fullscreen]").addEventListener("click", () => stage.requestFullscreen?.());
+      // A page can't say how big it wants to be from inside its frame, so the frame takes its picture's shape. It's
+      // shown once that's known, so it doesn't jump.
+      (wish.picture ? shapeOf(wish.picture) : Promise.resolve(undefined)).then((ratio) => {
+        if (ratio) stage.style.setProperty("--ratio", String(ratio));
+        stage.hidden = false;
+      });
     } else if (wish.picture) {
-      $<HTMLImageElement>("[data-picture]").src = $<HTMLImageElement>("[data-backdrop]").src = wish.picture;
-      $<HTMLImageElement>("[data-picture]").alt = `${wish.name}, as it looks`;
-      $<HTMLElement>("[data-shot]").hidden = false;
+      const picture = $<HTMLImageElement>("[data-picture]");
+      picture.src = wish.picture;
+      picture.alt = `${wish.name}, as it looks`;
+      picture.hidden = false;
     } else {
       $<HTMLElement>("[data-stage]").hidden = true;
     }
@@ -172,21 +176,21 @@ const browserIcon = [...browserFill.matchAll(/ d="([^"]+)"/g)].map((match) => ma
     const fit = () => { change.style.height = "auto"; change.style.height = `${change.scrollHeight + 4}px`; };
     change.addEventListener("input", fit);
     requestAnimationFrame(fit);
-    const chips = $<HTMLElement>("[data-chips]");
+    const ideas = $<HTMLElement>("[data-ideas]");
     for (const idea of wish.ideas ?? []) {
       const chip = document.createElement("button");
       chip.type = "button";
       chip.textContent = idea;
-      chip.className = "cursor-pointer rounded-[6px] bg-white px-3 py-1.5 text-left font-marker text-[16px] leading-snug text-[#b8264f] ring-1 ring-tape/25 transition ring-inset hover:-translate-y-px hover:ring-tape/60 focus-visible:outline-2 focus-visible:outline-tape";
+      chip.className = "cursor-pointer rounded-full bg-white px-3.5 py-1.5 text-left text-[14px] leading-snug font-semibold text-tape ring-1 ring-tape/25 transition ring-inset hover:ring-tape/60 focus-visible:outline-2 focus-visible:outline-tape";
       chip.addEventListener("click", () => {
         change.value = idea;
         change.dispatchEvent(new Event("input"));
         change.focus();
         track("idea_suggestion", { idea: wish.name, place: "shared" });
       });
-      chips.append(chip);
+      ideas.append(chip);
     }
-    $<HTMLElement>("[data-ideas]").hidden = !wish.ideas?.length;
+    ideas.hidden = !wish.ideas?.length;
 
     // A page can't tell whether Lamp is installed, so a Mac gets Open in Lamp beside Download. The exact wish when it
     // came with the link, so the copy follows it (`Following` in Lamp); else its words.
@@ -211,43 +215,5 @@ const browserIcon = [...browserFill.matchAll(/ d="([^"]+)"/g)].map((match) => ma
       });
     });
     track("idea_opened", { idea: wish.name, place: "shared" });
-
-    mountTapes(wish, () => { change.focus(); change.scrollIntoView({ block: "center", behavior: "smooth" }); }, () => download.click());
-  }
-
-  /** The wish's sleeve on a blank one, drawn as the homepage's shelf is. Its "Remix me" goes to the box for what to
-   * change, and the blank one's Download is the page's own, which copies the wish. */
-  async function mountTapes(wish: Shared, remix: () => void, getLamp: () => void) {
-    const host = document.querySelector<HTMLElement>("[data-tapes]");
-    if (!host) return;
-    // The picture (else the icon) goes on a canvas the tapes are drawn from, so it's read here as bytes (the pictures
-    // are on another host): a picture from another host drawn as it is would leave the canvas unreadable to WebGL.
-    const picture = wish.picture || wish.icon;
-    const shot = picture
-      ? await fetch(picture).then((response) => (response.ok ? response.blob() : undefined)).then((blob) => blob && URL.createObjectURL(blob)).catch(() => undefined)
-      : undefined;
-    const sleeves: Sleeve[] = [
-      {
-        look: "original", title: wish.name, by: wish.by ? `Made by ${wish.by}` : "Made with Lamp", kind: "", line: wish.about,
-        shot, tweaks: wish.ideas ?? [], remix: "?ask=",
-        places: wish.play ? [{ label: "Browser", icon: host.dataset.iconBrowser! }] : [],
-      },
-      {
-        look: "blank", title: "your idea here…", by: "", kind: "", line: "Remixable software for the things you already own.",
-        tweaks: ["Start from this one, or from scratch", "Change it live, while it runs", "Put it on your TV, your phone, your Xbox", "No code, and free"],
-        places: [], download: DOWNLOAD_URL,
-      },
-    ];
-    host.dataset.sleeves = JSON.stringify(sleeves);
-    document.addEventListener("lamp:remix", remix);
-    // The blank sleeve's printed Download presses a link of the shelf's; here it's the page's own Download instead.
-    document.addEventListener("click", (event) => {
-      const target = event.target as Element | null;
-      if (!target?.matches?.('a[data-download-place="shelf"]')) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      getLamp();
-    }, true);
-    mountStack(host);
   }
 </script>

@@ -337,7 +337,7 @@ enum WishLink {
             WishLink.Words(name: values.name.trimmed, by: values.by.trimmed, line: values.line.trimmed,
                            words: values.line.trimmed.isEmpty ? values.words.trimmed : values.line.trimmed,
                            ideas: ideas.isEmpty ? nil : ideas,
-                           picture: values.includePicture ? pictureDigest : nil, file: values.includeFile ? true : nil)
+                           picture: pictureDigest, file: values.includeFile ? true : nil)
         }
         /// A link that carries the wish is always worth sending again: the file is the wish as it is now.
         var changed: Bool { shared?.shown != words || values.includeFile }
@@ -358,16 +358,13 @@ enum WishLink {
         let name = WishLink.clip(project.title, WishLink.Limit.name)
         // The wish itself always goes with its link when its kind can go as a file: the link shares the wish.
         let values = shared.map { WishLinkCard.Values(name: name, by: $0.shown.by ?? WishLink.sharer, line: $0.shown.line, words: $0.shown.words,
-                                                      includePicture: $0.shown.picture != nil && picture != nil,
                                                       includeFile: Self.canIncludeFile(project)) }
             ?? WishLinkCard.Values(name: name, by: WishLink.sharer, line: WishLink.line(of: project), words: WishLink.firstRequest(of: project, store: Store.shared),
-                                   includePicture: picture != nil, includeFile: Self.canIncludeFile(project))
+                                   includeFile: Self.canIncludeFile(project))
         var card = Card(values: values, pictureDigest: digest, shared: shared)
         card.ideas = (RemixSuggestions.load(project) ?? []).prefix(WishLink.Limit.ideas).map(\.text)
             .map { $0.trimmed }.filter { !$0.isEmpty && $0.count <= WishLink.Limit.idea }
         card.picture = picture
-        // The picture the link shows is the one it was made with, as long as the app's own hasn't changed since.
-        if let shown = shared?.shown.picture, shown != digest { card.values.includePicture = picture != nil }
         cards[project.id] = card
         Task {
             let icon = await Sharing.sharedIcon(of: project)
@@ -403,7 +400,7 @@ enum WishLink {
         let words = card.words
         // A name changed on the card is the one the next link starts with.
         if let by = words.by, by != WishLink.sharer { WishLink.sharer = by }
-        let source = card.values.includePicture ? card.picture : nil
+        let source = card.picture
         let iconSource = card.icon
         Task {
             do {
@@ -514,7 +511,6 @@ enum WishLink {
             guard let data else { return }
             cards[project.id]?.picture = data
             cards[project.id]?.pictureDigest = Self.digest(data)
-            cards[project.id]?.values.includePicture = true
             cards[project.id]?.copied = false
         }
     }
