@@ -23,8 +23,24 @@ enum Publish {
     static func hasPage(_ project: LampProject) -> Bool { pageUse(project) != nil }
 
     static func pageUse(_ project: LampProject) -> PageUse? {
-        guard project.holdsApp, Parts.folders(in: project.dir).isEmpty else { return nil }
-        return project.platform.target.publishedPage(project)
+        pageApp(project).flatMap { $0.platform.target.publishedPage($0) }
+    }
+
+    /// The app whose page is played or used: the wish's own, or its one app when that's in a part of its own (a wish
+    /// laid out with its game in a folder). Nil for a wish of several apps, whose pages would each need a home.
+    static func pageApp(_ project: LampProject) -> LampProject? {
+        var wish = project
+        wish.partFolders = Parts.folders(in: project.dir)
+        if project.isPart || wish.partFolders.isEmpty { return project.holdsApp ? project : nil }
+        let apps = (wish.holdsApp ? [wish] : []) + Parts.load(wish)
+        return apps.count == 1 ? apps[0] : nil
+    }
+
+    /// Where that page's files are in the wish, as a repository holds them: "Web/", or "Game/Web/" for a part's.
+    static func pageFolder(_ project: LampProject) -> String? {
+        guard let app = pageApp(project) else { return nil }
+        let part = app.isPart && app.dir != project.dir ? app.dir.lastPathComponent + "/" : ""
+        return part + TVTemplate.webFolder + "/"
     }
 
     struct Failure: LocalizedError {
@@ -95,7 +111,7 @@ enum Publish {
     static func copyPage(of project: LampProject, into site: URL, scope: String) throws -> String {
         let fm = FileManager.default
         try fm.createDirectory(at: site, withIntermediateDirectories: true)
-        let web = project.dir.appendingPathComponent(GameKit.webFolder)
+        let web = (pageApp(project) ?? project).dir.appendingPathComponent(GameKit.webFolder)
         let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey]
         guard let items = fm.enumerator(at: web, includingPropertiesForKeys: keys) else { throw Failure(message: "\(project.name) has no page to play.") }
         for case let file as URL in items {

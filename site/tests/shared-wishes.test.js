@@ -50,6 +50,11 @@ test("only a checked wish is taken: known fields, plain words within their limit
   assert.equal(readShare(share).by, "", "nobody named, with no byline");
   assert.equal(readShare({ ...share, by: "  A  Maker " }).by, "A Maker");
   assert.equal(readShare({ ...share, by: "x".repeat(LIMITS.by + 1) }), null);
+  assert.deepEqual(readShare(share).ideas, [], "no suggestions");
+  assert.deepEqual(readShare({ ...share, ideas: ["Water them by the weather", " Add a fern "] }).ideas, ["Water them by the weather", "Add a fern"]);
+  assert.equal(readShare({ ...share, ideas: ["a", "b", "c", "d"] }), null, "at most three");
+  assert.equal(readShare({ ...share, ideas: ["x".repeat(LIMITS.idea + 1)] }), null);
+  assert.equal(readShare({ ...share, ideas: "Add a fern" }), null);
   assert.equal(readShare({ ...share, name: "e\u0301".repeat(LIMITS.name) }).name.length, LIMITS.name * 2, "counted as Lamp counts");
   assert.equal(readShare({ ...share, words: "  " }), null);
   assert.equal(readShare({ ...share, picture: Buffer.from("<svg></svg>").toString("base64") }), null);
@@ -234,7 +239,7 @@ test("the site and Lamp agree on the limits", () => {
   const swift = readFileSync(new URL("../../Sources/Lamp/WishLink.swift", import.meta.url), "utf8");
   assert.ok(swift.includes(`static let filePart = ${FILE_LIMITS.part.toLocaleString("en").replaceAll(",", "_")}`), "filePart");
   assert.ok(swift.includes(`static let fileTotal = ${FILE_LIMITS.total.toLocaleString("en").replaceAll(",", "_")}`), "fileTotal");
-  for (const [name, value] of Object.entries({ name: LIMITS.name, by: LIMITS.by, line: LIMITS.line, words: LIMITS.words })) {
+  for (const [name, value] of Object.entries({ name: LIMITS.name, by: LIMITS.by, line: LIMITS.line, words: LIMITS.words, ideas: LIMITS.ideas, idea: LIMITS.idea })) {
     assert.ok(swift.includes(`static let ${name} = ${value}`), name);
   }
 });

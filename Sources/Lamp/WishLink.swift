@@ -19,6 +19,9 @@ enum WishLink {
         static let by = 60
         static let line = 140
         static let words = 2000
+        /// The changes Lamp suggests for the wish (`RemixSuggestions`), which the page offers to remix with.
+        static let ideas = 3
+        static let idea = 100
         /// The wish's file goes in parts of at most this many bytes (a request to the site's function holds 4.5 MB), and
         /// is at most `fileTotal`.
         static let filePart = 3_000_000
@@ -43,6 +46,8 @@ enum WishLink {
         var by: String? = nil
         var line: String
         var words: String
+        /// The changes Lamp suggests for it, the page's to offer. Nil in links from before.
+        var ideas: [String]? = nil
         /// Which picture goes with it (a digest of it), or none.
         var picture: String?
         /// The wish's file goes with it. Nil in links from before files could go.
@@ -96,9 +101,12 @@ enum WishLink {
         return clip(request?.text.trimmed ?? line(of: project), Limit.words)
     }
 
-    /// The picture the desk shows of the wish, read as the app's own file: nil when there's none.
+    /// The picture the desk shows of the wish, read as the app's own file, or else its one app's when that's in a part
+    /// of its own (a game in its folder): nil when there's none.
     static func picture(of project: LampProject) -> Data? {
-        if let data = AppFile.read(Runtime.previewURL(project), in: project), NSImage(data: data) != nil { return data }
+        for app in [project] + [Publish.pageApp(project)].compactMap({ $0 }).filter({ $0.dir != project.dir }) {
+            if let data = AppFile.read(Runtime.previewURL(app), in: project), NSImage(data: data) != nil { return data }
+        }
         return Starters.shippedPreview(of: project).flatMap { try? Data(contentsOf: $0) }
     }
 
@@ -158,6 +166,7 @@ enum WishLink {
     static func publish(_ words: Words, picture: Data?, icon: Data?, replacing earlier: Shared?) async throws -> Shared {
         var body: [String: Any] = ["name": words.name.trimmed, "line": words.line.trimmed, "words": words.words.trimmed]
         if let by = words.by?.trimmed, !by.isEmpty { body["by"] = by }
+        if let ideas = words.ideas, !ideas.isEmpty { body["ideas"] = ideas }
         body["picture"] = picture?.base64EncodedString() ?? NSNull()
         body["icon"] = icon?.base64EncodedString() ?? NSNull()
         var request = URLRequest(url: earlier.map { address(for: $0.id) } ?? endpoint)
@@ -314,6 +323,8 @@ enum WishLink {
         private(set) var image: NSImage?
         private(set) var iconImage: NSImage?
         var shared: WishLink.Shared?
+        /// The changes Lamp suggests for the wish, as it has them now: they go with the link, not shown on the card.
+        var ideas: [String] = []
         var stage: WishLinkCard.Stage = .editing
         var copied = false
         var retaking = false
@@ -325,6 +336,7 @@ enum WishLink {
             // wish, not a message.
             WishLink.Words(name: values.name.trimmed, by: values.by.trimmed, line: values.line.trimmed,
                            words: values.line.trimmed.isEmpty ? values.words.trimmed : values.line.trimmed,
+                           ideas: ideas.isEmpty ? nil : ideas,
                            picture: values.includePicture ? pictureDigest : nil, file: values.includeFile ? true : nil)
         }
         /// A link that carries the wish is always worth sending again: the file is the wish as it is now.
@@ -351,6 +363,8 @@ enum WishLink {
             ?? WishLinkCard.Values(name: name, by: WishLink.sharer, line: WishLink.line(of: project), words: WishLink.firstRequest(of: project, store: Store.shared),
                                    includePicture: picture != nil, includeFile: Self.canIncludeFile(project))
         var card = Card(values: values, pictureDigest: digest, shared: shared)
+        card.ideas = (RemixSuggestions.load(project) ?? []).prefix(WishLink.Limit.ideas).map(\.text)
+            .map { $0.trimmed }.filter { !$0.isEmpty && $0.count <= WishLink.Limit.idea }
         card.picture = picture
         // The picture the link shows is the one it was made with, as long as the app's own hasn't changed since.
         if let shown = shared?.shown.picture, shown != digest { card.values.includePicture = picture != nil }

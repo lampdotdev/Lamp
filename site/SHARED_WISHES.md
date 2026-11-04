@@ -7,7 +7,8 @@ wish's shared file (`<name>.lampapp`, made as Share… makes it, with its
 license and key checks) goes too, whenever its kind can go as a file, and the page offers that exact wish to anyone with Lamp (Open in Lamp, on a Mac), which reviews it
 before it opens, as any shared file, and makes a copy that follows the link. Never the chat or the app's data.
 
-- The wish to play (`/w/<id>` for a wish sent with its page): a web app, a web game or a screen plays at the top of
+- The wish to play (`/w/<id>` for a wish sent with its page): a web app, a web game or a screen (the wish's own, or its
+  one app's when that's in a part of its own, `Publish.pageApp`) plays at the top of
   the link's page, nearly as tall as the window, with a button for full screen, so whoever opens the link tries it
   first. Lamp sends the page with the wish's file (`WishLink.playablePage`: the page Put on GitHub puts on
   GitHub Pages, what it saves kept under the link), zipped, in parts to `api/wish-file.js` with `what=page`; the site
@@ -22,7 +23,8 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   through a rewrite in `vercel.json`): a page of the wish's own, about the thing someone made, with Lamp only a small
   mark at the top ("Made with Lamp", and Get Lamp) and a line at the bottom. The wish fills the top, playing or as its
   picture on a blurred copy of itself; under it its icon, name, who it's by and what it does, and the ways to make one's own: a box
-  for what to change, **Open in Lamp** on a Mac (`lamp://wish?shared=<id>` with the change, so the copy follows the
+  for what to change with the changes Lamp suggests for it above it (`RemixSuggestions`, sent with the link; one puts its
+  words in the box), **Open in Lamp** on a Mac (`lamp://wish?shared=<id>` with the change, so the copy follows the
   link, or `lamp://wish?text=…` for a link without the wish's file), and **Download Lamp**, which copies the wish and
   the change with Lamp's mark (FIRST_IDEA.md). A request the link brought (`?ask=`) waits in the box. The function
   serves the built page (`dist/w/index.html`, bundled with it by `includeFiles`) with the wish in `#shared-wish`
@@ -71,7 +73,7 @@ Without the first two, sharing answers 503 and Lamp says it couldn't share; link
 
 ## Limits and privacy
 
-- What's taken: a name (60 characters), who it's by (60, or nothing), a line (140), the words (2,000), a PNG or JPEG picture (1.5 MB, 4,096 px a
+- What's taken: a name (60 characters), who it's by (60, or nothing), a line (140), up to three changes Lamp suggests (100 each), the words (2,000), a PNG or JPEG picture (1.5 MB, 4,096 px a
   side) and a square PNG icon (300 KB), checked by their bytes; nothing else. Lamp holds the sharer to the same
   limits and sends the picture as a fresh JPEG, which leaves behind whatever the file carried besides its pixels.
 - `QUOTAS` in `lib/shared-wishes.js`: 10 shares or changes an hour per address, 200 an hour and 1,000 a day overall;
