@@ -714,6 +714,7 @@ struct ChatBar: View {
     @State private var sharingOpen = false
     /// The Mac's way to send that was chosen while Lamp makes the wish's file, for a wish with no link.
     @State private var waitingWay: SharePopover.Way?
+    @State private var waitingSince: Date?
 
     var body: some View {
         Group {
@@ -885,11 +886,17 @@ struct ChatBar: View {
         case .export: link.send(.export)
         case .send(let way):
             // The link goes when there is one. Without it the wish's file does, which Lamp makes first and hands over.
+            // One file at a time: a way chosen while Lamp makes it is the one it goes by. A request that never came back
+            // (it failed, and the chat says why) stops waiting after a while.
             if let url {
                 send(way, items: [url])
             } else {
+                let waiting = waitingSince.map { Date().timeIntervalSince($0) < 60 } ?? false
                 waitingWay = way
-                link.send(.share)
+                if !waiting {
+                    waitingSince = Date()
+                    link.send(.share)
+                }
             }
         }
         sharingOpen = false
@@ -913,6 +920,7 @@ struct ChatBar: View {
         SharedCopy.removeEarlierFolders()
         let way = waitingWay ?? .more
         waitingWay = nil
+        waitingSince = nil
         guard let url = try? SharedCopy.keep(sharing) else { return }
         send(way, items: [url])
     }

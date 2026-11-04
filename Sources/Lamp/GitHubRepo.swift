@@ -168,7 +168,8 @@ enum GitHubRepo {
         let chain = Credits.read(tree.appendingPathComponent(Credits.file)) ?? credits
         let open = Publish.OpenInLamp(link: link, file: fileName)
         let build = Build(alone: root.platform.target.recipe.buildsAlone, app: root.platform.target.identity.name, others: !parts.isEmpty,
-                          page: Publish.hasPage(project) ? (site ? "" : Publish.pageFolder(project)) : nil)
+                          // Web/ even for a wish whose one app is in a part: the export puts that app at the root (`Sharing.layout`).
+                          page: Publish.hasPage(project) ? (site ? "" : TVTemplate.webFolder + "/") : nil)
         // The icon the shared file carries, as it's drawn: never a picture of the app running, which could show the
         // person's data.
         let icon = fm.fileExists(atPath: tree.appendingPathComponent(LampFile.iconEntry).path) ? LampFile.iconEntry : nil

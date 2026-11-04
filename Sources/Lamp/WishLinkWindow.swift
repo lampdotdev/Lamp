@@ -43,6 +43,13 @@ import LampSidebarKit
         closingInternally = false
     }
 
+    /// Not while the card is sending: a share in flight keeps its card, or a second Copy Link from a card opened again
+    /// would make another link over the first's kept secret. The card itself is disabled meanwhile; this is the close button.
+    func windowShouldClose(_ window: NSWindow) -> Bool {
+        guard let id = windows.first(where: { $0.value === window })?.key else { return true }
+        return WishLinkCards.shared.cards[id]?.stage != .sending
+    }
+
     func windowWillClose(_ notification: Notification) {
         guard !closingInternally, let window = notification.object as? NSWindow,
               let id = windows.first(where: { $0.value === window })?.key else { return }

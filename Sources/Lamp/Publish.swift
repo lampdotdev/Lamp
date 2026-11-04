@@ -48,13 +48,6 @@ enum Publish {
         }
     }
 
-    /// Where that page's files are in the wish, as a repository holds them: "Web/", or "Game/Web/" for a part's.
-    static func pageFolder(_ project: LampProject) -> String? {
-        guard let app = pageApp(project) else { return nil }
-        let part = app.isPart && app.dir != project.dir ? app.dir.lastPathComponent + "/" : ""
-        return part + TVTemplate.webFolder + "/"
-    }
-
     struct Failure: LocalizedError {
         let message: String
         var errorDescription: String? { message }
