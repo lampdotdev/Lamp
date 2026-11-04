@@ -121,6 +121,9 @@ enum Gallery {
             state.waitingForSetup = true
             state.lines = []
         },
+        screen("Chat couldn't be saved", group: "Chat screen", finishedChat) { state in
+            state.banner = SidebarBanner(text: ErrorMessages.chatNotSavedDiskFull, button: Store.SaveTrouble.button, needsYou: true)
+        },
         screen("A message answered while building", group: "Chat screen", Array(finishedChat.prefix(1))) { state in
             state.busy = true
             var answering = SidebarQueued(id: UUID(), text: "Can the title be bigger too?", attachments: [])

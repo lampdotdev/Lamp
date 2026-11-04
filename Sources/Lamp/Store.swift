@@ -5,6 +5,7 @@ import CryptoKit
 import Security
 import AppKit
 import Network
+import os
 import LampFileLook
 
 /// Where an app is built for and opened: this Mac, iOS (a simulator, or the person's phone, by
@@ -1599,17 +1600,29 @@ final class Store: ObservableObject {
     }
 
     /// Hands the chat as it is now to the writing queue. The lines are a copy, so the main thread goes on changing them.
+    /// What came of the write is told back on the main thread (`landed`), in the order the writes were made.
     private func writeChat(_ id: String) {
-        guard let project = projects.first(where: { $0.id == id }) else { return }
+        guard let project = projects.first(where: { $0.id == id }) else { return landed(.chat(id), error: nil) }
         let lines = logs[id] ?? []
         let file = project.dir.appendingPathComponent(".lamp/chat.json")
+        let write = nextChatWrite(id)
         if let unkept = unkeptChats[id] {
-            guard LogLine.keepAside(unkept, of: file) else { return }
+            guard LogLine.keepAside(unkept, of: file) else { return landed(.chat(id), write: write, error: CocoaError(.fileWriteUnknown)) }
             unkeptChats[id] = nil
         }
-        Self.chatWrites.async {
-            guard let data = try? JSONEncoder().encode(lines) else { return }
-            try? data.write(to: file, options: .atomic)
+        Self.chatWrites.async { [weak self] in
+            let error = Self.writeChatFile(lines, to: file)
+            DispatchQueue.main.async { self?.landed(.chat(id), write: write, error: error) }
+        }
+    }
+
+    /// Writes a chat's lines to its file, on the writing queue. Nil once they're on disk.
+    nonisolated private static func writeChatFile(_ lines: [LogLine], to file: URL) -> Error? {
+        do {
+            try JSONEncoder().encode(lines).write(to: file, options: .atomic)
+            return nil
+        } catch {
+            return error
         }
     }
 
@@ -1625,21 +1638,186 @@ final class Store: ObservableObject {
         chatsToSave.remove(project.id)
         let lines = logs[project.id] ?? []
         let file = project.dir.appendingPathComponent(".lamp/chat.json")
+        let write = nextChatWrite(project.id)
         if let unkept = unkeptChats[project.id] {
-            guard LogLine.keepAside(unkept, of: file) else { return false }
+            guard LogLine.keepAside(unkept, of: file) else {
+                landed(.chat(project.id), write: write, error: CocoaError(.fileWriteUnknown))
+                return false
+            }
             unkeptChats[project.id] = nil
         }
-        return Self.chatWrites.sync {
-            guard let data = try? JSONEncoder().encode(lines) else { return false }
-            return (try? data.write(to: file, options: .atomic)) != nil
-        }
+        let error = Self.chatWrites.sync { Self.writeChatFile(lines, to: file) }
+        landed(.chat(project.id), write: write, error: error)
+        return error == nil
     }
 
-    /// Writes every chat that's waiting, for when Lamp quits.
+    /// Writes every chat that's waiting, and every one that couldn't be written before, for when Lamp quits.
     func flushChats() {
+        chatsToSave.formUnion(unsaved.compactMap(\.chat))
         writeChats()
         Self.chatWrites.sync {}
     }
+
+    // MARK: - Work that couldn't be saved
+
+    /// The person's own work whose file couldn't be written: a chat, or what's typed in its box. Each stays in memory as
+    /// it is (`logs`, `drafts`), and the next write of it, by Try Again or by the next change to it, writes the whole of it.
+    enum Unsaved: Hashable {
+        case chat(String), draft(String)
+        var chat: String? { if case .chat(let id) = self { id } else { nil } }
+    }
+
+    /// A file sent with a message that couldn't be copied into the app's Attachments folder: copied there on Try Again
+    /// and added to its message's line, from where it came.
+    struct UnsavedAttachment: Equatable {
+        var project: String
+        var line: UUID?
+        let file: URL
+    }
+
+    /// Why the person's work isn't saved, as far as Lamp can tell: a full disk is fixed by freeing space, and anything
+    /// else only by trying again.
+    struct SaveTrouble: Equatable {
+        var diskFull: Bool
+        var text: String { diskFull ? ErrorMessages.chatNotSavedDiskFull : ErrorMessages.chatNotSaved }
+        static let button = "Try Again"
+    }
+
+    /// What every chat and the desk say while some of the person's work isn't on disk, until a write of every piece of it
+    /// has landed. Nil when everything is saved.
+    @Published private(set) var saveTrouble: SaveTrouble?
+    private var unsaved: Set<Unsaved> = []
+    private var unsavedAttachments: [UnsavedAttachment] = []
+
+    /// Each chat's writes, counted: an earlier write's word, told back after a later one's (`writeChatNow` writes at
+    /// once while the queue's word of the one before is still on its way), says nothing of the chat as it is now.
+    private var chatWritesMade: [String: Int] = [:]
+    private var chatWritesLanded: [String: Int] = [:]
+    /// The first write that holds a change made to a chat after its last write was handed over (a file recovered into
+    /// one of its lines): an earlier write's success, landing meanwhile, doesn't save that change.
+    private var chatWriteNeeded: [String: Int] = [:]
+
+    private func nextChatWrite(_ id: String) -> Int {
+        chatWritesMade[id, default: 0] += 1
+        return chatWritesMade[id]!
+    }
+
+    /// The same work under the id its wish has now: a write started before a rename lands after it.
+    private func following(_ work: Unsaved) -> Unsaved {
+        switch work {
+        case .chat(let id): .chat(moved[id] ?? id)
+        case .draft(let id): .draft(moved[id] ?? id)
+        }
+    }
+
+    /// Chats with a write handed to the queue whose word hasn't come back yet.
+    private var chatsBeingWritten: [String] {
+        chatWritesMade.compactMap { id, made in made > chatWritesLanded[id, default: 0] ? id : nil }
+    }
+
+    /// What couldn't be saved goes with a wish to the id it has after a rename (`follow`), counts and all, so it's
+    /// still written there rather than taken for a wish that's gone.
+    private func followUnsaved(from old: String, to new: String) {
+        unsaved = Set(unsaved.map(following))
+        for index in unsavedAttachments.indices where unsavedAttachments[index].project == old {
+            unsavedAttachments[index].project = new
+        }
+        if let made = chatWritesMade.removeValue(forKey: old) { chatWritesMade[new] = made }
+        if let landed = chatWritesLanded.removeValue(forKey: old) { chatWritesLanded[new] = landed }
+        if let needed = chatWriteNeeded.removeValue(forKey: old) { chatWriteNeeded[new] = needed }
+    }
+
+    /// A write of the person's work has landed, or failed with `error`. `write` is a chat's count of it, for a chat.
+    private func landed(_ work: Unsaved, write: Int? = nil, error: Error?) {
+        let work = following(work)
+        if let write, let id = work.chat {
+            guard write >= chatWritesLanded[id, default: 0] else { return }
+            chatWritesLanded[id] = write
+        }
+        if let error {
+            Self.saveLog.error("couldn't save \(String(describing: work), privacy: .public): \(String(describing: error), privacy: .public)")
+            unsaved.insert(work)
+            troubled(by: error)
+        } else if let id = work.chat, let write, write < chatWriteNeeded[id, default: 0] {
+            return
+        } else if unsaved.remove(work) != nil {
+            settleSaveTrouble()
+        }
+    }
+
+    private func troubled(by error: Error) {
+        let trouble = SaveTrouble(diskFull: ErrorMessages.isOutOfSpace(error))
+        if saveTrouble != trouble { saveTrouble = trouble }
+    }
+
+    /// The notice goes only once nothing is left unsaved: a write that landed for one chat says nothing of another's.
+    private func settleSaveTrouble() {
+        guard unsaved.isEmpty, unsavedAttachments.isEmpty, saveTrouble != nil else { return }
+        saveTrouble = nil
+    }
+
+    /// Try Again: writes everything that couldn't be written, and leaves the notice up until each write has landed. A
+    /// chat's write lands on its queue and is told back from there; a wish deleted since has nothing left to save.
+    func retrySaving() {
+        retryAttachments()
+        for work in unsaved {
+            switch work {
+            case .chat(let id):
+                chatsToSave.remove(id)
+                writeChat(id)
+            case .draft(let id):
+                guard let project = projects.first(where: { $0.id == id }) else { unsaved.remove(work); continue }
+                draftWrites[id]?.cancel()
+                writeDraft(for: project)
+            }
+        }
+        settleSaveTrouble()
+    }
+
+    /// Writes everything waiting or unsaved now, and waits for it, for Lamp quitting: true once all of it is on disk.
+    /// Retry in the quit question comes here again.
+    func saveAllNow() -> Bool {
+        retryAttachments()
+        for project in projects where draftWrites[project.id] != nil || unsaved.contains(.draft(project.id)) {
+            draftWrites[project.id]?.cancel()
+            writeDraft(for: project)
+        }
+        // A chat whose write is still on the queue is written again here: its word would come back only after Lamp
+        // had decided to quit, too late to ask.
+        let chats = chatsToSave.union(unsaved.compactMap(\.chat)).union(chatsBeingWritten)
+        chatsToSave.subtract(chats)
+        for id in chats {
+            if let project = projects.first(where: { $0.id == id }) { _ = writeChatNow(project) } else { landed(.chat(id), error: nil) }
+        }
+        settleSaveTrouble()
+        return unsaved.isEmpty && unsavedAttachments.isEmpty
+    }
+
+    /// Copies the files that couldn't be copied when their message was sent, and puts each in its message's line. One
+    /// whose own file is gone since (a picture dropped from a browser, kept only in a temporary folder) can't be
+    /// copied any more, and is let go. A line given its file leaves its chat unsaved until that chat's write lands:
+    /// the caller writes it, so the notice doesn't go while the file is still missing from the chat on disk.
+    private func retryAttachments() {
+        var still: [UnsavedAttachment] = []
+        for pending in unsavedAttachments {
+            guard let project = projects.first(where: { $0.id == pending.project }),
+                  FileManager.default.fileExists(atPath: pending.file.path) else { continue }
+            var failure: Error?
+            guard let name = Attachments.save([pending.file], to: project, failed: { _, error in failure = error }).first else {
+                if let failure { troubled(by: failure) }
+                still.append(pending)
+                continue
+            }
+            if let line = pending.line, let index = logs[project.id]?.firstIndex(where: { $0.id == line }) {
+                logs[project.id]?[index].attachments = (logs[project.id]?[index].attachments ?? []) + [name]
+                unsaved.insert(.chat(project.id))
+                chatWriteNeeded[project.id] = chatWritesMade[project.id, default: 0] + 1
+            }
+        }
+        unsavedAttachments = still
+    }
+
+    private static let saveLog = Logger(subsystem: Edition.bundleID, category: "saving")
 
     /// The message each app's agent is writing right now: its chat line, and text that has arrived but isn't
     /// in the chat yet.
@@ -1835,9 +2013,9 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Writes every draft that's waiting for its pause, for when Lamp quits.
+    /// Writes every draft that's waiting for its pause, and every one that couldn't be written before, for when Lamp quits.
     func flushDrafts() {
-        for project in projects where draftWrites[project.id] != nil {
+        for project in projects where draftWrites[project.id] != nil || unsaved.contains(.draft(project.id)) {
             draftWrites[project.id]?.cancel()
             writeDraft(for: project)
         }
@@ -1845,27 +2023,29 @@ final class Store: ObservableObject {
 
     private var draftWrites: [String: Task<Void, Never>] = [:]
 
+    /// The words, the request they take the place of and the words set aside for it, each in its own file, all written
+    /// or the draft counts as unsaved: a draft whose words landed but whose request didn't would send as a new request.
     private func writeDraft(for project: LampProject) {
         draftWrites[project.id] = nil
-        guard exists(project), let draft = drafts[project.id] else { return }
-        let file = project.dir.appendingPathComponent(".lamp/draft.txt")
-        if draft.text.isEmpty {
-            try? FileManager.default.removeItem(at: file)
-        } else {
-            try? draft.text.write(to: file, atomically: true, encoding: .utf8)
+        guard exists(project), let draft = drafts[project.id] else { return landed(.draft(project.id), error: nil) }
+        let lamp = project.dir.appendingPathComponent(".lamp")
+        do {
+            try Self.put(draft.text.isEmpty ? nil : draft.text, at: lamp.appendingPathComponent("draft.txt"))
+            try Self.put(draft.replacing?.uuidString, at: lamp.appendingPathComponent("draft-replaces"))
+            try Self.put(draft.replacing != nil && !draft.setAsideText.isEmpty ? draft.setAsideText : nil,
+                         at: lamp.appendingPathComponent("draft-set-aside.txt"))
+            landed(.draft(project.id), error: nil)
+        } catch {
+            landed(.draft(project.id), error: error)
         }
-        let replaces = project.dir.appendingPathComponent(".lamp/draft-replaces")
-        if let id = draft.replacing {
-            try? id.uuidString.write(to: replaces, atomically: true, encoding: .utf8)
-        } else {
-            try? FileManager.default.removeItem(at: replaces)
-        }
-        let setAside = project.dir.appendingPathComponent(".lamp/draft-set-aside.txt")
-        if draft.replacing != nil, !draft.setAsideText.isEmpty {
-            try? draft.setAsideText.write(to: setAside, atomically: true, encoding: .utf8)
-        } else {
-            try? FileManager.default.removeItem(at: setAside)
-        }
+    }
+
+    /// Writes `text` to `file`, or removes the file for nil. A file that's already gone is as good as removed.
+    private static func put(_ text: String?, at file: URL) throws {
+        if let text { return try text.write(to: file, atomically: true, encoding: .utf8) }
+        do {
+            try FileManager.default.removeItem(at: file)
+        } catch CocoaError.fileNoSuchFile {}
     }
 
     func handle(url: URL) {
@@ -3408,6 +3588,7 @@ final class Store: ObservableObject {
         for (from, to) in moved where to == old.id { moved[from] = project.id }
         moved = moved.filter { $0.key != project.id }
         moved[old.id] = project.id
+        followUnsaved(from: old.id, to: project.id)
         pendingSubmissions.move(from: old.id, to: project.id)
         if let draft = drafts.removeValue(forKey: old.id) { drafts[project.id] = draft }
         draftWrites.removeValue(forKey: old.id)?.cancel()
@@ -4982,17 +5163,26 @@ final class Store: ObservableObject {
     func post(_ messages: [QueuedMessage], to project: LampProject) -> [String] {
         var saved: [String] = []
         for message in messages {
-            var names = message.kept + Attachments.save(message.attachments, to: project)
+            // A file that couldn't be copied is kept to copy on Try Again, and the line it belongs to is known once it's logged.
+            var failed: [URL] = []
+            var failure: Error?
+            func couldNotSave(_ file: URL, _ error: Error) { failed.append(file); failure = error }
+            var names = message.kept + Attachments.save(message.attachments, to: project, failed: couldNotSave)
             // The picture of what was pointed at is one of the request's files, and the line says which.
             var pointed = message.pointed
             if let picture = pointed?.url {
                 let folder = project.dir.appendingPathComponent(Attachments.folder).standardizedFileURL
                 let name = picture.standardizedFileURL.deletingLastPathComponent() == folder
-                    ? picture.lastPathComponent : Attachments.save([picture], to: project).first
+                    ? picture.lastPathComponent : Attachments.save([picture], to: project, failed: couldNotSave).first
                 pointed?.picture = name ?? ""
                 if let name { if !names.contains(name) { names.append(name) } } else { pointed = nil }
             }
             log(project, .user, message.text, attachments: names.isEmpty ? nil : names)
+            if let failure {
+                let line = logs[project.id]?.last?.id
+                unsavedAttachments += failed.map { UnsavedAttachment(project: project.id, line: line, file: $0) }
+                troubled(by: failure)
+            }
             if let reply = message.sideReply, let last = logs[project.id]?.indices.last {
                 logs[project.id]?[last].sideReply = reply
                 if message.sideDone {

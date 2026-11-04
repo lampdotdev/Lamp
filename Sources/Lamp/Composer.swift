@@ -54,11 +54,12 @@ enum Attachments {
         names.map { project.dir.appendingPathComponent(folder).appendingPathComponent($0) }
     }
 
-    /// Copies files into <app>/Attachments with unique names. Returns the saved names.
-    static func save(_ files: [URL], to project: LampProject) -> [String] {
+    /// Copies files into <app>/Attachments with unique names. Returns the saved names; each file that couldn't be
+    /// copied (a full disk, say) goes to `failed` with why.
+    static func save(_ files: [URL], to project: LampProject, failed: (URL, Error) -> Void = { _, _ in }) -> [String] {
         let fm = FileManager.default
         let dir = project.dir.appendingPathComponent(folder, isDirectory: true)
-        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)   // a folder that can't be made fails each copy below
         var saved: [String] = []
         for file in files {
             let values = try? file.resourceValues(forKeys: [.isRegularFileKey])
@@ -71,7 +72,14 @@ enum Attachments {
                 name = ext.isEmpty ? "\(base) \(n)" : "\(base) \(n).\(ext)"
                 n += 1
             }
-            if (try? fm.copyItem(at: file, to: dir.appendingPathComponent(name))) != nil { saved.append(name) }
+            do {
+                try fm.copyItem(at: file, to: dir.appendingPathComponent(name))
+                saved.append(name)
+            } catch {
+                // A copy cut short by a full disk leaves part of the file behind, under the name the next try would take.
+                try? fm.removeItem(at: dir.appendingPathComponent(name))
+                failed(file, error)
+            }
         }
         return saved
     }

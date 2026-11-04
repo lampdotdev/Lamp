@@ -466,10 +466,13 @@ final class SidebarServer {
             state.tryOn = tryOn(for: project, busy: busy)
         }
         state.intro = log.isEmpty && (store.queued[project.id] ?? []).isEmpty ? intro(for: project, busy: busy, draft: draft.text) : nil
-        // Only for a wish that needs them, once they're asked for: a wish that's only being used doesn't, nor is a game
-        // or a screen made with them.
-        // Tools that need repair are said before anything is asked: nothing would build until they're put right.
-        if store.setup.checked, let repair = store.setup.repair, store.needsAppleTools(project) {
+        // Work that couldn't be saved comes first: what's at risk is the person's, and Try Again is what keeps it.
+        // Apple's tools only for a wish that needs them, once they're asked for: a wish that's only being used doesn't,
+        // nor is a game or a screen made with them. Tools that need repair are said before anything is asked: nothing
+        // would build until they're put right.
+        if let trouble = store.saveTrouble {
+            state.banner = SidebarBanner(text: trouble.text, button: Store.SaveTrouble.button, needsYou: true)
+        } else if store.setup.checked, let repair = store.setup.repair, store.needsAppleTools(project) {
             state.banner = SidebarBanner(text: repair.text + " Anything you ask for starts once they can.", button: repair.button, needsYou: true)
         } else if store.setup.checked && !store.setup.hasBuildTools && store.needsAppleTools(project)
             && (store.setup.installRequested || (store.setup.hasBuilder && store.waitsForAppleTools)) {
@@ -1394,7 +1397,7 @@ final class SidebarServer {
         case .moreIdeas:
             ideaDecks[project.id]?.more()
         case .banner:
-            store.fixBuildTools()
+            if store.saveTrouble != nil { store.retrySaving() } else { store.fixBuildTools() }
         case .scrolled(let line):
             readingAt[project.id] = line
         case .hello:

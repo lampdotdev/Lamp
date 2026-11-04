@@ -141,7 +141,8 @@ extension ChatLook {
         }
     }
 
-    /// Something every chat waits on (Apple's tools installing, or needing repair), above the chat, with its button.
+    /// Something every chat waits on (Apple's tools installing, or needing repair) or is at risk from (work Lamp
+    /// couldn't save), above the chat, with its button. The desk shows the same one above its list.
     public struct Banner: View {
         let banner: SidebarBanner
         let action: () -> Void
