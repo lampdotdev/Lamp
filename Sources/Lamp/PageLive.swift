@@ -525,6 +525,8 @@ import Foundation
             marked.waits = state == "held"
             if marked.waits != (change.waits ?? false) { give(marked, to: key, in: project) }
         }
+        // The game stands still from here until its new code draws (`shown`): the stripes turn over it meanwhile.
+        if ["rerun", "reloading"].contains(state), place == .mac { AppTransition.turn(project) }
         if let waiting = deciding[key], gen >= waiting.gen, ["swapped", "rerun", "reloading", "held", "phone"].contains(state) {
             deciding[key] = nil
             waiting.answer.resume(returning: state)

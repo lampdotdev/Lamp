@@ -7682,6 +7682,7 @@ enum Template {
                     guard gate.admits(phase: phase, id: id, at: at, signature: signature, now: Date()) else { return }
                     switch phase {
                     case "begin": begin()
+                    case "turn": turn()
                     case "land": land()
                     default: end()
                     }
@@ -7711,7 +7712,7 @@ enum Template {
             }
 
             mutating func admits(phase: String, id: String, at: String, signature: String, now: Date) -> Bool {
-                guard !token.isEmpty, !id.isEmpty, ["begin", "land", "end"].contains(phase), let sent = Double(at),
+                guard !token.isEmpty, !id.isEmpty, ["begin", "turn", "land", "end"].contains(phase), let sent = Double(at),
                       abs(now.timeIntervalSince1970 - sent) < 10, !seen.contains(id),
                       signature == Self.signature(phase: phase, id: id, at: at, token: token) else { return false }
                 seen.append(id)
@@ -7742,6 +7743,13 @@ enum Template {
                 glasses.append(glass)
                 glass.glow(still: reduceMotion)
             }
+        }
+
+        /// The app is standing still taking the change in (a game running its code again): the stripes roll up its
+        /// windows turn after turn until the change is on screen (`land`). Only over windows already glowing for it.
+        @MainActor static func turn() {
+            renew()
+            for glass in glasses where !glass.isLeaving { glass.turn(still: reduceMotion) }
         }
 
         /// The change went in: the stripes roll up each window once (fading where motion is reduced), then the smoke and the glow go.
@@ -7815,6 +7823,11 @@ enum Template {
                 look.glow(still: still)
             }
 
+            func turn(still: Bool) {
+                orderFront(nil)
+                look.turn(still: still)
+            }
+
             func reveal(still: Bool) {
                 isLeaving = true
                 orderFront(nil)
@@ -7844,7 +7857,9 @@ enum Template {
         /// as it rises a third of the way up, with a faint glow round the edge: noticeable on any ground, and out of the way
         /// of most of the window. When the change goes in the smoke surges for a moment, then the stripes roll up the window
         /// on Lamp's slant, as if round a drum: each comes in as a thin line, widens to the middle and thins again as it
-        /// leaves, and at the middle of the roll they cover the window whole, leaving it clear behind them.
+        /// leaves, and at the middle of the roll they cover the window whole, leaving it clear behind them. While the app
+        /// stands still taking the change in (a game running its code again), the stripes roll up turn after turn, so the
+        /// frame held there reads as the change going in, and once it's on screen the turn under way finishes.
         @MainActor final class Look: NSView {
             /// Lamp's stripes, in the order they come up: green, lime, yellow, orange, red and magenta.
             static let hues: [NSColor] = [
@@ -7868,6 +7883,11 @@ enum Template {
                     needsLayout = true
                 }
             }
+
+            /// One turn of the drum, in seconds.
+            private static let roll = 1.1
+            /// When the stripes began turning while the app stood still (`turn`), in the stripes' time.
+            private var turning: CFTimeInterval?
 
             private let glowLayer = CALayer()
             private let wisps = CAEmitterLayer()
@@ -8013,6 +8033,16 @@ enum Template {
                 wisps.birthRate = 1
             }
 
+            /// The app stands still taking the change in: the stripes roll up the window turn after turn until `reveal`, the
+            /// smoke and the glow staying. Where motion is reduced, the glow alone stays, as while it was built.
+            func turn(still: Bool) {
+                layoutSubtreeIfNeeded()
+                guard !still, turning == nil else { return }
+                let now = stripes.convertTime(CACurrentMediaTime(), from: nil)
+                turning = now
+                rollStripes(from: now, turns: .infinity)
+            }
+
             /// The change went in: the smoke surges and the stripes roll up (the stripes fading where motion is reduced), and
             /// the glow and the smoke go. Answers how long that takes, after which the layers can go.
             func reveal(still: Bool) -> TimeInterval {
@@ -8033,6 +8063,17 @@ enum Template {
                     Self.animate(stripes, "opacity", from: 0.35, to: 0, duration: 0.7)
                     return 0.8
                 }
+                // Turning already (`turn`): the turn under way is the last, and the smoke and the glow go as it finishes.
+                if let began = turning {
+                    turning = nil
+                    let now = stripes.convertTime(CACurrentMediaTime(), from: nil)
+                    let turns = Float(((now - began) / Self.roll).rounded(.down) + 1)
+                    rollStripes(from: began, turns: turns)
+                    wisps.birthRate = 0
+                    Self.animate(wisps, "opacity", from: wisps.presentation()?.opacity ?? wisps.opacity, to: 0, duration: 0.6)
+                    Self.animate(glowLayer, "opacity", from: glowing, to: 0, duration: 0.6)
+                    return max(began + Double(turns) * Self.roll - now, 0.6) + 0.2
+                }
                 // The smoke gathers itself, more of it and rising faster, for a moment before the roll. Timed by
                 // animations, not by the main thread, which may be busy with the new code.
                 let gather = 0.3
@@ -8047,33 +8088,40 @@ enum Template {
                 wisps.add(surge, forKey: "surge")
 
                 // Then the stripes roll up at the drum's steady turn, which is what eases them in and out at the edges, and
-                // the smoke and the glow go with them. Each stripe's edges are worked out ahead along the roll, so Core
-                // Animation can run them without the app.
-                let roll = 1.1
+                // the smoke and the glow go with them.
+                rollStripes(from: stripes.convertTime(CACurrentMediaTime(), from: nil) + gather, turns: 1)
+                Self.animate(wisps, "opacity", from: 1, to: 0, duration: 0.6, delay: gather + 0.1)
+                Self.animate(glowLayer, "opacity", from: glowing, to: 0, duration: 0.6, delay: gather)
+                return gather + Self.roll + 0.2
+            }
+
+            /// The stripes roll up the window from `begin` (in the stripes' time), `turns` times round, each stripe's edges
+            /// worked out ahead along the roll so Core Animation runs them without the app, and each left with no height
+            /// after. Rolled again from the same `begin`, the roll goes on unbroken with its new number of turns.
+            private func rollStripes(from begin: CFTimeInterval, turns: Float) {
+                let across = stripes.bounds.height, along = stripes.bounds.width
                 let steps = 60
                 let times = (0...steps).map { NSNumber(value: Double($0) / Double(steps)) }
                 CATransaction.begin()
                 CATransaction.setDisableActions(true)
                 stripes.opacity = 1
-                for (index, stripe) in layers.enumerated() {
+                for (index, stripe) in (stripes.sublayers ?? []).enumerated() {
                     let frames = (0...steps).map { Self.edges(index: index, roll: 2 * .pi * CGFloat($0) / CGFloat(steps), across: across) }
-                    Self.follow(stripe, "position.y", values: frames.map(\.bottom), times: times, duration: roll, delay: gather)
+                    Self.follow(stripe, "position.y", values: frames.map(\.bottom), times: times, from: begin, turns: turns)
                     Self.follow(stripe, "bounds.size.height", values: frames.map { $0.top > $0.bottom ? $0.top - $0.bottom + 1 : 0 },
-                                times: times, duration: roll, delay: gather)
+                                times: times, from: begin, turns: turns)
                     Self.place(stripe, index: index, roll: 2 * .pi, across: across, along: along)
                 }
                 CATransaction.commit()
-                Self.animate(wisps, "opacity", from: 1, to: 0, duration: 0.6, delay: gather + 0.1)
-                Self.animate(glowLayer, "opacity", from: glowing, to: 0, duration: 0.6, delay: gather)
-                return gather + roll + 0.2
             }
 
-            private static func follow(_ layer: CALayer, _ key: String, values: [CGFloat], times: [NSNumber], duration: Double, delay: Double) {
+            private static func follow(_ layer: CALayer, _ key: String, values: [CGFloat], times: [NSNumber], from begin: CFTimeInterval, turns: Float) {
                 let animation = CAKeyframeAnimation(keyPath: key)
                 animation.values = values
                 animation.keyTimes = times
-                animation.duration = duration
-                animation.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil) + delay
+                animation.duration = roll
+                animation.repeatCount = turns
+                animation.beginTime = begin
                 animation.fillMode = .backwards
                 layer.add(animation, forKey: key)
             }
