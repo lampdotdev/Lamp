@@ -81,7 +81,7 @@ final class TeamSigningLiveTests: XCTestCase {
         let signing = staging.appendingPathComponent("signing")
         try FileManager.default.createDirectory(at: signing, withIntermediateDirectories: true)
         let signed = try await Store.signForTeam(copy, for: project, team: team,
-                                                env: Sidebar.signingEnvironment(in: copy, entitlementsIn: signing))
+                                                env: Sidebar.signingEnvironment(in: copy, entitlementsIn: signing), staging: Store.Staging(for: nil))
         XCTAssertTrue(signed)
         let check = await Subprocess.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", copy.path], timeout: 60)
         XCTAssertTrue(check.ok, check.output)
