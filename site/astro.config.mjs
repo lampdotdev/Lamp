@@ -31,13 +31,13 @@ function localAPI() {
       server.middlewares.use(async (req, res, next) => {
         if (req.url === "/api/idea-event") { res.statusCode = 204; return res.end(); }
         const path = req.url.split("?")[0];
-        const shared = /^\/w\/([^/]+)(?:(\/card\.png)|\/([^/]+))?$/.exec(path);
+        const shared = /^\/w\/([^/]+)(\/card\.png)?$/.exec(path);
         const played = /^\/w\/([^/]+)\/play\/(\d+)\/(.*)$/.exec(path);
         const handler = path === "/api/first-idea" ? idea : path === "/api/wishes" ? share : path === "/api/wish-file" ? file
           : played ? play : shared ? (shared[2] ? card : page) : null;
         if (!handler) return next();
         const target = played ? `/x?id=${encodeURIComponent(played[1])}&v=${played[2]}&path=${encodeURIComponent(decodeURIComponent(played[3]))}`
-          : shared ? `/x?id=${encodeURIComponent(shared[1])}${shared[3] ? `&slug=${shared[3]}` : ""}` : req.url;
+          : shared ? `/x?id=${encodeURIComponent(shared[1])}` : req.url;
         const chunks = [];
         for await (const chunk of req) chunks.push(chunk);
         const headers = Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k, Array.isArray(v) ? v.join(", ") : String(v)]));

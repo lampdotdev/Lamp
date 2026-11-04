@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { cacheTags, findWish, isID, linkFor, playOrigin as playOriginFor, slugFor } from "./shared-wishes.js";
+import { cacheTags, findWish, isID, linkFor, playOrigin as playOriginFor, wishIDFrom } from "./shared-wishes.js";
 
 // The page a shared wish's link opens (lamp.dev/w/<id>): a page of its own (src/pages/w/index.astro) with the wish
 // itself as big as the window allows, playing when Lamp sent its page, else its picture, then its name, what it does,
@@ -124,15 +124,9 @@ export function createPageHandler({ env = process.env, fetcher = fetch, store, t
   return async (request) => {
     if (request.method !== "GET" && request.method !== "HEAD") return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
     const url = new URL(request.url);
-    const id = url.searchParams.get("id");
-    const wish = isID(id) ? await findWish(id, { env, fetcher, store }) : null;
-    // A link with an old name or none (one made before links carried it, or before a rename) goes on to the one with
-    // the wish's name now, keeping anything else it asked.
-    if (wish && (url.searchParams.get("slug") ?? "") !== slugFor(wish.name)) {
-      const to = new URL(linkFor(url.origin, wish.id, wish.name));
-      for (const [key, value] of url.searchParams) if (key !== "id" && key !== "slug") to.searchParams.append(key, value);
-      return new Response(null, { status: 302, headers: { Location: to.href, "Cache-Control": "public, max-age=0, s-maxage=60", ...cacheTags(wish.id) } });
-    }
+    // The link's last part: the id, and the wish's name after it only for reading.
+    const id = wishIDFrom(url.searchParams.get("id"));
+    const wish = id ? await findWish(id, { env, fetcher, store }) : null;
     const page = wish && wishPage(await template(url.origin), wish, { origin: url.origin, playOrigin: playOrigin(url, id) });
     if (!page) {
       const nonce = randomBytes(16).toString("base64");

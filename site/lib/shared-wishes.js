@@ -153,16 +153,22 @@ export const latest = (record) => ({
 
 /**
  * The wish's name as its link spells it ("Falling Blocks" → "falling-blocks"), so a link says what it's for. Only for
- * reading: the id finds the wish, and the page sends any other spelling on to this one. Empty for a name with no
- * letters or digits in plain Latin.
+ * reading: the id finds the wish (`wishIDFrom`), so a link with an old name or none still works. Empty for a name with
+ * no letters or digits in plain Latin.
  */
 export const slugFor = (name) => (name ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
   .replace(/[^A-Za-z0-9]+/g, "-").toLowerCase().replace(/^-+/, "").slice(0, 48).replace(/-+$/, "");
 
-/** The link people pass around: the wish's id, then its name. */
+/** The link people pass around: the wish's id, then its name after a dash (`/w/JP2R862d45-falling-blocks`). */
 export const linkFor = (origin, id, name) => {
   const slug = slugFor(name);
-  return `${origin}/w/${id}${slug ? `/${slug}` : ""}`;
+  return `${origin}/w/${id}${slug ? `-${slug}` : ""}`;
+};
+
+/** The wish's id in its link's last part, whatever name follows it after a dash. Null when it doesn't start with one. */
+export const wishIDFrom = (part) => {
+  const id = typeof part === "string" ? part.slice(0, ID_LENGTH) : null;
+  return isID(id) && (part.length === ID_LENGTH || part[ID_LENGTH] === "-") ? id : null;
 };
 
 // MARK: Where shared wishes are kept

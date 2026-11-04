@@ -2,7 +2,7 @@
 
 The chat's Share Wish popover has **Make a Link…** (a gear beside the link, to change it, once it has one): the person reviews what the link will show (the wish's name, what it
 does, who it's by (their name on the Mac until they change it, which Lamp remembers) and a picture of the app, which they can take again), and Copy Link puts it
-on lamp.dev and copies `https://lamp.dev/w/<id>/<name>`. The name (`slugFor`) is only for reading: the id finds the wish, and a link with an old name or none (made before a rename, or before links carried it) goes on to the one with the name now. Whoever opens the link makes their own version from the words, which Lamp sends as what the wish does (its first request when that's empty). The
+on lamp.dev and copies `https://lamp.dev/w/<id>-<name>`. The name (`slugFor`) is only for reading: the id finds the wish (`wishIDFrom`), so a link with an old name or none (made before a rename, or before links carried it) still works. Whoever opens the link makes their own version from the words, which Lamp sends as what the wish does (its first request when that's empty). The
 wish's shared file (`<name>.lampapp`, made as Share… makes it, with its
 license and key checks) goes too, whenever its kind can go as a file, and the page offers that exact wish to anyone with Lamp (Remix, then Open, on a Mac), which reviews it
 before it opens, as any shared file, and makes a copy that follows the link. Never the chat or the app's data.

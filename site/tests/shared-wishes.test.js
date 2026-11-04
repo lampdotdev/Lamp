@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { deflateSync, crc32 } from "node:zlib";
-import { createShareHandler, createFileHandler, createPlayHandler, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, slugFor, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
+import { createShareHandler, createFileHandler, createPlayHandler, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, slugFor, wishIDFrom, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
 import { createPageHandler } from "../lib/shared-wish-page.js";
 import { createCardHandler } from "../lib/wish-card.js";
 
@@ -76,7 +76,7 @@ test("a wish is shared, changed and taken down only with its secret", async () =
   assert.equal(created.status, 201);
   const { id, url, secret } = await created.json();
   assert.ok(isID(id));
-  assert.equal(url, `https://lamp.dev/w/${id}/plant-pal`, "the link carries the wish's name, only for reading");
+  assert.equal(url, `https://lamp.dev/w/${id}-plant-pal`, "the link carries the wish's name, only for reading");
   assert.ok(!JSON.stringify([...store.records.values()]).includes(secret), "only the secret's hash is kept");
 
   assert.equal((await send(handler, "PUT", { ...share, name: "Thief" }, { id, secret: "x".repeat(43) })).status, 404);
@@ -117,7 +117,7 @@ test("the page is the shared wish's own, with the wish in it, its words escaped,
   const store = memoryStore();
   const { id } = await (await send(createShareHandler({ store, limited: false }), "POST", share)).json();
   const built = `<!DOCTYPE html><html><head><title>A wish · Lamp</title><meta name="description" content="A wish made with Lamp."><link rel="canonical" href="https://lamp.dev/w/"><meta property="og:title" content="A wish · Lamp"><meta name="twitter:card" content="summary"></head><body><section data-stage></section></body></html>`;
-  const response = await createPageHandler({ store, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}&slug=${slugFor(store.records.get(id).name)}`));
+  const response = await createPageHandler({ store, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}`));
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.ok(html.includes("<section data-stage>"), "the built page");
@@ -131,10 +131,11 @@ test("the page is the shared wish's own, with the wish in it, its words escaped,
   assert.ok(!html.includes("<watered>"), "nothing the sharer wrote can close the script");
   assert.equal(response.headers.get("x-robots-tag"), "noindex");
 
-  // A link with no name or an old one goes on to the one with the wish's name, keeping what else it asked.
-  const old = await createPageHandler({ store, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}&slug=old-name&change=Add+a+cactus`));
-  assert.equal(old.status, 302);
-  assert.equal(old.headers.get("location"), `https://lamp.dev/w/${id}/${slugFor(store.records.get(id).name)}?change=Add+a+cactus`);
+  // The name after the id is only for reading: an old one, or none, finds the same wish.
+  for (const part of [`${id}-old-name`, `${id}-`]) {
+    assert.equal((await createPageHandler({ store, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${part}`))).status, 200);
+  }
+  assert.equal(wishIDFrom(`${id}x`), null, "the id ends at a dash");
   assert.equal(slugFor("Café  Crème!"), "cafe-creme");
   assert.equal(slugFor("東京"), "", "a name with nothing plain to spell has no slug");
 
@@ -211,7 +212,7 @@ test("the wish itself goes with its link in parts, only as a file Lamp made, and
   assert.equal(store.records.get(id).parts, undefined, "the parts go once they're together");
   assert.deepEqual(Buffer.from(store.records.get(id).file.url.split(",")[1], "base64"), file);
 
-  const page = await createPageHandler({ store, template: async () => "<html><head></head><body></body></html>" })(new Request(`https://lamp.dev/api/wish-page?id=${id}&slug=${slugFor(store.records.get(id).name)}`));
+  const page = await createPageHandler({ store, template: async () => "<html><head></head><body></body></html>" })(new Request(`https://lamp.dev/api/wish-page?id=${id}`));
   assert.match(await page.text(), /"file":"data:application\/octet-stream;base64,[^"]+","fileSize":\d+/);
 
   // Lamps that follow the link see the file's version, and each file sent again counts up; never the secret.
@@ -286,14 +287,14 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=2&path=index.html`))).status, 404, "only the version it has");
 
   const built = "<html><head><title>A wish</title></head><body></body></html>";
-  const page = await (await createPageHandler({ store, env, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}&slug=${slugFor(store.records.get(id).name)}`))).text();
+  const page = await (await createPageHandler({ store, env, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
   assert.match(page, new RegExp(`"play":"https://${own}/w/${id}/play/1/"`), "it plays from the link's own host, from its folder");
   assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=`))).status, 200, "the folder is its index.html");
   assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=index`))).status, 200, "a .html file by its clean name");
   const folder = await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=dir`));
   assert.match(await folder.text(), new RegExp(`<base href="/w/${id}/play/1/dir/">`), "a folder without its slash keeps its own files in place");
   assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=dir/`))).status, 200);
-  const without = await (await createPageHandler({ store, env: {}, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}&slug=${slugFor(store.records.get(id).name)}`))).text();
+  const without = await (await createPageHandler({ store, env: {}, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
   assert.doesNotMatch(without, /"play"/, "with no play host, nothing plays");
 
   // The page goes with the wish itself, and one sent again later plays at a new address.
