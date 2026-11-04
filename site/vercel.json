@@ -15,7 +15,8 @@
   "rewrites": [
     { "source": "/w/:id/card.png", "destination": "/api/wish-card?id=:id" },
     { "source": "/w/:id/play/:version/:path*", "destination": "/api/wish-play?id=:id&v=:version&path=:path*" },
-    { "source": "/w/:id", "destination": "/api/wish-page?id=:id" }
+    { "source": "/w/:id", "destination": "/api/wish-page?id=:id" },
+    { "source": "/w/:id/:slug", "destination": "/api/wish-page?id=:id&slug=:slug" }
   ],
   "headers": [
     {

@@ -151,8 +151,19 @@ export const latest = (record) => ({
   version: record.file ? (record.file.version ?? 1) : 0, file: record.file?.url ?? null,
 });
 
-/** The link people pass around. */
-export const linkFor = (origin, id) => `${origin}/w/${id}`;
+/**
+ * The wish's name as its link spells it ("Falling Blocks" → "falling-blocks"), so a link says what it's for. Only for
+ * reading: the id finds the wish, and the page sends any other spelling on to this one. Empty for a name with no
+ * letters or digits in plain Latin.
+ */
+export const slugFor = (name) => (name ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+  .replace(/[^A-Za-z0-9]+/g, "-").toLowerCase().replace(/^-+/, "").slice(0, 48).replace(/-+$/, "");
+
+/** The link people pass around: the wish's id, then its name. */
+export const linkFor = (origin, id, name) => {
+  const slug = slugFor(name);
+  return `${origin}/w/${id}${slug ? `/${slug}` : ""}`;
+};
 
 // MARK: Where shared wishes are kept
 
@@ -354,14 +365,14 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
         uploaded = [];
         await kept.removeImages(oldImages);
         await kept.forget(id);
-        return reply(200, { id, url: linkFor(url.origin, id) });
+        return reply(200, { id, url: linkFor(url.origin, id, words.name) });
       }
       const secret = newSecret();
       if (!(await kept.create({ id: wishID, ...words, secret: hashSecret(secret), created: time, updated: time }))) {
         throw new Error("Id taken");
       }
       uploaded = [];
-      return reply(201, { id: wishID, url: linkFor(url.origin, wishID), secret });
+      return reply(201, { id: wishID, url: linkFor(url.origin, wishID, words.name), secret });
     } catch {
       try { await kept.removeImages(uploaded); } catch {}
       return reply(503, { error: "service_unavailable" });
