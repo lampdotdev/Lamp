@@ -4,7 +4,7 @@ The chat's Share Wish popover has **Make a Link…** (a gear beside the link, to
 does, who it's by (their name on the Mac until they change it, which Lamp remembers) and a picture of the app, which they can take again), and Copy Link puts it
 on lamp.dev and copies `https://lamp.dev/w/<id>`. Whoever opens the link makes their own version from the words, which Lamp sends as what the wish does (its first request when that's empty). The
 wish's shared file (`<name>.lampapp`, made as Share… makes it, with its
-license and key checks) goes too, whenever its kind can go as a file, and the page offers that exact wish to anyone with Lamp (Open in Lamp, on a Mac), which reviews it
+license and key checks) goes too, whenever its kind can go as a file, and the page offers that exact wish to anyone with Lamp (Remix, then Open, on a Mac), which reviews it
 before it opens, as any shared file, and makes a copy that follows the link. Never the chat or the app's data.
 
 - The wish to play (`/w/<id>` for a wish sent with its page): a web app, a web game or a screen (the wish's own, or its
@@ -27,9 +27,9 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   or as its picture, only as big as it is (a page that plays takes the shape sent with it: it can't say its shape
   from inside its frame, and the picture is of its Mac window); under it its icon, name, who it's by and what it does, and the ways to make one's own: a box
   for what to change with the changes Lamp suggests for it above it (`RemixSuggestions`, sent with the link; one puts its
-  words in the box), **Open in Lamp** on a Mac (`lamp://wish?shared=<id>` with the change, so the copy follows the
-  link, or `lamp://wish?text=…` for a link without the wish's file), and **Download Lamp**, which copies the wish and
-  the change with Lamp's mark (FIRST_IDEA.md). A request the link brought (`?ask=`) waits in the box. The function
+  words in the box), **Remix** on a Mac, a dialog that says what Lamp is, with the box again and **Open** for whoever has it (`lamp://wish?shared=<id>` with the change, so the copy follows the
+  link, or `lamp://wish?text=…` for a link without the wish's file) and **Download** for whoever doesn't, and **Download Lamp**
+  under the box; each Download copies the wish and the change with Lamp's mark (FIRST_IDEA.md). A request the link brought (`?ask=`) waits in the box. The function
   serves the built page (`dist/w/index.html`, bundled with it by `includeFiles`) with the wish in `#shared-wish`
   (its play address in `play`) and its own title, description and preview tags in place of the built page's; `npm run
   dev` gives it its own server's. On its own, `/w/` goes to the ideas page.
@@ -44,7 +44,7 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
 - Following (`GET /api/wishes?id=`, `latest` in `lib/shared-wishes.js`): public, with no quota, for the Lamps that
   follow a link: `{format: 1, id, name, version, file}`, the file's version counting up each time it's sent again
   (Update Link), 0 with no file. The count is the link's (`fileVersion`), so a file taken away and sent again later is
-  still newer than any before. The page's Open in Lamp is `lamp://wish?shared=<id>`
+  still newer than any before. The page's Open is `lamp://wish?shared=<id>`
   (`sharedWishLink` in `lib/wish.js`): Lamp asks this for the file, and the copy it makes follows the link
   (`Following` in Lamp).
 - The API Lamp talks to (`api/wishes.js`, `lib/shared-wishes.js`): `POST` shares and answers `{id, url, secret}`;
@@ -93,7 +93,7 @@ Without the first two, sharing answers 503 and Lamp says it couldn't share; link
 
 `npm run dev` answers `/api/wishes`, `/w/<id>` and its card itself, keeping shared wishes in memory, with no quotas.
 A Lamp Dev started with `LAMP_WISH_LINK_ENDPOINT=http://localhost:4321/api/wishes` shares to it (installed Lamp
-ignores the variable). A Lamp Dev's link scheme is its own (`lamp-dev-…://`), so the page's Open in Lamp opens the
+ignores the variable). A Lamp Dev's link scheme is its own (`lamp-dev-…://`), so the page's Open opens the
 installed Lamp, if any: try the hand-off with `open "lamp-dev-<instance>://wish?text=…"` instead.
 
 To check the previews once deployed: X's card validator is gone, so post the link in a draft (or use a preview tool
