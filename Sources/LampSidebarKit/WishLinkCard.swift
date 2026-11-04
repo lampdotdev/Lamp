@@ -187,7 +187,9 @@ public struct WishLinkCard: View {
         HStack(spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "link").foregroundStyle(.secondary).accessibilityHidden(true)
-                Text(link).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
+                // Plain, not selectable: selectable text in this window sometimes drew nothing at all once the card
+                // changed. The button beside it copies the link, and the whole of it shows on hover.
+                Text(link).lineLimit(1).truncationMode(.middle).help(link)
                 Spacer(minLength: 0)
             }
             .font(.callout)
