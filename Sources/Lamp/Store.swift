@@ -1926,7 +1926,9 @@ final class Store: ObservableObject {
     nonisolated static func fetch(_ request: URLRequest, upTo limit: Int) async throws -> Data {
         let (bytes, response) = try await URLSession.shared.bytes(for: request)
         let refusal = Sharing.ImportError("Lamp couldn't get the shared wish.", detail: "The link may be old, or the wish was taken down.")
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw refusal }
+        // A `data:` address answers with no status: only the site's dev server gives one (`WishLink.latest`).
+        if let http = response as? HTTPURLResponse { guard http.statusCode == 200 else { throw refusal } }
+        else { guard request.url?.scheme == "data" else { throw refusal } }
         guard response.expectedContentLength <= Int64(limit) else { throw Sharing.ImportError("This file is too large to be a Lamp app (over 64 MB).") }
         var data = Data()
         data.reserveCapacity(Int(max(0, min(response.expectedContentLength, Int64(limit)))))
