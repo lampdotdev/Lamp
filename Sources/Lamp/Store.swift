@@ -3958,6 +3958,7 @@ final class Store: ObservableObject {
         var source = origin?.url.flatMap(RepoImport.source(from:))
         var commit = origin?.commit
         var ref = Upstream.ref
+        var accepted: String? = nil
         // Their latest: the link's file version it was fetched at, or the commit the fetched package's chain names
         // (`RepoImport.naming`).
         let pulled = following.flatMap { followed in
@@ -3967,14 +3968,15 @@ final class Store: ObservableObject {
             let base = Following.base(for: following, ours: Credits.load(project), theirs: package.credits, own: GitHubRepo.kept(for: project)?.url)
             source = base.flatMap { RepoImport.source(from: $0.url) }
             commit = base?.commit
-            ref = Following.ref(for: following)
+            ref = Following.incomingRef(for: following)
+            accepted = Following.acceptedRef(for: following)
         }
         let arrival = await Versions.list(project).first { Self.arrivalMessages.contains($0.message) }?.id
         let place = following.map { Following.title(of: $0) }
             ?? (original != nil ? "the original" : source.map { "\($0.owner)/\($0.name) on GitHub" } ?? "the shared wish")
         let merged: Upstream.Merged
         do {
-            merged = try await Upstream.merge(package, into: project, from: source, commit: commit, arrival: arrival, ref: ref)
+            merged = try await Upstream.merge(package, into: project, from: source, commit: commit, arrival: arrival, ref: ref, accepted: accepted)
             // What the reviewed file says each app reaches: the wish's own, and each of its apps merged in its folder.
             SharedNetwork.arrive(package, in: project, arriving: false)
             for part in package.parts {
@@ -4010,7 +4012,11 @@ final class Store: ObservableObject {
         }
         defer { finish(project) }
         if let following, await !Versions.hasUnsavedChanges(project) {
-            if let pulled { Following.brought(pulled, from: following, into: project); followingRevision += 1 }
+            if let pulled {
+                await Following.promote(following, in: project)
+                Following.brought(pulled, from: following, into: project)
+                followingRevision += 1
+            }
             log(project, .status, "You already have everything from \(place).")
             return
         }
@@ -4024,7 +4030,11 @@ final class Store: ObservableObject {
             Versions.rememberMerged(project, from: place)
             versionsRevision += 1
             // What a followed copy brought counts only once it's saved.
-            if let following, let pulled { Following.brought(pulled, from: following, into: project); followingRevision += 1 }
+            if let following, let pulled {
+                await Following.promote(following, in: project)
+                Following.brought(pulled, from: following, into: project)
+                followingRevision += 1
+            }
         }
         log(project, .status, "Brought in what's new from \(place), keeping your changes. Building it now…")
         if await build(project) == nil {
@@ -4738,7 +4748,7 @@ final class Store: ObservableObject {
             }
             result = await turn(messages, attachments: saved, asked: asked, on: project)
             await settleUpdate(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
-            settlePull(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
+            await settlePull(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
             // The scaffold's early build is the turn's until it's settled, whichever way the turn ended (a question, a
             // failure, a Stop): released before it, the next turn's build could run beside it on the same files.
             await owner.early?.value

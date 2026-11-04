@@ -53,9 +53,10 @@ enum Upstream {
     /// index, unsaved. `commit` is the commit of the repository the wish has; `arrival` the version that arrived. The
     /// wish's files are expected saved: a merge that fails leaves them as they were.
     /// `ref` is where the staged latest is kept: `Upstream.ref` for where the wish came from, one of its own for each
-    /// other copy it follows (`Following.ref`), so each is measured against what was last brought in from it.
+    /// other copy it follows (`Following.incomingRef`). `accepted` is where what was last brought in is read from, the
+    /// same ref unless the caller promotes the staged one only once the pull-in has succeeded (`Following.accepted`).
     static func merge(_ package: Sharing.Package, into project: LampProject, from source: RepoImport.Source?, commit: String?,
-                      arrival: String?, ref: String = Upstream.ref) async throws -> Merged {
+                      arrival: String?, ref: String = Upstream.ref, accepted: String? = nil) async throws -> Merged {
         let fm = FileManager.default
         // The merge's own indexes, in Lamp's folder in the wish, so the wish's index is never touched before the result
         // goes in; cleared with the staged folders when it's done, whichever way it went.
@@ -69,7 +70,7 @@ enum Upstream {
             if fm.fileExists(atPath: indexes.path) { try? fm.removeItem(at: indexes) }
         }
         let signed = "git -c user.name=Lamp -c user.email=lamp@localhost"
-        let lastBrought = Credits.validCommit((await run("git rev-parse --verify -q \(ref)", in: project)).output)
+        let lastBrought = Credits.validCommit((await run("git rev-parse --verify -q \(accepted ?? ref)", in: project)).output)
 
         // The base: the repository's commit, fetched from it as a remote (fetched from, never pushed to); else the
         // version of this wish's own history the file was made from; else what the last update brought in; else the

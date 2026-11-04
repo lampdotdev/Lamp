@@ -392,12 +392,14 @@ file (`WaitingImport.following(beside:)`). Pull In on a repository the wish came
 other copy it goes through `Following.pullIn`, the one place the merge experience plugs in: today `ReviewThenMerge`,
 which fetches the copy, shows the review a shared wish gets, and on Update always merges it (`PendingImport.following`,
 `Store.mergeUpdate(…following:)`), never puts it in place, since it's someone else's copy. The merge keeps each copy's
-staged latest at a ref of its own (`Following.ref`, passed to `Upstream.merge` and to the agent's note on conflicts) and
-measures both sides against it once something was pulled in (a link's copy by that ref alone, never a repository
+staged latest at a ref of its own (`Following.incomingRef`, passed to `Upstream.merge` and to the agent's note on
+conflicts), promoted to the copy's accepted ref (`Following.acceptedRef`, `promote`) only once the pull-in succeeded, and
+measures both sides against that once something was pulled in (a link's copy by that ref alone, never a repository
 both came from); before that, against what the two last shared: a repository both chains name, or this wish's own
 repository at the commit their chain names (`Following.base`), else the version this wish arrived as. What it brought
 counts (`brought`) only once it's saved: a clean merge as it's saved, one with conflicts once the agent's turn that
-settles it finished well (`Following.Pending`, `Store.settlePull`), so a pull-in that failed is offered again. Only the credit for work it
+settles it finished well, or a turn answering one of its questions (`Following.Pending`, `Store.settlePull`), so a
+pull-in that failed is offered again and measured as before. Only the credit for work it
 brings joins the wish's credits (`Mix.creditsTaken`), so where the wish came from stays as it was. A view that makes
 someone's changes understandable and lets the person take part of them takes the same `Following.Offer` in
 `ReviewThenMerge`'s place.

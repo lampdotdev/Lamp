@@ -110,11 +110,18 @@ enum Following {
         var told: [String: String]? = nil
     }
 
-    /// A pull-in whose conflicts went to the agent as `request`, bringing `version` of `followed`.
+    /// A pull-in whose conflicts went to the agent as `request`, bringing `version` of `followed`. `cards` are the
+    /// questions that agent asked: the turns that answer them settle it too.
     struct Pending: Codable, Equatable {
         var followed: Followed
         var version: String
         var request: String
+        var cards: [String]? = nil
+
+        func isItsTurn(_ messages: [QueuedMessage]) -> Bool {
+            let cards = Set(cards ?? [])
+            return messages.contains { $0.text == request || $0.card.map { cards.contains($0.uuidString) } == true }
+        }
     }
 
     static func pending(for project: LampProject) -> Pending? { read().pending?[key(project)] }
@@ -286,9 +293,19 @@ enum Following {
         return nil
     }
 
-    /// The git ref a followed copy's staged latest is kept at, one for each, so each is measured against its own.
-    static func ref(for followed: Followed) -> String {
-        "refs/lamp/follow/" + String(followed.id.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : "-" })
+    /// The git ref what was last brought in from a followed copy is kept at, one for each, so each is measured against
+    /// its own. It moves only once a pull-in has succeeded (`promote`); until then the latest staged is at
+    /// `incomingRef`, which the merge and the agent's note on conflicts name.
+    static func acceptedRef(for followed: Followed) -> String { "refs/lamp/follow/" + refName(followed) }
+    static func incomingRef(for followed: Followed) -> String { "refs/lamp/follow-incoming/" + refName(followed) }
+
+    private static func refName(_ followed: Followed) -> String {
+        String(followed.id.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : "-" })
+    }
+
+    /// A pull-in from `followed` succeeded: what it brought is the base the next one is measured against.
+    static func promote(_ followed: Followed, in project: LampProject) async {
+        _ = await Versions.git("git update-ref \(acceptedRef(for: followed)) \(incomingRef(for: followed))", cwd: project.dir) { _ in }
     }
 }
 
@@ -389,13 +406,22 @@ extension Store {
 
     /// After a turn: a pull-in left to the agent (`Following.Pending`) counts once the turn that settled it finished
     /// well, and is dropped if it didn't, so Pull In offers it again.
-    func settlePull(_ project: LampProject, messages: [QueuedMessage], end: TurnEnd, asked: Bool) {
-        guard let pending = Following.pending(for: project), messages.contains(where: { $0.text == pending.request }) else { return }
+    /// A turn that answers one of its questions settles it the same way (`Pending.cards`, as `settleUpdate` does).
+    func settlePull(_ project: LampProject, messages: [QueuedMessage], end: TurnEnd, asked: Bool) async {
+        guard var pending = Following.pending(for: project), pending.isItsTurn(messages) else { return }
         let turnLines = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }
         let asking = asked || Talk.open(in: logs[project.id] ?? []) != nil || (queued[project.id] ?? []).contains { $0.card != nil }
         switch AppUpdates.settle(end: end, errors: turnLines.contains { $0.kind == .error }, asking: asking) {
-        case .waiting: return
-        case .ready: Following.brought(pending.version, from: pending.followed, into: project)
+        case .waiting:
+            let cards = [Talk.open(in: logs[project.id] ?? [])?.id].compactMap { $0 } + (queued[project.id] ?? []).compactMap(\.card)
+            if !cards.isEmpty {
+                pending.cards = Array(Set((pending.cards ?? []) + cards.map(\.uuidString)))
+                Following.setPending(pending, for: project)
+            }
+            return
+        case .ready:
+            await Following.promote(pending.followed, in: project)
+            Following.brought(pending.version, from: pending.followed, into: project)
         case .failed: break
         }
         Following.setPending(nil, for: project)
