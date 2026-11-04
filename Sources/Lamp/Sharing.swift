@@ -347,6 +347,8 @@ enum Sharing {
             return source
         }
         try carried.encoded().write(to: stage.appendingPathComponent(Credits.file))
+        // What's new in each release, for the app's What's New… in the copies made from it (`WishReleases`).
+        try WishReleases.carry(project, into: stage)
         // Each license and notice the credits name goes with the work it covers, wherever the kind's own files left it.
         for source in credits.upstream {
             for path in source.termsFiles where Credits.isLicenceFile(path) {
@@ -587,6 +589,8 @@ enum Sharing {
         /// Where the wish came from (credits.json at the file's root), through Lamp's checks; nil for a part, and in
         /// files from before wishes carried it.
         var credits: Credits? = nil
+        /// What's new in each release of the copy it was shared from (`WishReleases.fileEntry`); nil in files without it.
+        var releases: [WishReleases.Entry]? = nil
         /// The license texts those credits name, beside the work they cover (`Credits.isLicenceFile`).
         var licences: [URL] = []
         /// What the sender's capabilities.json declares, through the checks the agent's own goes through.
@@ -674,6 +678,7 @@ enum Sharing {
         var package = try read(app: folder, platform: platform, family: manifest.family ?? .iphone, name: name(from: manifest.name),
                                identity: identity(from: manifest.app), description: manifest.description.flatMap(AppDescription.valid), fileCount: all)
         package.credits = Credits.read(folder.appendingPathComponent(Credits.file))
+        package.releases = WishReleases.read(folder.appendingPathComponent(WishReleases.fileEntry))
         package.site = platform == .webApp && manifest.site == true
         package.licences = (package.credits?.upstream ?? []).flatMap(\.termsFiles).filter(Credits.isLicenceFile).compactMap { path in
             let file = folder.appendingPathComponent(path)
@@ -943,6 +948,7 @@ enum Sharing {
         // And where it came from, kept as it arrived so it's credited however the wish changes here (`Credits.load`), with
         // each license it names where it names it, when the kind's own files didn't already bring it.
         try Credits.arrive(package.credits, in: project)
+        WishReleases.arrive(package.releases, in: project)
         // An update replaces what's there, so a license whose text changed upstream never stays as it was; one the kind's
         // files already brought is the same text written again.
         for file in package.licences {

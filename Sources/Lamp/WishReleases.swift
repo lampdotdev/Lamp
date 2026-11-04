@@ -6,11 +6,22 @@ import Foundation
 /// maker never writes release notes. Kept with the wish in its own folder, newest first, with the version each release
 /// was made at, which is where the next one's changes start. The link's page shows them under What's new
 /// (site/lib/shared-wishes.js), and the app shows them in What's New… in its menu (`LampWhatsNew`), asked of Lamp
-/// (`/app/releases`) or else read from the copy in its bundle (`bundleFile`).
+/// (`/app/releases`) or else read from the copy in its bundle (`bundleFile`). A copy made from the shared file keeps the
+/// history it arrived with apart from its own (`receivedFile`), so its app shows what's new in the original too, while its
+/// own releases start from its own versions.
 enum WishReleases {
     static let file = ".lamp/releases.json"
+    /// What's new in the copy this wish came from, as its shared file carried it (`fileEntry` at the file's root).
+    static let receivedFile = ".lamp/releases-received.json"
+    static let fileEntry = "releases.json"
     /// Beside Credits.html in an installed app, for when Lamp doesn't answer.
     static let bundleFile = "Releases.json"
+
+    /// A release as it's shown and carried: when, and its lines; never the version it was made at, which is this Mac's.
+    struct Entry: Codable, Equatable {
+        var date: Date
+        var lines: [String]
+    }
 
     struct Release: Codable, Equatable {
         /// The version (commit) the release was made at.
@@ -34,10 +45,52 @@ enum WishReleases {
         try? data.write(to: project.dir.appendingPathComponent(file), options: .atomic)
     }
 
-    /// The releases that say something, as the link and the app show them: newest first, at most `WishLink.Limit.releases`.
+    /// The releases that say something, as the link shows them: newest first, at most `WishLink.Limit.releases`.
     static func shown(_ releases: [Release]) -> [[String: Any]] {
-        releases.filter { !$0.lines.isEmpty }.prefix(WishLink.Limit.releases)
+        shown(releases.map { Entry(date: $0.date, lines: $0.lines) })
+    }
+
+    static func shown(_ entries: [Entry]) -> [[String: Any]] {
+        entries.filter { !$0.lines.isEmpty }.prefix(WishLink.Limit.releases)
             .map { ["date": ISO8601DateFormatter().string(from: $0.date), "lines": $0.lines] }
+    }
+
+    /// What the app shows under What's New… and its shared file carries: the wish's own releases and those it arrived
+    /// with, newest first.
+    static func forApp(_ project: LampProject) -> [Entry] {
+        let own = load(project).filter { !$0.lines.isEmpty }.map { Entry(date: $0.date, lines: $0.lines) }
+        var seen: Set<String> = []
+        return (own + received(project)).sorted { $0.date > $1.date }
+            .filter { seen.insert("\($0.date.timeIntervalSince1970) \($0.lines)").inserted }
+            .prefix(WishLink.Limit.releases).map { $0 }
+    }
+
+    static func received(_ project: LampProject) -> [Entry] {
+        read(project.dir.appendingPathComponent(receivedFile)) ?? []
+    }
+
+    /// The history a shared file carried, checked as the site checks it: nil when the file has none (one from a Lamp
+    /// from before), so an update from it leaves what arrived earlier.
+    static func read(_ url: URL) -> [Entry]? {
+        guard let data = try? Data(contentsOf: url), let list = try? decoder.decode([Entry].self, from: data) else { return nil }
+        return list.prefix(WishLink.Limit.releases).compactMap { entry in
+            let lines = lines(from: entry.lines.joined(separator: "\n"))
+            return lines.isEmpty || entry.date > Date().addingTimeInterval(86_400) ? nil : Entry(date: entry.date, lines: lines)
+        }
+    }
+
+    /// Keeps the history a shared file brought, in place of what an earlier one brought.
+    static func arrive(_ entries: [Entry]?, in project: LampProject) {
+        guard let entries, let data = try? encoder.encode(entries) else { return }
+        try? FileManager.default.createDirectory(at: project.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+        try? data.write(to: project.dir.appendingPathComponent(receivedFile), options: .atomic)
+    }
+
+    /// Into a shared file being made: what the app shows, for the copies made from it.
+    static func carry(_ project: LampProject, into folder: URL) throws {
+        let entries = forApp(project)
+        guard !entries.isEmpty else { return }
+        try encoder.encode(entries).write(to: folder.appendingPathComponent(fileEntry))
     }
 
     /// The card's lines as they go: one a line, tidied, none empty, at most `releaseLines` of at most `releaseLine`.
@@ -48,16 +101,21 @@ enum WishReleases {
     }
 
     /// What changed since the last release, oldest first, as the versions saved since say it: their titles, or the
-    /// requests that made them. Lamp's own versions (an Undo, a support update) aren't changes the maker made. A wish
-    /// shared before releases were kept starts from its last few versions.
+    /// requests that made them. Lamp's own versions (an Undo, a support update) aren't changes the maker made, and nor is
+    /// a version an Undo took back. Going back to an earlier version takes back everything between, and it doesn't say
+    /// how far, so only what came after it counts. A wish shared before releases were kept starts from its last few versions.
     static func changes(in project: LampProject) async -> [String] {
         let versions = await Versions.list(project)
         let since = load(project).first?.version
         var changes: [String] = []
+        var undone: Set<String> = []
         for version in versions {
             if version.id == since { break }
             if since == nil, changes.count >= 8 { break }
-            guard !version.isLampNote, version.title != "Lamp update" else { continue }
+            // Newest first, so an Undo is met before the version it took back.
+            if let undid = version.undid { undone.formUnion(undid.split(separator: ",").map { String($0).trimmed }) }
+            if version.message.hasPrefix("Restored to “") { break }
+            guard !version.isLampNote, version.title != "Lamp update", !undone.contains(where: { !$0.isEmpty && version.id.hasPrefix($0) }) else { continue }
             changes.append(String((version.name ?? version.title ?? version.message).prefix(300)))
         }
         return changes.reversed()

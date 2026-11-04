@@ -4205,6 +4205,7 @@ final class Store: ObservableObject {
                 SharedNetwork.arrive(part.package, in: app, arriving: false)
             }
             if let credits = package.credits { try Credits.add(following == nil ? credits : Mix.creditsTaken(credits), to: project) }
+            WishReleases.arrive(package.releases, in: project)
             if let original { try Starters.keepFile(of: original, in: project) }
 
         } catch {
@@ -12370,7 +12371,7 @@ final class Store: ObservableObject {
         // none has no such item.
         let releasesFile = resources.appendingPathComponent(WishReleases.bundleFile)
         try? fm.removeItem(at: releasesFile)
-        let releases = WishReleases.shown(WishReleases.load(wish(of: project)))
+        let releases = WishReleases.shown(WishReleases.forApp(wish(of: project)))
         if !releases.isEmpty { try JSONSerialization.data(withJSONObject: releases).write(to: releasesFile) }
         // Told once: from now on the app opens at login and keeps running, which is the person's to undo.
         let told = project.dir.appendingPathComponent(".lamp/background-told")
@@ -13639,7 +13640,7 @@ final class Store: ObservableObject {
         // The About window's credits as they are now (`LampAbout`): a credit added since the app was installed shows.
         if route == "/app/credits" { return (200, Credits.load(wish(of: project)).aboutPage.map { ["page": $0] } ?? [:]) }
         // What's New… in the app's menu (`LampWhatsNew`): what's new in each release of the wish, as Lamp has it now.
-        if route == "/app/releases" { return (200, ["releases": WishReleases.shown(WishReleases.load(wish(of: project)))]) }
+        if route == "/app/releases" { return (200, ["releases": WishReleases.shown(WishReleases.forApp(wish(of: project)))]) }
         if route == "/app/controller" { return await controllerSession(request, for: project) }
         if route == "/app/phone-page" { return await phonePageAddress(for: project) }
         if route.hasPrefix("/app/wish") { return await wishRoom(request, route: route, for: project) }

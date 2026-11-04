@@ -465,9 +465,6 @@ enum WishLink {
                 let release = WishReleases.Release(version: await Versions.head(project) ?? "", date: Date(), lines: notes)
                 var shared = try await WishLink.publish(words, picture: picture, icon: icon,
                                                         releases: WishReleases.shown([release] + WishReleases.load(project)), replacing: card.shared)
-                // Kept once the link has it, so the next release's changes start here.
-                WishReleases.record(release, in: project)
-                cards[project.id]?.values.notes = ""
                 // Kept at once, with the file as the link had it so far: its secret is the only way to change it or take it
                 // down, so a file that fails after this leaves a link the card can still stop.
                 shared.shown.file = card.shared?.shown.file
@@ -516,8 +513,13 @@ enum WishLink {
                 }
                 shared.shown = words
                 WishLink.keep(shared, for: project)
+                // The release is kept only once the wish itself went with it, so one that failed is tried again with its
+                // lines, and the next release's changes start here. What's new goes into each of the wish's installed
+                // apps, a Mac app in a part of the wish too.
+                WishReleases.record(release, in: project)
+                cards[project.id]?.values.notes = ""
                 // The link goes into the installed app too, for a Mac without Lamp (`RemixPanel`).
-                Store.shared.refreshInstalled(project)
+                for app in [project] + Store.shared.apps(of: project).filter({ $0.id != project.id }) { Store.shared.refreshInstalled(app) }
                 guard cards[project.id] != nil else { return }
                 cards[project.id]?.shared = shared
                 cards[project.id]?.stage = pageProblem.map { .failed($0) } ?? .editing

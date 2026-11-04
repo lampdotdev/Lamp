@@ -382,10 +382,15 @@ Releases: once a link is out, the Share Link card's button is **Release Update**
 field that Lamp fills (`WishReleases.write`): one to five short lines for the people who use the wish, in plain words
 ("You can jump out of helicopters now"), written by the helper model in one call (`AppAI.complete`, whichever route
 answers apps' text, so any engine) from the versions saved since the last release, their titles or else the requests
-that made them, never Lamp's own versions. The maker changes or clears them before they go; empty is fine. Each share
-records a release in the wish's folder (`.lamp/releases.json`, not versioned: the version it was made at, when, and its
-lines, the first share's always empty), which is where the next release's changes start; a link shared before releases
-were kept starts from its last few versions. The releases that say something go with every share (`releases`, at most
+that made them, never Lamp's own versions, one an Undo took back, or anything before a going back to an earlier version
+(which doesn't say how far it went). The maker changes or clears them before they go; empty is fine. Each share that
+went through, the wish's file with it, records a release in the wish's folder (`.lamp/releases.json`, not versioned:
+the version it was made at, when, and its lines, the first share's always empty), which is where the next release's
+changes start, and refreshes each of the wish's installed apps; one that failed keeps its lines on the card to try again.
+A link shared before releases were kept starts from its last few versions. The wish's shared file carries what its app
+shows (`releases.json` at its root, dates and lines only), and a copy opened or updated from it keeps that apart
+(`.lamp/releases-received.json`), so the copy's What's New… shows the original's releases beside its own, while its own
+link shows only its own. The releases that say something go with every share (`releases`, at most
 30, `WishLink.Limit`), and show on the link's page under What's new (SHARED_WISHES.md) and in the app's menu under
 What's New… ("Generated apps"). Not yet: lines that credit what was pulled in from someone else's copy.
 
