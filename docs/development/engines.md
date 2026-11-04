@@ -42,6 +42,16 @@ A capability given to one engine must be given to all of them that can take it, 
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
   engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `remove_app`, `rename_app`, `use_icon_picture`, `connectors`, `lampify`, `shared_copy`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
+- **Errors a change brought** (`LogErrors`, `Store.markLog`, `untoldLogErrors`): just before each change goes into an
+  app (a live change, a game's page, an install) Lamp notes where the app's log was, and the turn's first mark notes
+  every error the log and the launch before it already held. Errors logged after the latest change that were never
+  logged before (a number in them aside) go back to the agent once, deduplicated, with the lines before each and capped
+  in size, in the note every tool's answer carries beside a held change (`untoldNotes`, in `mcp` and `agentRequest`),
+  so pi, Claude Code and Codex hear the same. `progress` first gives a step that just went in a moment to run
+  (`letLogSettle`, under a second from when it began). The rule for them is one bullet of `Rules.finish`. The turn's end
+  hands the agent what it never heard, and the errors of a window that never drew even when it did, as a fix round
+  like a crash's; what's left after that is one plain line in the chat (`errorsLeftLine`). Nothing is read when the
+  person keeps the log from the agent (`Privacy.sharesLog`), and this never looks at or tries the app.
 - **What Lamp remembers** (`Memory`): two short sets of notes, about the person (`about-you.md` in the
   support folder) and about each app (`.lamp/notes.md`), each with a one-line summary. They must cost the
   person tokens only when used: the agent is told just the summaries and opens the notes with `read_notes`
