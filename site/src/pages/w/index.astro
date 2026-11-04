@@ -208,8 +208,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
     border-radius: 6px; background: var(--color-tape); color: var(--color-paper); font-size: 1.125rem; font-weight: 800;
   }
   /* Pointed at, a button is outlined in ink a little way out from its edge, as the tapes' printed buttons are
-     (lib/tapes.ts); one that can't be pressed yet isn't. */
-  .shared-button:hover:not(:disabled), .remix-popup-close:hover { outline: 3px solid var(--color-tape); outline-offset: 3px; }
+     (lib/tapes.ts); one that can't be pressed yet isn't. A dialog's close button has no outline at all. */
+  .shared-button:hover:not(:disabled) { outline: 3px solid var(--color-tape); outline-offset: 3px; }
   .shared-button:focus-visible { outline: 3px solid #1f8a4a; outline-offset: 3px; }
   /* The yellow of the stripes, as the homepage's remix dialog has its Download. */
   .shared-button-lit { background: #f6b81c; color: var(--color-tape); box-shadow: inset 0 0 0 2px var(--color-tape); }
@@ -225,6 +225,9 @@ import { DOWNLOAD_URL } from "../../lib/download";
     .remix-popup[open] .make-slab { animation: remix-popup-rise 0.7s cubic-bezier(0.2, 0.9, 0.25, 1.05) both; }
     .remix-popup[open]::backdrop { animation: remix-popup-dim 0.4s ease both; }
   }
+  /* The dialog has no resting turn of its own: it faces the pointer (the script's --lean-x and --lean-y), and lies flat
+     where less motion is asked for. */
+  .remix-popup .make-slab { transform: rotateX(var(--lean-x, 0deg)) rotateY(var(--lean-y, 0deg)); }
   @keyframes remix-popup-rise {
     from { translate: 0 70vh; rotate: x 18deg; opacity: 0; }
     40% { opacity: 1; }
@@ -238,7 +241,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
   }
   .remix-popup-close {
     position: absolute; top: 2.5rem; right: 1rem; z-index: 1; display: grid; place-items: center; width: 2.25rem; height: 2.25rem;
-    border-radius: 6px; background: var(--color-paper); color: var(--color-tape); box-shadow: inset 0 0 0 2px var(--color-tape); cursor: pointer;
+    border-radius: 6px; background: var(--color-paper); color: var(--color-tape); cursor: pointer;
   }
   .remix-popup-close svg { width: 0.875rem; height: 0.875rem; fill: none; stroke: currentColor; stroke-width: 2.25; stroke-linecap: round; }
   .remix-popup-close:focus-visible { outline: 3px solid #1f8a4a; outline-offset: 2px; }
@@ -392,9 +395,9 @@ import { DOWNLOAD_URL } from "../../lib/download";
       setTimeout(once, 2500);
     } else build();
 
-    // The panel and the dialog lean toward the pointer, as the homepage's remix dialog does: turned toward it across,
-    // tipped back from it up and down, by how far it is from each one's middle (half a window away at most). While the
-    // dialog is open, the panel behind it holds still.
+    // The panel leans toward the pointer, as the homepage's remix dialog does: turned toward it across, tipped back from
+    // it up and down. The dialog faces it: the pointer at its top right, it turns to the top right. Each by how far the
+    // pointer is from its middle (half a window away at most). While the dialog is open, the panel behind it holds still.
     if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
       const clamp = (v: number) => Math.max(-1, Math.min(1, v));
       addEventListener("pointermove", (event) => {
@@ -403,8 +406,9 @@ import { DOWNLOAD_URL } from "../../lib/download";
           const box = slab.getBoundingClientRect();
           const x = clamp((event.clientX - (box.left + box.width / 2)) / (innerWidth / 2));
           const y = clamp((event.clientY - (box.top + box.height / 2)) / (innerHeight / 2));
-          slab.style.setProperty("--lean-x", `${(y * 7).toFixed(2)}deg`);
-          slab.style.setProperty("--lean-y", `${(x * 9).toFixed(2)}deg`);
+          const facing = !!slab.closest("dialog");
+          slab.style.setProperty("--lean-x", `${(facing ? -y * 12 : y * 7).toFixed(2)}deg`);
+          slab.style.setProperty("--lean-y", `${(x * (facing ? 14 : 9)).toFixed(2)}deg`);
         }
       }, { passive: true });
     }
