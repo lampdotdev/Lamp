@@ -106,6 +106,34 @@ final class UnsavedWorkTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: attachments.appendingPathComponent("mockup.png").path))
     }
 
+    /// Quitting writes everything now and quits only once it's all on disk (the quit question's Retry). An earlier
+    /// write's failure, told back after a later one landed, doesn't bring the notice back.
+    func testQuittingSavesNowAndALateFailureDoesNotCountAgainstALaterSave() async throws {
+        let wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)
+        let store = Store(testingAt: root)
+        let project = try XCTUnwrap(store.current(wish))
+        let lamp = project.dir.appendingPathComponent(".lamp")
+        try setWritable(lamp, false)
+        defer { try? setWritable(lamp, true) }
+
+        store.log(project, .user, "Track my runs")
+        store.saveDraft(Store.Draft(text: "and my swims"), for: project)
+        XCTAssertFalse(store.saveAllNow(), "nothing can be written: the quit question is asked")
+        XCTAssertNotNil(store.saveTrouble)
+
+        // The queue's write fails, and its word is still on its way to the main thread when Retry writes at once.
+        store.retrySaving()
+        store.flushChats()
+        try setWritable(lamp, true)
+        XCTAssertTrue(store.saveAllNow(), "Retry with room quits")
+        XCTAssertNil(store.saveTrouble)
+        for _ in 0..<5 { try? await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertNil(store.saveTrouble, "the earlier write's failure is older than the save that landed")
+        XCTAssertEqual(try String(contentsOf: lamp.appendingPathComponent("draft.txt"), encoding: .utf8), "and my swims")
+        let saved = try JSONDecoder().decode([LogLine].self, from: Data(contentsOf: lamp.appendingPathComponent("chat.json")))
+        XCTAssertEqual(saved.last?.text, "Track my runs")
+    }
+
     /// A real full disk: a small disk image filled to the last byte.
     func testAFullDiskIsToldApartAndTryAgainSavesOnceThereIsRoom() async throws {
         let image = root.appendingPathComponent("small.dmg"), mount = root.appendingPathComponent("volume")

@@ -28,6 +28,11 @@ enum ErrorMessages {
     static let chatNotSavedDiskFull = "Lamp couldn't save your chat. Free up disk space, then click Try Again."
     static let chatNotSaved = "Lamp couldn't save your chat. Click Try Again."
 
+    /// Quitting with work that couldn't be saved (`AppDelegate.unsavedWorkLetsQuit`).
+    static let quitUnsaved = "Lamp couldn't save your chat."
+    static let quitUnsavedDiskFull = "Free up disk space, then click Retry. If you quit anyway, what wasn't saved is lost."
+    static let quitUnsavedOther = "Click Retry to try again. If you quit anyway, what wasn't saved is lost."
+
     /// A failed write whose own error, or one beneath it, says the disk is full; or one that says nothing of why, on a
     /// disk with next to nothing left.
     static func isOutOfSpace(_ error: Error) -> Bool {

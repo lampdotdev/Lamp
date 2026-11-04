@@ -149,6 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             // A Stop a moment ago may still have processes on their two seconds' notice; they go now.
             Subprocess.killStopping()
+            guard Self.unsavedWorkLetsQuit() else { return .terminateCancel }
             guard Store.shared.isWorking else { return .terminateNow }
             let alert = NSAlert()
             alert.messageText = "A wish is still being worked on. Quit anyway?"
@@ -166,6 +167,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return .terminateLater
         }
+    }
+
+    /// Work that couldn't be saved is only in memory, and quitting loses it: Lamp writes everything now, and asks only
+    /// when something still won't go. Retry writes again and quits only once it's all on disk; Quit Anyway loses it.
+    @MainActor private static func unsavedWorkLetsQuit() -> Bool {
+        let store = Store.shared
+        while !store.saveAllNow() {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = ErrorMessages.quitUnsaved
+            alert.informativeText = store.saveTrouble?.diskFull == true ? ErrorMessages.quitUnsavedDiskFull : ErrorMessages.quitUnsavedOther
+            alert.addButton(withTitle: "Retry")
+            alert.addButton(withTitle: "Quit Anyway")
+            alert.addButton(withTitle: "Cancel")
+            switch alert.runModal() {
+            case .alertFirstButtonReturn: continue
+            case .alertSecondButtonReturn: return true
+            default: return false
+            }
+        }
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {

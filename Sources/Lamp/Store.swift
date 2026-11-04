@@ -1605,13 +1605,14 @@ final class Store: ObservableObject {
         guard let project = projects.first(where: { $0.id == id }) else { return landed(.chat(id), error: nil) }
         let lines = logs[id] ?? []
         let file = project.dir.appendingPathComponent(".lamp/chat.json")
+        let write = nextChatWrite(id)
         if let unkept = unkeptChats[id] {
-            guard LogLine.keepAside(unkept, of: file) else { return landed(.chat(id), error: CocoaError(.fileWriteUnknown)) }
+            guard LogLine.keepAside(unkept, of: file) else { return landed(.chat(id), write: write, error: CocoaError(.fileWriteUnknown)) }
             unkeptChats[id] = nil
         }
         Self.chatWrites.async { [weak self] in
             let error = Self.writeChatFile(lines, to: file)
-            DispatchQueue.main.async { self?.landed(.chat(id), error: error) }
+            DispatchQueue.main.async { self?.landed(.chat(id), write: write, error: error) }
         }
     }
 
@@ -1637,15 +1638,16 @@ final class Store: ObservableObject {
         chatsToSave.remove(project.id)
         let lines = logs[project.id] ?? []
         let file = project.dir.appendingPathComponent(".lamp/chat.json")
+        let write = nextChatWrite(project.id)
         if let unkept = unkeptChats[project.id] {
             guard LogLine.keepAside(unkept, of: file) else {
-                landed(.chat(project.id), error: CocoaError(.fileWriteUnknown))
+                landed(.chat(project.id), write: write, error: CocoaError(.fileWriteUnknown))
                 return false
             }
             unkeptChats[project.id] = nil
         }
         let error = Self.chatWrites.sync { Self.writeChatFile(lines, to: file) }
-        landed(.chat(project.id), error: error)
+        landed(.chat(project.id), write: write, error: error)
         return error == nil
     }
 
@@ -1687,8 +1689,22 @@ final class Store: ObservableObject {
     private var unsaved: Set<Unsaved> = []
     private var unsavedAttachments: [UnsavedAttachment] = []
 
-    /// A write of the person's work has landed, or failed with `error`.
-    private func landed(_ work: Unsaved, error: Error?) {
+    /// Each chat's writes, counted: an earlier write's word, told back after a later one's (`writeChatNow` writes at
+    /// once while the queue's word of the one before is still on its way), says nothing of the chat as it is now.
+    private var chatWritesMade: [String: Int] = [:]
+    private var chatWritesLanded: [String: Int] = [:]
+
+    private func nextChatWrite(_ id: String) -> Int {
+        chatWritesMade[id, default: 0] += 1
+        return chatWritesMade[id]!
+    }
+
+    /// A write of the person's work has landed, or failed with `error`. `write` is a chat's count of it, for a chat.
+    private func landed(_ work: Unsaved, write: Int? = nil, error: Error?) {
+        if let write, let id = work.chat {
+            guard write >= chatWritesLanded[id, default: 0] else { return }
+            chatWritesLanded[id] = write
+        }
         if let error {
             Self.saveLog.error("couldn't save \(String(describing: work), privacy: .public): \(String(describing: error), privacy: .public)")
             unsaved.insert(work)
@@ -1725,6 +1741,23 @@ final class Store: ObservableObject {
         }
         retryAttachments()
         settleSaveTrouble()
+    }
+
+    /// Writes everything waiting or unsaved now, and waits for it, for Lamp quitting: true once all of it is on disk.
+    /// Retry in the quit question comes here again.
+    func saveAllNow() -> Bool {
+        for project in projects where draftWrites[project.id] != nil || unsaved.contains(.draft(project.id)) {
+            draftWrites[project.id]?.cancel()
+            writeDraft(for: project)
+        }
+        let chats = chatsToSave.union(unsaved.compactMap(\.chat))
+        chatsToSave.subtract(chats)
+        for id in chats {
+            if let project = projects.first(where: { $0.id == id }) { _ = writeChatNow(project) } else { landed(.chat(id), error: nil) }
+        }
+        retryAttachments()
+        settleSaveTrouble()
+        return unsaved.isEmpty && unsavedAttachments.isEmpty
     }
 
     /// Copies the files that couldn't be copied when their message was sent, and puts each in its message's line. One
