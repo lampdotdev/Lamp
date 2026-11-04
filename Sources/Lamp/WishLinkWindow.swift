@@ -62,7 +62,7 @@ private struct WishLinkWindowContent: View {
             WishLinkCard(icon: card.iconImage, picture: card.image,
                          values: Binding(get: { card.values }, set: { cards.update(project, values: $0) }),
                          limits: WishLink.cardLimits, link: card.shared?.url.absoluteString, changed: card.changed,
-                         stage: card.stage, copied: card.copied && !card.changed,
+                         stage: card.stage, copied: card.copied,
                          retake: cards.canRetake(project) ? { cards.retake(project) } : nil, retaking: card.retaking,
                          canIncludeFile: card.values.includeFile, noLicense: noLicense,
                          share: { cards.share(project) }, copy: { cards.copy(project) }, stop: { cards.stop(project) },

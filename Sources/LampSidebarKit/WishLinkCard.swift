@@ -171,18 +171,27 @@ public struct WishLinkCard: View {
         }
     }
 
+    /// The link that's out, and a button beside it that copies it, a tick for a moment once it has.
     private func linkRow(_ link: String) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: copied ? "checkmark.circle.fill" : "link")
-                .foregroundStyle(copied ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
-                .accessibilityHidden(true)
-            Text(link).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
-            if copied { Text("Copied").foregroundStyle(.secondary) }
-            Spacer(minLength: 0)
+            HStack(spacing: 8) {
+                Image(systemName: "link").foregroundStyle(.secondary).accessibilityHidden(true)
+                Text(link).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 0)
+            }
+            .font(.callout)
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .background(Paper.card, in: RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Paper.rule))
+            Button(action: copy) {
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 13, weight: .semibold))
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            .buttonStyle(PaperButtonStyle(.outline, height: 34, square: true))
+            .help(copied ? "Copied" : "Copy the link")
+            .accessibilityLabel(copied ? "Copied" : "Copy Link")
         }
-        .font(.callout)
-        .padding(10)
-        .background(Paper.card, in: RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Paper.rule))
     }
 
     @ViewBuilder private var buttons: some View {

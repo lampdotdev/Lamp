@@ -453,6 +453,11 @@ enum WishLink {
         (url as NSURL).write(to: board)
         board.setString(url.absoluteString, forType: .string)
         cards[project.id]?.copied = true
+        // The copy button's tick is for a moment, so a second copy shows too.
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            cards[project.id]?.copied = false
+        }
     }
 
     /// Takes the link down, and the card with it.
