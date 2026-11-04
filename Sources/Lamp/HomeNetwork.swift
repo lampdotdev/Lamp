@@ -601,6 +601,28 @@ enum Bonjour {
         return heard.lock.withLock { heard.items }
     }
 
+    /// A TXT record's entries, read by hand: `NetService.dictionary(fromTXTRecord:)` aborts the app when an entry
+    /// is a bare key with no "=" (some devices on the network send these), because it can't bridge the null value.
+    static func entries(ofTXTRecord data: Data) -> [String: Data] {
+        var entries: [String: Data] = [:]
+        let bytes = [UInt8](data)
+        var index = 0
+        while index < bytes.count {
+            let length = Int(bytes[index])
+            index += 1
+            guard index + length <= bytes.count else { break }
+            if length == 0 { continue }
+            let entry = bytes[index..<index + length]
+            index += length
+            let equals = entry.firstIndex(of: UInt8(ascii: "="))
+            let key = String(decoding: entry[..<(equals ?? entry.endIndex)], as: UTF8.self)
+            // The first value for a key wins, as the record format says.
+            guard !key.isEmpty, entries[key] == nil else { continue }
+            entries[key] = equals.map { Data(entry[($0 + 1)...]) } ?? Data()
+        }
+        return entries
+    }
+
     /// One service's host and record, waited for up to three seconds.
     private static func resolve(name: String, type: String) async -> BonjourService? {
         final class Resolved: @unchecked Sendable { var host: String?; var txt: [String: String] = [:]; let lock = NSLock() }
@@ -615,7 +637,7 @@ enum Bonjour {
             var txt: [String: String] = [:]
             if let record {
                 let data = Data(bytes: record, count: Int(length))
-                for (key, value) in NetService.dictionary(fromTXTRecord: data) where BonjourService.modelKeys.contains(key) {
+                for (key, value) in Bonjour.entries(ofTXTRecord: data) where BonjourService.modelKeys.contains(key) {
                     // A Cast device's "md" is its model; AirPlay's is the kinds of metadata it takes.
                     // Its "fn" is the name the person gave it ("Living Room TV"), kept as the host's other names are.
                     if key == "md" || key == "fn", !(fullName.map { String(cString: $0) } ?? "").contains("._googlecast._tcp.") { continue }
