@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { cacheTags, findWish, isID, playOrigin as playOriginFor } from "./shared-wishes.js";
+import { cacheTags, findWish, isID, linkFor, playOrigin as playOriginFor, wishIDFrom } from "./shared-wishes.js";
 
 // The page a shared wish's link opens (lamp.dev/w/<id>): a page of its own (src/pages/w/index.astro) with the wish
 // itself as big as the window allows, playing when Lamp sent its page, else its picture, then its name, what it does,
@@ -28,7 +28,7 @@ export function builtWishPage() {
 
 /** What X, iMessage and Slack read for the link's preview, in place of the built page's own. */
 function previewTags(wish, origin) {
-  const link = `${origin}/w/${wish.id}`;
+  const link = linkFor(origin, wish.id, wish.name);
   const card = `${origin}/w/${wish.id}/card.png?v=${encodeURIComponent(wish.updated ?? "")}`;
   const title = `${wish.name} · A wish for Lamp`;
   const description = summary(wish);
@@ -124,8 +124,9 @@ export function createPageHandler({ env = process.env, fetcher = fetch, store, t
   return async (request) => {
     if (request.method !== "GET" && request.method !== "HEAD") return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
     const url = new URL(request.url);
-    const id = url.searchParams.get("id");
-    const wish = isID(id) ? await findWish(id, { env, fetcher, store }) : null;
+    // The link's last part: the id, and the wish's name after it only for reading.
+    const id = wishIDFrom(url.searchParams.get("id"));
+    const wish = id ? await findWish(id, { env, fetcher, store }) : null;
     const page = wish && wishPage(await template(url.origin), wish, { origin: url.origin, playOrigin: playOrigin(url, id) });
     if (!page) {
       const nonce = randomBytes(16).toString("base64");

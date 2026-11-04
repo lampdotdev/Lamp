@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { deflateSync, crc32 } from "node:zlib";
-import { createShareHandler, createFileHandler, createPlayHandler, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
+import { createShareHandler, createFileHandler, createPlayHandler, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, slugFor, wishIDFrom, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
 import { createPageHandler } from "../lib/shared-wish-page.js";
 import { createCardHandler } from "../lib/wish-card.js";
 
@@ -76,7 +76,7 @@ test("a wish is shared, changed and taken down only with its secret", async () =
   assert.equal(created.status, 201);
   const { id, url, secret } = await created.json();
   assert.ok(isID(id));
-  assert.equal(url, `https://lamp.dev/w/${id}`);
+  assert.equal(url, `https://lamp.dev/w/${id}-plant-pal`, "the link carries the wish's name, only for reading");
   assert.ok(!JSON.stringify([...store.records.values()]).includes(secret), "only the secret's hash is kept");
 
   assert.equal((await send(handler, "PUT", { ...share, name: "Thief" }, { id, secret: "x".repeat(43) })).status, 404);
@@ -130,6 +130,14 @@ test("the page is the shared wish's own, with the wish in it, its words escaped,
   assert.equal(card.by, "", "a wish shared with no name has no byline");
   assert.ok(!html.includes("<watered>"), "nothing the sharer wrote can close the script");
   assert.equal(response.headers.get("x-robots-tag"), "noindex");
+
+  // The name after the id is only for reading: an old one, or none, finds the same wish.
+  for (const part of [`${id}-old-name`, `${id}-`]) {
+    assert.equal((await createPageHandler({ store, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${part}`))).status, 200);
+  }
+  assert.equal(wishIDFrom(`${id}x`), null, "the id ends at a dash");
+  assert.equal(slugFor("Café  Crème!"), "cafe-creme");
+  assert.equal(slugFor("東京"), "", "a name with nothing plain to spell has no slug");
 
   const gone = await createPageHandler({ store, template: async () => built })(new Request("https://lamp.dev/api/wish-page?id=2345678922"));
   assert.equal(gone.status, 404);

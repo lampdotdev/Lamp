@@ -75,7 +75,7 @@ enum Following {
 
     // MARK: The link
 
-    /// The copy a link names: a wish's Share Link (`lamp.dev/w/<id>`, or Lamp's own `wish?shared=<id>`), lamp.dev's
+    /// The copy a link names: a wish's Share Link (`lamp.dev/w/<id>`, with `-<name>` after it or not, or Lamp's own `wish?shared=<id>`), lamp.dev's
     /// remix of a repository (`?repo=`), or a repository's address. Nil for anything else.
     static func copy(fromLink text: String, scheme: String = Edition.urlScheme) -> Place? {
         let line = text.trimmed
@@ -83,8 +83,11 @@ enum Following {
             let host = url.host?.lowercased() ?? ""
             let value = { (name: String) in parts.queryItems?.first { $0.name == name }?.value }
             let onSite = url.scheme == "https" && ["lamp.dev", "www.lamp.dev"].contains(host)
+            // The link carries the wish's name after its id and a dash (`lamp.dev/w/<id>-<name>`), only for reading.
             if onSite, url.pathComponents.count == 3, url.pathComponents[1] == "w" {
-                return Wish.isSharedID(url.pathComponents[2]) ? .lamp(url.pathComponents[2]) : nil
+                let part = url.pathComponents[2], id = String(part.prefix(10))
+                let named = part.count == 10 || part.dropFirst(10).first == "-"
+                return Wish.isSharedID(id) && named ? .lamp(id) : nil
             }
             if url.scheme == scheme, host == "wish", let id = value("shared") { return Wish.isSharedID(id) ? .lamp(id) : nil }
             if onSite || (url.scheme == scheme && host == "wish") {

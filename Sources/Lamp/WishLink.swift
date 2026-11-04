@@ -179,7 +179,12 @@ enum WishLink {
         if let earlier { request.setValue("Bearer \(earlier.secret)", forHTTPHeaderField: "Authorization") }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, status) = try await send(request)
-        if let earlier, status == 200 { return Shared(id: earlier.id, url: earlier.url, secret: earlier.secret, shown: words) }
+        // A change keeps the link; its address follows the wish's name, so a rename shows in it (the old one still works).
+        if let earlier, status == 200 {
+            let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: String]
+            let link = answer?["url"].flatMap(URL.init(string:)).flatMap { $0.scheme == endpoint.scheme && $0.host == endpoint.host ? $0 : nil }
+            return Shared(id: earlier.id, url: link ?? earlier.url, secret: earlier.secret, shown: words)
+        }
         // The link is gone from the site (taken down there): a new one takes its place.
         if earlier != nil, status == 404 { return try await publish(words, picture: picture, icon: icon, replacing: nil) }
         guard status == 201, let answer = try? JSONSerialization.jsonObject(with: data) as? [String: String],
