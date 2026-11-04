@@ -239,7 +239,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
     const icon = $<HTMLImageElement>("[data-icon]");
     if (wish.icon) { icon.src = wish.icon; icon.hidden = false; }
 
-    // What's new: each version the maker released, newest first, opened from "Updated <date>" beside the name, which
+    // What's new: each version the maker released, newest first, opened from "updated <date>" beside the name, which
     // has a sparkle until this browser has opened it since the newest one.
     const releases = (wish.releases ?? []).filter((release) => release.lines?.length);
     if (releases.length) {
