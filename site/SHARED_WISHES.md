@@ -10,7 +10,8 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
 - The wish to play (`/w/<id>` for a wish sent with its page): a web app, a web game or a screen (the wish's own, or its
   one app's when that's in a part of its own, `Publish.pageApp`) plays at the top of
   the link's page, as large as the window allows in the shape Lamp sends with it (`shape` in the page's JSON: its width
-  over its height, or `"fill"` for a page that takes any shape; without one, the 16:9 a web game is drawn in), with a button for full screen, so whoever opens the link tries it
+  over its height, or `"fill"` for a page that takes any shape; Lamp sends a web game's stage, and `"fill"` for a web app
+  or a screen, `Publish.pageShape`; without one, the 16:9 a web game is drawn in), with a button for full screen, so whoever opens the link tries it
   first. Lamp sends the page with the wish's file (`WishLink.playablePage`: the page Put on GitHub puts on
   GitHub Pages, what it saves kept under the link), zipped, in parts to `api/wish-file.js` with `what=page`; the site
   unpacks it (`readPage`: index.html at its root, never a link or a path that steps up, at most 3,000 files) into Blob,
@@ -75,7 +76,7 @@ Without the first two, sharing answers 503 and Lamp says it couldn't share; link
 
 ## Limits and privacy
 
-- What's taken: a name (60 characters), who it's by (60, or nothing), a line (140), up to three changes Lamp suggests (100 each), the words (2,000), a PNG or JPEG picture (1.5 MB, 4,096 px a
+- What's taken: a name (60 characters), who it's by (60, or nothing), a line (140), up to three changes Lamp suggests (100 each), the page's shape (a width over a height from 0.2 to 5, or "fill"), the words (2,000), a PNG or JPEG picture (1.5 MB, 4,096 px a
   side) and a square PNG icon (300 KB), checked by their bytes; nothing else. Lamp holds the sharer to the same
   limits and sends the picture as a fresh JPEG, which leaves behind whatever the file carried besides its pixels.
 - `QUOTAS` in `lib/shared-wishes.js`: 10 shares or changes an hour per address, 200 an hour and 1,000 a day overall;

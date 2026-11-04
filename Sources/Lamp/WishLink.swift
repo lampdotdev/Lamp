@@ -48,6 +48,9 @@ enum WishLink {
         var words: String
         /// The changes Lamp suggests for it, the page's to offer. Nil in links from before.
         var ideas: [String]? = nil
+        /// The shape its page plays in (`Publish.pageShape`): "fill", or its width over its height. Nil for a wish with no
+        /// page, and in links from before.
+        var shape: String? = nil
         /// Which picture goes with it (a digest of it), or none.
         var picture: String?
         /// The wish's file goes with it. Nil in links from before files could go.
@@ -167,6 +170,7 @@ enum WishLink {
         var body: [String: Any] = ["name": words.name.trimmed, "line": words.line.trimmed, "words": words.words.trimmed]
         if let by = words.by?.trimmed, !by.isEmpty { body["by"] = by }
         if let ideas = words.ideas, !ideas.isEmpty { body["ideas"] = ideas }
+        if let shape = words.shape { body["shape"] = shape == "fill" ? shape : Double(shape) ?? NSNull() }
         body["picture"] = picture?.base64EncodedString() ?? NSNull()
         body["icon"] = icon?.base64EncodedString() ?? NSNull()
         var request = URLRequest(url: earlier.map { address(for: $0.id) } ?? endpoint)
@@ -325,6 +329,8 @@ enum WishLink {
         var shared: WishLink.Shared?
         /// The changes Lamp suggests for the wish, as it has them now: they go with the link, not shown on the card.
         var ideas: [String] = []
+        /// The shape the wish's page plays in, as `Words.shape` keeps it; nil for a wish with no page.
+        var shape: String?
         var stage: WishLinkCard.Stage = .editing
         var copied = false
         var retaking = false
@@ -336,7 +342,7 @@ enum WishLink {
             // wish, not a message.
             WishLink.Words(name: values.name.trimmed, by: values.by.trimmed, line: values.line.trimmed,
                            words: values.line.trimmed.isEmpty ? values.words.trimmed : values.line.trimmed,
-                           ideas: ideas.isEmpty ? nil : ideas,
+                           ideas: ideas.isEmpty ? nil : ideas, shape: shape,
                            picture: pictureDigest, file: values.includeFile ? true : nil)
         }
         /// A link that carries the wish is always worth sending again: the file is the wish as it is now.
@@ -362,6 +368,7 @@ enum WishLink {
             ?? WishLinkCard.Values(name: name, by: WishLink.sharer, line: WishLink.line(of: project), words: WishLink.firstRequest(of: project, store: Store.shared),
                                    includeFile: Self.canIncludeFile(project))
         var card = Card(values: values, pictureDigest: digest, shared: shared)
+        card.shape = Publish.pageShape(project).map { if case .ratio(let ratio) = $0 { String(format: "%.4f", ratio) } else { "fill" } }
         card.ideas = (RemixSuggestions.load(project) ?? []).prefix(WishLink.Limit.ideas).map(\.text)
             .map { $0.trimmed }.filter { !$0.isEmpty && $0.count <= WishLink.Limit.idea }
         card.picture = picture

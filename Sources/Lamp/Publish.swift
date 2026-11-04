@@ -36,6 +36,18 @@ enum Publish {
         return apps.count == 1 ? apps[0] : nil
     }
 
+    /// The shape a page plays in, which the link's page frames it in: a web game is drawn on its fixed stage
+    /// (`GameKit.width` by `height`, fitted to any window with bars around it), so its frame is that shape and it shows
+    /// none; a web app or a screen lays itself out for whatever room it has, so it fills the frame. Nil without a page.
+    enum PageShape: Equatable { case ratio(Double), fill }
+    static func pageShape(_ project: LampProject) -> PageShape? {
+        switch pageUse(project) {
+        case .play: .ratio(Double(GameKit.width) / Double(GameKit.height))
+        case .use: .fill
+        case nil: nil
+        }
+    }
+
     /// Where that page's files are in the wish, as a repository holds them: "Web/", or "Game/Web/" for a part's.
     static func pageFolder(_ project: LampProject) -> String? {
         guard let app = pageApp(project) else { return nil }

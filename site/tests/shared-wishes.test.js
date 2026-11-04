@@ -55,6 +55,11 @@ test("only a checked wish is taken: known fields, plain words within their limit
   assert.equal(readShare({ ...share, ideas: ["a", "b", "c", "d"] }), null, "at most three");
   assert.equal(readShare({ ...share, ideas: ["x".repeat(LIMITS.idea + 1)] }), null);
   assert.equal(readShare({ ...share, ideas: "Add a fern" }), null);
+  assert.equal(readShare(share).shape, null, "a link that says no shape");
+  assert.equal(readShare({ ...share, shape: 16 / 9 }).shape, 1.7778);
+  assert.equal(readShare({ ...share, shape: "fill" }).shape, "fill");
+  assert.equal(readShare({ ...share, shape: 9 }), null, "no shape that thin or wide");
+  assert.equal(readShare({ ...share, shape: "16:9" }), null);
   assert.equal(readShare({ ...share, name: "e\u0301".repeat(LIMITS.name) }).name.length, LIMITS.name * 2, "counted as Lamp counts");
   assert.equal(readShare({ ...share, words: "  " }), null);
   assert.equal(readShare({ ...share, picture: Buffer.from("<svg></svg>").toString("base64") }), null);
