@@ -12287,12 +12287,14 @@ final class Store: ObservableObject {
         // Every install of a Mac app ends here (a build, a new icon, a refreshed copy): an update waiting for its review
         // is never put where it can be opened.
         guard AppUpdates.mayOpen(wish(of: project)) else { throw Sharing.ImportError(AppUpdates.notInstalledYet) }
-        // What Lamp signed as the app's sidebar, the one program it will talk to there.
-        Sidebar.remember(project, signed: app)
 
         // The app isn't running by now (a build quits it, an icon waits for it to close), but its widget's
         // process may be: ended here, last thing before the swap, so no program outlives the copy it came from.
         await WidgetProcess.end(for: project)
+        // That can take seconds, and a Stop pressed meanwhile still keeps this copy out.
+        try copy.staging.check()
+        // What Lamp signed as the app's sidebar, the one program it will talk to there: only once this copy goes in.
+        Sidebar.remember(project, signed: app)
         if fm.fileExists(atPath: project.installedURL.path) {
             _ = try fm.replaceItemAt(project.installedURL, withItemAt: app)
         } else {
