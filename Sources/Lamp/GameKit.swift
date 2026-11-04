@@ -388,7 +388,7 @@ enum GameKit {
 
     static func withoutWish(page text: String) -> String {
         var text = text.replacingOccurrences(of: pageWishLine, with: "")
-        if let start = text.range(of: "// MARK: - The wish's other apps\n"),
+        if let start = text.range(of: "// MARK: - The project's other apps\n"),
            let end = text.range(of: "// MARK: - The page's log\n", range: start.upperBound..<text.endIndex) {
             text.removeSubrange(start.lowerBound..<end.lowerBound)
         }
@@ -396,7 +396,7 @@ enum GameKit {
     }
 
     private static let pageWishLine = """
-            configuration.userContentController.add(LampPageWish(scheme: scheme), contentWorld: .page, name: "lampWish") // the wish's other apps
+            configuration.userContentController.add(LampPageWish(scheme: scheme), contentWorld: .page, name: "lampWish") // the project's other apps
 
     """
 
@@ -1215,7 +1215,7 @@ extension Agent.Rules {
     /// skills that one has it read: the web-game skill whole, which saves the turn it would take to open it, and only
     /// the rules a first game needs. A game at home elsewhere, and every later request, has the full rules.
     static func newMacGame(in folder: String, guide: String) -> String {
-        let rules = ["- Your tools and shell start in the wish's folder: every file of this game is under \(folder)/. Only the wish's description is there itself, in \(AppDescription.file), with `write`.\n" + newMacGameEdit, guide + "\n", Agent.Rules.pageNative + "\n", Agent.Rules.gameBudget, Agent.Rules.gameWebAssets, Agent.Rules.macWebGameTry]
+        let rules = ["- Your tools and shell start in the project's folder: every file of this game is under \(folder)/. Only the project's description is there itself, in \(AppDescription.file), with `write`.\n" + newMacGameEdit, guide + "\n", Agent.Rules.pageNative + "\n", Agent.Rules.gameBudget, Agent.Rules.gameWebAssets, Agent.Rules.macWebGameTry]
         return (Agent.Rules.partHeader("a game drawn in a page in Web/ on Lamp's game runtime, at home on the Mac", folder: folder) + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac")
@@ -1255,30 +1255,30 @@ extension Agent.Rules {
     static func placesAmongApps(_ word: String, verb: String) -> String {
         """
 
-        - This wish has other apps beside the \(word). Where the \(word) is \(verb) is make_app_for's `devices` for it, \
-        with its folder in `app` and `made` "web"; the wish's other apps stay as they are, and one is taken away only with remove_app.
+        - This project has other apps beside the \(word). Where the \(word) is \(verb) is make_app_for's `devices` for it, \
+        with its folder in `app` and `made` "web"; the project's other apps stay as they are, and one is taken away only with remove_app.
         """
     }
 
     /// For a wish with a game beside other apps: how its places are given, and how it reaches the others.
     static let gameAmongApps = placesAmongApps("game", verb: "played") + """
 
-    - The game reaches the wish's other apps with `Lamp.wish` in Web/lamp.js, the same block a TV app's page has: \
-    messages, shared values and files, so another app of the wish can send it moves or things to play with, or show \
+    - The game reaches the project's other apps with `Lamp.wish` in Web/lamp.js, the same block a TV app's page has: \
+    messages, shared values and files, so another app of the project can send it moves or things to play with, or show \
     its score. That works wherever it's played: the Mac, an iPhone or an iPad, Android and the Xbox. Its players play with a controller, the keyboard or the touch controls Lamp draws, and \
-    phones join as players from its Phone/ page (`Lamp.controllers`); the wish's other apps send it messages rather than \
+    phones join as players from its Phone/ page (`Lamp.controllers`); the project's other apps send it messages rather than \
     joining as players.
     """
 
     /// For a wish with a screen beside other apps: how its places are given, and how it reaches the others.
     static let screenAmongApps = placesAmongApps("screen", verb: "shown") + """
 
-    - The screen reaches the wish's other apps with `Lamp.wish` in Web/lamp.js, as a TV app does: messages, shared \
+    - The screen reaches the project's other apps with `Lamp.wish` in Web/lamp.js, as a TV app does: messages, shared \
     values and files, wherever it's shown, the Xbox included. Its window on this Mac is one of them; Lamp's preview \
     never is while it holds a copy of that window's data, and otherwise only when the screen is shown there, so what \
     another app sends shows where the screen is shown. What every place shows (a list, the calendar, photos) goes in \
     `LampStore.shared` and `LampStore.sharedFiles`, kept the same on every copy of the screen (and with `{ wish: true }` \
-    in every app of the wish), with a copy that can read the calendar or the album (on the Mac, an iPhone or an iPad, \
+    in every app of the project), with a copy that can read the calendar or the album (on the Mac, an iPhone or an iPad, \
     through `LampNative`) publishing it for the others.
     """
 
@@ -1322,9 +1322,9 @@ extension Agent.Rules {
     builds by itself when you look and, at the end of your turn, opens the game where Try On points (the Mac, a \
     simulator, an Android emulator or device, a TV or the Xbox), so don't run a build, a server or a browser yourself, \
     and leave .lamp/ alone. Where else it's played is the person's to ask for: when they want it somewhere else, call \
-    make_app_for with the game's folder in `app` ("." when it's the wish's own folder), `kind` "game", `made` "web" and \
+    make_app_for with the game's folder in `app` ("." when it's the project's own folder), `kind` "game", `made` "web" and \
     `devices` every device it's to be played on ("mac", "iphone", "android", "android-tv", "tv", "xbox-one"…: a page \
-    goes wherever the table of devices gives a web host); it stays the same game, and the wish's other apps stay as they are.
+    goes wherever the table of devices gives a web host); it stays the same game, and the project's other apps stay as they are.
     \(pageCopies)
     """ }
 

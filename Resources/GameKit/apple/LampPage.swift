@@ -62,7 +62,7 @@ import UIKit
         let gateway = LampPageGateway(scheme: scheme)
         configuration.userContentController.addScriptMessageHandler(gateway, contentWorld: .page, name: "lampGateway")
         configuration.userContentController.addScriptMessageHandler(LampPageNative(scheme: scheme), contentWorld: .page, name: "lampNative")
-        configuration.userContentController.add(LampPageWish(scheme: scheme), contentWorld: .page, name: "lampWish") // the wish's other apps
+        configuration.userContentController.add(LampPageWish(scheme: scheme), contentWorld: .page, name: "lampWish") // the project's other apps
         configuration.userContentController.addScriptMessageHandler(LampPageVoice(scheme: scheme), contentWorld: .page, name: "lampVoice")
         configuration.userContentController.add(LampPageLog(), name: "lampLog")
         #if os(macOS)
@@ -475,12 +475,12 @@ final class LampPageNative: NSObject, WKScriptMessageHandlerWithReply {
     }
 }
 
-// MARK: - The wish's other apps
+// MARK: - The project's other apps
 
-/// The page's `Lamp.wish` (Web/lamp.js), answered by this app's own `LampWish` (LampSupport.swift): the app is the wish's
-/// peer, as every Swift app of a wish is (it listens, is found on the network and keeps the values on this device, so
+/// The page's `Lamp.wish` (Web/lamp.js), answered by this app's own `LampWish` (LampSupport.swift): the app is the project's
+/// peer, as every Swift app of a project is (it listens, is found on the network and keeps the values on this device, so
 /// it goes on with Lamp closed), and the page mirrors it. What the app hears goes to the page's `window.__lampWish`.
-/// Only an app whose wish has other apps has this, as only it has `LampWish`.
+/// Only an app whose project has other apps has this, as only it has `LampWish`.
 @MainActor final class LampPageWish: NSObject, WKScriptMessageHandler {
     private let scheme: String
     private weak var page: WKWebView?

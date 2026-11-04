@@ -96,7 +96,7 @@ enum RepoImport {
         }, onLine: { said.add($0) })
         guard status == 0 else {
             try? fm.removeItem(at: folder)
-            if status == Versions.noGit { throw Sharing.ImportError("Lamp needs Apple's tools for this.", detail: "Updating a wish from GitHub uses git, which comes with them.") }
+            if status == Versions.noGit { throw Sharing.ImportError("Lamp needs Apple's tools for this.", detail: "Updating an app from GitHub uses git, which comes with them.") }
             let detail = said.lines.last.map { String($0.suffix(200)) }
             if status == Versions.unconfined { throw Sharing.ImportError("Lamp couldn't fetch \(source.owner)/\(source.name).", detail: "Its sandbox couldn't be set up.") }
             throw Sharing.ImportError("Lamp couldn't get \(source.owner)/\(source.name) from GitHub.",
@@ -141,7 +141,7 @@ enum RepoImport {
             .filter { $0.pathExtension == "lampapp" && (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         guard let file = files.first else {
-            throw Sharing.ImportError("This isn't a wish Lamp can open.", detail: "A wish put on GitHub has lamp-app.json and its code at the top of the repository.")
+            throw Sharing.ImportError("This isn't an app Lamp can open.", detail: "An app put on GitHub has lamp-app.json and its code at the top of the repository.")
         }
         var package = try Sharing.open(file)
         package.credits = naming(package.credits, repository: repository?.url, commit: repository?.commit, name: package.name, identity: package.identity)

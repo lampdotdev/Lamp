@@ -138,7 +138,7 @@ public struct RepoCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Put \(name) on GitHub").font(.title3.bold())
                     // What the person accepts: what goes, and where.
-                    Text("Its code goes up as a repository on your GitHub account: what a shared wish file holds, with the files that build it."
+                    Text("Its code goes up as a repository on your GitHub account: what a shared app file holds, with the files that build it."
                          + (page == nil ? "" : " Its page goes up too, for anyone to \(plays ? "play" : "use") in a browser.")
                          + (picture == nil ? " Never your chat or the app's data." : " Your chat stays on this Mac. If you include the picture, anything visible in it goes on GitHub too."))
                         .font(.callout).foregroundStyle(.secondary)
@@ -172,7 +172,7 @@ public struct RepoCard: View {
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
                             .opacity(showsPicture ? 1 : 0.3)
-                            .accessibilityLabel("Picture of the wish")
+                            .accessibilityLabel("Picture of the app")
                         Toggle("Include this picture", isOn: Binding(get: { showsPicture }, set: setPicture))
                             .toggleStyle(.checkbox)
                             .font(.callout)
@@ -223,7 +223,7 @@ public struct RepoCard: View {
         case .working(let step):
             HStack(spacing: 8) { ProgressView().controlSize(.small); Text(step).foregroundStyle(.secondary) }.font(.callout)
         case .needsGitHub(.install):
-            problem("Putting a wish on GitHub needs GitHub's command-line tool, gh.")
+            problem("Putting an app on GitHub needs GitHub's command-line tool, gh.")
         case .needsGitHub(.signIn):
             problem("Sign in to GitHub with gh to put it on your account.")
         case .refused(let why), .failed(let why):

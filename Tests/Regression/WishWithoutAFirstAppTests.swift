@@ -146,7 +146,7 @@ final class WishWithoutAFirstAppTests: XCTestCase {
         let second = await Versions.commitAll("-qm \"$LAMP_PROMPT\"", in: wish.dir, env: ["LAMP_PROMPT": "Put it on my Android phone too"])
         XCTAssertEqual(second, .saved)
         let support = wish.dir.appendingPathComponent("Sources/LampSupport.swift")
-        XCTAssertTrue(try String(contentsOf: support, encoding: .utf8).contains("MARK: - The wish's other apps"))
+        XCTAssertTrue(try String(contentsOf: support, encoding: .utf8).contains("MARK: - The project's other apps"))
 
         let versions = await Versions.list(wish)
         XCTAssertEqual(versions.map { $0.apps?.map(\.kind) }, [[.mac, .android], [.mac]])

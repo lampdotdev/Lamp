@@ -74,7 +74,7 @@ extension ChatLook {
                         .focused($editing)
                         .onSubmit(commit)
                         .disabled(!intro.canRename)
-                        .help("Rename this wish")
+                        .help("Rename this app")
                         .onAppear { name = current }
                         .onChange(of: current) { if !editing { name = current } }
                         .onChange(of: editing) { if !editing { commit() } }

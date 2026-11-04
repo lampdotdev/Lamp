@@ -87,7 +87,7 @@ Each screen has one job. "What is this game?" and "which level?" are two questio
 
 Before writing a phone's screens, go through each phase of the flow and settle what the shared display shows and what
 each player's phone shows, and keep that as a small table under the `Flow:` line. The shared display is whatever everyone looks at: the
-Mac, a TV, or a phone or iPad running the game. A phone used as a controller, by a phone page or an app of the wish's own
+Mac, a TV, or a phone or iPad running the game. A phone used as a controller, by a phone page or an app of the project's own
 (the phone-controllers skill), is a different thing from a phone running the game, which has only its own screen and
 needs no split.
 

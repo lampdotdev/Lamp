@@ -266,8 +266,8 @@ enum WishLink {
     /// `page` sends its playable page (`playablePage`), which the site unpacks and serves on the link's page.
     static func uploadFile(_ data: Data, for shared: Shared, page: Bool = false) async throws {
         guard data.count <= Limit.fileTotal else {
-            throw Failure(message: page ? "This wish's page is too big to play on its link (over \(Limit.fileTotal / 1_000_000) MB)."
-                          : "This wish is too big to go with its link (over \(Limit.fileTotal / 1_000_000) MB).")
+            throw Failure(message: page ? "This app's page is too big to play on its link (over \(Limit.fileTotal / 1_000_000) MB)."
+                          : "This app is too big to go with its link (over \(Limit.fileTotal / 1_000_000) MB).")
         }
         let count = max(1, (data.count + Limit.filePart - 1) / Limit.filePart)
         for n in 0..<count {
@@ -288,8 +288,8 @@ enum WishLink {
 
     private static func fileFailure(_ status: Int, page: Bool) -> Failure {
         guard [400, 409, 413].contains(status) else { return failure(status) }
-        return Failure(message: page ? "lamp.dev couldn't take this wish's page to play, so its link shows its picture. Try again in a moment."
-                       : "lamp.dev couldn't take this wish's file. Try again in a moment.")
+        return Failure(message: page ? "lamp.dev couldn't take this app's page to play, so its link shows its picture. Try again in a moment."
+                       : "lamp.dev couldn't take this app's file. Try again in a moment.")
     }
 
     /// Takes the wish's file away from its link, which keeps showing the idea, and its page with it. `page` takes only
@@ -329,9 +329,9 @@ enum WishLink {
 
     private static func failure(_ status: Int) -> Failure {
         switch status {
-        case 429: Failure(message: "Too many wishes were shared from here just now. Try again later.")
-        case 400, 413: Failure(message: "lamp.dev couldn't take this wish. Try a shorter one, or leave out the picture.")
-        default: Failure(message: "lamp.dev couldn't share this wish right now. Try again in a moment.")
+        case 429: Failure(message: "Too many apps were shared from here just now. Try again later.")
+        case 400, 413: Failure(message: "lamp.dev couldn't take this app. Try a shorter one, or leave out the picture.")
+        default: Failure(message: "lamp.dev couldn't share this app right now. Try again in a moment.")
         }
     }
 }

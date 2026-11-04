@@ -551,7 +551,7 @@ struct ExperimentalSettings: View {
         Form {
             Section {
                 SettingsCheckboxes {
-                    Toggle("Mix copies of a wish", isOn: $mix)
+                    Toggle("Mix copies of an app", isOn: $mix)
                         .checkboxNote("A button at the foot of the desk opens a window to pick what to keep from someone else's copy.")
                 }
             } header: {

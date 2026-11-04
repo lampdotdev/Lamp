@@ -183,9 +183,9 @@ enum Skills {
     static func applying(to project: LampProject, parts: [LampProject] = []) -> [(name: String, because: String)] {
         let offered = offered(project.platform) + named(project.platform)
         var found: [(name: String, because: String)] = parts.map { part in
-            (Parts.skill(of: part), "this wish has \(Parts.name(of: part)) in \(part.dir.lastPathComponent)/: its rules, for the files there (part \"\(Parts.address(of: part, among: (project.holdsApp ? [project] : []) + parts))\" in look_at_app and use_app)")
+            (Parts.skill(of: part), "this project has \(Parts.name(of: part)) in \(part.dir.lastPathComponent)/: its rules, for the files there (part \"\(Parts.address(of: part, among: (project.holdsApp ? [project] : []) + parts))\" in look_at_app and use_app)")
         }
-        if Template.talksToOtherApps(project) { found.append(("wish-links", "this wish is more than one app: the ways its apps can share data")) }
+        if Template.talksToOtherApps(project) { found.append(("wish-links", "this project is more than one app: the ways its apps can share data")) }
         else if appSwift(of: project, matches: #"\bLampWish\b|\bLampStore\.shared"#) { found.append(("wish-links", "its code uses LampWish or LampStore.shared")) }
         if !project.makesNoApp, DevicePermissions.reachesDevices(project) { found.append(("device-control", "its code reaches the person's devices")) }
         if offered.contains("app-kinds"), !project.makesNoApp, Template.isScaffold(project) { found.append(("app-kinds", "it's a new app, still to be given its kind")) }

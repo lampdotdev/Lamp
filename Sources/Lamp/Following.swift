@@ -447,7 +447,7 @@ extension Store {
         guard let place = Following.copy(fromLink: field.stringValue) else {
             let refusal = NSAlert()
             refusal.messageText = "That isn't a link to a copy"
-            refusal.informativeText = "Ask for a link made with the wish itself included."
+            refusal.informativeText = "Ask for a link made with the app itself included."
             refusal.runModal()
             return
         }

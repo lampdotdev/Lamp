@@ -267,7 +267,7 @@ struct AppMenu: View {
         }
         Divider()
         if store.canShare(project) {
-            Button("Copy Wish File") { store.copyAppFile(project) }
+            Button("Copy App File") { store.copyAppFile(project) }
             Button { Sharing.share(project, from: .app(project.id)) } label: {
                 Label("Share…", systemImage: "square.and.arrow.up")
             }
@@ -510,7 +510,7 @@ struct ImportReviewCard: View {
             } else {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
-                    Text("Checking what this wish does…").foregroundStyle(.secondary)
+                    Text("Checking what this app does…").foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 20)
             }
@@ -519,10 +519,10 @@ struct ImportReviewCard: View {
                 // The buttons say what each does; this is what someone would worry about before choosing Update.
                 Label {
                     Text(verbatim: mix != nil
-                         ? "You already have this wish\(existing == name ? "" : ", as “\(existing)”"). Mix lets you pick which of its changes to bring into yours. Keep Both keeps it as a separate app."
+                         ? "You already have this app\(existing == name ? "" : ", as “\(existing)”"). Mix lets you pick which of its changes to bring into yours. Keep Both keeps it as a separate app."
                          : prepared
                          ? "Update puts it in place of “\(existing)” and keeps your data, and you can go back if you change your mind. Keep Both keeps it as a separate app."
-                         : "You already have this wish\(existing == name ? "" : ", as “\(existing)”")"
+                         : "You already have this app\(existing == name ? "" : ", as “\(existing)”")"
                          + (changedHere ? ", and you've changed it since. Updating brings in what's new and keeps your changes; Lamp asks you about anything it can't settle itself"
                                         : ". Updating keeps your data")
                          + ", and you can go back if you change your mind.")

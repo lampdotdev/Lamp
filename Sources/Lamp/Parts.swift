@@ -62,7 +62,7 @@ enum Parts {
     /// the folder itself is never a draft to write an app into (`LampProject.holdsApp`). Kept with the wish's files, so a
     /// version restored from before it was marked brings back what the folder held then.
     static let wishOnly = ".lamp-wish"
-    static let wishOnlyText = "A wish made with Lamp: each of its apps is in a folder of its own, and this folder holds none.\n"
+    static let wishOnlyText = "A project made with Lamp: each of its apps is in a folder of its own, and this folder holds none.\n"
 
     /// Whether a wish's own folder is marked as only the wish's: the mark a plain file, never a link.
     static func isWishOnly(_ dir: URL) -> Bool {
@@ -462,7 +462,7 @@ enum Parts {
         var skills: [String: Skills.Skill] = [:]
         func add(_ skill: String, _ kind: Platform, _ part: LampProject?) {
             let folder = part?.dir.lastPathComponent ?? folder(for: kind)
-            skills[skill] = Skills.Skill(name: skill, description: "The rules for \(part.map { name(of: $0) } ?? name(of: kind)) of a wish, in \(folder)/: how it's written, built, tried and how it talks to the rest.",
+            skills[skill] = Skills.Skill(name: skill, description: "The rules for \(part.map { name(of: $0) } ?? name(of: kind)) of a project, in \(folder)/: how it's written, built, tried and how it talks to the rest.",
                                         body: part.map(GameKit.isMacWebGame) == true ? Agent.gamePrompt(part: folder, macOnly: true)
                                             : pack(for: kind, in: folder, integration: part.flatMap(listedIntegration(of:))))
         }
@@ -477,8 +477,8 @@ enum Parts {
                 add(skill, kind, own)
             } else if mine.count > 1 {
                 let each = mine.map { "\(name(of: $0)) in \($0.dir.lastPathComponent)/: the \(self.skill(of: $0)) skill" }
-                skills[skill] = Skills.Skill(name: skill, description: "Which skill has the rules for each of the wish's \(mine.count) apps of this kind.",
-                                            body: "This wish has \(mine.count) apps of this kind, each with rules of its own: " + each.joined(separator: "; ")
+                skills[skill] = Skills.Skill(name: skill, description: "Which skill has the rules for each of the project's \(mine.count) apps of this kind.",
+                                            body: "This project has \(mine.count) apps of this kind, each with rules of its own: " + each.joined(separator: "; ")
                                                 + ". Open the one for the app you're changing.")
             } else {
                 add(skill, kind, nil)
@@ -505,14 +505,14 @@ enum Parts {
         guard apps.count > 1 else { return Template.talksToOtherApps(wish) ? Agent.Rules.wishTalk : "" }
         let listed = apps.map { app in
             app.isPart ? "\(name(of: app)) in \(app.dir.lastPathComponent)/ (part \"\(address(of: app, among: apps))\", its rules in the \(skill(of: app)) skill)"
-                : "\(name(of: app)) in the wish's own folder (part \"\(address(of: app, among: apps))\", the rules above)"
+                : "\(name(of: app)) in the project's own folder (part \"\(address(of: app, among: apps))\", the rules above)"
         }
         return """
 
-        - This wish is \(apps.count) apps: \(listed.joined(separator: ", and ")). Each is an app of its own kind with its own \
+        - This project is \(apps.count) apps: \(listed.joined(separator: ", and ")). Each is an app of its own kind with its own \
         build files, made to work with the others, and each is the person's: none comes first, and any of them can be \
         added or changed (`make_app_for`) or taken away (`remove_app`) when the person asks, each named by its folder in their `app` ("." for \
-        the one in the wish's own folder). Before you write or change one in a folder of \
+        the one in the project's own folder). Before you write or change one in a folder of \
         its own, open its rules with `read_skill` (once per conversation) and follow them for the files in its folder. \
         `look_at_app` and `use_app` take `part` to say which app; when to look is as for one app, for each one you changed.
         """ + (apps.filter { WishRooms.joins($0.platform) }.count >= 2 ? Agent.Rules.wishTalk : "") + Targets.all.flatMap { kind in
@@ -535,9 +535,9 @@ extension Agent.Rules {
     /// The first lines of a part's rules (`Parts.pack`), in place of its kind's header.
     static func partHeader(_ kind: String, folder: String) -> String {
         """
-        These are the rules for the part of the wish in \(folder)/: \(kind). Everything they say about "the app" is \
+        These are the rules for the part of the project in \(folder)/: \(kind). Everything they say about "the app" is \
         about that part, and every path in them is inside \(folder)/ (its Sources/, its APP.md, its .lamp/runtime/). \
-        Lamp writes its build files as it does for every app. The rules you were given first still hold for the wish as a \
+        Lamp writes its build files as it does for every app. The rules you were given first still hold for the project as a \
         whole: how to ask, talk, use the shell and finish.
         """
     }
@@ -547,7 +547,7 @@ extension Agent.Rules {
     static func partTalk(mac: Bool) -> String {
         wishTalk + """
 
-        - When the wish has a TV app and this app steers it, choose what fits: plain `LampWish` messages do for a few \
+        - When the project has a TV app and this app steers it, choose what fits: plain `LampWish` messages do for a few \
         commands (a slideshow's next and back, a remote), and `LampController` from LampSupport.swift is one way \
         suited to game-style input (buttons held and let go, sticks, several players), which the TV app takes in \
         `Lamp.controllers`: `let pad = LampController.connect()` joins the TV app as a player, as a phone's page would, over the home \
@@ -574,12 +574,12 @@ extension Agent {
     static func undecidedPrompt(candidates devices: [String]) -> String {
         let named = devices.compactMap { Places.named($0) }.map(\.name)
         return """
-        You are Lamp's builder agent. The current directory is a new wish with nothing made for it yet. Before anything         is written, you decide what it is and where it runs, and give it its first app with `make_app_for`: what it is (a game or an         app), the devices it's to be on, and whether it's made as a web page or as each device's own native code.         \(named.isEmpty ? "The request names no device." : "The request names: \(named.joined(separator: ", ")).")
+        You are Lamp's builder agent. The current directory is a new project with nothing made for it yet. Before anything         is written, you decide what it is and where it runs, and give it its first app with `make_app_for`: what it is (a game or an         app), the devices it's to be on, and whether it's made as a web page or as each device's own native code.         \(named.isEmpty ? "The request names no device." : "The request names: \(named.joined(separator: ", ")).")
 
         Rules:
         - Choose from the request and from what each device can run (the table in `make_app_for`'s description, and the         person's own devices Lamp knows of, below the request). When the person names no make, take the table's default: a game or an app is web wherever         Lamp has a host for a page, and native elsewhere; one app asked for across several devices is web where every one         takes a page. Make an app native only where it needs what only native code does (a menu bar icon, widgets, Siri         and Shortcuts, Health: the web-or-native skill has the list). A make the person names is theirs wherever Lamp can         build it, and devices Lamp found never add a device or change the make by themselves. How it gets onto each device         is the table's. Most wishes that name no device are for this Mac, made web.
         - Ask with `ask` only when the answer really changes what you make, in one short question about people and         devices ("Just your phone, or your family's too?"), never "web or native". Nothing else in the card, and change         no files until it's answered. When it's clear, call `make_app_for` straight away.
-        - A wish can be more than one app, made to work together (an iPhone app and its TV app): give the first with         `make_app_for`; one more beside it only once the person chose that when you asked with `ask`, with `another` (the more-apps skill).
+        - A project can be more than one app, made to work together (an iPhone app and its TV app): give the first with         `make_app_for`; one more beside it only once the person chose that when you asked with `ask`, with `another` (the more-apps skill).
         - `make_app_for`'s reply carries the rules for the app it made, which take the place of these: follow them and         build the wish in the same request.
         """ + Rules.audience + Rules.begin
     }
@@ -634,7 +634,7 @@ extension Parts {
         let present = Set(apps.map(Made.App.init))
         let sent = made(in: wish).filter { present.contains($0.app) }
         guard !sent.isEmpty else { return ("", []) }
-        return ("\n\n---\nApps this wish was waiting for that Lamp has made (from Lamp, not part of the request above):\n\n"
+        return ("\n\n---\nApps this project was waiting for that Lamp has made (from Lamp, not part of the request above):\n\n"
                 + sent.flatMap(\.said).joined(separator: "\n\n"), sent)
     }
 
@@ -654,7 +654,7 @@ extension Parts {
     @MainActor static func brief(for project: LampProject, engine: Engine, session: String?) -> String {
         let line = waitingLine(for: project, parts: Store.shared.parts(of: project))
         guard note.telling(line, for: project, engine: engine, session: session) != .nothing, !line.isEmpty else { return "" }
-        return "\n\n---\nApps this wish should have and doesn't yet (from Lamp, not part of the request above). Don't make them " +
+        return "\n\n---\nApps this project should have and doesn't yet (from Lamp, not part of the request above). Don't make them " +
             "yourself: Lamp makes each as soon as this Mac can build it, and the person has its setup a click away in the chat. " +
             "Build the rest, and say in a sentence what's waiting if the person asks about it:\n" + line
     }

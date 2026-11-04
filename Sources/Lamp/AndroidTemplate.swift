@@ -426,7 +426,7 @@ extension Agent.Rules {
     /// How an Android app reaches the wish's other apps: `LampWish` in LampSupport.kt (`wishTalk`), messages, values and
     /// files alike; it has no `LampController`, a TV app's game controls, which are the Swift apps'.
     static let androidPartTalk = String(wishTalk.dropFirst()) + """
-    - `LampWish` is this app's building block for the wish's other apps, the TV app's included: messages, shared \
+    - `LampWish` is this app's building block for the project's other apps, the TV app's included: messages, shared \
     values and files (`LampWish.sendFile`, which the TV app gets in `Lamp.wish.onFile`). It has no `LampController`, \
     so it can't join a TV app's game as a player (`Lamp.controllers`, buttons and sticks held and let go); for a few \
     commands plain messages do, and when the person wants game controls from the phone, say plainly that only an \
@@ -480,8 +480,8 @@ extension Agent.Rules {
     saved property. Files the app ships with go in app/src/main/assets and are read with LampAssets. Data that \
     should be the same wherever the app is open (one list on a phone, a tablet and the Mac): \
     `LampStore.shared<Grocery>("groceries") { it.id }` (items, put, delete, publish, onChange), merged item by item \
-    between the app's copies, and `LampStore.sharedFiles("photos")` for files; `wish = true` makes either the wish's \
-    own, the same in every app of the wish. Open the `wish-links` skill first.
+    between the app's copies, and `LampStore.sharedFiles("photos")` for files; `wish = true` makes either the project's \
+    own, the same in every app of the project. Open the `wish-links` skill first.
     """
 
     static let androidPermissions = """

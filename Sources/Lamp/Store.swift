@@ -205,7 +205,7 @@ struct LampProject: Identifiable, Hashable {
     /// its folder and everything that asks `untitled` go by), so the screen says what it is instead: a wish,
     /// theirs from the site or one still to be told. Nothing is an app until Lamp has made something; the
     /// name Lamp or the person gives it takes over everywhere at once.
-    var title: String { !untitled ? name : fromWish ? "Your wish" : finding ? "Finding a wish" : "New wish" }
+    var title: String { !untitled ? name : fromWish ? "Your wish" : finding ? "Finding a wish" : "New app" }
     var isDeviceSetup: Bool { deviceSetup != nil }
     /// Nothing here is an app yet, or ever: a wish being found, or a device's setup.
     var makesNoApp: Bool { finding || isDeviceSetup }
@@ -2129,8 +2129,8 @@ final class Store: ObservableObject {
         Task {
             guard let latest = await WishLink.latest(shared.id), let file = latest.file else {
                 let alert = NSAlert()
-                alert.messageText = "Lamp couldn't get the shared wish"
-                alert.informativeText = "The link may be old, the wish may have been taken down, or it was shared without the wish itself."
+                alert.messageText = "Lamp couldn't get the shared app"
+                alert.informativeText = "The link may be old, the app may have been taken down, or it was shared without the app itself."
                 alert.runModal()
                 return
             }
@@ -2145,7 +2145,7 @@ final class Store: ObservableObject {
     /// turns out bigger is dropped as soon as it passes the limit, so nothing larger is ever held.
     nonisolated static func fetch(_ request: URLRequest, upTo limit: Int) async throws -> Data {
         let (bytes, response) = try await URLSession.shared.bytes(for: request)
-        let refusal = Sharing.ImportError("Lamp couldn't get the shared wish.", detail: "The link may be old, or the wish was taken down.")
+        let refusal = Sharing.ImportError("Lamp couldn't get the shared app.", detail: "The link may be old, or the app was taken down.")
         // A `data:` address answers with no status: only the site's dev server gives one (`WishLink.latest`).
         if let http = response as? HTTPURLResponse { guard http.statusCode == 200 else { throw refusal } }
         else { guard request.url?.scheme == "data" else { throw refusal } }
@@ -2215,7 +2215,7 @@ final class Store: ObservableObject {
     private func refuseRemix() {
         NSApp.activate()
         NSAlert(error: Sharing.ImportError("Lamp can't open this link.",
-                                           detail: "It doesn't name one of Lamp's wishes or a repository on GitHub.")).runModal()
+                                           detail: "It doesn't name an app made with Lamp or a repository on GitHub.")).runModal()
     }
 
     func take(wish: String) {
@@ -2576,7 +2576,7 @@ final class Store: ObservableObject {
     /// `given`: the folder a shared file had it in, used when it's free.
     func addPart(_ kind: Platform, to wish: LampProject, family: DeviceFamily? = nil, folder reserved: String? = nil, given: String? = nil,
                  places: [Destination]? = nil, integration: String? = nil) async -> (part: LampProject?, problem: String?, setup: Bool) {
-        guard let wish = current(wish), !wish.isPart else { return (nil, "Lamp can't find the wish.", false) }
+        guard let wish = current(wish), !wish.isPart else { return (nil, "Lamp can't find the project.", false) }
         // Only a folder directly in the wish's, by a name a new app's folder can have: never the wish's own, or a path.
         let reserved = reserved.flatMap { Parts.isFolderName($0) ? $0 : nil }
         // A device's app is its integration's to make: one Lamp no longer has can't be.
@@ -2585,7 +2585,7 @@ final class Store: ObservableObject {
             return have.platform == kind ? (have, nil, false)
                 : (nil, "\(have.dir.lastPathComponent)/ already holds \(Parts.name(of: have)).", false)
         }
-        guard Parts.partKinds.contains(kind) else { return (nil, "Lamp can't make \(Parts.name(of: kind)) as a part of another wish yet.", false) }
+        guard Parts.partKinds.contains(kind) else { return (nil, "Lamp can't make \(Parts.name(of: kind)) beside other apps yet.", false) }
         if device, integration.map(DeviceApps.makesApps) != true {
             return (nil, "Lamp doesn't know how to make apps for that device any more.", false)
         }
@@ -2604,10 +2604,10 @@ final class Store: ObservableObject {
         // The wish's folder is the agent's: what's there under the part's name must be a plain folder or nothing, and a
         // folder kept for an app still to be made may hold what the agent wrote for it, but no other app.
         if let type = (try? FileManager.default.attributesOfItem(atPath: dir.path))?[.type] as? FileAttributeType, type != .typeDirectory {
-            return (nil, "\(folder)/ in the wish's folder isn't a folder: delete it first.", false)
+            return (nil, "\(folder)/ in the project's folder isn't a folder: delete it first.", false)
         }
         if let other = Parts.kindOfScaffold(in: dir, wish: wish.dir), other != kind {
-            return (nil, "\(folder)/ in the wish's folder already holds \(Parts.name(of: other)).", false)
+            return (nil, "\(folder)/ in the project's folder already holds \(Parts.name(of: other)).", false)
         }
         do {
             try AppFolder.createDirectory(dir.appendingPathComponent(".lamp"), in: wish.dir)
@@ -2660,7 +2660,7 @@ final class Store: ObservableObject {
         if !app.isPart || !wish.hasScaffold {
             let mark = wish.dir.appendingPathComponent(Parts.wishOnly)
             do { try AppFolder.write(Data(Parts.wishOnlyText.utf8), to: mark, in: wish.dir) } catch { return .failed(error.localizedDescription) }
-            guard Parts.isWishOnly(wish.dir) else { return .failed("\(Parts.wishOnly) in the wish's folder isn't a plain file.") }
+            guard Parts.isWishOnly(wish.dir) else { return .failed("\(Parts.wishOnly) in the project's folder isn't a plain file.") }
         }
         // The wish no longer should have it: taken away, it isn't made again at the next turn. Only here: a restore has
         // already given the wish the list its version had (`Versions.restoreFiles`), which forgetting leaves alone.
@@ -3648,7 +3648,7 @@ final class Store: ObservableObject {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.lampApp, .folder]
         panel.canChooseDirectories = true
-        panel.message = "Choose a shared wish file, or a folder cloned from GitHub"
+        panel.message = "Choose a shared app file, or a folder cloned from GitHub"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         importApp(from: url)
     }
@@ -3656,10 +3656,10 @@ final class Store: ObservableObject {
     /// Open from GitHub…: the address of a wish's repository, which Lamp fetches and opens as it would the shared file.
     func chooseRepository() {
         let alert = NSAlert()
-        alert.messageText = "Open a wish from GitHub"
-        alert.informativeText = "Paste the address of a repository on GitHub: a wish Lamp put there, or a project Lamp can make into an app."
+        alert.messageText = "Open an app from GitHub"
+        alert.informativeText = "Paste the address of a repository on GitHub: an app Lamp put there, or a project Lamp can make into one."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
-        field.placeholderString = "https://github.com/someone/wish"
+        field.placeholderString = "https://github.com/someone/app"
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
         alert.addButton(withTitle: "Open")
@@ -3668,7 +3668,7 @@ final class Store: ObservableObject {
         guard let source = RepoImport.source(from: field.stringValue) else {
             let refusal = NSAlert()
             refusal.messageText = "That isn't a repository on GitHub"
-            refusal.informativeText = "An address looks like https://github.com/someone/wish, with a branch or commit after it if you like."
+            refusal.informativeText = "An address looks like https://github.com/someone/app, with a branch or commit after it if you like."
             refusal.runModal()
             return
         }
@@ -4194,7 +4194,7 @@ final class Store: ObservableObject {
         }
         let arrival = await Versions.list(project).first { Self.arrivalMessages.contains($0.message) }?.id
         let place = following.map { Following.title(of: $0) }
-            ?? (original != nil ? "the original" : source.map { "\($0.owner)/\($0.name) on GitHub" } ?? "the shared wish")
+            ?? (original != nil ? "the original" : source.map { "\($0.owner)/\($0.name) on GitHub" } ?? "the shared app")
         let merged: Upstream.Merged
         do {
             merged = try await Upstream.merge(package, into: project, from: source, commit: commit, arrival: arrival, ref: ref, accepted: accepted)
@@ -4695,7 +4695,7 @@ final class Store: ObservableObject {
     }
 
     /// Refused while an app still to be made couldn't be given its folder (`givingWaitingAppsFolders`).
-    private static let waitingFoldersFailed = "Lamp couldn't note where an app still to be made goes, so nothing changed. Tell the person in a sentence that Lamp couldn't update the wish's apps just now."
+    private static let waitingFoldersFailed = "Lamp couldn't note where an app still to be made goes, so nothing changed. Tell the person in a sentence that Lamp couldn't update the project's apps just now."
 
     /// The setup one of a wish's apps was waiting for is done (`IPhoneSetupLine`): what stopped it is cleared, so the
     /// next turn makes it, and the request that asks for it is sent.
@@ -5504,7 +5504,7 @@ final class Store: ObservableObject {
             return "The app builds, but it quit right after launching. Find the cause and fix it.\n\n\(crash)"
         }
         let each = apps.compactMap { app in
-            crashes[app.id].map { (app.isPart ? "\(placeName(app)), in \(app.dir.lastPathComponent)/," : "\(placeName(app)), in the wish's own folder,") + " builds, but it quit right after launching.\n\n\($0)" }
+            crashes[app.id].map { (app.isPart ? "\(placeName(app)), in \(app.dir.lastPathComponent)/," : "\(placeName(app)), in the project's own folder,") + " builds, but it quit right after launching.\n\n\($0)" }
         }
         return each.joined(separator: "\n\n") + "\n\nFind the cause and fix it."
     }
@@ -7374,7 +7374,7 @@ final class Store: ObservableObject {
             // asked again: Lamp can't tell the same device from another one given the old name.
             let kept = DevicePermissions.kept(wish)
             if kept.always.contains(device), kept.addresses[device] == address {
-                return (200, ["text": "The person already allows \(device) for this wish: go ahead."])
+                return (200, ["text": "The person already allows \(device) for this project: go ahead."])
             }
             if turn.asked || Talk.open(in: logs[project.id] ?? []) != nil { return (200, ["text": Talk.alreadyAsked]) }
             DevicePermissions.asking(about: device, at: address, for: wish)
@@ -7425,7 +7425,7 @@ final class Store: ObservableObject {
         if !wish.holdsApp, stamps[wish.id] != nil {
             let closed = await quit(before, for: turns[wish.id])
             await forget(before, .reversibly)
-            if !closed { log(wish, .status, "T\(Parts.name(of: before).dropFirst()) is still open. It's no longer one of the wish's apps.") }
+            if !closed { log(wish, .status, "T\(Parts.name(of: before).dropFirst()) is still open. It's no longer one of \(wish.name)'s apps.") }
         }
         guard !Parts.match(parts(of: wish), filesOf: wish.dir) else { return wish }
         let found = Parts.folders(in: wish.dir)
@@ -7481,7 +7481,7 @@ final class Store: ObservableObject {
     private func describe(_ member: WishMember) -> String {
         let name = Parts.name(of: member.target.kind, integration: member.target.integration)
         guard member.isMade else { return name + " (still to be made" + (member.slot.map { $0 == "." ? "" : ", in \($0)/" } ?? "") + ")" }
-        return name + " in " + (member.folder.map { $0 + "/" } ?? "the wish's own folder")
+        return name + " in " + (member.folder.map { $0 + "/" } ?? "the project's own folder")
     }
 
     /// `make_app_for`: one app, a game or an app, on the devices asked for, made the way asked (`AppPlanner.make`): its
@@ -7492,14 +7492,14 @@ final class Store: ObservableObject {
         let wish: LampProject
         switch givingWaitingAppsFolders(project) {
         case .ready(let found): wish = found
-        case .notFound: return (404, ["error": "Lamp can't find the wish."])
+        case .notFound: return (404, ["error": "Lamp can't find the project."])
         case .failed: return (500, ["error": Self.waitingFoldersFailed])
         }
         guard let made = (arguments["made"] as? String).flatMap({ Place.Make(rawValue: $0.trimmed.lowercased()) }),
               let intent = (arguments["kind"] as? String).flatMap({ AppIntent(rawValue: $0.trimmed.lowercased()) }),
               let devices = arguments["devices"] as? [String], !devices.isEmpty else {
             return (400, ["error": "make_app_for takes `kind`, \"game\" or \"app\"; `made`, \"web\" or \"native\"; and `devices`, every device "
-                          + "the app is to be on from now on. Once the wish has an app, `app` names the one to change, or `another` adds one more."])
+                          + "the app is to be on from now on. Once the project has an app, `app` names the one to change, or `another` adds one more."])
         }
         let needs: [String]
         switch Skills.gameNeeds(arguments["needs"]) {
@@ -7522,7 +7522,7 @@ final class Store: ObservableObject {
             var into = wish
             if !wish.scaffolded {
                 guard let only = await makeWishOnly(wish) else {
-                    return (500, ["error": "Lamp couldn't set up the wish's folder. Tell the person in a sentence; it says why in the chat."])
+                    return (500, ["error": "Lamp couldn't set up the project's folder. Tell the person in a sentence; it says why in the chat."])
                 }
                 into = only
             }
@@ -7535,7 +7535,7 @@ final class Store: ObservableObject {
             // Of a code the wish has none of (`AppPlanner.make`): the same call again finds that app there and is refused,
             // so it never makes a folder more.
             said += await add(target, to: wish, intent: intent, needs: needs)
-            said.append("The wish's other apps stay as they are (" + members.map(describe).joined(separator: ", ") + ").")
+            said.append("The project's other apps stay as they are (" + members.map(describe).joined(separator: ", ") + ").")
         case .update(let member, let asked):
             target = asked
             var changed = true
@@ -7543,8 +7543,8 @@ final class Store: ObservableObject {
                let other = Parts.clash(changing: app, to: target.kind, integration: target.integration, places: target.places,
                                        among: apps(of: wish), in: wish) {
                 return (400, ["error": "\(describe(member).prefix(1).uppercased() + describe(member).dropFirst()) can't become this: it would share its name among "
-                              + "the wish's apps, or its place on this Mac, with \(Parts.name(of: other)) in "
-                              + (other.isPart ? other.dir.lastPathComponent + "/" : "the wish's own folder")
+                              + "the project's apps, or its place on this Mac, with \(Parts.name(of: other)) in "
+                              + (other.isPart ? other.dir.lastPathComponent + "/" : "the project's own folder")
                               + ". Nothing changed. Tell the person in a sentence that this app can't become that while the other one is there."])
             }
             if let id = member.id, let app = apps(of: wish).first(where: { $0.id == id }) {
@@ -7558,7 +7558,7 @@ final class Store: ObservableObject {
                 // Not made what was asked (this Mac's setup, or the person kept it open): nothing about it to adapt.
                 changed = !(text.hasPrefix("Not yet") || text.hasPrefix("Nothing changed"))
                 said.append(unchanged ? "Nothing changed, and nothing was added."
-                            : "That changed \(describe(member)); nothing was added: the wish has the same apps as before.")
+                            : "That changed \(describe(member)); nothing was added: the project has the same apps as before.")
             } else {
                 var waiting = target.waiting
                 waiting.folder = member.slot
@@ -7596,7 +7596,7 @@ final class Store: ObservableObject {
             let ignore = wish.dir.appendingPathComponent(".gitignore")
             if !FileManager.default.fileExists(atPath: ignore.path) { try AppFolder.write(Data(".lamp/\n".utf8), to: ignore, in: wish.dir) }
         } catch {
-            log(wish, .error, "Couldn't set up the wish: \(error.localizedDescription)")
+            log(wish, .error, "Couldn't set up the app's folder: \(error.localizedDescription)")
             return nil
         }
         var changed = projects[index]
@@ -7622,7 +7622,7 @@ final class Store: ObservableObject {
                                                    integration: kind == .device ? target.integration : nil)
         guard let part else {
             recordNeeds(problem ?? "Lamp couldn't make it.", for: waiting, of: wish, setup: setup)
-            return ["Not yet for \(Parts.name(of: target.waiting)): \(problem ?? "Lamp couldn't make it.") Lamp keeps it on the wish's list and makes it "
+            return ["Not yet for \(Parts.name(of: target.waiting)): \(problem ?? "Lamp couldn't make it.") Lamp keeps it on the project's list and makes it "
                     + "once that's done\(intent == .game && kind != .game ? ", as a game" : ""). Build the rest; what it was to do may go another way meanwhile if one works now, your choice. "
                     + "Tell the person in a sentence."]
         }
@@ -7633,8 +7633,8 @@ final class Store: ObservableObject {
         said.append(watchLine(for: part, wanted: target.rows.contains("watch"), had: false))
         said.append(Skills.forNewDevices(target.rows))
         said.append(Agent.Rules.newAppAI)
-        said.append("Done: the wish has \(Parts.name(of: part)) now, in \(part.dir.lastPathComponent)/, with its scaffold written. It's a new app "
-                    + "with data of its own, starting empty: nothing another app of the wish saved is in it unless its code reads it from that app. Build it in this "
+        said.append("Done: the project has \(Parts.name(of: part)) now, in \(part.dir.lastPathComponent)/, with its scaffold written. It's a new app "
+                    + "with data of its own, starting empty: nothing another app of the project saved is in it unless its code reads it from that app. Build it in this "
                     + "request, made to work with the rest. `make_app_for` and `remove_app` name it with `app` \"\(part.dir.lastPathComponent)\"; `look_at_app` and `use_app` reach it with `part` \"\(Parts.address(of: part, among: apps(of: current(wish) ?? wish)))\". "
                     + "Its rules, for the files in \(part.dir.lastPathComponent)/:\n\n"
                     + rulesOfNew(part, kind: kind, needs: needs))
@@ -7723,7 +7723,7 @@ final class Store: ObservableObject {
         let wish: LampProject
         switch givingWaitingAppsFolders(project) {
         case .ready(let found): wish = found
-        case .notFound: return (404, ["error": "Lamp can't find the wish."])
+        case .notFound: return (404, ["error": "Lamp can't find the project."])
         case .failed: return (500, ["error": Self.waitingFoldersFailed])
         }
         let members = members(of: wish)
@@ -7740,7 +7740,7 @@ final class Store: ObservableObject {
                          && (member.target.kind != .device || entry.integration == member.target.integration))
             })
             log(wish, .status, "\(wish.name) won't have \(name).")
-            return (200, ["text": "Lamp took \(name) off the wish's list: it won't be made."])
+            return (200, ["text": "Lamp took \(name) off \(wish.name)'s list: it won't be made."])
         case .success(.remove(let member)):
             guard let id = member.id, let app = apps(of: wish).first(where: { $0.id == id }) else { return (404, ["error": "Lamp can't find that app."]) }
             let name = Parts.name(of: app)
@@ -7752,9 +7752,9 @@ final class Store: ObservableObject {
                 return (500, ["error": "Lamp couldn't take \(name) away: \(why) Nothing was taken away. Tell the person in a sentence."])
             }
             log(wish, .status, "\(wish.name) no longer has \(name).")
-            let left = apps(of: wish).isEmpty ? " The wish has no apps now: it keeps its name, chat and history, and `make_app_for` gives it a new one."
-                : app.isPart ? "" : " What your instructions said about it no longer applies: every app of the wish is in a folder of its own now, with its own rules."
-            return (200, ["text": "Lamp took \(name) away, as asked. Its code is in the wish's versions and what it saved stays on this Mac, so "
+            let left = apps(of: wish).isEmpty ? " \(wish.name) has no apps now: it keeps its name, chat and history, and `make_app_for` gives it a new one."
+                : app.isPart ? "" : " What your instructions said about it no longer applies: every app of \(wish.name) is in a folder of its own now, with its own rules."
+            return (200, ["text": "Lamp took \(name) away, as asked. Its code is in \(wish.name)'s versions and what it saved stays on this Mac, so "
                           + "Undo in the chat's toolbar or restore_version brings it back as it was." + left])
         case .success:
             return (400, ["error": "remove_app only takes an app away."])
@@ -7766,9 +7766,9 @@ final class Store: ObservableObject {
     /// yet isn't made again under the new name as the desk's Rename makes it, and a draft, with no app to carry the
     /// name, is named once it has one.
     func agentRename(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
-        guard let wish = current(self.wish(of: project)) else { return (404, ["error": "Lamp can't find the wish."]) }
+        guard let wish = current(self.wish(of: project)) else { return (404, ["error": "Lamp can't find the project."]) }
         guard wish.scaffolded, !wish.makesNoApp else {
-            return (400, ["error": "The wish has no app to carry a name yet: give it one with make_app_for, then rename it."])
+            return (400, ["error": "There's no app to carry a name yet: give it one with make_app_for, then rename it."])
         }
         let asked = (arguments["name"] as? String ?? "").trimmed
         if asked == wish.name { return (200, ["text": "It's already called \(wish.name)."]) }
@@ -7779,7 +7779,7 @@ final class Store: ObservableObject {
         turns[wish.id]?.renamed = true
         // Another wish may have the name, or it held what a name can't (a slash): the agent says the one it got.
         let taken = renamed.name == asked ? "" : ", the nearest Lamp could give to \(asked)"
-        return (200, ["text": "Lamp renamed the wish \(renamed.name)\(taken): on the desk, in the chat and on its installed apps, "
+        return (200, ["text": "Lamp renamed it \(renamed.name)\(taken): on the desk, in the chat and on its installed apps, "
                       + "saved as a version of its own, so Undo in the chat's toolbar gives \(wish.name) back. Its settings and data stay. "
                       + "Change any words in the app's own screens that still say \(wish.name)."])
     }
@@ -8071,7 +8071,7 @@ final class Store: ObservableObject {
                 let kept = Credits.load(project).merged(with: credit)
                 return credit.upstream.allSatisfy { source in kept.upstream.contains { $0.sameWork(as: source) } }
             }
-            let full = "- \(item.id) wasn't brought in: this wish already credits as many works as Lamp can keep (\(Credits.maxEntries)), so its credit would be lost. Use one from a pack the wish already credits, or make it in code."
+            let full = "- \(item.id) wasn't brought in: this project already credits as many works as Lamp can keep (\(Credits.maxEntries)), so its credit would be lost. Use one from a pack the project already credits, or make it in code."
             guard creditFits() else { problems.append(full); continue }
             do {
                 let files = try await AssetCatalog.files(of: item, budget: budget)
@@ -12966,13 +12966,13 @@ final class Store: ObservableObject {
     func agentIconPicture(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
         guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
         let wish = self.wish(of: project)
-        guard let spec = Icons.load(wish) else { return (400, ["error": "The wish has no icon yet: build its app first, then give it the picture."]) }
+        guard let spec = Icons.load(wish) else { return (400, ["error": "The project has no icon yet: build its app first, then give it the picture."]) }
         let given = (arguments["path"] as? String)?.trimmed ?? ""
         guard !given.isEmpty else { return (400, ["error": "Say in `path` which picture, e.g. Attachments/Logo.icns."]) }
         // Read as Lamp reads the app's own files: inside the wish's folder, through no link.
         let url = URL(fileURLWithPath: given, relativeTo: wish.dir).standardizedFileURL
         guard let data = AppFile.read(url, in: wish) else {
-            return (404, ["error": "There's no picture at \(given) in the wish's folder. Attachments are in Attachments/."])
+            return (404, ["error": "There's no picture at \(given) in the project's folder. Attachments are in Attachments/."])
         }
         let made: (png: Data, fills: Bool)
         do {
@@ -13712,11 +13712,11 @@ final class Store: ObservableObject {
             // A screen is looked at in the TV preview wherever it's shown: only when it's shown there is the preview the
             // screen among the wish's apps, so it never takes the place of the screen's own window or TV.
             if request.fromPreview, project.platform.target.looksInTVPreview, !(project.onTV && project.device == nil) {
-                return (409, ["error": "This is Lamp's preview of the screen: the screen where it's shown is the one the wish's other apps reach."])
+                return (409, ["error": "This is Lamp's preview of the screen: the screen where it's shown is the one the project's other apps reach."])
             }
             // A preview holding a copy of the Mac copy's data isn't one of the wish's apps: what's done there stays there.
             if request.fromPreview, TVPreview.isSeeded(project) {
-                return (409, ["error": "This is Lamp's preview, holding a copy of the app's data: it doesn't join the wish's other apps."])
+                return (409, ["error": "This is Lamp's preview, holding a copy of the app's data: it doesn't join the project's other apps."])
             }
             return await WishRooms.answer(for: project, wish: wish, apps: apps, host: host, preview: request.fromPreview)
         }
@@ -14569,17 +14569,17 @@ final class Store: ObservableObject {
         let have = apps.map { "\"\(Parts.address(of: $0, among: apps))\" (\(Parts.name(of: $0)))" }.joined(separator: ", ")
         guard let word = (arguments["part"] as? String)?.trimmed, !word.isEmpty else {
             guard apps.count > 1 else { return (apps.first ?? project, nil) }
-            return (nil, "This wish has \(apps.count) apps: say which with `part`: \(have).")
+            return (nil, "This project has \(apps.count) apps: say which with `part`: \(have).")
         }
         let found = Parts.picks(word, among: apps)
         if found.count == 1 { return (found[0], nil) }
         // A word that fits several (two Mac apps' "mac") is asked about, never read as the first.
         if found.count > 1 {
-            return (nil, "\"\(word)\" is more than one of this wish's apps: say which with `part`: "
-                    + found.map { "\"\(Parts.address(of: $0, among: apps))\" (\(Parts.name(of: $0)) in \($0.isPart ? $0.dir.lastPathComponent + "/" : "the wish's own folder"))" }
+            return (nil, "\"\(word)\" is more than one of this project's apps: say which with `part`: "
+                    + found.map { "\"\(Parts.address(of: $0, among: apps))\" (\(Parts.name(of: $0)) in \($0.isPart ? $0.dir.lastPathComponent + "/" : "the project's own folder"))" }
                         .joined(separator: ", ") + ".")
         }
-        return (nil, "This wish has no \(word) app. Its apps: \(have). To add one, use make_app_for.")
+        return (nil, "This project has no \(word) app. Its apps: \(have). To add one, use make_app_for.")
     }
 
     /// A part's look or use runs under its wish's turn, as the wish's own does: the turn is the part's too while it

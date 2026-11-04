@@ -205,7 +205,7 @@ struct StoreDialogs: ViewModifier {
         } message: {
             // A device app comes off the devices Lamp put it on too (`DeviceApps.removeEverywhere`), whichever app of the
             // wish it is.
-            Text("The wish, its chat, its history and what it saved are moved to the Trash."
+            Text("The app, its chat, its history and what it saved are moved to the Trash."
                  + (store.deleting.flatMap { wish in store.apps(of: wish).lazy.compactMap { $0.hasDevice ? DeviceApps.integration(for: $0)?.name : nil }.first }
                     .map { " It's also taken off your \($0)." } ?? ""))
         }

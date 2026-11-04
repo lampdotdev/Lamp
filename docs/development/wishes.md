@@ -2,6 +2,8 @@
 
 One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the repository: it has the rules every change follows and the list of guides; a section named in quotes may be in another guide on that list.
 
+People see a wish called an app; the agent's prompts call it a project.
+
 A wish can be more than one app made to work together: a TV app with an iPhone app that controls it, a Mac app with an
 Android app (`Parts`). The wish is its own thing, apart from its apps: its name, chat, versions and icon are the wish's,
 and which apps it should have is its list (`LampProject.apps`, `WishApp`, in its meta.json; below). No app of a wish is
@@ -281,7 +283,7 @@ an open license goes with its license and credit; under a share-alike one (GPL, 
 and the remix stays under it, which a shared file satisfies by carrying the code and a published page says
 (`ShareCheck.notes`); under its own terms (`LicenseRef-`, an id Lamp doesn't know, non-commercial or no-derivatives) it
 goes, credited and named; with no license it goes too, once the person has been told, naming it (`ShareCheck.warning`):
-Share…, Copy Wish File, Export… and a drag from the desk ask once with Share Anyway (`Sharing.askToShare`), and the answer
+Share…, Copy App File, Export… and a drag from the desk ask once with Share Anyway (`Sharing.askToShare`), and the answer
 is kept for the wish until it takes in more such work (`ShareCheck.accepted`, in Lamp's settings rather than the wish's
 folder, where the agent writes); an app's File ▸ Share… gets the same question from `/app/share` and asks again with
 `anyway` and the work it was shown (an answer covers only that, by the wish's `instance`); Share Link (with the wish itself ticked), Send Changes Back… and Put on GitHub… to a public repository (a game's page with it) say it

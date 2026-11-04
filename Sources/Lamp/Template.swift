@@ -353,7 +353,7 @@ enum Template {
     /// block never makes such an app build again.
     static func withoutWish(_ swift: String) -> String {
         let swift = swift.replacingOccurrences(of: wishLeavesLampClosed, with: "")
-        guard let start = swift.range(of: "    // MARK: - The wish's other apps\n"),
+        guard let start = swift.range(of: "    // MARK: - The project's other apps\n"),
               let end = swift.range(of: "    // MARK: - Mac building blocks\n", range: start.upperBound..<swift.endIndex) else { return swift }
         return String(swift[..<start.lowerBound]) + String(swift[end.lowerBound...])
     }
@@ -3799,7 +3799,7 @@ enum Template {
         static var host: String { value("host") }
         /// The folder of Lamp's apps, and this app's in it.
         static var apps: String { value("apps") }
-        /// Its folder: under its own name, or for a part of a wish (an app beside a TV app) inside its wish's. An app
+        /// Its folder: under its own name, or for a part of a project (an app beside a TV app) inside its project's. An app
         /// installed by a Lamp from before says only its name.
         static var app: String { apps + "/" + (value("folder").isEmpty ? slug : value("folder")) }
         static var macHost: String { value("macHost") }
@@ -3902,7 +3902,7 @@ enum Template {
 
     /// The About window, with the app's credits as Lamp has them now. The Credits.html written into the bundle is only
     /// as new as the app's install, and a credit added while the app is open (work brought in with a change that went
-    /// into the running app, with no install) would wait for the next one; Lamp answers from the wish's credits.json.
+    /// into the running app, with no install) would wait for the next one; Lamp answers from the project's credits.json.
     /// With no answer from Lamp (it isn't open, or this app isn't its), it's the bundle's page, as macOS shows it.
     @MainActor enum LampAbout {
         static var name: String {
@@ -6232,7 +6232,7 @@ enum Template {
             // Not put back where a cover was left (full screen, the Dock): the first window takes on what's owed.
             takeOn(window)
             if let wait = askedToOpen() {
-                // A wish Lamp came with, opened for the first time, is seen on its own a moment before its chat
+                // A project Lamp came with, opened for the first time, is seen on its own a moment before its chat
                 // comes in beside it: the file says how long (`MagicPanel.startWithChat`).
                 guard wait > 0 else { return open(window) }
                 DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
@@ -6776,7 +6776,7 @@ enum Template {
 
         /// The chat on a card in its panel, on the chat's own paper (`Paper`): opaque, since what's behind the window
         /// showing through glass drew the eye from the chat, and glass drew a bright line round its edge. The chat draws its own bar, close button included, and asks the app to close or move the
-        /// panel (`LampSidebarHost`): what changes the wish (undo, versions, sharing…) is in the chat, which only Lamp
+        /// panel (`LampSidebarHost`): what changes the project (undo, versions, sharing…) is in the chat, which only Lamp
         /// speaks to.
         @MainActor private static func card(for host: EXHostViewController, in window: NSWindow) -> (card: NSView, pane: NSView) {
             let outer = Card()
@@ -15237,17 +15237,17 @@ enum Template {
         }
     }
 
-    // MARK: - The wish's other apps
+    // MARK: - The project's other apps
 
-    /// The other apps of this app's wish (a TV app, an iPhone app, an Android app…): which are open now, and messages
+    /// The other apps of this app's project (a TV app, an iPhone app, an Android app…): which are open now, and messages
     /// between them, through Lamp on the person's Mac over the home Wi‑Fi, with nothing to pair, host or set up. Each app
-    /// of the wish is a peer named by its folder in the wish: "tv", "iphone", "apple" (an app for iPhone and Mac), "mac",
+    /// of the project is a peer named by its folder in the project: "tv", "iphone", "apple" (an app for iPhone and Mac), "mac",
     /// "android". One for the whole app, started the first time it's used; keep using `LampWish.shared`. What they say
-    /// is sealed with a key only the wish's apps have, which Lamp gave each as it put it on its device.
+    /// is sealed with a key only the project's apps have, which Lamp gave each as it put it on its device.
     ///
     ///     @ObservedObject var wish = LampWish.shared
-    ///     wish.peers                                    // the wish's other apps open now
-    ///     wish.peer("tv")?.isOpen                       // whether the TV app is open; nil when the wish has no "tv"
+    ///     wish.peers                                    // the project's other apps open now
+    ///     wish.peer("tv")?.isOpen                       // whether the TV app is open; nil when the project has no "tv"
     ///     wish.peer("tv")?.status.reason                // why not, in words to show as they are: "Open the TV app on your TV.",
     ///                                                   // "The TV app was last open 5 min ago. Open it on your TV."
     ///     wish.peer("tv")?.status.lastSeen              // when it was last open on this device, or since when while it is
@@ -15255,7 +15255,7 @@ enum Template {
     ///     wish.send(["score": 3], to: "tv")             // JSON to one app (to each copy of it that's open); false (with why
     ///                                                   // in the app's log) when it wasn't sent
     ///     wish.send(["score": 3], to: copy.id)          // to one copy of an app: "screen.k3j9x0ab"
-    ///     wish.send(["round": 2])                       // to every other app of the wish
+    ///     wish.send(["round": 2])                       // to every other app of the project
     ///     wish.onMessage { from, data in … }           // what another app sent: who, and its JSON
     ///     wish.onMessage { from, data, copy in … }     // and which copy of it, to answer that one alone
     ///     wish.state                                    // this app's link: .connecting, .connected, .alone, .away (Lamp isn't reachable),
@@ -15263,7 +15263,7 @@ enum Template {
     ///     wish.status.reason                            // what to show about it: "" while all is well
     ///     wish.me                                       // this app's own peer name
     ///     wish.copy                                     // this copy's own: the app open on this device ("screen.k3j9x0ab")
-    ///     wish.values["list"]                           // a value the wish's apps share, kept on each device (@Published)
+    ///     wish.values["list"]                           // a value the project's apps share, kept on each device (@Published)
     ///     wish.set("list", ["milk", "eggs"])            // sets it here and in every other app, now or when they next meet;
     ///                                                   // nil removes it; false (with why in the app's log) when it wasn't set
     ///     wish.onChange { key, value, from in … }       // a value changed, here (from == me) or in another app
@@ -15289,13 +15289,13 @@ enum Template {
         struct State: RawRepresentable, Hashable, Sendable {
             let rawValue: String
             init(rawValue: String) { self.rawValue = rawValue }
-            /// This app is joining the wish's other apps.
+            /// This app is joining the project's other apps.
             static let connecting = State(rawValue: "connecting")
             /// This app is with the others; another app is open and reachable.
             static let connected = State(rawValue: "connected")
-            /// This app's wish has no other app, and no other copy of this one is open.
+            /// This app's project has no other app, and no other copy of this one is open.
             static let alone = State(rawValue: "alone")
-            /// This app can't reach Lamp, nor any other app of the wish.
+            /// This app can't reach Lamp, nor any other app of the project.
             static let away = State(rawValue: "away")
             /// This app called `stop()`.
             static let ended = State(rawValue: "ended")
@@ -15315,7 +15315,7 @@ enum Template {
             var lastSeen: Date?
         }
         struct Peer: Identifiable, Equatable {
-            /// The peer's name: its folder in the wish, lowercased ("tv", "iphone", "apple", "mac", "android").
+            /// The peer's name: its folder in the project, lowercased ("tv", "iphone", "apple", "mac", "android").
             let id: String
             /// Where it's open now, one copy for each device, the one opened first first: none while it isn't open.
             var copies: [Copy] = []
@@ -15339,27 +15339,27 @@ enum Template {
         static let valuesLimit = 64 * 1024
         static let shared = LampWish()
 
-        /// Every other app of the wish, open or not.
+        /// Every other app of the project, open or not.
         @Published private(set) var apps: [Peer] = []
         @Published private(set) var status = Status(state: .connecting, reason: LampWish.reason(.connecting), lastSeen: nil)
         @Published private(set) var me = ""
-        /// The values the wish's apps share, by name: the same in every app once they've met.
+        /// The values the project's apps share, by name: the same in every app once they've met.
         @Published private(set) var values: [String: Any] = [:]
 
-        /// What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
+        /// What the project's apps say to each other, numbered: an app that says another number was built by another Lamp.
         /// 2 brought values, 3 files and a game's controls, 4 copies of one app on several devices, 5 shared collections
-        /// (`LampStore.shared`), 6 the wish's own collections, shared by all its apps, 7 Lamp keeping them too; an app from
+        /// (`LampStore.shared`), 6 the project's own collections, shared by all its apps, 7 Lamp keeping them too; an app from
         /// before says none, which counts as 1.
         private static let wire = 7
-        /// The wish's other apps open now.
+        /// The project's other apps open now.
         var peers: [Peer] { apps.filter(\.isOpen) }
         var state: State { status.state }
-        /// This copy's peer name: the app's own, then this device's id for it, which the app keeps beside the wish.
+        /// This copy's peer name: the app's own, then this device's id for it, which the app keeps beside the project.
         var copy: String { me.isEmpty ? "" : me + "." + copyID }
 
         // Two ways to the others, used together: Lamp's relay while Lamp is open on the Mac, and a link straight to each
         // app that listens (this one does too), found on the home network by an opaque Bonjour name or at the address it
-        // was last reached at. Each is sealed the same way, with the wish's key; a message goes the direct way when there
+        // was last reached at. Each is sealed the same way, with the project's key; a message goes the direct way when there
         // is one. So the apps go on talking with Lamp closed, or the Mac asleep, as long as they're on the same network.
         private final class Link: @unchecked Sendable { var task: URLSessionWebSocketTask? }
         private let link = Link()
@@ -15368,21 +15368,21 @@ enum Template {
         private var opener: Sealer?
         private var handshake: (nonce: Data, tag: Data)?
         private var relayIn = false
-        /// Lamp's room said Lamp keeps the wish's shared collections: Lamp is shared with as a copy is, under its own name
+        /// Lamp's room said Lamp keeps the project's shared collections: Lamp is shared with as a copy is, under its own name
         /// (`keeper`), so a copy that opens alone gets the latest and what it changes reaches the others when they open.
-        /// Never one of the wish's apps or copies.
+        /// Never one of the project's apps or copies.
         private var lampKeeps = false
         nonisolated private static let keeper = "lamp"
         private var lampAway = false
         private var alone = false
         /// Another copy of this app has been open somewhere (Lamp's room said so), kept on the device: until then an
-        /// app with no other app in its wish doesn't look for its copies on the network, so an app on one device never
+        /// app with no other app in its project doesn't look for its copies on the network, so an app on one device never
         /// asks for Local Network.
         private var copiesSeen = false
         /// The copies in Lamp's room now, by peer name ("screen.k3j9x0ab"): the device they said, since when, and what
         /// they speak (`wire`). An app built before copies is in it by its name alone.
         private var relayPresent: [String: (device: String, since: Date, wire: Int)] = [:]
-        /// This device's id for the app, made the first time it runs and kept with what it keeps of the wish, so the app
+        /// This device's id for the app, made the first time it runs and kept with what it keeps of the project, so the app
         /// open here and on another device at once are two copies, and this one opened again is the same one.
         private var copyID = LampWish.newCopyID()
         /// Each value as it was last set, here or by another app, and when: a removed one is kept, without its value, so
@@ -15393,7 +15393,7 @@ enum Template {
         private var clock: (ms: Int64, n: Int64) = (0, 0)
         private var changeListeners: [(String, Any?, String) -> Void] = []
         private var messageListeners: [(String, Any, String) -> Void] = []
-        /// Every app of the wish, this one included, as Lamp last said: kept on the device, so it's known with Lamp closed.
+        /// Every app of the project, this one included, as Lamp last said: kept on the device, so it's known with Lamp closed.
         private var roster: [(id: String, kind: String, name: String)] = []
         private var directs: [String: Direct] = [:]
         private var opening: [ObjectIdentifier: Direct] = [:]
@@ -15410,7 +15410,7 @@ enum Template {
         /// When each app was last open, kept on the device so it's still known after this app was closed.
         private var lastSeen: [String: Date] = [:]
         private var appsOpen: Set<String> = []
-        /// The apps the wish asks for that Lamp hasn't made yet.
+        /// The apps the project asks for that Lamp hasn't made yet.
         private var waiting: Set<String> = []
         private var localNetworkDenied = false
         /// What this app last told Lamp's room of its link, for the builder to see.
@@ -15445,12 +15445,12 @@ enum Template {
         /// Which app a peer name is a copy of.
         private static func app(of peer: String) -> String { peer.split(separator: ".", maxSplits: 1).first.map(String.init) ?? peer }
         private static func newCopyID() -> String { String((0..<8).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! }) }
-        /// `LampController`s, each a player of the wish's TV app's game, by what they're held by: what the TV app sends
+        /// `LampController`s, each a player of the project's TV app's game, by what they're held by: what the TV app sends
         /// them, and the files it sends them, which aren't the app's own `onMessage` and `onFile`.
         private var pads: [(owner: Weak, message: (String, [String: Any]) -> Void, file: (String, String, LampFile) -> Void, apps: () -> Void)] = []
         private final class Weak { weak var object: AnyObject?; init(_ object: AnyObject) { self.object = object } }
 
-        /// One link straight to another app of the wish, dialled or taken: its handshake, then its seals each way.
+        /// One link straight to another app of the project, dialled or taken: its handshake, then its seals each way.
         private final class Direct: @unchecked Sendable {   // touched only on the main queue
             let connection: NWConnection
             let dialled: Bool
@@ -15495,7 +15495,7 @@ enum Template {
             }
         }
 
-        /// Joins the wish's other apps again after `stop()`; otherwise nothing, since it joins by itself.
+        /// Joins the project's other apps again after `stop()`; otherwise nothing, since it joins by itself.
         func start() {
             guard closed else { return }
             closed = false
@@ -15521,7 +15521,7 @@ enum Template {
             rebuild()
         }
 
-        /// The wish's app with this peer name (or the app a copy's name is of), open or not; nil when the wish has no such app.
+        /// The project's app with this peer name (or the app a copy's name is of), open or not; nil when the project has no such app.
         func peer(_ id: String) -> Peer? { apps.first { $0.id == Self.app(of: id) } }
 
         /// The copies a message for `peer` goes to: the one it names, or every open copy of the app it names, or with none
@@ -15532,11 +15532,11 @@ enum Template {
             return self.peer(peer)?.copies.map(\.id) ?? []
         }
 
-        /// Sends `data` (anything JSON can hold) to one of the wish's apps (each copy of it open now) or one copy, or with no
+        /// Sends `data` (anything JSON can hold) to one of the project's apps (each copy of it open now) or one copy, or with no
         /// `to` to all of them; false, with the reason in the app's log, when it wasn't sent.
         @discardableResult
         func send(_ data: Any, to peer: String? = nil) -> Bool {
-            let what = peer.map { "A message to \"\($0)\"" } ?? "A message to the wish's apps"
+            let what = peer.map { "A message to \"\($0)\"" } ?? "A message to the project's apps"
             guard state == .connected else {
                 if !saidAway { saidAway = true; fputs("LampWish: \(what) wasn't sent: not connected (\(state.rawValue)). Check state and peers before sending.\n", stderr) }
                 return false
@@ -15553,7 +15553,7 @@ enum Template {
                 return false
             }
             guard text.count <= Self.messageLimit else {
-                fputs("LampWish: \(what) of \(text.count) bytes wasn't sent: a message between the wish's apps is at most \(Self.messageLimit) bytes as JSON.\n", stderr)
+                fputs("LampWish: \(what) of \(text.count) bytes wasn't sent: a message between the project's apps is at most \(Self.messageLimit) bytes as JSON.\n", stderr)
                 return false
             }
             // Each app the straight way when there is one, else through Lamp's room.
@@ -15578,13 +15578,13 @@ enum Template {
             say(frame)
         }
 
-        /// Hears what the wish's other apps send: who sent it (its peer name) and the JSON they sent.
+        /// Hears what the project's other apps send: who sent it (its peer name) and the JSON they sent.
         func onMessage(_ handler: @escaping (_ from: String, _ data: Any) -> Void) { messageListeners.append { from, data, _ in handler(from, data) } }
 
         /// The same, with which copy of the app sent it (its `id`, "screen.k3j9x0ab"), to answer that copy alone.
         func onMessage(_ handler: @escaping (_ from: String, _ data: Any, _ copy: String) -> Void) { messageListeners.append(handler) }
 
-        /// Sets a value the wish's apps share (anything JSON can hold; nil removes it), here at once and in each other app
+        /// Sets a value the project's apps share (anything JSON can hold; nil removes it), here at once and in each other app
         /// now if it's open, else when they next meet. False, with the reason in the app's log, when it wasn't set.
         @discardableResult
         func set(_ key: String, _ value: Any?) -> Bool {
@@ -15606,7 +15606,7 @@ enum Template {
                     return false
                 }
                 guard size(without: key) + key.utf8.count + max(32, bytes) <= Self.valuesLimit else {
-                    fputs("LampWish: \(what) wasn't set: the wish's values would pass \(Self.valuesLimit) bytes (each name counts 32 bytes at least, and a removed one for a month). Keep to fewer names, and reuse them.\n", stderr)
+                    fputs("LampWish: \(what) wasn't set: the project's values would pass \(Self.valuesLimit) bytes (each name counts 32 bytes at least, and a removed one for a month). Keep to fewer names, and reuse them.\n", stderr)
                     return false
                 }
                 // Kept as it reads back from JSON, so this app sees what the others will.
@@ -15621,19 +15621,19 @@ enum Template {
             return true
         }
 
-        /// Hears every change to the wish's values: its name, the new value (nil when removed), and the peer name of the
+        /// Hears every change to the project's values: its name, the new value (nil when removed), and the peer name of the
         /// app that set it, this one's own (`me`) for a change made here or by another copy of this app.
         func onChange(_ handler: @escaping (_ key: String, _ value: Any?, _ from: String) -> Void) { changeListeners.append(handler) }
 
         /// The words for a state of this app's link, the same in every language Lamp's apps are written in.
         static func reason(_ state: State) -> String {
             switch state {
-            case .connecting: "Connecting to the wish's other apps…"
-            case .away: "Can't reach the wish's other apps. Keep this device on the same Wi‑Fi as them."
+            case .connecting: "Connecting to the apps that go with this one…"
+            case .away: "Can't reach the apps that go with this one. Keep this device on the same Wi‑Fi as them."
             #if os(macOS)
-            case .localNetworkDenied: "To reach the wish's other apps, allow Local Network for this app in System Settings, Privacy & Security."
+            case .localNetworkDenied: "To reach the apps that go with this one, allow Local Network for this app in System Settings, Privacy & Security."
             #else
-            case .localNetworkDenied: "To reach the wish's other apps, allow Local Network for this app in Settings."
+            case .localNetworkDenied: "To reach the apps that go with this one, allow Local Network for this app in Settings."
             #endif
             default: ""
             }
@@ -15681,7 +15681,7 @@ enum Template {
             #endif
         }
 
-        // The wish's key, which Lamp gave this copy as it put it here: in the installed app's Info.plist, or on the
+        // The project's key, which Lamp gave this copy as it put it here: in the installed app's Info.plist, or on the
         // simulator in the app's own folder there. It never crosses the network: the app proves it holds it.
         private static let key: SymmetricKey? = {
             var text = Bundle.main.object(forInfoDictionaryKey: "LampWishKey") as? String
@@ -15749,7 +15749,7 @@ enum Template {
                 keep()
                 DispatchQueue.main.async { MainActor.assumeIsolated { self.lookAgain() } }
             }
-            // Alone: nothing else to reach, as an app with no other app in its wish is while no copy of it is open, as
+            // Alone: nothing else to reach, as an app with no other app in its project is while no copy of it is open, as
             // long as none ever was; once one has been, not reaching it is said as for any other app.
             let next: State = closed ? .ended : (alone || (roster.count == 1 && open.isEmpty && !copiesSeen)) ? .alone
                 : (relayIn || directs.values.contains { $0.ready }) ? .connected
@@ -15823,7 +15823,7 @@ enum Template {
             return number.int64Value
         }
 
-        /// A name the wish's apps can all keep a value under: 1 to 64 bytes, and not one a web page's objects hold already.
+        /// A name the project's apps can all keep a value under: 1 to 64 bytes, and not one a web page's objects hold already.
         private static func isValueName(_ key: String) -> Bool { (1...64).contains(key.utf8.count) && key != "__proto__" }
 
         /// A value's size as JSON, slashes as they are, the same as the TV page's and the Android app's measure.
@@ -15843,7 +15843,7 @@ enum Template {
             entries.reduce(0) { $1.key == key ? $0 : $0 + Self.held($1.key, $1.value) }
         }
 
-        /// What every setting this app has adds up to, sealed with the wish's key: two apps with the same say the same.
+        /// What every setting this app has adds up to, sealed with the project's key: two apps with the same say the same.
         private func digest() -> String {
             guard let key = Self.key else { return "" }
             var data = Data()
@@ -15866,7 +15866,7 @@ enum Template {
         /// in, every app ends with the same.
         private func merge(_ given: [String: Any], from peer: String) {
             var changed: [(String, Any?)] = []
-            // What the store holds may grow, from other apps, to what every app of the wish could have set between them
+            // What the store holds may grow, from other apps, to what every app of the project could have set between them
             // (each sets at most the limit of the whole), twice over for how apps measure: everything they set fits,
             // so they still agree, and an app gone wrong or hostile that floods the others gets no further.
             dropExpired()
@@ -16018,7 +16018,7 @@ enum Template {
             rebuild()
         }
 
-        /// What this app keeps of its wish on the device, by the wish's tag: who it is, the wish's apps and where each was
+        /// What this app keeps of its project on the device, by the project's tag: who it is, the project's apps and where each was
         /// last reached, so it finds the others with Lamp closed.
         private static var keptKey: String? { key.map { "LampWish." + tag(of: $0).map { String(format: "%02x", $0) }.joined() } }
 
@@ -16063,7 +16063,7 @@ enum Template {
 
         // MARK: Files and a game's controls
 
-        /// Sends a file (up to 64 MB) to one of the wish's apps that's open now, in pieces, the straight way when there is one,
+        /// Sends a file (up to 64 MB) to one of the project's apps that's open now, in pieces, the straight way when there is one,
         /// else through Lamp's room; the transfer says how far it's got, and ends failed, with why, when it didn't get there.
         /// It goes to one copy: the one `to` names ("screen.k3j9x0ab"), or for an app open on several devices the one opened
         /// last. Two go to each copy at a time: send a third once one has finished (`try await transfer.finished()`).
@@ -16072,7 +16072,7 @@ enum Template {
             sendFile(data, name: name, type: type, to: peer, channel: "")
         }
 
-        /// Hears the files the wish's other apps send: who sent it (its peer name), and the file, whole (`file.copy` is which
+        /// Hears the files the project's other apps send: who sent it (its peer name), and the file, whole (`file.copy` is which
         /// copy of the app sent it).
         func onFile(_ handler: @escaping (_ from: String, _ file: LampFile) -> Void) { fileListeners.append(handler) }
 
@@ -16126,7 +16126,7 @@ enum Template {
                 pump(key)
                 return transfer
             }
-            guard let app = self.peer(peer) else { return failed("The wish has no app called \"\(given)\".") }
+            guard let app = self.peer(peer) else { return failed("The project has no app called \"\(given)\".") }
             guard app.isOpen, state == .connected else { return failed(app.status.reason.isEmpty ? "\(Self.title(app.name)) isn't open now." : app.status.reason) }
             guard app.copies.contains(where: { $0.id == peer }) else { return failed("That copy of \(app.name) isn't open now.") }
             guard wire(of: peer) >= 3 else { return failed(Self.outOfDate(name: app.name, older: true)) }
@@ -16283,8 +16283,8 @@ enum Template {
 
         private static func title(_ name: String) -> String { name.prefix(1).uppercased() + name.dropFirst() }
 
-        /// A `LampController` taking what the wish's TV app sends its players: kept for as long as `owner` is.
-        /// `apps` hears whenever the list of the wish's apps changes (one came, went, or can take a game's controls).
+        /// A `LampController` taking what the project's TV app sends its players: kept for as long as `owner` is.
+        /// `apps` hears whenever the list of the project's apps changes (one came, went, or can take a game's controls).
         fileprivate func addPad(owner: AnyObject, message: @escaping (String, [String: Any]) -> Void, file: @escaping (String, String, LampFile) -> Void,
                                 apps: @escaping () -> Void) {
             pads.removeAll { $0.owner.object == nil || $0.owner.object === owner }
@@ -16316,12 +16316,12 @@ enum Template {
 
         // MARK: Lamp's room
 
-        // Where to join, from Lamp: the relay's socket and this app's peer name. What lets it in is the wish's key, proved
+        // Where to join, from Lamp: the relay's socket and this app's peer name. What lets it in is the project's key, proved
         // in a handshake that sends nothing anyone could use again, and everything after it is sealed.
         private func open() {
             guard !closed else { return }
             guard let key = Self.key else {
-                status = Status(state: .away, reason: "This copy wasn't opened from Lamp, so it can't reach the wish's other apps. Open it from Lamp on your Mac.", lastSeen: nil)
+                status = Status(state: .away, reason: "This copy wasn't opened from Lamp, so it can't reach the apps that go with it. Open it from Lamp on your Mac.", lastSeen: nil)
                 return
             }
             Task { @MainActor in
@@ -16329,7 +16329,7 @@ enum Template {
                     if address == nil || me.isEmpty {
                         let answer = try await LampAI.post("/app/wish", ["device": Self.device], timeout: 20)
                         if answer["alone"] as? Bool == true {
-                            // The wish has no other app: nothing to join, until one is added.
+                            // The project has no other app: nothing to join, until one is added.
                             alone = true
                             me = ((answer["me"] as? [String: Any])?["peer"] as? String) ?? me
                             if let mine = answer["me"] as? [String: Any] { setRoster([mine]) }
@@ -16337,7 +16337,7 @@ enum Template {
                             return again(after: (answer["renew"] as? Double ?? 300))
                         }
                         guard let socket = (answer["socket"] as? String).flatMap(URL.init(string:)), let peer = answer["peer"] as? String else {
-                            throw LampAI.Failure(message: answer["error"] as? String ?? "Lamp didn't say where the wish's apps meet.")
+                            throw LampAI.Failure(message: answer["error"] as? String ?? "Lamp didn't say where the project's apps meet.")
                         }
                         alone = false
                         address = socket
@@ -16410,7 +16410,7 @@ enum Template {
             }
         }
 
-        // The relay proved it holds the wish's key: this app proves it does too, and both seal from here on.
+        // The relay proved it holds the project's key: this app proves it does too, and both seal from here on.
         private func answer(_ challenge: [String: Any], on task: URLSessionWebSocketTask) -> Bool {
             guard let key = Self.key, let handshake, let server = challenge["peer"] as? String, (1...32).contains(server.utf8.count),
                   let theirs = (challenge["nonce"] as? String).flatMap({ Data(base64Encoded: $0) }), theirs.count == 16,
@@ -16439,7 +16439,7 @@ enum Template {
         }
 
         private func refuse(_ task: URLSessionWebSocketTask) {
-            fputs("LampWish: the link to the wish's other apps heard something that wasn't theirs, and started again.\n", stderr)
+            fputs("LampWish: the link to the project's other apps heard something that wasn't theirs, and started again.\n", stderr)
             task.cancel(with: .goingAway, reason: nil)
             dropped(task)
         }
@@ -16474,7 +16474,7 @@ enum Template {
             case "at":
                 if let id = m["peer"] as? String { remember(id, at: m["addresses"] as? [String] ?? []); lookAgain() }
             case "apps":
-                // The wish gained an app or lost one: the others keep what's known of them.
+                // The project gained an app or lost one: the others keep what's known of them.
                 setRoster(m["apps"] as? [[String: Any]] ?? [])
             case "message":
                 guard let from = m["from"] as? String, let data = m["data"] else { return }
@@ -16521,7 +16521,7 @@ enum Template {
             relayPresent = [:]
             dropFiles("The link was lost.") { _, way in way == nil }
             // Turned away, or the room ended, or dropped before it was let in: the relay may have moved, or this app may
-            // not be of the wish it was, so Lamp is asked again where to join and who this app is.
+            // not be of the project it was, so Lamp is asked again where to join and who this app is.
             if code == 4003 || code == 4005 || retry >= 3 { address = nil }
             rebuild()
             again()
@@ -16573,7 +16573,7 @@ enum Template {
             // And its shared collections, and a shared file asked of a copy that has gone quiet is asked again.
             if beats % 12 == 0 { for each in storePeers { sendSums(to: each) } }
             if beats % 12 == 6 { fetchFiles() }
-            // A copy without the wish's key keeps saying why (`open`) rather than "Connecting…".
+            // A copy without the project's key keeps saying why (`open`) rather than "Connecting…".
             if Self.key != nil { rebuild() }
             reach()
         }
@@ -16605,8 +16605,8 @@ enum Template {
             reach()
         }
 
-        /// This app's place on the network: the wish's port for it, worked out from the wish's key and its place in the
-        /// wish's list, so a TV that can't look up names knows where to try; any port when another program has that one.
+        /// This app's place on the network: the project's port for it, worked out from the project's key and its place in the
+        /// project's list, so a TV that can't look up names knows where to try; any port when another program has that one.
         private static func port(for peer: String, among roster: [String]) -> UInt16? {
             guard let key else { return nil }
             let d = derive("lamp-wish port", key)
@@ -16615,7 +16615,7 @@ enum Template {
             return UInt16(base + rank)
         }
 
-        /// The name an app is found by on the network, which says nothing of the wish or the app to anyone without the key.
+        /// The name an app is found by on the network, which says nothing of the project or the app to anyone without the key.
         /// Each copy adds its own id to it ("…-k3j9x0ab"), so the app's copies on several devices are each found.
         private static func serviceName(of app: String) -> String? {
             key.map { derive("lamp-wish service", $0, Data(app.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined() }
@@ -16656,7 +16656,7 @@ enum Template {
                         made.cancel()
                         self.listener = nil
                         self.listenerPort = nil
-                        // Another program has the wish's port: any port, found by name and told to Lamp's room instead.
+                        // Another program has the project's port: any port, found by name and told to Lamp's room instead.
                         if wanted != nil { self.listen(anyPort: true) }
                     default:
                         break
@@ -16736,7 +16736,7 @@ enum Template {
         /// Where this app listens, for Lamp's room to tell the others, who keep it for when Lamp is closed.
         private func tellWhereIListen() {
             guard relayIn, let port = listenerPort else { return }
-            // This Mac's own address first, for an app of the wish on the same Mac (an iPhone app in the simulator): it shares
+            // This Mac's own address first, for an app of the project on the same Mac (an iPhone app in the simulator): it shares
             // the Mac's network, and an app on another device that tries it is turned away at once.
             let places = (["127.0.0.1"] + Self.addresses()).map { "\($0):\(port)" }
             if let json = try? JSONSerialization.data(withJSONObject: ["t": "at", "addresses": places]) { say(json) }
@@ -16762,7 +16762,7 @@ enum Template {
             return list
         }
 
-        /// Dials another copy at each place in turn until one answers and proves it holds the wish's key; tried again later,
+        /// Dials another copy at each place in turn until one answers and proves it holds the project's key; tried again later,
         /// less often each time it fails, and at once when it's found anew. Whichever copy of that app answers is taken
         /// (an address can change hands), and kept as the copy it said it is.
         private func dial(_ peer: String, _ places: [NWEndpoint]) {
@@ -16809,7 +16809,7 @@ enum Template {
                     // Another copy answered where this one was looked for: what was kept of the old one goes.
                     let reached = direct?.peer ?? peer
                     if reached != peer { self.told[peer] = nil }
-                    // Kept by an address any app of the wish can dial again, an IPv4 one or a name.
+                    // Kept by an address any app of the project can dial again, an IPv4 one or a name.
                     switch host {
                     case .ipv4, .name: self.remember(reached, at: ["\(name):\(port.rawValue)"])
                     default: break
@@ -16853,7 +16853,7 @@ enum Template {
 
         private final class Flag: @unchecked Sendable { var on = false }   // touched only on the main queue
 
-        /// An app of the wish, or anyone, dialling this one: let in only once it proves it holds the wish's key.
+        /// An app of the project, or anyone, dialling this one: let in only once it proves it holds the project's key.
         private func take(_ connection: NWConnection) {
             // Eight unproven at a time, counting only those dialled in, so this app's own dials never shut the others out.
             guard opening.values.filter({ !$0.dialled }).count < 8, !closed else { return connection.cancel() }
@@ -17025,8 +17025,8 @@ enum Template {
             direct.connection.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { _ in then?() })
         }
 
-        // The wish's channel, the same steps as Lamp's relay takes on its side, byte for byte: every value is an HMAC
-        // under the wish's key of a label, a zero byte and what it's about; messages are AES-GCM with a nonce that
+        // The project's channel, the same steps as Lamp's relay takes on its side, byte for byte: every value is an HMAC
+        // under the project's key of a label, a zero byte and what it's about; messages are AES-GCM with a nonce that
         // counts them, so one that was changed, sent again or put out of order doesn't open.
         private static func derive(_ label: String, _ key: SymmetricKey, _ data: Data = Data()) -> Data {
             var message = Data(label.utf8)
@@ -17084,8 +17084,8 @@ enum Template {
         }
     }
 
-    /// How the wish's other apps stand, ready to drop in: a line for each ("TV app connected", "Open the iPhone app on
-    /// your iPhone."), or what keeps this app from them ("To reach the wish's other apps, allow Local Network…"), with a
+    /// How the project's other apps stand, ready to drop in: a line for each ("TV app connected", "Open the iPhone app on
+    /// your iPhone."), or what keeps this app from them ("To reach the apps that go with this one, allow Local Network…"), with a
     /// dot of its color. Nothing while this app is alone, with no other app or copy open. Give a peer name for that app's line alone. It
     /// takes the font and colors of where it's put, so style it as the rest of the app; or show `LampWish`'s own
     /// `status` and `peer(_:)?.status` in a view of your own.
@@ -17122,11 +17122,11 @@ enum Template {
         }
     }
 
-    // MARK: - The wish's TV app
+    // MARK: - The project's TV app
 
-    /// Joins the TV app of this app's wish as a player of its `Lamp.controllers`, the way a phone's page does, over the
+    /// Joins the TV app of this app's project as a player of its `Lamp.controllers`, the way a phone's page does, over the
     /// home Wi‑Fi with nothing to pair or set up. It goes the way `LampWish` reaches the TV app, straight to it or through
-    /// Lamp on the Mac, sealed with the wish's key, so it goes on with Lamp closed. Keep it while it's used (a @StateObject,
+    /// Lamp on the Mac, sealed with the project's key, so it goes on with Lamp closed. Keep it while it's used (a @StateObject,
     /// or a model's property); it leaves the game when released.
     ///
     ///     @StateObject private var pad = LampController.connect()
@@ -17154,7 +17154,7 @@ enum Template {
         private let wish = LampWish.shared
         /// This controller among any others the app has, each a player of its own: on everything it says and is told.
         private let pad = String(UUID().uuidString.prefix(8)).lowercased()
-        /// The copy of the wish's TV app this plays with, by its peer name ("tv.k3j9x0ab"): the one open longest, kept
+        /// The copy of the project's TV app this plays with, by its peer name ("tv.k3j9x0ab"): the one open longest, kept
         /// while it stays open.
         private var tv: String?
         private var seq = 0
@@ -17253,7 +17253,7 @@ enum Template {
             return wish.sendPad(message, to: tv)
         }
 
-        /// The wish's list changed: the TV app came (this one asks to play), went, or can't take players yet.
+        /// The project's list changed: the TV app came (this one asks to play), went, or can't take players yet.
         private func appsChanged() {
             guard !closed else { return }
             let app = wish.apps.first { $0.kind == "tv" }
@@ -17324,7 +17324,7 @@ enum Template {
         }
     }
 
-    /// How files go between a wish's apps, the same in every library and at Lamp's relay (`ControllerWire`): pieces of
+    /// How files go between a project's apps, the same in every library and at Lamp's relay (`ControllerWire`): pieces of
     /// at most `chunk` bytes, at most `window` sent ahead of what the receiver has acknowledged, `largest` at most, and
     /// `transfers` at once each way between two apps.
     enum LampFiles {
@@ -17334,7 +17334,7 @@ enum Template {
         nonisolated static let transfers = 2
     }
 
-    /// A file on its way to another app of the wish (`LampWish.sendFile`, `LampController.sendFile`).
+    /// A file on its way to another app of the project (`LampWish.sendFile`, `LampController.sendFile`).
     @MainActor final class LampTransfer: ObservableObject, Identifiable {
         enum State: Equatable { case sending, done, failed(String) }
         let id: Int
@@ -17375,7 +17375,7 @@ enum Template {
         }
     }
 
-    /// A file another app of the wish sent (`LampWish.onFile`), or the TV app sent with `Lamp.controllers.sendFile`.
+    /// A file another app of the project sent (`LampWish.onFile`), or the TV app sent with `Lamp.controllers.sendFile`.
     struct LampFile {
         let name: String
         let type: String
@@ -17410,13 +17410,13 @@ enum Template {
         }
 
         /// A collection's name: letters, digits, "-", "_" and "."; a shared files' collection is "files:" and such a name, and
-        /// one of the wish's own, shared by all its apps rather than this app's copies, has "wish:" before the name.
+        /// one of the project's own, shared by all its apps rather than this app's copies, has "wish:" before the name.
         nonisolated static func isCollection(_ name: String) -> Bool {
             var plain = name.hasPrefix("files:") ? String(name.dropFirst(6)) : name
             if plain.hasPrefix("wish:") { plain = String(plain.dropFirst(5)) }
             return (1...64).contains(plain.utf8.count) && plain != "__proto__" && plain.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) }
         }
-        /// One of the wish's own collections (`LampStore.shared(name, wish: true)`): every app of the wish keeps it, not only
+        /// One of the project's own collections (`LampStore.shared(name, wish: true)`): every app of the project keeps it, not only
         /// this app's copies.
         nonisolated static func isWishWide(_ name: String) -> Bool { (name.hasPrefix("files:") ? String(name.dropFirst(6)) : name).hasPrefix("wish:") }
         nonisolated fileprivate static func isItemID(_ id: String) -> Bool { (1...128).contains(id.utf8.count) && id != "__proto__" }
@@ -17451,7 +17451,7 @@ enum Template {
                 return false
             }
             dropExpiredItems()
-            // Only what this app set counts: a wish's own collections also hold what its other apps set, which this one
+            // Only what this app set counts: a project's own collections also hold what its other apps set, which this one
             // can't make room for.
             var held = collections.values.reduce(0) { $0 + $1.values.reduce(0) { $0 + (isOwn($1.entry) ? $1.held : 0) } }
             var sets: [String: Entry] = [:], changed: [(String, Any?)] = [], failed = false
@@ -17482,7 +17482,7 @@ enum Template {
                 }
                 let need = id.utf8.count + max(32, size)
                 let ownHad = had.map { isOwn($0.entry) ? $0.held : 0 } ?? 0
-                // A deletion is never turned down: it takes no more than the item it replaces, so the wish holds no more than before.
+                // A deletion is never turned down: it takes no more than the item it replaces, so the project holds no more than before.
                 guard kept == nil || held - ownHad + need <= Self.sharedLimit else {
                     fputs("\(what): the item \"\(id)\" wasn't set: this app's items in shared collections would pass \(Self.sharedLimit) bytes (a deleted item counts 32 bytes for a month).\n", stderr)
                     failed = true
@@ -17536,14 +17536,14 @@ enum Template {
         // MARK: Between copies
 
         /// Who this copy shares collections with now: the other copies of this app that speak 5, which share all of them,
-        /// and the copies of the wish's other apps that speak 6, which share only the wish's own (`shares`).
+        /// and the copies of the project's other apps that speak 6, which share only the project's own (`shares`).
         private var storePeers: [String] {
             guard !me.isEmpty else { return [] }
             return copies(for: nil).filter { $0 != copy && wire(of: $0) >= (Self.app(of: $0) == me ? 5 : 6) } + (relayIn && lampKeeps ? [Self.keeper] : [])
         }
 
         /// Whether a collection goes to another copy and is taken from it: this app's own collections only between its own
-        /// copies, never another app's of the wish; the wish's own between every app of it.
+        /// copies, never another app's of the project; the project's own between every app of it.
         private func shares(_ name: String, with peer: String) -> Bool {
             !me.isEmpty && peer != copy && (Self.app(of: peer) == me || Self.isWishWide(name) || peer == Self.keeper)
         }
@@ -17585,7 +17585,7 @@ enum Template {
 
         /// Items another copy sent, each taken when it's later than what this one has, so whatever order they come in,
         /// every copy ends with the same. What's held from other copies is bounded as values are: to what every app of the
-        /// wish could set between them, twice over, the oldest deletions let go first when a flood needs room.
+        /// project could set between them, twice over, the oldest deletions let go first when a flood needs room.
         private func mergeItems(_ name: String, _ given: [String: Any], from peer: String) {
             guard collections[name] != nil || collections.count < Self.collectionsLimit * 2 else { return }
             dropExpiredItems()
@@ -17890,7 +17890,7 @@ enum Template {
     ///                                       // its items become exactly these
     ///     groceries.onChange { id, item, from in … }   // item nil when deleted; from == wish.me for this app's own copies
     ///
-    /// With `wish: true` the list is the wish's own rather than this app's: every app of the wish keeps it the same (a Mac
+    /// With `wish: true` the list is the project's own rather than this app's: every app of the project keeps it the same (a Mac
     /// app and the iPhone app beside it sharing one calendar), each reading and changing it with the same name.
     ///
     ///     @ObservedObject var events = LampStore.shared("events", of: Event.self, wish: true)
@@ -17980,7 +17980,7 @@ enum Template {
         ///     photos.onChange { name, from in … }
         ///
         /// A file is at most 64 MB, all of them `LampWish.sharedFilesLimit` (256 MB). With `wish: true` the files are the
-        /// wish's own, kept by every app of it, as `shared(_:of:wish:)`'s are.
+        /// project's own, kept by every app of it, as `shared(_:of:wish:)`'s are.
         @MainActor static func sharedFiles(_ name: String, wish: Bool = false) -> SharedFiles {
             let key = wish ? "wish:" + name : name
             if let existing = sharedFolders[key] { return existing }

@@ -15,7 +15,7 @@ depends on how an app is made and run, not on the device alone. What follows is 
 
 - **Several people's** (family, friends, a class): each phone has to join with nothing to install. That's a page for
   phones: they scan a QR code on the screen and play in their browser. The phone-pages skill says how to build it.
-- **Only the person's own phone**: on an iPhone, an app of the wish's own, made natively, is the controller: it has
+- **Only the person's own phone**: on an iPhone, an app of the project's own, made natively, is the controller: it has
   the phone's own feel, hardware and haptics, and keeps its data, and joins as a player with `LampController` over
   `LampWish`. Installing it goes the way the table says for that phone. An Android app has no `LampController`, so it
   can't join a game as a player: for game controls on an Android phone, native is out of reach and a page is the
@@ -46,8 +46,8 @@ Who serves the phone page and runs the link phones join is the game's choice, `L
 They're options, not an order, and another approach is fine. A host that isn't there, or fails, is said in
 `onError`; the game never moves to the other one by itself. `start()` with no host keeps where each device ran before.
 
-An iPhone app of the wish's own needs no browser page: it joins the TV app's game as a player with `LampController`
-over `LampWish`. An Android app has no `LampController` and doesn't join as a player. Every app of the wish's talks to
+An iPhone app of the project's own needs no browser page: it joins the TV app's game as a player with `LampController`
+over `LampWish`. An Android app has no `LampController` and doesn't join as a player. Every app of the project's talks to
 the others through `LampWish` (messages, shared values, files) on whichever devices they're on (the wish-links skill).
 
 On an iPhone or iPad the game's own phones play only while the game is in front: when the person leaves it, every
@@ -58,7 +58,7 @@ when the person asks for phones there.
 
 ## A page or an app on the phones?
 
-For the person's own iPhone, an app of the wish's on it, made natively. For game controls on an Android phone, a page,
+For the person's own iPhone, an app of the project's on it, made natively. For game controls on an Android phone, a page,
 since a native Android app can't join as a player.
 For several people's phones joining one game or TV app, a page: nothing to install, and any phone on the Wi‑Fi joins (that's
 one app shared across devices, the case where web-or-native chooses web). The web-or-native skill has the rest of that
@@ -67,7 +67,7 @@ choice.
 ## Away from home
 
 Phones reach the phone page on the same Wi‑Fi, whichever host serves it. Friends in other
-homes can't join through it: say so if that's what they want. Apps of the wish's that talk through `LampWish` work
+homes can't join through it: say so if that's what they want. Apps of the project's that talk through `LampWish` work
 by its own rules (the wish-links skill).
 
 ## Building it
