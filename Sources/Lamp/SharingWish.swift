@@ -146,7 +146,7 @@ extension Sharing {
         guard !parts.isEmpty else { return "" }
         return """
 
-        This file is a wish of more than one app, made to work together (a TV app with the iPhone app that controls \
+        This file is a project of more than one app, made to work together (a TV app with the iPhone app that controls \
         it, a Mac app with an Android app): beside the app at the root, \(parts.joined(separator: ", ")), each in its own \
         folder, whose files are named with the folder first. Judge each as you would the app at the root, and what \
         they share between them as data going from one to the other.

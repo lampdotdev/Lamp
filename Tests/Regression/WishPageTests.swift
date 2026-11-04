@@ -268,7 +268,7 @@ final class WishPageTests: XCTestCase {
         let stray = try page(installed: "null", before: { $0.evaluateScript(beats) })
         stray.evaluateScript("Lamp.wish.start(); beaters[0](); beaters[0]();")
         XCTAssertEqual(stray.evaluateScript("Lamp.wish.status().reason")?.toString(),
-                       "This copy wasn't opened from Lamp, so it can't reach the wish's other apps. Open it from Lamp on your Mac.")
+                       "This copy wasn't opened from Lamp, so it can't reach the apps that go with it. Open it from Lamp on your Mac.")
 
         let context = try page(before: { $0.evaluateScript(beats) })
         context.evaluateScript("Lamp.wish.start();")

@@ -1,6 +1,6 @@
 ---
 name: web-app
-description: Apps made as a web page Lamp shows on each device - lamp.js's building blocks (AI, saved data, the app's files, the wish's other apps), the remote's focus and keys, what the person's own things need from the app around the page, and what each device's browser runs. Read before writing or changing an app's page.
+description: Apps made as a web page Lamp shows on each device - lamp.js's building blocks (AI, saved data, the app's files, the project's other apps), the remote's focus and keys, what the person's own things need from the app around the page, and what each device's browser runs. Read before writing or changing an app's page.
 ---
 
 # Web apps
@@ -25,7 +25,7 @@ opening comment for the whole list. What it gives:
   gets a default where it's read, and a saved one is never renamed or retyped, because people rely on their data
   through every change.
 - **LampAssets**: the app's own files that come with it.
-- **Lamp.wish**: the wish's other apps (an iPhone, Mac or Android app beside the page), messages and shared values;
+- **Lamp.wish**: the project's other apps (an iPhone, Mac or Android app beside the page), messages and shared values;
   the wish-links skill says how they share data.
 - **Lamp.controllers** and `Lamp.phonePage`: phones on the same Wi‑Fi as controllers or a second screen; the
   phone-controllers skill first.
@@ -34,7 +34,7 @@ opening comment for the whole list. What it gives:
 
 Put on GitHub gives a web app a page anyone opens in a browser, with no Lamp anywhere: the page as it is, with
 lamp.js. There, `LampAI.isAvailable` answers false and its calls fail with a sentence saying the page is away from
-Lamp, `LampNative.available` is false, and `Lamp.wish` can't reach the wish's other apps; `LampStore` and `LampAssets`
+Lamp, `LampNative.available` is false, and `Lamp.wish` can't reach the project's other apps; `LampStore` and `LampAssets`
 work as they do everywhere. So every feature that leans on Lamp keeps the app usable without it: the app's own buttons
 for everything AI would do, example content where the person's own things would be, and a short line where something
 needs Lamp, never an error or an empty screen.

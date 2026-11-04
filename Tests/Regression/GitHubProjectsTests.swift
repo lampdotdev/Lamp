@@ -72,7 +72,7 @@ final class GitHubProjectsTests: XCTestCase {
         XCTAssertNotNil(Credits.read(wish.dir.appendingPathComponent(Credits.arrivedPath)), "Lamp's own record has it too")
         XCTAssertTrue(FileManager.default.fileExists(atPath: wish.dir.appendingPathComponent(".lamp/lampify/PavelDoGreat/WebGL-Fluid-Simulation@\(commit)/index.html").path))
         XCTAssertTrue(answer.contains("Lamp pinned that commit"), answer)
-        XCTAssertTrue(answer.contains("Still missing:\n- Its structure: give the wish its app with make_app_for"), answer)
+        XCTAssertTrue(answer.contains("Still missing:\n- Its structure: give the project its app with make_app_for"), answer)
     }
 
     func testALaterCallNeverMovesOnByItself() async throws {

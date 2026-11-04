@@ -216,7 +216,7 @@ enum WishRooms {
         asked[key] = Date()
         ControllerRelay.openRoom(key, wishKey: WishKeys.key(for: wish), apps: roster)
         startTimer()
-        guard let port = await ControllerRelay.ready() else { return (503, ["error": "Lamp couldn't start the link between the wish's apps."]) }
+        guard let port = await ControllerRelay.ready() else { return (503, ["error": "Lamp couldn't start the link between the project's apps."]) }
         var answer: [String: Any] = ["socket": "ws://\(host):\(port)/", "peer": peer(project, in: wish),
                                      "peers": presence(of: wish), "apps": roster, "me": me]
         if preview { answer["key"] = WishKeys.key(for: wish).base64EncodedString() }
@@ -368,7 +368,7 @@ enum WishProxies {
         var (status, answer) = await WishRooms.answer(for: project, wish: wish, apps: apps, host: "127.0.0.1")
         guard status == 200, answer["alone"] as? Bool != true else { return (status, answer) }
         guard let socket = (answer["socket"] as? String).flatMap(URL.init(string:)) else {
-            return (503, ["error": "Lamp couldn't say where the wish's apps meet."])
+            return (503, ["error": "Lamp couldn't say where the project's apps meet."])
         }
         links += 1
         let proxy = Proxy(app: project.id, copy: copy, room: WishRooms.key(for: wish), link: links)
@@ -402,7 +402,7 @@ enum WishProxies {
     /// for a sealed message, and `{"closed": code}` when the socket went; waiting a while for the first. A link that isn't
     /// the app's now is answered 409, and the app opens a new one.
     static func poll(_ project: LampProject, link: Int) async -> (Int, [String: Any]) {
-        guard let proxy = proxy(project, link: link) else { return (409, ["error": "That link to the wish's apps is over: open another."]) }
+        guard let proxy = proxy(project, link: link) else { return (409, ["error": "That link to the project's apps is over: open another."]) }
         proxy.lastPoll = Date()
         if !proxy.events.isEmpty || proxy.task == nil { return (200, ["events": take(proxy)]) }
         // One poll waits at a time: a second one ends the first with nothing, since the app has moved on.
@@ -424,13 +424,13 @@ enum WishProxies {
     /// each as one message on the socket, as the app would on its own.
     static func send(_ project: LampProject, body: [String: Any]) async -> (Int, [String: Any]) {
         guard let proxy = proxy(project, link: body["link"] as? Int), let task = proxy.task else {
-            return (409, ["error": "That link to the wish's apps is over: open another."])
+            return (409, ["error": "That link to the project's apps is over: open another."])
         }
         var messages: [URLSessionWebSocketTask.Message] = []
         for item in body["frames"] as? [[String: Any]] ?? [] {
             if let text = item["text"] as? String, text.utf8.count <= ControllerWire.message { messages.append(.string(text)) }
             else if let data = (item["data"] as? String).flatMap({ Data(base64Encoded: $0) }), data.count <= max(WishChannel.sealedLimit, WishChannel.pieceLimit) + 16 { messages.append(.data(data)) }
-            else { return (413, ["error": "A message between the wish's apps is at most \(ControllerWire.message) bytes as JSON."]) }
+            else { return (413, ["error": "A message between the project's apps is at most \(ControllerWire.message) bytes as JSON."]) }
         }
         proxy.lastPoll = Date()
         let before = proxy.sending
@@ -443,7 +443,7 @@ enum WishProxies {
         }
         proxy.sending = Task { _ = await sent.value }
         if let error = await sent.value {
-            return (503, ["error": "The message didn't reach the wish's other apps: \(error.localizedDescription)"])
+            return (503, ["error": "The message didn't reach the project's other apps: \(error.localizedDescription)"])
         }
         return (200, ["ok": true])
     }
@@ -524,7 +524,7 @@ enum WishNote {
             let peer = WishRooms.peer(app, in: wish)
             // One that can't join the room says so, rather than that it isn't in it.
             guard WishRooms.joins(app.platform) else {
-                return "\(name.prefix(1).uppercased() + name.dropFirst()): can't reach the wish's other apps yet, and they can't reach it"
+                return "\(name.prefix(1).uppercased() + name.dropFirst()): can't reach the project's other apps yet, and they can't reach it"
             }
             var line = "\(name.prefix(1).uppercased() + name.dropFirst()) (peer \"\(peer)\"): \(store.isOpen(app) ? "open" : "not open")"
             let copies = present[peer] ?? []
@@ -533,7 +533,7 @@ enum WishNote {
             return line + copies.map { member in
                 var line = ""
                 let since = (member["since"] as? Int).map { Date(timeIntervalSince1970: Double($0) / 1000).formatted(date: .omitted, time: .shortened) } ?? "?"
-                line += ", in the wish's room as \"\(member["device"] as? String ?? "")\" since \(since)"
+                line += ", in the project's room as \"\(member["device"] as? String ?? "")\" since \(since)"
                 if copies.count > 1, let id = member["peer"] as? String { line += " (copy \"\(id)\")" }
                 // Built by an earlier Lamp: its wish's other apps show it as out of date and share no values, files or game
                 // controls with it,
@@ -564,7 +564,7 @@ enum WishNote {
         let now = line(for: project, store: .shared)
         guard !now.isEmpty else { return "" }
         switch note.telling(now, for: project, engine: engine, session: session) {
-        case .fresh, .changed: return "\n\n---\nThe wish's apps right now (from Lamp, not part of the request above; the room is where they see each other through LampWish): \(now)"
+        case .fresh, .changed: return "\n\n---\nThe project's apps right now (from Lamp, not part of the request above; the room is where they see each other through LampWish): \(now)"
         case .nothing: return ""
         }
     }
@@ -582,7 +582,7 @@ extension Agent.Rules {
     /// part's rules, so every app of the wish is told the same thing.
     static let wishTalk = """
 
-    - The apps of this wish can share data and send each other messages. Each has Lamp's `LampWish` block for it, built \
+    - The apps of this project can share data and send each other messages. Each has Lamp's `LampWish` block for it, built \
     in (`LampWish.shared` in LampSupport.swift, `LampWish` in LampSupport.kt, `Lamp.wish` in lamp.js). Before writing how \
     they reach each other, open the `wish-links` skill with `read_skill`: the ways they can, when another fits better, \
     and what to do while one of them isn't made yet.

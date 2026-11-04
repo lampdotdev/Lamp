@@ -564,14 +564,14 @@ enum Versions {
         let note = """
 
 
-        Note from Lamp: the user chose to bring in the latest version of this wish from \(place). Lamp merged it into \
-        the wish's files with git: what changed only upstream and what changed only here is already in place. These \
-        files changed in the same places on both sides and hold conflict markers (`<<<<<<< HEAD` begins what this wish \
+        Note from Lamp: the user chose to bring in the latest version of this project from \(place). Lamp merged it into \
+        the project's files with git: what changed only upstream and what changed only here is already in place. These \
+        files changed in the same places on both sides and hold conflict markers (`<<<<<<< HEAD` begins what this project \
         had, `=======` divides it from what came from upstream, `>>>>>>> \(ref)` ends it):
         \(list)
         Settle each one: bring in what changed upstream and keep what was changed here. Settle it yourself when what the \
         person wants is clear (a fix upstream to code they didn't touch, a change here that upstream merely moved); ask \
-        them with the ask tool only where it isn't, then go on. `git show HEAD:<path>` is a file as this wish had it \
+        them with the ask tool only where it isn't, then go on. `git show HEAD:<path>` is a file as this project had it \
         before the merge, and `git show \(ref):<path>` is it as it is upstream. Leave no marker behind: the app \
         has to build. credits.json is already updated by Lamp: leave it. When it's all in, tell the person what came in \
         and what you kept of theirs.
@@ -591,8 +591,8 @@ enum Versions {
         let note = """
 
 
-        Note from Lamp: before this message, the user brought in the latest version of this wish from \(place). Lamp \
-        merged it into the wish's files with git, keeping what was changed here, and saved the result as a version. The \
+        Note from Lamp: before this message, the user brought in the latest version of this project from \(place). Lamp \
+        merged it into the project's files with git, keeping what was changed here, and saved the result as a version. The \
         files may no longer match what you remember from this conversation: read them again before editing.
         """
         try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
@@ -606,7 +606,7 @@ enum Versions {
         let note = """
 
 
-        Note from Lamp: before this message, the user mixed changes from another person's copy of this wish into it, \
+        Note from Lamp: before this message, the user mixed changes from another person's copy of this project into it, \
         each saved as a version of its own; where two changes touched the same lines, the later one won.\(said) The \
         files may no longer match what you remember from this conversation: read them again before editing.
         """
