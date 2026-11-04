@@ -106,6 +106,77 @@ final class UnsavedWorkTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: attachments.appendingPathComponent("mockup.png").path))
     }
 
+    /// A file copied on Try Again belongs to its message only once the chat is written with it: until then the notice
+    /// stays, and quitting asks.
+    func testAFileCopiedOnTryAgainKeepsTheNoticeUntilItsChatIsWritten() async throws {
+        let wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)
+        let store = Store(testingAt: root)
+        let project = try XCTUnwrap(store.current(wish))
+        let lamp = project.dir.appendingPathComponent(".lamp")
+        let attachments = project.dir.appendingPathComponent(Attachments.folder)
+        try FileManager.default.createDirectory(at: attachments, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("mockup.png")
+        try Data([1, 2, 3]).write(to: file)
+        try setWritable(attachments, false)
+        defer { try? setWritable(attachments, true); try? setWritable(lamp, true) }
+        _ = store.post([QueuedMessage(text: "Like this", attachments: [file])], to: project)
+        await settle(store)
+
+        try setWritable(attachments, true)
+        try setWritable(lamp, false)
+        store.retrySaving()
+        XCTAssertNotNil(store.saveTrouble, "the file is copied, but the chat naming it isn't written yet")
+        await settle(store)
+        XCTAssertNotNil(store.saveTrouble, "the chat naming the file couldn't be written")
+        XCTAssertFalse(store.saveAllNow(), "quitting asks")
+
+        try setWritable(lamp, true)
+        XCTAssertTrue(store.saveAllNow())
+        XCTAssertNil(store.saveTrouble)
+        let saved = try JSONDecoder().decode([LogLine].self, from: Data(contentsOf: lamp.appendingPathComponent("chat.json")))
+        XCTAssertEqual(saved.last?.attachments, ["mockup.png"])
+    }
+
+    /// A wish not built yet is renamed by moving its folder to a new id: what it couldn't save goes with it.
+    func testRenamingAWishKeepsWhatItCouldntSave() async throws {
+        let draft = try Template.draft(name: "Untitled", in: root)
+        let store = Store(testingAt: root)
+        let project = try XCTUnwrap(store.current(draft))
+        // A folder where the draft's file goes: only that write fails, and the rename itself goes through.
+        let blocker = project.dir.appendingPathComponent(".lamp/draft.txt/kept")
+        try FileManager.default.createDirectory(at: blocker, withIntermediateDirectories: true)
+        store.saveDraft(Store.Draft(text: "Make it blue"), for: project)
+        store.flushDrafts()
+        XCTAssertNotNil(store.saveTrouble)
+
+        let renamed = await store.performRename(project, to: "Tea Timer")
+        XCTAssertNotEqual(renamed.id, project.id, "the folder moved to a new id")
+        let newLamp = renamed.dir.appendingPathComponent(".lamp")
+        XCTAssertNotNil(store.saveTrouble, "still unsaved after the rename")
+
+        try FileManager.default.removeItem(at: newLamp.appendingPathComponent("draft.txt"))
+        store.retrySaving()
+        await settle(store)
+        XCTAssertNil(store.saveTrouble)
+        XCTAssertEqual(try String(contentsOf: newLamp.appendingPathComponent("draft.txt"), encoding: .utf8), "Make it blue")
+    }
+
+    /// Quitting while a chat's write is still on its queue: that write's word hasn't come back, so the chat is
+    /// written again at once and its failure asks.
+    func testQuittingDuringAChatWriteStillAsks() throws {
+        let wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)
+        let store = Store(testingAt: root)
+        let project = try XCTUnwrap(store.current(wish))
+        let lamp = project.dir.appendingPathComponent(".lamp")
+        try setWritable(lamp, false)
+        defer { try? setWritable(lamp, true) }
+
+        store.log(project, .user, "Count my cups of tea")
+        store.flushChats()
+        XCTAssertFalse(store.saveAllNow())
+        XCTAssertNotNil(store.saveTrouble)
+    }
+
     /// Quitting writes everything now and quits only once it's all on disk (the quit question's Retry). An earlier
     /// write's failure, told back after a later one landed, doesn't bring the notice back.
     func testQuittingSavesNowAndALateFailureDoesNotCountAgainstALaterSave() async throws {

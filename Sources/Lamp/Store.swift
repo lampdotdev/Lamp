@@ -1670,7 +1670,7 @@ final class Store: ObservableObject {
     /// A file sent with a message that couldn't be copied into the app's Attachments folder: copied there on Try Again
     /// and added to its message's line, from where it came.
     struct UnsavedAttachment: Equatable {
-        let project: String
+        var project: String
         var line: UUID?
         let file: URL
     }
@@ -1699,8 +1699,33 @@ final class Store: ObservableObject {
         return chatWritesMade[id]!
     }
 
+    /// The same work under the id its wish has now: a write started before a rename lands after it.
+    private func following(_ work: Unsaved) -> Unsaved {
+        switch work {
+        case .chat(let id): .chat(moved[id] ?? id)
+        case .draft(let id): .draft(moved[id] ?? id)
+        }
+    }
+
+    /// Chats with a write handed to the queue whose word hasn't come back yet.
+    private var chatsBeingWritten: [String] {
+        chatWritesMade.compactMap { id, made in made > chatWritesLanded[id, default: 0] ? id : nil }
+    }
+
+    /// What couldn't be saved goes with a wish to the id it has after a rename (`follow`), counts and all, so it's
+    /// still written there rather than taken for a wish that's gone.
+    private func followUnsaved(from old: String, to new: String) {
+        unsaved = Set(unsaved.map(following))
+        for index in unsavedAttachments.indices where unsavedAttachments[index].project == old {
+            unsavedAttachments[index].project = new
+        }
+        if let made = chatWritesMade.removeValue(forKey: old) { chatWritesMade[new] = made }
+        if let landed = chatWritesLanded.removeValue(forKey: old) { chatWritesLanded[new] = landed }
+    }
+
     /// A write of the person's work has landed, or failed with `error`. `write` is a chat's count of it, for a chat.
     private func landed(_ work: Unsaved, write: Int? = nil, error: Error?) {
+        let work = following(work)
         if let write, let id = work.chat {
             guard write >= chatWritesLanded[id, default: 0] else { return }
             chatWritesLanded[id] = write
@@ -1728,6 +1753,7 @@ final class Store: ObservableObject {
     /// Try Again: writes everything that couldn't be written, and leaves the notice up until each write has landed. A
     /// chat's write lands on its queue and is told back from there; a wish deleted since has nothing left to save.
     func retrySaving() {
+        retryAttachments()
         for work in unsaved {
             switch work {
             case .chat(let id):
@@ -1739,30 +1765,32 @@ final class Store: ObservableObject {
                 writeDraft(for: project)
             }
         }
-        retryAttachments()
         settleSaveTrouble()
     }
 
     /// Writes everything waiting or unsaved now, and waits for it, for Lamp quitting: true once all of it is on disk.
     /// Retry in the quit question comes here again.
     func saveAllNow() -> Bool {
+        retryAttachments()
         for project in projects where draftWrites[project.id] != nil || unsaved.contains(.draft(project.id)) {
             draftWrites[project.id]?.cancel()
             writeDraft(for: project)
         }
-        let chats = chatsToSave.union(unsaved.compactMap(\.chat))
+        // A chat whose write is still on the queue is written again here: its word would come back only after Lamp
+        // had decided to quit, too late to ask.
+        let chats = chatsToSave.union(unsaved.compactMap(\.chat)).union(chatsBeingWritten)
         chatsToSave.subtract(chats)
         for id in chats {
             if let project = projects.first(where: { $0.id == id }) { _ = writeChatNow(project) } else { landed(.chat(id), error: nil) }
         }
-        retryAttachments()
         settleSaveTrouble()
         return unsaved.isEmpty && unsavedAttachments.isEmpty
     }
 
     /// Copies the files that couldn't be copied when their message was sent, and puts each in its message's line. One
     /// whose own file is gone since (a picture dropped from a browser, kept only in a temporary folder) can't be
-    /// copied any more, and is let go.
+    /// copied any more, and is let go. A line given its file leaves its chat unsaved until that chat's write lands:
+    /// the caller writes it, so the notice doesn't go while the file is still missing from the chat on disk.
     private func retryAttachments() {
         var still: [UnsavedAttachment] = []
         for pending in unsavedAttachments {
@@ -1776,7 +1804,7 @@ final class Store: ObservableObject {
             }
             if let line = pending.line, let index = logs[project.id]?.firstIndex(where: { $0.id == line }) {
                 logs[project.id]?[index].attachments = (logs[project.id]?[index].attachments ?? []) + [name]
-                saveChat(project)
+                unsaved.insert(.chat(project.id))
             }
         }
         unsavedAttachments = still
@@ -3553,6 +3581,7 @@ final class Store: ObservableObject {
         for (from, to) in moved where to == old.id { moved[from] = project.id }
         moved = moved.filter { $0.key != project.id }
         moved[old.id] = project.id
+        followUnsaved(from: old.id, to: project.id)
         pendingSubmissions.move(from: old.id, to: project.id)
         if let draft = drafts.removeValue(forKey: old.id) { drafts[project.id] = draft }
         draftWrites.removeValue(forKey: old.id)?.cancel()
