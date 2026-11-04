@@ -7887,8 +7887,8 @@ enum Template {
 
             /// One turn of the drum, in seconds.
             private static let roll = 1.1
-            /// How often the stripes come round while the app stands still: a roll, then the window clear for a while, so the
-            /// person sees the change is under way without the window kept covered.
+            /// The roll's place in the turn while the app stands still: the stripes roll up once as it starts (`turn`), then
+            /// the glow and the smoke alone say the change is under way, so a long wait isn't a run of rainbows.
             private static let turnEvery = 3.2
             /// When the stripes began turning while the app stood still (`turn`), in the stripes' time.
             private var turning: CFTimeInterval?
@@ -7999,7 +7999,7 @@ enum Template {
                 }
                 // Laid out again while the app stands still (its window resized, or put in full screen): the new stripes take up
                 // the roll where it is, from when it began.
-                if let began = turning { rollStripes(from: began, turns: .infinity, every: Self.turnEvery) }
+                if let began = turning { rollStripes(from: began, turns: 1, every: Self.turnEvery) }
             }
 
             /// Where a stripe's edges are at a point of the roll, from 0 to 2π: the stripes lie side by side round a drum
@@ -8040,14 +8040,14 @@ enum Template {
                 wisps.birthRate = 1
             }
 
-            /// The app stands still taking the change in: the stripes roll up the window every few seconds until `reveal`, the
-            /// smoke and the glow staying. Where motion is reduced, the glow alone stays, as while it was built.
+            /// The app stands still taking the change in: the stripes roll up the window once, the smoke and the glow staying
+            /// until `reveal`. Where motion is reduced, the glow alone stays, as while it was built.
             func turn(still: Bool) {
                 layoutSubtreeIfNeeded()
                 guard !still, turning == nil else { return }
                 let now = stripes.convertTime(CACurrentMediaTime(), from: nil)
                 turning = now
-                rollStripes(from: now, turns: .infinity, every: Self.turnEvery)
+                rollStripes(from: now, turns: 1, every: Self.turnEvery)
             }
 
             /// The change went in: the smoke surges and the stripes roll up (the stripes fading where motion is reduced), and
@@ -8070,13 +8070,13 @@ enum Template {
                     Self.animate(stripes, "opacity", from: 0.35, to: 0, duration: 0.7)
                     return 0.8
                 }
-                // Turning already (`turn`): a roll under way is the last and finishes; between rolls, one more rolls now, so the
-                // change landing is marked as it is without turning. The smoke and the glow go meanwhile.
+                // Turning already (`turn`): its one roll, still under way, is the last and finishes; after it, one more rolls
+                // now, so the change landing is marked as it is without turning. The smoke and the glow go meanwhile.
                 if let began = turning {
                     turning = nil
                     let now = stripes.convertTime(CACurrentMediaTime(), from: nil)
-                    let done = ((now - began) / Self.turnEvery).rounded(.down)
-                    let rolling = now - began - done * Self.turnEvery < Self.roll
+                    let done: Double = 0
+                    let rolling = now - began < Self.roll
                     if rolling { rollStripes(from: began, turns: Float(done + 1), every: Self.turnEvery) }
                     else { rollStripes(from: now, turns: 1, every: Self.roll) }
                     wisps.birthRate = 0
