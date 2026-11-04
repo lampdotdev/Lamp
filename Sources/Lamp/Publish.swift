@@ -328,7 +328,7 @@ enum Publish {
     /// Puts `site` on `repo`'s page branch as one commit of the difference on top of what's there, or none when it's the
     /// same, signed in through gh for these commands alone. Returns the branch's commit, which Pages builds, and whether
     /// it's a new one.
-    static func pushPage(_ site: URL, to repo: String, gh: String, login: String, author shown: GitHubRepo.Author? = nil, message: String) async throws -> (commit: String, changed: Bool) {
+    static func pushPage(_ site: URL, to repo: String, gh: String, login: String, authors shown: [GitHubRepo.Author]? = nil, message: String) async throws -> (commit: String, changed: Bool) {
         let git = GitHubRepo.git
         let signedIn = GitHubRepo.signedIn(gh: gh)
         let remote = "https://github.com/\(repo).git"

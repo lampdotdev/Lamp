@@ -48,9 +48,9 @@ final class CommitAuthorTests: XCTestCase {
         let folder = try repository(try signing())
         let author = try await GitHubRepo.author(login: "someone", git: git, in: folder)
         XCTAssertTrue(author.signs)
-        XCTAssertEqual(author.email, "signer@example.com")
-        XCTAssertEqual(author.note, "Your git signs your commits, so they go as you sign them, showing signer@example.com on GitHub.")
-        let commit = try await GitHubRepo.commit(["commit", "-q", "-m", "Up"], as: author, shown: author, git: git, in: folder)
+        XCTAssertEqual(author.emails, ["signer@example.com"])
+        XCTAssertEqual(GitHubRepo.note(for: [author]), "Your git signs your commits, so they go as you sign them, showing signer@example.com on GitHub.")
+        let commit = try await GitHubRepo.commit(["commit", "-q", "-m", "Up"], as: author, shown: [author], git: git, in: folder)
         XCTAssertEqual(show("%ae %ce", commit, in: folder), "signer@example.com signer@example.com")
         XCTAssertTrue(signed(commit, in: folder))
     }
@@ -69,8 +69,8 @@ final class CommitAuthorTests: XCTestCase {
         let folder = try repository([("commit.gpgSign", "false"), ("user.email", "personal@example.com")])
         let author = try await GitHubRepo.author(login: "someone", git: git, in: folder)
         XCTAssertFalse(author.signs)
-        XCTAssertNil(author.note)
-        let commit = try await GitHubRepo.commit(["commit", "-q", "-m", "Up"], as: author, shown: author, git: git, in: folder)
+        XCTAssertNil(GitHubRepo.note(for: [author]))
+        let commit = try await GitHubRepo.commit(["commit", "-q", "-m", "Up"], as: author, shown: [author], git: git, in: folder)
         XCTAssertEqual(show("%an %ae", commit, in: folder), "someone someone@users.noreply.github.com")
         XCTAssertFalse(signed(commit, in: folder))
     }
@@ -79,7 +79,7 @@ final class CommitAuthorTests: XCTestCase {
         let folder = try repository(try signing(program: "/usr/bin/false"))
         let author = try await GitHubRepo.author(login: "someone", git: git, in: folder)
         do {
-            _ = try await GitHubRepo.commit(["commit", "-q", "-m", "Up"], as: author, shown: author, git: git, in: folder)
+            _ = try await GitHubRepo.commit(["commit", "-q", "-m", "Up"], as: author, shown: [author], git: git, in: folder)
             XCTFail("An unsigned commit was made")
         } catch {
             XCTAssertTrue(error.localizedDescription.hasPrefix("Your git signs your commits and couldn't sign this one"), error.localizedDescription)
@@ -91,13 +91,52 @@ final class CommitAuthorTests: XCTestCase {
     func testAnAddressTheCardDidntShowStopsTheCommit() async throws {
         let folder = try repository(try signing())
         let author = try await GitHubRepo.author(login: "someone", git: git, in: folder)
-        let shown = GitHubRepo.Author(signs: false, email: "someone@users.noreply.github.com", options: [])
+        let shown = GitHubRepo.Author(signs: false, emails: ["someone@users.noreply.github.com"], options: [])
         do {
-            _ = try await GitHubRepo.commit(["commit", "-q", "-m", "Up"], as: author, shown: shown, git: git, in: folder)
+            _ = try await GitHubRepo.commit(["commit", "-q", "-m", "Up"], as: author, shown: [shown], git: git, in: folder)
             XCTFail("A commit under an address the card didn't show was made")
         } catch {
             XCTAssertTrue(error.localizedDescription.contains("signer@example.com"), error.localizedDescription)
         }
         XCTAssertFalse(Subprocess.runBlocking(git, ["rev-parse", "--verify", "-q", "HEAD"], cwd: folder, timeout: 30).ok)
+    }
+
+    /// git can set the committer's address apart from the author's: both go out, so both are said.
+    func testAnAuthorsAddressApartFromTheCommittersIsSaidToo() async throws {
+        let folder = try repository(try signing() + [("committer.email", "someone@users.noreply.github.com")])
+        let author = try await GitHubRepo.author(login: "someone", git: git, in: folder)
+        XCTAssertEqual(Set(author.emails), ["signer@example.com", "someone@users.noreply.github.com"])
+        XCTAssertEqual(GitHubRepo.note(for: [author]), "Your git signs your commits, so they go as you sign them, showing signer@example.com on GitHub.")
+        let commit = try await GitHubRepo.commit(["commit", "-q", "-m", "Up"], as: author, shown: [author], git: git, in: folder)
+        XCTAssertEqual(show("%ae %ce", commit, in: folder), "signer@example.com someone@users.noreply.github.com")
+    }
+
+    /// Put on GitHub's card asks where the commit will be made, on the branch it will be made on: settings that apply
+    /// only there (here, signing as another address on main) are what the card shows, and the commit then goes.
+    func testTheCardAsksOnTheBranchTheCommitIsMadeOn() async throws {
+        let signing = try signing()
+        let include = root.appendingPathComponent("main.inc")
+        try Data(("[commit]\n\tgpgSign = true\n[gpg]\n\tformat = ssh\n[user]\n\tname = Signer\n\temail = main@example.com\n"
+                  + "\tsigningKey = \(signing.first { $0.0 == "user.signingKey" }!.1)\n").utf8).write(to: include)
+        let global = root.appendingPathComponent("global")
+        try Data("[includeIf \"onbranch:main\"]\n\tpath = \(include.path)\n".utf8).write(to: global)
+        setenv("GIT_CONFIG_GLOBAL", global.path, 1)
+        defer { unsetenv("GIT_CONFIG_GLOBAL") }
+        let tree = root.appendingPathComponent("work/repo")
+        try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true)
+        try Data("hello\n".utf8).write(to: tree.appendingPathComponent("a.txt"))
+        // Outside a repository the branch's settings don't apply.
+        let outside = try await GitHubRepo.author(login: "someone", git: git, in: tree)
+        XCTAssertFalse(outside.signs)
+        let staged = GitHubRepo.Staged(folder: tree, files: 1, bytes: 6, credits: Credits(), open: Publish.OpenInLamp())
+        let authors = try await GitHubRepo.authors(for: staged, repo: "someone/tally", isNew: true, gh: "/usr/bin/false", login: "someone")
+        XCTAssertEqual(authors.map(\.emails), [["main@example.com"]])
+        XCTAssertEqual(GitHubRepo.note(for: authors), "Your git signs your commits, so they go as you sign them, showing main@example.com on GitHub.")
+        // As upload makes it there.
+        XCTAssertTrue(Subprocess.runBlocking(git, ["add", "-A"], cwd: tree, timeout: 30).ok)
+        let author = try await GitHubRepo.author(login: "someone", git: git, in: tree)
+        let commit = try await GitHubRepo.commit(["commit", "-q", "-m", "Up"], as: author, shown: authors, git: git, in: tree)
+        XCTAssertEqual(show("%ae", commit, in: tree), "main@example.com")
+        XCTAssertTrue(signed(commit, in: tree))
     }
 }

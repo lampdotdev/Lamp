@@ -738,7 +738,7 @@ enum Contribute {
         if card.stage == .ready, card.fork == nil, let login = card.login, let source = card.source {
             notes.append("You have no fork of \(source.owner)/\(source.name) yet: Lamp makes one on your account (\(login)/\(source.name)) first.")
         }
-        if let note = card.prepared?.author.note { notes.append(note) }
+        if let note = card.prepared.flatMap({ GitHubRepo.note(for: [$0.author]) }) { notes.append(note) }
         let size = card.prepared.map { $0.changed.count == 1 ? "1 file changed" : "\($0.changed.count) files changed" }
         return SidebarContribute(name: project.name, icon: card.icon, stage: card.stage,
                                  upstream: card.source.map { "\($0.owner)/\($0.name)" }, fork: card.fork ?? card.request?.fork,

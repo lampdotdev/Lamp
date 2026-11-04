@@ -274,12 +274,14 @@ card stages again when a new repository is made private (`setPrivate`). A public
 gets the remix link as its website, or its page once it's up (`offerWebsite`, `from=github`); one the person set is left alone. One commit per Put on GitHub, on top of
 what's there (a shallow clone, the tree replaced; unchanged when only the export's own marks differ), never the wish's
 own history, which holds every version and the chat's attachments. Its commits, the page's and Send Changes Back's
-are made as `GitHubRepo.author` says: someone whose git signs commits (`commit.gpgSign`, read in the folder the commit is
-made in, so conditional settings count) gets them as their git makes them, their name, address and key, since GitHub
-verifies a signature only under an address its key names (signed under the private address, it reads `bad_email`);
-everyone else gets their GitHub name and private address, unsigned. A signature that fails, or a commit that comes out
-unsigned, stops it (`GitHubRepo.commit`), and an address other than the private one is said on the card before anything
-goes; one that changed since the card showed it stops it too. The repository is remembered by the wish's instance
+are made as `GitHubRepo.author` says: someone whose git signs commits (`commit.gpgSign`, read where the commit is made, so
+conditional settings for a folder, branch or remote count) gets them as their git makes them, their name, address and
+key, since GitHub verifies a signature only under an address its key names (signed under the private address, it reads
+`bad_email`); everyone else gets their GitHub name and private address, unsigned. A signature that fails, or a commit
+that comes out unsigned, stops it (`GitHubRepo.commit`). The author's and the committer's addresses, which git can set
+apart, are said on the card before anything goes when they aren't the private one: Put on GitHub's card asks in a
+folder set up as each commit's will be (`GitHubRepo.authors`: the repository's branch and remote, the page branch). An
+address the card didn't say, beforehand or as written in the commit, stops it too. The repository is remembered by the wish's instance
 in Lamp's own folder (`GitHub Repositories.json`, with whether it carries the license, which an update keeps to, and where its page
 plays, `Repo.page`). `gh`, the sign-in, the repository name and the page come from `Publish`, which shares them. The file's credits
 name the repository on the chain's last link (`Credits.Remix.url`, `Sharing.export(repository:)`), so a remix opened

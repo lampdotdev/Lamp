@@ -485,7 +485,7 @@ enum GitHubRepo {
     /// the person's own repository the wish was opened from, the one it was opened at. A repository that has moved on
     /// since is refused rather than overwritten (a push of a commit on top of its tip would quietly undo what's there).
     static func upload(_ staged: Staged, of project: LampProject, to repo: String, gh: String, login: String, isNew: Bool, expected: String? = nil,
-                       isPrivate: Bool, license: Bool, picture: Bool? = nil, author shown: Author? = nil,
+                       isPrivate: Bool, license: Bool, picture: Bool? = nil, authors shown: [Author]? = nil,
                        step: @escaping @Sendable (String) -> Void) async throws -> (repo: Repo, changed: Bool) {
         let fm = FileManager.default
         let url = url(repo)
@@ -607,7 +607,7 @@ enum GitHubRepo {
         var chain = page.chain
         if let last = chain.remixOf.indices.last, chain.remixOf[last].url == url { chain.remixOf[last].commit = commit }
         try chain.encoded().write(to: page.folder.appendingPathComponent(Credits.file))
-        let pushed = try await Publish.pushPage(page.folder, to: repo, gh: gh, login: login, author: shown, message: "\(project.name)'s page, from Lamp")
+        let pushed = try await Publish.pushPage(page.folder, to: repo, gh: gh, login: login, authors: shown, message: "\(project.name)'s page, from Lamp")
         try await Publish.servePage(repo, commit: pushed.commit, changed: pushed.changed, gh: gh, step: step)
         record.page = page.url
         return (record, changed || pushed.changed || kept(for: project)?.page != page.url)
@@ -638,41 +638,88 @@ enum GitHubRepo {
     /// the GitHub name and private address Lamp gives everyone else would show their signed commits as Unverified.
     struct Author: Equatable, Sendable {
         let signs: Bool
-        /// The address the commits show on GitHub.
-        let email: String
+        /// The addresses the commits show on GitHub: the author's and the committer's, which git can set apart.
+        let emails: [String]
         /// What git is run with to commit as them.
         let options: [String]
 
-        /// The address GitHub keeps for an account that hides its own.
-        var isPrivate: Bool { email.lowercased().hasSuffix("@users.noreply.github.com") }
-
-        /// The card's words for an address that goes out with the commits, said before anything does.
-        var note: String? {
-            isPrivate ? nil : "Your git signs your commits, so they go as you sign them, showing \(email) on GitHub."
-        }
+        /// The addresses that aren't the one GitHub keeps for an account that hides its own.
+        var publicEmails: [String] { emails.filter { !$0.lowercased().hasSuffix("@users.noreply.github.com") } }
     }
 
-    /// The person's author for commits made in `folder`, as their git says there (conditional settings included).
+    /// The card's words for the addresses that go out with the commits, said before anything does.
+    static func note(for authors: [Author]) -> String? {
+        var shown: [String] = []
+        for email in authors.flatMap(\.publicEmails) where !shown.contains(email) { shown.append(email) }
+        guard !shown.isEmpty else { return nil }
+        return "Your git signs your commits, so they go as you sign them, showing \(shown.joined(separator: " and ")) on GitHub."
+    }
+
+    /// The person's author for commits made in `folder`, as their git says there: conditional settings follow the
+    /// folder, its branch and its remote, so it's asked where the commit is made, or somewhere set up the same way.
     static func author(login: String, git: String, in folder: URL) async throws -> Author {
         let signs = await Subprocess.run(git, ["config", "--type=bool", "--get", "commit.gpgSign"], cwd: folder, mergeErrors: false, timeout: 10)
         guard signs.ok, signs.output.trimmed == "true" else {
-            return Author(signs: false, email: "\(login)@users.noreply.github.com",
+            return Author(signs: false, emails: ["\(login)@users.noreply.github.com"],
                           options: ["-c", "user.name=\(login)", "-c", "user.email=\(login)@users.noreply.github.com"])
         }
-        let ident = await Subprocess.run(git, ["var", "GIT_COMMITTER_IDENT"], cwd: folder, mergeErrors: false, timeout: 10)
-        guard ident.ok, let open = ident.output.firstIndex(of: "<"), let close = ident.output[open...].firstIndex(of: ">"),
-              case let email = String(ident.output[ident.output.index(after: open)..<close]), email.contains("@") else {
-            throw Failure(message: "Your git signs your commits but has no email address set for them. Set one, then try again.")
+        var emails: [String] = []
+        for role in ["GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"] {
+            let ident = await Subprocess.run(git, ["var", role], cwd: folder, mergeErrors: false, timeout: 10)
+            guard ident.ok, let open = ident.output.firstIndex(of: "<"), let close = ident.output[open...].firstIndex(of: ">"),
+                  case let email = String(ident.output[ident.output.index(after: open)..<close]), email.contains("@") else {
+                throw Failure(message: "Your git signs your commits but has no email address set for them. Set one, then try again.")
+            }
+            if !emails.contains(email) { emails.append(email) }
         }
-        return Author(signs: true, email: email, options: [])
+        return Author(signs: true, emails: emails, options: [])
+    }
+
+    /// Where Put on GitHub's commits will be made, set up as they will be, and who they're made as there: the code's in
+    /// `staged.folder` on main for a new repository or in a clone beside it on the repository's branch for one that's
+    /// up, and a page's in its folder on the page branch. What the card shows, before anything goes.
+    static func authors(for staged: Staged, repo: String, isNew: Bool, gh: String, login: String) async throws -> [Author] {
+        let git = git
+        func ready(_ folder: URL, branch: String, remote: String?) async throws -> URL {
+            for arguments in [["init", "-q", "-b", branch]] + (remote.map { [["remote", "add", "origin", $0]] } ?? []) {
+                let ran = await Subprocess.run(git, arguments, cwd: folder, mergeErrors: false, timeout: 30)
+                guard ran.ok else { throw Failure(message: "Couldn't prepare the repository: \(ran.errors.trimmed.suffix(200))") }
+            }
+            return folder
+        }
+        var authors: [Author] = []
+        if isNew {
+            authors.append(try await author(login: login, git: git, in: try await ready(staged.folder, branch: "main", remote: nil)))
+        } else {
+            // `upload` clones it here, which replaces this.
+            let clone = staged.folder.deletingLastPathComponent().appendingPathComponent("clone")
+            try? FileManager.default.removeItem(at: clone)
+            try FileManager.default.createDirectory(at: clone, withIntermediateDirectories: true)
+            let branch = await Subprocess.run(gh, ["repo", "view", repo, "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"], mergeErrors: false, timeout: 30)
+            let name = branch.ok && !branch.output.trimmed.isEmpty ? branch.output.trimmed : "main"
+            authors.append(try await author(login: login, git: git, in: try await ready(clone, branch: name, remote: "https://github.com/\(repo).git")))
+            try? FileManager.default.removeItem(at: clone)
+        }
+        if let page = staged.page {
+            // `pushPage` starts its own afresh here.
+            authors.append(try await author(login: login, git: git, in: try await ready(page.folder, branch: Publish.pageBranch, remote: nil)))
+            try? FileManager.default.removeItem(at: page.folder.appendingPathComponent(".git"))
+        }
+        return authors
     }
 
     /// Makes a commit as `author` (`git commit …` or `git commit-tree …` in `arguments`, run with `options` first) and
     /// returns it. A commit the person's git should have signed and didn't is an error, never sent unsigned in its place.
-    /// `shown` is the author the card showed: an address it didn't show never goes out.
-    static func commit(_ arguments: [String], as author: Author, shown: Author?, git: String, options: [String] = [], in folder: URL) async throws -> String {
-        if let shown, author.email != shown.email, !author.isPrivate {
-            throw Failure(message: "Your commits would now show \(author.email) on GitHub, which this didn't say. Close this and try again.")
+    /// `shown` is who the card showed: an address it didn't show never goes out, whether git names it beforehand or
+    /// writes it in the commit.
+    static func commit(_ arguments: [String], as author: Author, shown: [Author]?, git: String, options: [String] = [], in folder: URL) async throws -> String {
+        let allowed = shown.map { Set($0.flatMap(\.emails)) }
+        func unshown(_ emails: [String]) -> String? {
+            guard let allowed else { return nil }
+            return emails.first { !allowed.contains($0) && !$0.lowercased().hasSuffix("@users.noreply.github.com") }
+        }
+        if let email = unshown(author.emails) {
+            throw Failure(message: "Your commits would now show \(email) on GitHub, which this didn't say. Close this and try again.")
         }
         // commit-tree signs only when asked.
         let made = author.signs && arguments.first == "commit-tree" ? ["commit-tree", "-S"] + arguments.dropFirst() : arguments
@@ -684,6 +731,12 @@ enum GitHubRepo {
         let commit = arguments.first == "commit-tree" ? ran.output.trimmed
             : (await Subprocess.run(git, ["rev-parse", "HEAD"], cwd: folder, mergeErrors: false, timeout: 10)).output.trimmed
         guard let commit = Credits.validCommit(commit) else { throw Failure(message: "Couldn't make the commit.") }
+        // What the commit carries, as written: nothing is sent under an address that wasn't said.
+        let written = await Subprocess.run(git, ["show", "-s", "--format=%ae%n%ce", commit], cwd: folder, mergeErrors: false, timeout: 10)
+        let emails = written.output.split(separator: "\n").map { String($0).trimmed }
+        guard written.ok, emails.allSatisfy(author.emails.contains) else {
+            throw Failure(message: "Git made the commit under \(emails.joined(separator: " and ")), which this didn't say, so it wasn't sent.")
+        }
         if author.signs {
             let object = await Subprocess.run(git, ["cat-file", "commit", commit], cwd: folder, mergeErrors: false, timeout: 10)
             guard object.ok, object.output.contains("\ngpgsig") else {
@@ -774,8 +827,8 @@ enum GitHubRepo {
         /// Whether what was staged goes where anyone can read it: as GitHub says for a repository that's up, as chosen
         /// for a new one.
         var isPublic: Bool?
-        /// Who the commits are made as, which the card says when its address goes out with them.
-        var author: GitHubRepo.Author?
+        /// Who the commits are made as, where they'll be made, which the card says when an address goes out with them.
+        var authors: [GitHubRepo.Author]?
 
         /// Ready, or failed with the tree still staged, so Put on GitHub tries again.
         var canPut: Bool {
@@ -808,12 +861,13 @@ enum GitHubRepo {
         if let old = cards[project.id]?.staged { try? FileManager.default.removeItem(at: old.folder.deletingLastPathComponent()) }
         cards[project.id]?.staged = nil
         cards[project.id]?.isPublic = nil
-        cards[project.id]?.author = nil
+        cards[project.id]?.authors = nil
         Task {
             guard let gh = await Publish.gh() else { return set(project, .needsGitHub(.install)) }
             guard let login = await Publish.login(gh: gh) else { return set(project, .needsGitHub(.signIn)) }
             let repo: String
             let isPublic: Bool
+            var isNew = false
             // The README offers a remix by link only where anyone can read it: as GitHub says for one that's up, as
             // chosen for a new one (choosing again stages it again, `setPrivate`).
             if let kept = GitHubRepo.kept(for: project) {
@@ -831,6 +885,7 @@ enum GitHubRepo {
                 cards[project.id]?.license = false
             } else {
                 repo = await Publish.freeName(for: project, login: login, gh: gh)
+                isNew = true
                 isPublic = !(cards[project.id]?.isPrivate ?? false)
             }
             let picture = cards[project.id].flatMap { $0.showsPicture ? $0.picture : nil }
@@ -838,8 +893,8 @@ enum GitHubRepo {
                 let staged = try await Task.detached(priority: .userInitiated) {
                     try GitHubRepo.stage(project, repo: repo, link: WishLink.kept(for: project)?.url, isPublic: isPublic, picture: picture)
                 }.value
-                let author: GitHubRepo.Author
-                do { author = try await GitHubRepo.author(login: login, git: GitHubRepo.git, in: staged.folder) } catch {
+                let authors: [GitHubRepo.Author]
+                do { authors = try await GitHubRepo.authors(for: staged, repo: repo, isNew: isNew, gh: gh, login: login) } catch {
                     try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent())
                     throw error
                 }
@@ -847,7 +902,7 @@ enum GitHubRepo {
                     try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent())
                     return
                 }
-                cards[project.id]?.author = author
+                cards[project.id]?.authors = authors
                 cards[project.id]?.gh = gh
                 cards[project.id]?.login = login
                 cards[project.id]?.repo = repo
@@ -904,7 +959,7 @@ enum GitHubRepo {
                                                                   expected: isNew ? nil : card.expected,
                                                                   isPrivate: card.isPrivate, license: card.license,
                                                                   picture: card.picture == nil ? before?.picture : card.showsPicture,
-                                                                  author: card.author) { step in
+                                                                  authors: card.authors) { step in
                     Task { @MainActor in GitHubRepoCards.shared.cards[id]?.stage = .working(step) }
                 }
                 let (kept, changed) = uploaded
@@ -970,7 +1025,7 @@ enum GitHubRepo {
         if !credits.generated.isEmpty { notes.append(Credits.generatedLine(credits.generated.count) + ", marked as such.") }
         // A private repository passes nothing on, so only a public one says what came with no license.
         if card.isPublic ?? !card.isPrivate, let line = ShareCheck.warningLine(credits) { notes.append(line) }
-        if card.stage != .preparing, let note = card.author?.note { notes.append(note) }
+        if card.stage != .preparing, let note = card.authors.flatMap(GitHubRepo.note(for:)) { notes.append(note) }
         let size = card.staged.map { "\($0.files) files · " + ByteCountFormatter.string(fromByteCount: Int64($0.bytes), countStyle: .file) }
         // What the README offers: in a public repository the repository itself on lamp.dev, so no Share Link is asked
         // for; in a private one the Share Link, when there is one.
