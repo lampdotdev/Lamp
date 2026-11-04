@@ -753,12 +753,14 @@ struct ChatBar: View {
                         tryOn(state)
                         undo(toolbar)
                         if more { versions(state, toolbar) }
+                        // Share is always there, beside the button for the rest: it's what people come back for.
+                        share(toolbar)
                         // Its own symbol says it's on (filled), so it has no lit circle behind it.
                         ToolButton(more ? "ellipsis.rectangle.fill" : "ellipsis.rectangle", more ? "Fewer Buttons" : "More Buttons",
                                    on: more, plain: true) {
                             withAnimation(.snappy(duration: 0.2)) { more.toggle() }
                         }
-                        .help(more ? "Show the title again" : "Sharing, agent details, delete and versions")
+                        .help(more ? "Show the title again" : "Agent details, delete and versions")
                         // Changed where it stands, the symbol simply filled: not faded or slid in as a new button.
                         .transaction { $0.animation = nil }
                     }
@@ -876,6 +878,13 @@ struct ChatBar: View {
 
     /// What the button for the rest shows (Versions goes beside Undo, the two being about the same thing).
     @ViewBuilder private func rest(_ state: SidebarState, _ toolbar: SidebarToolbar) -> some View {
+        ToolButton("chevron.left.forwardslash.chevron.right", "Agent Details", on: toolbar.details) { link.send(.details(!toolbar.details)) }
+            .help("Agent details")
+        ToolButton("trash", "Delete App") { deleting = true }
+            .help("Delete this app")
+    }
+
+    @ViewBuilder private func share(_ toolbar: SidebarToolbar) -> some View {
         let shareLink = toolbar.shareLink.flatMap { URL(string: $0) }
         ToolButton("square.and.arrow.up", "Share", on: sharingOpen) { sharingOpen.toggle() }
             .background(AnchorView(anchor: shareAnchor))
@@ -884,10 +893,6 @@ struct ChatBar: View {
             .popover(isPresented: $sharingOpen, arrowEdge: .bottom) {
                 SharePopover(link: shareLink, canContribute: toolbar.canContribute == true) { shareAction($0, link: shareLink) }
             }
-        ToolButton("chevron.left.forwardslash.chevron.right", "Agent Details", on: toolbar.details) { link.send(.details(!toolbar.details)) }
-            .help("Agent details")
-        ToolButton("trash", "Delete App") { deleting = true }
-            .help("Delete this app")
     }
 
     /// What was chosen in the share button's popover. Copying the link keeps it open, saying Copied; anything else
