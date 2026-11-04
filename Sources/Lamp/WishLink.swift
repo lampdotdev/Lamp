@@ -267,7 +267,7 @@ enum WishLink {
     static func uploadFile(_ data: Data, for shared: Shared, page: Bool = false) async throws {
         guard data.count <= Limit.fileTotal else {
             throw Failure(message: page ? "This wish's page is too big to play on its link (over \(Limit.fileTotal / 1_000_000) MB)."
-                          : "This wish is too big to go with its link (over \(Limit.fileTotal / 1_000_000) MB). Share the link without it.")
+                          : "This wish is too big to go with its link (over \(Limit.fileTotal / 1_000_000) MB).")
         }
         let count = max(1, (data.count + Limit.filePart - 1) / Limit.filePart)
         for n in 0..<count {
@@ -289,7 +289,7 @@ enum WishLink {
     private static func fileFailure(_ status: Int, page: Bool) -> Failure {
         guard [400, 409, 413].contains(status) else { return failure(status) }
         return Failure(message: page ? "lamp.dev couldn't take this wish's page to play, so its link shows its picture. Try again in a moment."
-                       : "lamp.dev couldn't take this wish's file. Share the link without it, or try again.")
+                       : "lamp.dev couldn't take this wish's file. Try again in a moment.")
     }
 
     /// Takes the wish's file away from its link, which keeps showing the idea, and its page with it. `page` takes only
