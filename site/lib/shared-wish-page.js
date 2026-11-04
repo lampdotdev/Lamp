@@ -70,7 +70,7 @@ export function wishPage(template, wish, { origin, playOrigin = null }) {
   // What the page reads (src/pages/w/index.astro), its words kept from closing the script early.
   const card = JSON.stringify({
     id: wish.id, name: wish.name, by: wish.by ?? "", about: wish.line, wish: wish.words, ideas: wish.ideas ?? [],
-    picture: wish.picture?.url ?? "", icon: wish.icon?.url ?? "",
+    releases: wish.releases ?? [], picture: wish.picture?.url ?? "", icon: wish.icon?.url ?? "",
     ...(wish.file?.url ? { file: wish.file.url, fileSize: wish.file.size, shared: wish.id } : {}),
     ...(plays ? { play: `${playOrigin}/w/${wish.id}/play/${wish.page.version}/`, ...(wish.shape ? { shape: wish.shape } : {}) } : {}),
   }).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");

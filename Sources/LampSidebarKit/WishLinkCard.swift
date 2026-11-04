@@ -15,13 +15,17 @@ public struct WishLinkCard: View {
         public var words: String
         /// The wish itself goes with the link, for anyone with Lamp to open that exact one: always, when it can.
         public var includeFile: Bool
+        /// What's new in this release, a line each, for the link's page and the app's What's New: written by Lamp, the
+        /// person's to change or clear. Only for a link that's out.
+        public var notes: String
 
-        public init(name: String, by: String = "", line: String, words: String, includeFile: Bool = false) {
+        public init(name: String, by: String = "", line: String, words: String, includeFile: Bool = false, notes: String = "") {
             self.name = name
             self.by = by
             self.line = line
             self.words = words
             self.includeFile = includeFile
+            self.notes = notes
         }
 
         /// The card can share only a wish with a name, and something to make one's own version from: what it does,
@@ -36,11 +40,16 @@ public struct WishLinkCard: View {
         public var line: Int
         public var words: Int
         public var by: Int
-        public init(name: Int, line: Int, words: Int, by: Int = 60) {
+        /// What's new: the lines a release holds, and a line's characters.
+        public var notes: Int
+        public var note: Int
+        public init(name: Int, line: Int, words: Int, by: Int = 60, notes: Int = 5, note: Int = 120) {
             self.name = name
             self.line = line
             self.words = words
             self.by = by
+            self.notes = notes
+            self.note = note
         }
     }
 
@@ -69,7 +78,9 @@ public struct WishLinkCard: View {
     let canIncludeFile: Bool
     /// Said while the wish goes with its link: the work in the wish that came with no license.
     let noLicense: String?
-    /// Copy Link the first time, Update Link after a change: shares what's on the card and copies the link.
+    /// Lamp is writing what's new for the release.
+    let writingNotes: Bool
+    /// Copy Link the first time, Release Update after: shares what's on the card and copies the link.
     let share: () -> Void
     let copy: () -> Void
     let stop: () -> Void
@@ -79,9 +90,11 @@ public struct WishLinkCard: View {
 
     public init(icon: NSImage?, picture: NSImage?, values: Binding<Values>, limits: Limits, link: String?, changed: Bool,
                 stage: Stage, copied: Bool, retake: (() -> Void)?, retaking: Bool, canIncludeFile: Bool = false, noLicense: String? = nil,
+                writingNotes: Bool = false,
                 share: @escaping () -> Void, copy: @escaping () -> Void, stop: @escaping () -> Void, close: @escaping () -> Void,
                 width: CGFloat? = 480) {
         self.noLicense = noLicense
+        self.writingNotes = writingNotes
         self.icon = icon
         self.picture = picture
         self._values = values
@@ -122,6 +135,8 @@ public struct WishLinkCard: View {
             }
             VStack(alignment: .leading, spacing: 16) {
                 if let picture { pictureRow(picture) }
+                // A release says what's new in it: Lamp's lines, the person's to change. Only once there's a link.
+                if link != nil { notesField }
                 field("What it does") {
                     TextField("What it does", text: clipped(\.line, limits.line), prompt: Text("A line or two, optional"), axis: .vertical)
                         .lineLimit(3, reservesSpace: true)
@@ -225,10 +240,31 @@ public struct WishLinkCard: View {
             Button("Done", action: close).keyboardShortcut(.defaultAction)
         } else {
             Button("Cancel", role: .cancel, action: close).keyboardShortcut(.cancelAction)
-            Button(link == nil ? "Copy Link" : "Update Link", action: share)
+            Button(link == nil ? "Copy Link" : "Release Update", action: share)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!values.isComplete)
         }
+    }
+
+    private var notesField: some View {
+        field("What's New") {
+            TextField("What's New", text: notesBinding, prompt: Text(writingNotes ? "Writing what's new…" : "A line for each change, optional"), axis: .vertical)
+                .lineLimit(3, reservesSpace: true)
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 8).padding(.vertical, 6)
+                .background(Paper.card, in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
+                .overlay(alignment: .topTrailing) { if writingNotes { ProgressView().controlSize(.small).padding(6) } }
+                .help("Shown on the link's page and in the app's menu")
+        }
+    }
+
+    /// What's new holds at most `notes` lines of `note` characters.
+    private var notesBinding: Binding<String> {
+        Binding(get: { values.notes }, set: { text in
+            values.notes = text.split(separator: "\n", omittingEmptySubsequences: false).prefix(limits.notes)
+                .map { String($0.prefix(limits.note)) }.joined(separator: "\n")
+        })
     }
 
     private func field<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {

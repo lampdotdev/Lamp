@@ -21,6 +21,11 @@ export const LIMITS = {
   idea: 100,
   /** A playing page's shape, its width over its height (`shape`), within these; or "fill", a page that takes any. */
   shape: [0.2, 5],
+  /** What's new in each version the sharer released (`releases`), newest first: the most kept, the lines each holds
+   *  and the characters in a line. Lamp writes the lines; the sharer can change them before they go. */
+  releases: 30,
+  releaseLines: 5,
+  releaseLine: 120,
   picture: 1_500_000,
   icon: 300_000,
   /** Pixels on a side, for both pictures. */
@@ -118,10 +123,21 @@ function picture(value, max, { square = false } = {}) {
   return { bytes, ...info };
 }
 
-/** What a share sends, checked. Null when anything is off. */
+/** A release as it's kept: when it went out (an ISO time, never more than a day ahead) and its lines. Null when off. */
+function release(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((key) => !["date", "lines"].includes(key))) return null;
+  const time = typeof value.date === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value.date) ? Date.parse(value.date) : NaN;
+  if (!Number.isFinite(time) || time > Date.now() + 86_400_000) return null;
+  if (!Array.isArray(value.lines) || !value.lines.length || value.lines.length > LIMITS.releaseLines) return null;
+  const lines = value.lines.map((line) => tidy(line, LIMITS.releaseLine));
+  return lines.includes(null) ? null : { date: new Date(time).toISOString(), lines };
+}
+
+/** What a share sends, checked. Null when anything is off. `releases` is undefined when the share didn't say (a Lamp
+ *  from before them), so a change keeps the ones the link has. */
 export function readShare(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
-  const known = ["name", "by", "line", "words", "ideas", "shape", "picture", "icon"];
+  const known = ["name", "by", "line", "words", "ideas", "shape", "releases", "picture", "icon"];
   if (Object.keys(body).some((key) => !known.includes(key))) return null;
   const name = tidy(body.name, LIMITS.name);
   const words = tidy(body.words, LIMITS.words, { lines: true });
@@ -131,16 +147,19 @@ export function readShare(body) {
     ? body.ideas.map((idea) => tidy(idea, LIMITS.idea)) : [null];
   const shape = body.shape == null ? null : body.shape === "fill" ? "fill"
     : typeof body.shape === "number" && body.shape >= LIMITS.shape[0] && body.shape <= LIMITS.shape[1] ? Math.round(body.shape * 10000) / 10000 : undefined;
+  const releases = body.releases === undefined ? undefined : Array.isArray(body.releases) && body.releases.length <= LIMITS.releases
+    ? body.releases.map(release) : [null];
   const shot = picture(body.picture, LIMITS.picture);
   const icon = picture(body.icon, LIMITS.icon, { square: true });
-  if (!name || !words || line == null || by == null || ideas.includes(null) || shape === undefined || !shot || !icon) return null;
-  return { name, by, line, words, ideas, shape, picture: shot.bytes ? shot : null, icon: icon.bytes ? icon : null };
+  if (!name || !words || line == null || by == null || ideas.includes(null) || shape === undefined || releases?.includes(null) || !shot || !icon) return null;
+  return { name, by, line, words, ideas, shape, releases: releases?.sort((a, b) => b.date.localeCompare(a.date)),
+    picture: shot.bytes ? shot : null, icon: icon.bytes ? icon : null };
 }
 
 /** What anyone may see of a shared wish: never its secret. */
 export const shown = (record) => record && ({
   id: record.id, name: record.name, by: record.by ?? "", line: record.line, words: record.words, ideas: record.ideas ?? [], shape: record.shape ?? null,
-  picture: record.picture, icon: record.icon, file: record.file ?? null, updated: record.updated,
+  releases: record.releases ?? [], picture: record.picture, icon: record.icon, file: record.file ?? null, updated: record.updated,
   page: record.page ? { version: record.page.version } : null,
 });
 
@@ -151,7 +170,7 @@ const pageBlobs = (record) => Object.values(record?.page?.files ?? {});
 
 /**
  * What anyone's Lamp asks of a link it follows (`GET /api/wishes?id=`): the format of the answer, and the version of
- * the wish's file, which goes up each time the sharer sends it again (Update Link), with the file's address. Version 0
+ * the wish's file, which goes up each time the sharer sends it again (Release Update), with the file's address. Version 0
  * and no file for a link that carries none. Never the secret or anything a follower doesn't need.
  */
 export const FOLLOW_FORMAT = 1;
@@ -389,7 +408,8 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       const picture = share.picture && { url: await put("picture", share.picture), width: share.picture.width, height: share.picture.height };
       const icon = share.icon && { url: await put("icon", share.icon) };
       const time = now().toISOString();
-      const words = { name: share.name, by: share.by, line: share.line, words: share.words, ideas: share.ideas, shape: share.shape, picture: picture || null, icon: icon || null };
+      const words = { name: share.name, by: share.by, line: share.line, words: share.words, ideas: share.ideas, shape: share.shape,
+        ...(share.releases ? { releases: share.releases } : {}), picture: picture || null, icon: icon || null };
       if (method === "PUT") {
         await kept.replace({ ...earlier, ...words, updated: time });
         uploaded = [];

@@ -22,6 +22,11 @@ enum WishLink {
         /// The changes Lamp suggests for the wish (`RemixSuggestions`), which the page offers to remix with.
         static let ideas = 3
         static let idea = 100
+        /// What's new in each release (`WishReleases`): the most releases a link keeps, the lines in one, and a line's
+        /// characters.
+        static let releases = 30
+        static let releaseLines = 5
+        static let releaseLine = 120
         /// The wish's file goes in parts of at most this many bytes (a request to the site's function holds 4.5 MB), and
         /// is at most `fileTotal`.
         static let filePart = 3_000_000
@@ -167,9 +172,10 @@ enum WishLink {
         return URLSession(configuration: config, delegate: NoRedirects(), delegateQueue: nil)
     }()
 
-    /// Shares the wish, or changes what its link shows, and answers the link as it is now.
-    static func publish(_ words: Words, picture: Data?, icon: Data?, replacing earlier: Shared?) async throws -> Shared {
-        var body: [String: Any] = ["name": words.name.trimmed, "line": words.line.trimmed, "words": words.words.trimmed]
+    /// Shares the wish, or changes what its link shows, and answers the link as it is now. `releases` is what's new in
+    /// each version released, as `WishReleases.shown` gives it.
+    static func publish(_ words: Words, picture: Data?, icon: Data?, releases: [[String: Any]] = [], replacing earlier: Shared?) async throws -> Shared {
+        var body: [String: Any] = ["name": words.name.trimmed, "line": words.line.trimmed, "words": words.words.trimmed, "releases": releases]
         if let by = words.by?.trimmed, !by.isEmpty { body["by"] = by }
         if let ideas = words.ideas, !ideas.isEmpty { body["ideas"] = ideas }
         if let shape = words.shape { body["shape"] = shape == "fill" ? shape : Double(shape) ?? NSNull() }
@@ -188,7 +194,7 @@ enum WishLink {
             return Shared(id: earlier.id, url: link ?? earlier.url, secret: earlier.secret, shown: words)
         }
         // The link is gone from the site (taken down there): a new one takes its place.
-        if earlier != nil, status == 404 { return try await publish(words, picture: picture, icon: icon, replacing: nil) }
+        if earlier != nil, status == 404 { return try await publish(words, picture: picture, icon: icon, releases: releases, replacing: nil) }
         guard status == 201, let answer = try? JSONSerialization.jsonObject(with: data) as? [String: String],
               let id = answer["id"], let link = answer["url"].flatMap(URL.init(string:)), let secret = answer["secret"],
               link.scheme == endpoint.scheme, link.host == endpoint.host else { throw failure(status) }
@@ -358,6 +364,8 @@ enum WishLink {
         var stage: WishLinkCard.Stage = .editing
         var copied = false
         var retaking = false
+        /// Lamp is writing what's new for the release (`WishReleases.write`).
+        var writingNotes = false
 
         /// What the link would show with what's on the card.
         var words: WishLink.Words {
@@ -369,8 +377,9 @@ enum WishLink {
                            ideas: ideas.isEmpty ? nil : ideas, shape: shape,
                            picture: pictureDigest, file: values.includeFile ? true : nil)
         }
-        /// A link that carries the wish is always worth sending again: the file is the wish as it is now.
-        var changed: Bool { shared?.shown != words || values.includeFile }
+        /// A link that carries the wish is always worth sending again: the file is the wish as it is now. So is one with
+        /// something to say about what's new.
+        var changed: Bool { shared?.shown != words || values.includeFile || !values.notes.trimmed.isEmpty }
     }
 
     @Published private(set) var cards: [String: Card] = [:]
@@ -396,10 +405,21 @@ enum WishLink {
         card.ideas = (RemixSuggestions.load(project) ?? []).prefix(WishLink.Limit.ideas).map(\.text)
             .map { $0.trimmed }.filter { !$0.isEmpty && $0.count <= WishLink.Limit.idea }
         card.picture = picture
+        // A link that's out is released again: Lamp writes what's new since the last release, for the person to change.
+        card.writingNotes = shared != nil
         cards[project.id] = card
         Task {
             let icon = await Sharing.sharedIcon(of: project)
             cards[project.id]?.icon = icon
+        }
+        if shared != nil {
+            Task {
+                let lines = await WishReleases.write(for: project)
+                guard cards[project.id]?.writingNotes == true else { return }
+                cards[project.id]?.writingNotes = false
+                // Only into a field nobody has started typing in.
+                if cards[project.id]?.values.notes.trimmed.isEmpty == true { cards[project.id]?.values.notes = lines.joined(separator: "\n") }
+            }
         }
     }
 
@@ -424,11 +444,14 @@ enum WishLink {
         WishLinkWindows.shared.close(project)
     }
 
-    /// Shares what's on the card, or changes what the link shows, and copies the link.
+    /// Shares what's on the card, or releases what the wish is now with what's new in it, and copies the link.
     func share(_ project: LampProject) {
         guard let card = cards[project.id], card.stage != .sending, card.values.isComplete else { return }
         cards[project.id]?.stage = .sending
+        cards[project.id]?.writingNotes = false
         let words = card.words
+        // A link's first share is where the first release's changes start, and says nothing itself.
+        let notes = card.shared == nil ? [] : WishReleases.lines(from: card.values.notes)
         // A name changed on the card is the one the next link starts with.
         if let by = words.by, by != WishLink.sharer { WishLink.sharer = by }
         let source = card.picture
@@ -439,7 +462,9 @@ enum WishLink {
                     (source.flatMap(NSImage.init(data:)).flatMap(WishLink.jpeg), WishLink.iconPNG(iconSource))
                 }.value
                 var pageProblem: String?
-                var shared = try await WishLink.publish(words, picture: picture, icon: icon, replacing: card.shared)
+                let release = WishReleases.Release(version: await Versions.head(project) ?? "", date: Date(), lines: notes)
+                var shared = try await WishLink.publish(words, picture: picture, icon: icon,
+                                                        releases: WishReleases.shown([release] + WishReleases.load(project)), replacing: card.shared)
                 // Kept at once, with the file as the link had it so far: its secret is the only way to change it or take it
                 // down, so a file that fails after this leaves a link the card can still stop.
                 shared.shown.file = card.shared?.shown.file
@@ -458,7 +483,8 @@ enum WishLink {
                 Store.shared.refreshInstalled(project)
                     cards[project.id]?.shared = shared
                     let data = try await Task.detached(priority: .userInitiated) { () throws -> Data in
-                        let file = try Sharing.export(project)
+                        // With this release's lines, which are kept only once the file is up.
+                        let file = try Sharing.export(project, releasing: WishReleases.Entry(date: release.date, lines: release.lines))
                         defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
                         return try Data(contentsOf: file)
                     }.value
@@ -488,8 +514,13 @@ enum WishLink {
                 }
                 shared.shown = words
                 WishLink.keep(shared, for: project)
+                // The release is kept only once the wish itself went with it, so one that failed is tried again with its
+                // lines, and the next release's changes start here. What's new goes into each of the wish's installed
+                // apps, a Mac app in a part of the wish too.
+                WishReleases.record(release, in: project)
+                cards[project.id]?.values.notes = ""
                 // The link goes into the installed app too, for a Mac without Lamp (`RemixPanel`).
-                Store.shared.refreshInstalled(project)
+                for app in [project] + Store.shared.apps(of: project).filter({ $0.id != project.id }) { Store.shared.refreshInstalled(app) }
                 guard cards[project.id] != nil else { return }
                 cards[project.id]?.shared = shared
                 cards[project.id]?.stage = pageProblem.map { .failed($0) } ?? .editing
@@ -565,7 +596,8 @@ enum WishLink {
 }
 
 extension WishLink {
-    static let cardLimits = WishLinkCard.Limits(name: Limit.name, line: Limit.line, words: Limit.words, by: Limit.by)
+    static let cardLimits = WishLinkCard.Limits(name: Limit.name, line: Limit.line, words: Limit.words, by: Limit.by,
+                                                 notes: Limit.releaseLines, note: Limit.releaseLine)
 
     /// The name a link says it's by: what the person last gave on the card, kept in Lamp's own settings; until they have,
     /// their name on this Mac, which they see on the card before anything goes.

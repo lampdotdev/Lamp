@@ -36,6 +36,13 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   serves the built page (`dist/w/index.html`, bundled with it by `includeFiles`) with the wish in `#shared-wish`
   (its play address in `play`) and its own title, description and preview tags in place of the built page's; `npm run
   dev` gives it its own server's. On its own, `/w/` goes to the ideas page.
+- What's new (`releases` on the record): each version the sharer released (Release Update, `WishReleases` in Lamp),
+  newest first, with when it went out and the plain lines Lamp wrote for it and the sharer kept. The page's header says
+  "updated <date of the newest>" after the name and who it's by, when there are any, and opens the list under it (a
+  popover). Until this browser has opened it since the newest release (`lamp.shared.seen.<id>` in localStorage), it's
+  darker with a sparkle, which twinkles twice as the page comes in (still where less motion is asked for); after, gray
+  like the byline. A change from a Lamp that doesn't send `releases` keeps the ones
+  the link has.
 - The preview card (`/w/<id>/card.png`, `lib/wish-card.js`, `api/wish-card.js`): 1200×630, drawn by `@vercel/og`
   with Geist (`lib/fonts`, SIL Open Font License) on the first-idea section's night sky. The page names it in
   `og:image` and `twitter:image` with Twitter's large card.
@@ -46,7 +53,7 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   it away. Parts go once they're together; everything goes with the link, and with `scripts/take-down-wish.js`.
 - Following (`GET /api/wishes?id=`, `latest` in `lib/shared-wishes.js`): public, with no quota, for the Lamps that
   follow a link: `{format: 1, id, name, version, file}`, the file's version counting up each time it's sent again
-  (Update Link), 0 with no file. The count is the link's (`fileVersion`), so a file taken away and sent again later is
+  (Release Update), 0 with no file. The count is the link's (`fileVersion`), so a file taken away and sent again later is
   still newer than any before. The page's Open is `lamp://wish?shared=<id>`
   (`sharedWishLink` in `lib/wish.js`): Lamp asks this for the file, and the copy it makes follows the link
   (`Following` in Lamp).
@@ -79,7 +86,7 @@ Without the first two, sharing answers 503 and Lamp says it couldn't share; link
 
 ## Limits and privacy
 
-- What's taken: a name (60 characters), who it's by (60, or nothing), a line (140), up to three changes Lamp suggests (100 each), the page's shape (a width over a height from 0.2 to 5, or "fill"), the words (2,000), a PNG or JPEG picture (1.5 MB, 4,096 px a
+- What's taken: a name (60 characters), who it's by (60, or nothing), a line (140), up to three changes Lamp suggests (100 each), up to 30 releases of up to five lines (120 each) with an ISO date no more than a day ahead, the page's shape (a width over a height from 0.2 to 5, or "fill"), the words (2,000), a PNG or JPEG picture (1.5 MB, 4,096 px a
   side) and a square PNG icon (300 KB), checked by their bytes; nothing else. Lamp holds the sharer to the same
   limits and sends the picture as a fresh JPEG, which leaves behind whatever the file carried besides its pixels.
 - `QUOTAS` in `lib/shared-wishes.js`: 10 new links an hour per address, 200 an hour and 1,000 a day overall. Changes

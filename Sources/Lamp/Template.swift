@@ -3885,6 +3885,10 @@ enum Template {
         var body: some Commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About \(LampAbout.name)") { LampAbout.show() }
+                // What's new in each version its maker released, there once there's one.
+                if LampWhatsNew.available {
+                    Button("What's New…") { LampWhatsNew.show() }
+                }
             }
             CommandGroup(after: .appInfo) {
                 Button("Customize with Lamp…") {
@@ -3932,6 +3936,91 @@ enum Template {
                   let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
             guard let page = answer["page"] as? String else { return NSAttributedString() }
             return NSAttributedString(html: Data(page.utf8), documentAttributes: nil)
+        }
+    }
+
+    /// What's New… in the app's menu: what's new in each version the app's maker released with its link, in the plain lines
+    /// Lamp wrote for them, newest first, as the link's page shows them. Asked of Lamp, which has the latest; without an
+    /// answer, the list the app was installed with (Releases.json beside Credits.html). An app installed with none has no
+    /// such item.
+    @MainActor enum LampWhatsNew {
+        struct Release: Identifiable {
+            let id = UUID()
+            let date: Date?
+            let lines: [String]
+        }
+
+        static let available = !(bundled ?? []).isEmpty
+        private static var window: NSWindow?
+
+        static func show() {
+            Task {
+                let releases = await ask() ?? bundled ?? []
+                if window == nil {
+                    let made = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 320), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+                    made.isReleasedWhenClosed = false
+                    made.title = "What's New in \(LampAbout.name)"
+                    made.center()
+                    window = made
+                }
+                window?.contentView = NSHostingView(rootView: LampWhatsNewView(releases: releases))
+                NSApp.activate()
+                window?.makeKeyAndOrderFront(nil)
+            }
+        }
+
+        private static var bundled: [Release]? {
+            Bundle.main.url(forResource: "Releases", withExtension: "json").flatMap { try? Data(contentsOf: $0) }
+                .flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [[String: Any]] }.map(releases)
+        }
+
+        private static func ask() async -> [Release]? {
+            guard let url = URL(string: lampGateway + "/app/releases") else { return nil }
+            var request = URLRequest(url: url, timeoutInterval: 1.5)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
+            request.httpBody = Data("{}".utf8)
+            guard let (data, response) = try? await URLSession.shared.data(for: request),
+                  (response as? HTTPURLResponse)?.statusCode == 200,
+                  let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let list = answer["releases"] as? [[String: Any]], !list.isEmpty else { return nil }
+            return releases(list)
+        }
+
+        private static func releases(_ list: [[String: Any]]) -> [Release] {
+            let dates = ISO8601DateFormatter()
+            return list.compactMap { item in
+                let lines = (item["lines"] as? [String] ?? []).filter { !$0.isEmpty }
+                return lines.isEmpty ? nil : Release(date: (item["date"] as? String).flatMap(dates.date(from:)), lines: lines)
+            }
+        }
+    }
+
+    struct LampWhatsNewView: View {
+        let releases: [LampWhatsNew.Release]
+
+        var body: some View {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    ForEach(releases) { release in
+                        VStack(alignment: .leading, spacing: 6) {
+                            if let date = release.date {
+                                Text(date, format: .dateTime.month(.wide).day().year()).font(.callout).foregroundStyle(.secondary)
+                            }
+                            ForEach(release.lines, id: \.self) { line in
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text("•").foregroundStyle(.tertiary)
+                                    Text(line).fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(20)
+            }
+            .frame(minWidth: 300, minHeight: 200)
         }
     }
 

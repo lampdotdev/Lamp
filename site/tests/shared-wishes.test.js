@@ -89,6 +89,28 @@ test("a wish is shared, changed and taken down only with its secret", async () =
   assert.equal(store.records.has(id), false);
 });
 
+test("what's new in each release is checked, kept newest first, and kept by a change that doesn't say", async () => {
+  const older = { date: "2026-10-01T09:00:00Z", lines: ["Plants have names now"] };
+  const newer = { date: "2026-11-02T10:30:00.000Z", lines: ["Reminders come at dawn", " Ferns  are in "] };
+  assert.deepEqual(readShare({ ...share, releases: [older, newer] }).releases.map((r) => r.lines[0]), ["Reminders come at dawn", "Plants have names now"]);
+  assert.equal(readShare(share).releases, undefined, "a Lamp from before them says nothing");
+  assert.equal(readShare({ ...share, releases: [{ ...older, lines: [] }] }), null, "a release says something");
+  assert.equal(readShare({ ...share, releases: [{ ...older, lines: Array(LIMITS.releaseLines + 1).fill("a") }] }), null);
+  assert.equal(readShare({ ...share, releases: [{ ...older, lines: ["x".repeat(LIMITS.releaseLine + 1)] }] }), null);
+  assert.equal(readShare({ ...share, releases: [{ ...older, date: "2999-01-01T00:00:00Z" }] }), null, "never far ahead");
+  assert.equal(readShare({ ...share, releases: [{ ...older, extra: 1 }] }), null);
+  assert.equal(readShare({ ...share, releases: Array(LIMITS.releases + 1).fill(older) }), null);
+
+  const store = memoryStore();
+  const handler = createShareHandler({ store, limited: false });
+  const { id, secret } = await (await send(handler, "POST", { ...share, releases: [older] })).json();
+  await send(handler, "PUT", share, { id, secret });
+  assert.deepEqual(store.records.get(id).releases.map((r) => r.date), ["2026-10-01T09:00:00.000Z"]);
+  await send(handler, "PUT", { ...share, releases: [older, newer] }, { id, secret });
+  const page = await createPageHandler({ store, template: async () => "<html><head></head><body></body></html>" })(new Request(`https://lamp.dev/w/${id}?id=${id}`));
+  assert.match(await page.text(), /"releases":\[\{"date":"2026-11-02T10:30:00.000Z","lines":\["Reminders come at dawn","Ferns are in"\]\}/);
+});
+
 test("pictures that went up are taken back when the wish can't be kept", async () => {
   const store = memoryStore();
   const removed = [];
@@ -252,7 +274,8 @@ test("the site and Lamp agree on the limits", () => {
   const swift = readFileSync(new URL("../../Sources/Lamp/WishLink.swift", import.meta.url), "utf8");
   assert.ok(swift.includes(`static let filePart = ${FILE_LIMITS.part.toLocaleString("en").replaceAll(",", "_")}`), "filePart");
   assert.ok(swift.includes(`static let fileTotal = ${FILE_LIMITS.total.toLocaleString("en").replaceAll(",", "_")}`), "fileTotal");
-  for (const [name, value] of Object.entries({ name: LIMITS.name, by: LIMITS.by, line: LIMITS.line, words: LIMITS.words, ideas: LIMITS.ideas, idea: LIMITS.idea })) {
+  for (const [name, value] of Object.entries({ name: LIMITS.name, by: LIMITS.by, line: LIMITS.line, words: LIMITS.words, ideas: LIMITS.ideas, idea: LIMITS.idea,
+    releases: LIMITS.releases, releaseLines: LIMITS.releaseLines, releaseLine: LIMITS.releaseLine })) {
     assert.ok(swift.includes(`static let ${name} = ${value}`), name);
   }
 });

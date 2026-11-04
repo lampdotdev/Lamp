@@ -4205,6 +4205,7 @@ final class Store: ObservableObject {
                 SharedNetwork.arrive(part.package, in: app, arriving: false)
             }
             if let credits = package.credits { try Credits.add(following == nil ? credits : Mix.creditsTaken(credits), to: project) }
+            WishReleases.arrive(package.releases, in: project)
             if let original { try Starters.keepFile(of: original, in: project) }
 
         } catch {
@@ -12366,6 +12367,12 @@ final class Store: ObservableObject {
         try? fm.removeItem(at: creditsPage)
         // The wish's credits, which are at its root, for an app of it in a folder of its own as for the wish's own app.
         if let page = Credits.load(wish(of: project)).aboutPage { try Data(page.utf8).write(to: creditsPage) }
+        // What's new in each release of the wish, for What's New… in the app's menu when Lamp doesn't answer: an app with
+        // none has no such item.
+        let releasesFile = resources.appendingPathComponent(WishReleases.bundleFile)
+        try? fm.removeItem(at: releasesFile)
+        let releases = WishReleases.shown(WishReleases.forApp(wish(of: project)))
+        if !releases.isEmpty { try JSONSerialization.data(withJSONObject: releases).write(to: releasesFile) }
         // Told once: from now on the app opens at login and keeps running, which is the person's to undo.
         let told = project.dir.appendingPathComponent(".lamp/background-told")
         if capabilities.background == true, !FileManager.default.fileExists(atPath: told.path) {
@@ -13535,7 +13542,7 @@ final class Store: ObservableObject {
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/setup", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/icon", "/agent/connectors", "/agent/lampify", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/reload", "/app/credits", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state", "/app/page/saved"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/icon", "/agent/connectors", "/agent/lampify", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/reload", "/app/credits", "/app/releases", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state", "/app/page/saved"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -13632,6 +13639,8 @@ final class Store: ObservableObject {
         }
         // The About window's credits as they are now (`LampAbout`): a credit added since the app was installed shows.
         if route == "/app/credits" { return (200, Credits.load(wish(of: project)).aboutPage.map { ["page": $0] } ?? [:]) }
+        // What's New… in the app's menu (`LampWhatsNew`): what's new in each release of the wish, as Lamp has it now.
+        if route == "/app/releases" { return (200, ["releases": WishReleases.shown(WishReleases.forApp(wish(of: project)))]) }
         if route == "/app/controller" { return await controllerSession(request, for: project) }
         if route == "/app/phone-page" { return await phonePageAddress(for: project) }
         if route.hasPrefix("/app/wish") { return await wishRoom(request, route: route, for: project) }

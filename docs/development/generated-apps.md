@@ -495,6 +495,13 @@ none. A change that goes into the open app (`LiveReload`, `PageLive`) installs n
 and the bundle's page only when Lamp doesn't answer within a moment. Only `Credits.basis` is "Based on", there, in the README and the credit
 bar; everything else, and a library in a wish with no basis, is "Uses".
 
+**What's New…** sits under the About command in a Mac app's menu once its maker has released a version with something
+to say (`LampWhatsNew`): the lines Lamp wrote for each release of its link, newest first, as the link's page shows them
+("Releases" in the wishes guide). Like the credits, it asks Lamp for the list as it is now (`/app/releases`) and falls
+back to the copy written beside Credits.html as the app is installed (`Releases.json`), whose being there is what puts
+the item in the menu; a release refreshes the installed copy (`refreshInstalled`), so the item shows from the app's next
+launch.
+
 `capabilities.json` at an app's root is where the agent declares what the app needs beyond its code
 (`Template.Capabilities`): for an iPhone app the entitlements and background work described above, for a Mac
 app what Finder may hand it, `{"opens": ["folder", "png", "public.image"]}` ("folder", "file", extensions,

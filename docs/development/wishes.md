@@ -369,7 +369,7 @@ links are read as a browser's form writes them too (`Wish.items`: "+" is a space
 Nobody's copy of a wish is the main one: everyone has their own, and nothing is upstream of anything (`Following`). A
 copy is shared as its Share Link with the wish itself included (`WishLink`, SHARED_WISHES.md in site/: `lamp.dev/w/<id>`,
 the file kept in lamp.dev's Blob store; the file always goes when the wish can go as one), and
-each Update Link sends the file again, which counts the link's version up. A wish with a page (a web app, a web
+each Release Update sends the file again, which counts the link's version up (see "Releases" below). A wish with a page (a web app, a web
 game, a screen: `Publish.hasPage`) sends that too (`WishLink.playablePage`, the page Put on GitHub builds, which
 stays as it is), and its link's page opens on it, playing, with the ways to make one's own under it: whoever has the
 link tries the wish first and remixes it after (SHARED_WISHES.md). The version is what followers ask for (`latest` in
@@ -377,6 +377,22 @@ lib/shared-wishes.js, `GET /api/wishes?id=`, `WishLink.latest`). The page's Open
 (`sharedWishLink` in lib/wish.js, `Wish.Shared`): Lamp asks for the file's latest, fetches it and reviews it as any shared
 file (`Store.takeShared`), and the copy it makes follows that link, marked as the one it started from, at the version it
 arrived as (`finishImport`, `Following.brought`).
+
+Releases: once a link is out, the Share Link card's button is **Release Update**, and the card opens with a What's New
+field that Lamp fills (`WishReleases.write`): one to five short lines for the people who use the wish, in plain words
+("You can jump out of helicopters now"), written by the helper model in one call (`AppAI.complete`, whichever route
+answers apps' text, so any engine) from the versions saved since the last release, their titles or else the requests
+that made them, never Lamp's own versions, one an Undo took back, or anything before a going back to an earlier version
+(which doesn't say how far it went). The maker changes or clears them before they go; empty is fine. Each share that
+went through, the wish's file with it, records a release in the wish's folder (`.lamp/releases.json`, not versioned:
+the version it was made at, when, and its lines, the first share's always empty), which is where the next release's
+changes start, and refreshes each of the wish's installed apps; one that failed keeps its lines on the card to try again.
+A link shared before releases were kept starts from its last few versions. The wish's shared file carries what its app
+shows (`releases.json` at its root, dates and lines only), and a copy opened or updated from it keeps that apart
+(`.lamp/releases-received.json`), so the copy's What's New… shows the original's releases beside its own, while its own
+link shows only its own. The releases that say something go with every share (`releases`, at most
+30, `WishLink.Limit`), and show on the link's page under What's new (SHARED_WISHES.md) and in the app's menu under
+What's New… ("Generated apps"). Not yet: lines that credit what was pulled in from someone else's copy.
 
 A wish opened from GitHub follows its repository as before (the chain's last link, `AppUpdates`, Update from GitHub…), so
 that commit moves with each update and goes back with Undo. Any other copy is followed by its link (Follow a Copy… in

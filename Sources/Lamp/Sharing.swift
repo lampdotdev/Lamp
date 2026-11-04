@@ -282,7 +282,9 @@ enum Sharing {
     /// where it lives and what commit it's at. A wish that lives nowhere names the version of its own history the
     /// file is made from, so a file that comes back from whoever it was sent to can be merged against that version
     /// (`Upstream.ownVersion`); a copy sharing on keeps the version it was given, which is the sender's and not its own.
-    static func export(_ project: LampProject, icon: Data? = nil, repository: String? = nil, commit: String? = nil) throws -> URL {
+    /// `releasing` is what's new in a release the file goes out with, which isn't kept until it has (`WishReleases`).
+    static func export(_ project: LampProject, icon: Data? = nil, repository: String? = nil, commit: String? = nil,
+                       releasing: WishReleases.Entry? = nil) throws -> URL {
         // Some kinds' files can't go in a shared file yet (an app for a device through its integration). The wish's
         // other apps are read off its folder, as Lamp lists them.
         // The file holds one app at its root and the others in their folders, as Lamp laid wishes out until any app could
@@ -347,6 +349,8 @@ enum Sharing {
             return source
         }
         try carried.encoded().write(to: stage.appendingPathComponent(Credits.file))
+        // What's new in each release, for the app's What's New… in the copies made from it (`WishReleases`).
+        try WishReleases.carry(project, releasing: releasing, into: stage)
         // Each license and notice the credits name goes with the work it covers, wherever the kind's own files left it.
         for source in credits.upstream {
             for path in source.termsFiles where Credits.isLicenceFile(path) {
@@ -587,6 +591,8 @@ enum Sharing {
         /// Where the wish came from (credits.json at the file's root), through Lamp's checks; nil for a part, and in
         /// files from before wishes carried it.
         var credits: Credits? = nil
+        /// What's new in each release of the copy it was shared from (`WishReleases.fileEntry`); nil in files without it.
+        var releases: [WishReleases.Entry]? = nil
         /// The license texts those credits name, beside the work they cover (`Credits.isLicenceFile`).
         var licences: [URL] = []
         /// What the sender's capabilities.json declares, through the checks the agent's own goes through.
@@ -674,6 +680,7 @@ enum Sharing {
         var package = try read(app: folder, platform: platform, family: manifest.family ?? .iphone, name: name(from: manifest.name),
                                identity: identity(from: manifest.app), description: manifest.description.flatMap(AppDescription.valid), fileCount: all)
         package.credits = Credits.read(folder.appendingPathComponent(Credits.file))
+        package.releases = WishReleases.read(folder.appendingPathComponent(WishReleases.fileEntry))
         package.site = platform == .webApp && manifest.site == true
         package.licences = (package.credits?.upstream ?? []).flatMap(\.termsFiles).filter(Credits.isLicenceFile).compactMap { path in
             let file = folder.appendingPathComponent(path)
@@ -943,6 +950,7 @@ enum Sharing {
         // And where it came from, kept as it arrived so it's credited however the wish changes here (`Credits.load`), with
         // each license it names where it names it, when the kind's own files didn't already bring it.
         try Credits.arrive(package.credits, in: project)
+        WishReleases.arrive(package.releases, in: project)
         // An update replaces what's there, so a license whose text changed upstream never stays as it was; one the kind's
         // files already brought is the same text written again.
         for file in package.licences {
