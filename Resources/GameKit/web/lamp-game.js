@@ -1654,9 +1654,9 @@ function keep(path, key, build, options = {}) {
         keepsWaiting.add(waiting);
         value = Promise.resolve(value).finally(() => keepsWaiting.delete(waiting));
         const drawnBefore = draws;
-        value.then(v => { entry.made = v; entry.settled = true; entry.timers = waiting.timers; entry.ms = performance.now() - began; if (draws !== drawnBefore) entry.draws = null; own(v, waiting); },
+        value.then(v => { entry.made = v; entry.settled = true; entry.timers = waiting.timers; entry.ms = performance.now() - began; entry.span = [began, began + entry.ms]; if (draws !== drawnBefore) entry.draws = null; own(v, waiting); },
             () => { entry.settled = true; if (kept.get(id) === entry) kept.delete(id); });
-    } else { entry.made = value; entry.settled = true; entry.ms = performance.now() - began; }
+    } else { entry.made = value; entry.settled = true; entry.ms = performance.now() - began; entry.span = [began, began + entry.ms]; }
     entry.value = value;
     // The part it replaces goes, sparing what the new one shares with it (materials made once, so compiled once).
     if (had) Promise.resolve(value).then(v => letGo(had, usedBy(v)), () => letGo(had));
@@ -2560,8 +2560,17 @@ function ranAgain(again) {
     const ms = k => k.ms == null ? {} : { ms: Math.round(k.ms) }, cause = k => k.cause ? { cause: k.cause } : {};
     // The game's own start, outside the parts built again: what it awaits there (data fetched from the network, above
     // all) holds the game still at every change, and nothing else would tell the agent so.
-    const ranAt = performance.now(), rebuilt = tally.built.reduce((sum, k) => sum + (k.ms || 0), 0);
-    const outside = again.started == null ? null : Math.max(0, Math.round(ranAt - again.started - rebuilt));
+    // Parts built side by side, or one inside another's build, overlap: what's taken off is the time some part was being
+    // built, each moment once, within the start.
+    const ranAt = performance.now();
+    let outside = null;
+    if (again.started != null) {
+        const clipped = tally.built.filter(k => k.span).map(k => [Math.max(k.span[0], again.started), Math.min(k.span[1], ranAt)])
+            .filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+        let building = 0, reach = again.started;
+        for (const [a, b] of clipped) { if (b > reach) { building += b - Math.max(a, reach); reach = b; } }
+        outside = Math.max(0, Math.round(ranAt - again.started - building));
+    }
     reporting = { again, said, outside, ran: ranAt - again.began, more: {
         built: [...tally.built.map(k => ({ part: k.key, ...ms(k), ...cause(k) })),
                 ...tally.building.map(k => ({ part: k.key, background: true, ...cause(k) })),
