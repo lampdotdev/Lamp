@@ -743,14 +743,15 @@ enum GameKit {
         guard isGame(project), engine(project) == .web, !ownsLoop(project) else { return [] }
         let files = sourceFiles(project)
         // Each pattern is looked for file by file, which finds what it would in the files joined: none spans two.
-        func has(_ pattern: String) -> Bool {
-            PageScan.any(files, in: project, asking: pattern) { $0.range(of: pattern, options: .regularExpression) != nil }
+        // `needing`: the plain text each pattern can't match without.
+        func has(_ pattern: String, needing words: [String]) -> Bool {
+            PageScan.any(files, in: project, asking: pattern, needing: words) { $0.range(of: pattern, options: .regularExpression) != nil }
         }
-        let flat = has("from\\s*['\"]\\./lamp-phaser\\.js['\"]")
+        let flat = has("from\\s*['\"]\\./lamp-phaser\\.js['\"]", needing: ["lamp-phaser.js"])
         var left: [String] = []
-        if !flat, !has("\\.renderer\\(\\s*(async|\\(|[A-Za-z_$])") && !has("\\.keep\\(\\s*['\"]renderer['\"]") { left.append("its renderer (live.renderer)") }
-        if !flat, !has("\\.camera\\(\\s*['\"]") && !has("\\.keep\\(\\s*['\"][^'\"]*[Cc]amera") { left.append("its camera (live.camera)") }
-        if !has("\\.state\\(\\s*['\"]") && !(has("\\bsnapshot\\b") && has("\\b(restore|pendingRestore)\\b")) { left.append(unregisteredState) }
+        if !flat, !has("\\.renderer\\(\\s*(async|\\(|[A-Za-z_$])", needing: [".renderer("]) && !has("\\.keep\\(\\s*['\"]renderer['\"]", needing: [".keep("]) { left.append("its renderer (live.renderer)") }
+        if !flat, !has("\\.camera\\(\\s*['\"]", needing: [".camera("]) && !has("\\.keep\\(\\s*['\"][^'\"]*[Cc]amera", needing: [".keep("]) { left.append("its camera (live.camera)") }
+        if !has("\\.state\\(\\s*['\"]", needing: [".state("]) && !(has("\\bsnapshot\\b", needing: ["snapshot"]) && has("\\b(restore|pendingRestore)\\b", needing: ["restore", "Restore"])) { left.append(unregisteredState) }
         return left
     }
 
