@@ -26,6 +26,8 @@ enum WishLink {
         /// is at most `fileTotal`.
         static let filePart = 3_000_000
         static let fileTotal = 48_000_000
+        /// The page the link plays may unpack to this much (`PAGE_LIMITS` on the site): a big 3D game's data packs small.
+        static let pageUnpacked = 128_000_000
     }
     /// The picture is sent as a JPEG this many pixels on its long side at most, the icon as a PNG of this side.
     static let pictureSide: CGFloat = 1600
@@ -235,6 +237,10 @@ enum WishLink {
         if let leak = ShareCheck.secrets(in: site, known: Sharing.knownSecrets(project)).first {
             throw Failure(message: "\(project.name)'s page can't go with its link: it holds a key or a password, in \(leak). Ask Lamp to take it out.")
         }
+        // Counted as the site counts it, unpacked and without hidden files, so a page it would turn down isn't sent.
+        if unpackedSize(of: site) > Limit.pageUnpacked {
+            throw Failure(message: "\(project.name) is too big to play on its link (over \(Limit.pageUnpacked / 1_000_000) MB), so the link shows its picture.")
+        }
         let zip = work.appendingPathComponent("page.zip")
         let made = Process()
         made.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
@@ -245,12 +251,23 @@ enum WishLink {
         return try Data(contentsOf: zip)
     }
 
+    /// What a folder's files come to, leaving out hidden ones as the site does.
+    private static func unpackedSize(of folder: URL) -> Int {
+        let walk = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey], options: [.skipsHiddenFiles])
+        var total = 0
+        while let file = walk?.nextObject() as? URL {
+            guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true else { continue }
+            total += values.fileSize ?? 0
+        }
+        return total
+    }
+
     /// Sends the wish's file with its link, in parts, and has the site put them together in place of any file it had.
     /// `page` sends its playable page (`playablePage`), which the site unpacks and serves on the link's page.
     static func uploadFile(_ data: Data, for shared: Shared, page: Bool = false) async throws {
         guard data.count <= Limit.fileTotal else {
             throw Failure(message: page ? "This wish's page is too big to play on its link (over \(Limit.fileTotal / 1_000_000) MB)."
-                          : "This wish is too big to go with its link (over \(Limit.fileTotal / 1_000_000) MB). Share the link without it.")
+                          : "This wish is too big to go with its link (over \(Limit.fileTotal / 1_000_000) MB).")
         }
         let count = max(1, (data.count + Limit.filePart - 1) / Limit.filePart)
         for n in 0..<count {
@@ -260,17 +277,19 @@ enum WishLink {
             request.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
             request.httpBody = data.subdata(in: (n * Limit.filePart)..<min(data.count, (n + 1) * Limit.filePart))
             let (_, status) = try await send(request)
-            guard status == 204 else { throw fileFailure(status) }
+            guard status == 204 else { throw fileFailure(status, page: page) }
         }
         var finish = URLRequest(url: fileAddress(for: shared.id, page: page))
         finish.httpMethod = "POST"
         finish.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
         let (_, status) = try await send(finish)
-        guard status == 200 else { throw fileFailure(status) }
+        guard status == 200 else { throw fileFailure(status, page: page) }
     }
 
-    private static func fileFailure(_ status: Int) -> Failure {
-        [400, 409, 413].contains(status) ? Failure(message: "lamp.dev couldn't take this wish's file. Share the link without it, or try again.") : failure(status)
+    private static func fileFailure(_ status: Int, page: Bool) -> Failure {
+        guard [400, 409, 413].contains(status) else { return failure(status) }
+        return Failure(message: page ? "lamp.dev couldn't take this wish's page to play, so its link shows its picture. Try again in a moment."
+                       : "lamp.dev couldn't take this wish's file. Try again in a moment.")
     }
 
     /// Takes the wish's file away from its link, which keeps showing the idea, and its page with it. `page` takes only
@@ -419,6 +438,7 @@ enum WishLink {
                 let (picture, icon) = await Task.detached(priority: .userInitiated) {
                     (source.flatMap(NSImage.init(data:)).flatMap(WishLink.jpeg), WishLink.iconPNG(iconSource))
                 }.value
+                var pageProblem: String?
                 var shared = try await WishLink.publish(words, picture: picture, icon: icon, replacing: card.shared)
                 // Kept at once, with the file as the link had it so far: its secret is the only way to change it or take it
                 // down, so a file that fails after this leaves a link the card can still stop.
@@ -443,13 +463,25 @@ enum WishLink {
                         return try Data(contentsOf: file)
                     }.value
                     try await WishLink.uploadFile(data, for: shared)
-                    // Its page, so whoever opens the link plays or uses it right there, before anything else.
+                    // Its page, so whoever opens the link plays or uses it right there, before anything else. A page that
+                    // can't go (too big, say) leaves the link working with its picture, and the card says why.
                     let id = shared.id
-                    if let page = try await Task.detached(priority: .userInitiated, operation: { try WishLink.playablePage(of: project, id: id) }).value {
-                        try await WishLink.uploadFile(page, for: shared, page: true)
-                    } else {
-                        // No page now (an app added to the wish, say): the link goes back to its card.
-                        try await WishLink.removeFile(for: shared, page: true)
+                    do {
+                        if let page = try await Task.detached(priority: .userInitiated, operation: { try WishLink.playablePage(of: project, id: id) }).value {
+                            try await WishLink.uploadFile(page, for: shared, page: true)
+                        } else {
+                            // No page now (an app added to the wish, say): the link goes back to its card.
+                            try await WishLink.removeFile(for: shared, page: true)
+                        }
+                    } catch {
+                        // The old page goes, so the link shows the picture as the card says; if it can't be taken away,
+                        // the link still plays the earlier version, and the card says that instead.
+                        do {
+                            try await WishLink.removeFile(for: shared, page: true)
+                            pageProblem = Self.problem(error)
+                        } catch {
+                            pageProblem = "\(project.name)'s page couldn't be updated on its link, so the link still plays its earlier version. Try again in a moment."
+                        }
                     }
                 } else if card.shared?.shown.file == true {
                     try await WishLink.removeFile(for: shared)
@@ -460,7 +492,7 @@ enum WishLink {
                 Store.shared.refreshInstalled(project)
                 guard cards[project.id] != nil else { return }
                 cards[project.id]?.shared = shared
-                cards[project.id]?.stage = .editing
+                cards[project.id]?.stage = pageProblem.map { .failed($0) } ?? .editing
                 copy(project)
             } catch {
                 cards[project.id]?.stage = .failed(Self.problem(error))
