@@ -2438,6 +2438,7 @@ async function runAgain(change, state, roster) {
             addresses.set(path, from);
             if (rootPaths.includes(path)) {
                 // The module that starts the game: what it awaits may be the whole start, so it isn't waited for here.
+                if (again.started == null) again.started = performance.now();
                 import(from).catch(e => ranAgainFailed(again, e));
                 continue;
             }
@@ -2557,11 +2558,15 @@ function ranAgain(again) {
     // for Reload: Lamp's chat and the agent's next look say it, so neither says the person sees what they don't. Said
     // once the new code's first frame is drawn, with how long the game stood still for it (`firstDrawn`).
     const ms = k => k.ms == null ? {} : { ms: Math.round(k.ms) }, cause = k => k.cause ? { cause: k.cause } : {};
-    reporting = { again, said, ran: performance.now() - again.began, more: {
+    // The game's own start, outside the parts built again: what it awaits there (data fetched from the network, above
+    // all) holds the game still at every change, and nothing else would tell the agent so.
+    const ranAt = performance.now(), rebuilt = tally.built.reduce((sum, k) => sum + (k.ms || 0), 0);
+    const outside = again.started == null ? null : Math.max(0, Math.round(ranAt - again.started - rebuilt));
+    reporting = { again, said, outside, ran: ranAt - again.began, more: {
         built: [...tally.built.map(k => ({ part: k.key, ...ms(k), ...cause(k) })),
                 ...tally.building.map(k => ({ part: k.key, background: true, ...cause(k) })),
                 ...tally.swapped.map(k => ({ part: k.key, background: true, ...ms(k), ...cause(k) }))],
-        kept: tally.kept.length, waits, ...(again.change.quiet ? { later: true } : {}) } };
+        kept: tally.kept.length, waits, ...(outside == null ? {} : { outside }), ...(again.change.quiet ? { later: true } : {}) } };
     if (waits.length) {
         // The rest of the change goes in when the page opens again, at the person's Reload.
         waiting = { ...again.change, changed: waits, why: `nothing in the running game read ${waits.join(', ')} again`, hard: true, reopens: true };
@@ -2577,12 +2582,13 @@ function ranAgain(again) {
 let reporting = null;
 function firstDrawn(cost) {
     if (!reporting) return;
-    const { again, said, ran, more } = reporting, still = performance.now() - again.stopped, compiled = warmed;
+    const { again, said, ran, outside, more } = reporting, still = performance.now() - again.stopped, compiled = warmed;
     reporting = warmed = null;
     const timing = `the game stood still ${Math.round(still)} ms (its first frame ${Math.round(cost)} ms`
         + `${compiled == null ? '' : `, drawn once its shaders had compiled in ${Math.round(compiled)} ms`})`;
     log(again.change.quiet ? `Lamp: put in what was built in the background${said ? ` (${said})` : ''}; ${timing}.`
-        : `Lamp: the game's code ran again in place${said ? ` (${said})` : ''} in ${Math.round(ran)} ms; ${timing}.`);
+        : `Lamp: the game's code ran again in place${said ? ` (${said})` : ''} in ${Math.round(ran)} ms`
+            + `${outside >= 100 ? `, ${outside} ms of it in the game's own start outside its kept parts (what it awaits there, such as data from the network, holds it still at every change)` : ''}; ${timing}.`);
     tellHost(again.change.gen, 'report', said, { ...more, frozen: Math.round(still), firstFrame: Math.round(cost) });
 }
 

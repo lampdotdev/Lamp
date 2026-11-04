@@ -604,7 +604,9 @@ code again meanwhile takes a built part with it, and goes on with a build its ch
 `busy()` the swap waits for a pause, as a run in place does. Every run in place also has its first frame's shaders compiled before it's drawn (`watchRender` puts
 `compileAsync` in front of that frame's render, the last frame held on screen meanwhile), so no game shows a frame
 stalled on compiling. The report is said at the new code's first drawn frame with how long the game stood still
-(`frozen`, from the old code's last frame) and that frame's time; parts still being built are named apart, and a second
+(`frozen`, from the old code's last frame) and that frame's time, and how long the game's own start took outside the parts
+built again (`outside`, said when it's 100 ms or more: a fetch from the network awaited in the starting module is waited
+for again at every change, which the game skill has go inside the part built from it); parts still being built are named apart, and a second
 report (`later`) gives their time once they're in, which `PageLive` keeps beside the change's waits. A look at the open
 game waits for that, up to half a minute (`lookAtOpenGame`), and `openGameNote` says what's still being built. What a game registers lasts
 beyond that (lamp-game.js, "What the game registers"; the scaffold and the game skill start every new game with it):
