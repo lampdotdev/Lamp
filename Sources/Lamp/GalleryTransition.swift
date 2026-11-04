@@ -3,7 +3,7 @@ import AppKit
 
 /// The light on an app being changed, tried in the gallery over made-up windows: a Mac app in the system's look, a
 /// dark game and a bright one, the three grounds it has to read on. The layers are the apps' own
-/// (`LampTransition.Look`), driven the way `LampTransition` drives them: begin, land, end.
+/// (`LampTransition.Look`), driven the way `LampTransition` drives them: begin, turn, land, end.
 struct TransitionPlayground: View {
     enum Screen: String, CaseIterable, Identifiable {
         case mac = "Mac App", darkGame = "Dark Game", brightGame = "Bright Game", all = "All Three"
@@ -23,6 +23,8 @@ struct TransitionPlayground: View {
 
             HStack {
                 Button("Glow") { stage.begin() }.disabled(stage.state != .idle)
+                Button("Stands Still") { stage.turn() }.disabled(stage.state != .glowing)
+                    .help("The app stands still taking the change in, as a game running its code again does")
                 Button("Change Goes In") { stage.land() }.disabled(stage.state == .leaving)
                 Button("Let Go") { stage.end() }.disabled(stage.state != .glowing)
                 Button("Whole Change") { stage.wholeChange() }.disabled(stage.state != .idle)
@@ -60,6 +62,11 @@ struct TransitionPlayground: View {
         guard state == .idle else { return }
         state = .glowing
         for look in looks.allObjects { look.glow(still: still) }
+    }
+
+    func turn() {
+        guard state == .glowing else { return }
+        for look in looks.allObjects { look.turn(still: still) }
     }
 
     /// Like the app, a change that goes in without a begin still shows the light crossing.

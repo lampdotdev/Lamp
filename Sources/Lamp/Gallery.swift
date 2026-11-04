@@ -1224,6 +1224,7 @@ private struct TransitionTrial: View {
                 if let project = open.first(where: { $0.id == (chosen ?? open[0].id) }) {
                     HStack {
                         Button("Glow") { AppTransition.send(.begin, to: project) }
+                        Button("Stands Still") { AppTransition.send(.turn, to: project) }
                         Button("Change Goes In") { AppTransition.send(.land, to: project) }
                         Button("Let Go") { AppTransition.send(.end, to: project) }
                     }

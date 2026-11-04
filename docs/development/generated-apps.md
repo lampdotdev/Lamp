@@ -161,7 +161,10 @@ puts no picture of the window in its place meanwhile: a copy that opens no windo
 until it timed out.
 While Lamp builds a change for a Mac app that's open, smoke in Lamp's stripe colors curls up from the bottom of the app's
 windows, with a faint glow round their edges, and as the change goes in the stripes roll up across them on the slant, covering the window at the middle of the roll (`AppTransition`, drawn by
-`LampTransition` in LampSupport.swift). It starts in `Store.build`,
+`LampTransition` in LampSupport.swift). A web game stands still while it takes a change by running its code again or
+opening its page again; from the page's word that it's doing so (`rerun`, `reloading`, in `PageLive`) until its new code
+draws (`shown`), the stripes roll up its window every few seconds, the window clear between rolls (`AppTransition.turn`, the `turn` phase), and the turn
+under way then finishes as the change lands, so the frame held there never reads as a game that hung. It starts in `Store.build`,
 lands in `reloadInPlace` (or, after a reopen, once the new copy's window is on screen, `landWhenShown`), and fades after `install` otherwise (held for Reload,
 kept open, failed); Lamp renews it while the turn goes on and the app lets it go after 90 seconds unrenewed. The app
 draws it in clear child windows that let clicks through and are left out of its pictures (`windowsOnScreen`), so the
