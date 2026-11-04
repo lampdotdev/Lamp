@@ -574,7 +574,7 @@ final class SidebarServer {
             icon: introIcons[project.id]?.data,
             name: asks ? nil : project.untitled ? "" : project.name,
             namePrompt: !project.untitled ? project.name : project.fromWish ? project.title : "Name it, or Lamp will",
-            line: project.untitled && project.fromWish ? "Here's your wish. Change anything you like."
+            line: project.untitled && project.fromWish ? "Here it is. Change anything you like."
                 : project.untitled ? "Say it in your own words: a chore to take off your hands, a habit to keep, a game to play. Lamp makes it for you."
                 : "Describe what \(project.name) should do. Lamp builds it and opens it for you.",
             ideas: ideas, canRename: !busy)

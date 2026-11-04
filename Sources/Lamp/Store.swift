@@ -205,7 +205,7 @@ struct LampProject: Identifiable, Hashable {
     /// its folder and everything that asks `untitled` go by), so the screen says what it is instead: a wish,
     /// theirs from the site or one still to be told. Nothing is an app until Lamp has made something; the
     /// name Lamp or the person gives it takes over everywhere at once.
-    var title: String { !untitled ? name : fromWish ? "Your wish" : finding ? "Finding a wish" : "New app" }
+    var title: String { !untitled ? name : fromWish ? "New app" : finding ? "Finding an idea" : "New app" }
     var isDeviceSetup: Bool { deviceSetup != nil }
     /// Nothing here is an app yet, or ever: a wish being found, or a device's setup.
     var makesNoApp: Bool { finding || isDeviceSetup }
@@ -2399,7 +2399,7 @@ final class Store: ObservableObject {
     /// What a device's setup conversation may not do: everything that looks at, opens, builds or changes an app,
     /// since there is none. Only the integration, the skills, the notes and the chat's own cards are left.
     static func deviceSetupRefusal(route: String, request: Gateway.Request) -> (Int, [String: Any])? {
-        let refusal = (400, ["error": "This conversation sets up a device; no app is made here. Write or fix the device's integration with device_integration, and tell the person to make a wish on Lamp's desk for anything to put on it."] as [String: Any])
+        let refusal = (400, ["error": "This conversation sets up a device; no app is made here. Write or fix the device's integration with device_integration, and tell the person to ask for it on Lamp's desk for anything to put on it."] as [String: Any])
         switch route {
         case "/agent/look", "/agent/use", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/icon", "/agent/art", "/agent/assets", "/agent/versions", "/agent/versions/name", "/agent/versions/restore",
              "/agent/setup", "/agent/connectors", "/agent/lampify":
@@ -7390,13 +7390,13 @@ final class Store: ObservableObject {
             // Only for a wish being found: one the person told is already theirs, and a box they're typing in
             // isn't the agent's to fill.
             guard project.finding else {
-                return (400, ["error": "`write_wish` is only for helping someone find a wish. Build what they asked for."])
+                return (400, ["error": "`write_wish` is only for helping someone find an idea. Build what they asked for."])
             }
             guard let wish = Wish.tidy(arguments["wish"] as? String), Talk.words(in: wish) <= Talk.Words.wish else {
-                return (400, ["error": "Give the wish in `wish`, \(Talk.Words.wish) words at most."])
+                return (400, ["error": "Give the idea in `wish`, \(Talk.Words.wish) words at most."])
             }
             writeIn(wish, for: project)
-            return (200, ["text": "The wish is in their message box, for them to change and send. End your reply now, with one short sentence at most."])
+            return (200, ["text": "The idea is in their message box, for them to change and send. End your reply now, with one short sentence at most."])
         default:
             return (400, ["error": "Unknown tool \(tool)."])
         }

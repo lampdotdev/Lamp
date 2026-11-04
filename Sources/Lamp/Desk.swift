@@ -329,7 +329,7 @@ struct WishDesk: View {
                 Label("Not sure?", systemImage: "lightbulb")
             }
             .buttonStyle(PaperButtonStyle(.outline, height: 40))
-            .help("Show some ideas, or have Lamp help you find your wish")
+            .help("Show some ideas, or have Lamp help you find one")
             .popover(isPresented: $showingIdeas, arrowEdge: .bottom) {
                 DeskIdeas(ideas: ideas, choose: choose, find: { showingIdeas = false; store.findWish() })
                     .padding(20)
@@ -398,8 +398,8 @@ struct WishDesk: View {
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.return, modifiers: .command)
-                .help("Make this wish (Return)")
-                .accessibilityLabel("Make this wish")
+                .help("Make it (Return)")
+                .accessibilityLabel("Make it")
                 .transition(.scale.combined(with: .opacity))
             }
         }
@@ -565,7 +565,7 @@ struct DeskIdeas: View {
                 }
                 .buttonStyle(.plain)
                 .onHover { hovered = $0 ? Self.finder : (hovered == Self.finder ? nil : hovered) }
-                .help("Lamp asks a few questions about your days and writes a wish with you")
+                .help("Lamp asks a few questions about your days and writes it with you")
             }
         }
         .frame(maxWidth: 760)
@@ -627,8 +627,8 @@ struct TalkButton: View {
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: hovered)
-        .help(listening ? "Stop listening" : "Say your wish")
-        .accessibilityLabel(listening ? "Stop listening" : "Say your wish")
+        .help(listening ? "Stop listening" : "Say it")
+        .accessibilityLabel(listening ? "Stop listening" : "Say it")
     }
 
     /// The colors of the wish icon's dusk, going round.

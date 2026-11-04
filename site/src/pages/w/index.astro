@@ -314,7 +314,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
       copyWish(withAsk(wish.wish, $<HTMLElement>("[data-remix-to]").textContent ?? "")).then((copied) => {
         $<HTMLElement>("[data-download-label]").textContent = "Downloading…";
         next.textContent = copied === "marked" ? "Open Lamp when it's ready. This app will be there."
-          : copied === "plain" ? "The wish is copied. Paste it into Lamp when it's ready."
+          : copied === "plain" ? "It's copied. Paste it into Lamp when it's ready."
           : "Copy the app's name, and ask Lamp for it when it's ready.";
       });
     });

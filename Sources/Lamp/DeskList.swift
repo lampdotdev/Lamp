@@ -468,7 +468,7 @@ struct DeskListRow: View {
         if store.busy.contains(project.id) { return store.progress[project.id]?.newApp == true || project.untitled ? "Coming true…" : "Changing…" }
         if Talk.waiting(in: store.logs[project.id] ?? []) != nil { return "Has a question" }
         if store.queued[project.id]?.isEmpty == false { return "Waiting to start" }
-        if project.finding { return "Finding a wish" }
+        if project.finding { return "Finding an idea" }
         if store.unread.contains(project.id) { return "Ready" }
         return ""
     }
