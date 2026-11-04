@@ -546,9 +546,17 @@ struct DeskDetail: View {
                                   : "Bring in the newer \(project.title). Undo takes it back.")
                     }
                 }
-                // Where it came from on GitHub: what was last heard of its updates, with the one button that checks or
-                // reviews them. Asking for it checks by itself when the last check is a day old.
-                if let project, row.entry?.followsRepository == true, let update = store.updateAvailability(of: project) {
+                // The copies it follows, the one it started from first: what was last heard of each, with the one button
+                // that checks it again or pulls in what's new (`Following`). Asking checks by itself when the last check is
+                // a day old.
+                if let project, !kept, !store.followingRows(of: project).isEmpty {
+                    FollowingList(rows: store.followingRows(of: project), busy: store.busy.contains(project.id),
+                                  pullIn: { store.pullIn($0, into: project) }, check: { store.checkFollowing($0, of: project) },
+                                  unfollow: { store.unfollow($0, for: project) })
+                }
+                // Where someone's project it was made from lives on GitHub: what was last heard of its updates, with the
+                // one button that checks or reviews them.
+                else if let project, row.entry?.followsRepository == true, let update = store.updateAvailability(of: project) {
                     HStack(spacing: 8) {
                         Text(update.line).font(.system(size: 13)).foregroundStyle(Paper.muted)
                         Button(update.reviews ? "Review" : "Check Again") {
@@ -714,6 +722,12 @@ struct DeskWishMenu: View {
             }
             .disabled(busy)
         }
+        // Its link, once it's on GitHub as it is now (Put on GitHub… puts it there), and following someone's copy of it.
+        if project.scaffolded {
+            Divider()
+            if Following.shareLink(for: project) != nil { Button("Copy Link") { store.copyShareLink(project) } }
+            Button("Follow a Copy…") { store.askToFollow(for: project) }
+        }
         Divider()
         AppMenu(project: project)
     }
@@ -766,6 +780,43 @@ struct StarterIcon: View {
         .task(id: url) {
             guard let url else { return }
             image = await Task.detached { NSImage(contentsOf: url) }.value
+        }
+    }
+}
+
+/// The copies a wish follows, in its side panel (`Store.followingRows`): each one's name, what was last heard of it, and
+/// Pull In once it has something new, else Check Again. The one it started from says so; any other can be unfollowed
+/// from its right-click.
+struct FollowingList: View {
+    let rows: [Following.Row]
+    let busy: Bool
+    let pullIn: (String) -> Void
+    let check: (String) -> Void
+    let unfollow: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Following").font(.system(size: 13, weight: .semibold))
+            ForEach(rows) { row in
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(row.title).font(.system(size: 13)).lineLimit(1)
+                        Text([row.startedFrom ? "Started from" : nil, row.state?.line].compactMap { $0 }.joined(separator: " · "))
+                            .font(.system(size: 12)).foregroundStyle(Paper.muted)
+                    }
+                    Spacer(minLength: 4)
+                    if let page = row.page.flatMap(URL.init(string:)) {
+                        Button("Try It") { NSWorkspace.shared.open(page) }
+                            .buttonStyle(PaperButtonStyle(.outline, height: 26))
+                    }
+                    if row.state != .unreachable {
+                        Button(row.state == .new ? "Pull In" : "Check Again") { row.state == .new ? pullIn(row.id) : check(row.id) }
+                            .buttonStyle(PaperButtonStyle(.outline, height: 26))
+                            .disabled(busy || row.state == .checking)
+                    }
+                }
+                .contextMenu { if !row.startedFrom { Button("Stop Following") { unfollow(row.id) } } }
+            }
         }
     }
 }

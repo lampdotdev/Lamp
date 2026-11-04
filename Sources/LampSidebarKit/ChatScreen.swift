@@ -855,6 +855,7 @@ struct ChatBar: View {
     /// What the button for the rest shows (Versions goes beside Undo, the two being about the same thing).
     @ViewBuilder private func rest(_ state: SidebarState, _ toolbar: SidebarToolbar) -> some View {
         Menu {
+            if toolbar.canCopyLink == true { Button("Copy Link") { link.send(.copyLink) } }
             Button("Share Link…") { link.send(.wishLink(.open)) }
             Button("Put on GitHub…") { link.send(.repo(.open)) }
             if toolbar.canContribute == true { Button("Send Changes Back…") { link.send(.contribute(.open)) } }

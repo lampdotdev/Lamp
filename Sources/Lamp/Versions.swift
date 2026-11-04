@@ -559,7 +559,7 @@ enum Versions {
     /// What the agent hears with the request Lamp sends when the latest of a wish was merged into it by git
     /// (`Upstream.merge`) and some files conflicted: which files hold markers, what the markers mean, how to read each
     /// side, and how to settle them. Written in place of any other note, since that request is the next one.
-    static func rememberConflicts(_ project: LampProject, files: [String], from place: String) {
+    static func rememberConflicts(_ project: LampProject, files: [String], from place: String, ref: String = Upstream.ref) {
         let list = files.map { "- \($0)" }.joined(separator: "\n")
         let note = """
 
@@ -567,12 +567,12 @@ enum Versions {
         Note from Lamp: the user chose to bring in the latest version of this wish from \(place). Lamp merged it into \
         the wish's files with git: what changed only upstream and what changed only here is already in place. These \
         files changed in the same places on both sides and hold conflict markers (`<<<<<<< HEAD` begins what this wish \
-        had, `=======` divides it from what came from upstream, `>>>>>>> \(Upstream.ref)` ends it):
+        had, `=======` divides it from what came from upstream, `>>>>>>> \(ref)` ends it):
         \(list)
         Settle each one: bring in what changed upstream and keep what was changed here. Settle it yourself when what the \
         person wants is clear (a fix upstream to code they didn't touch, a change here that upstream merely moved); ask \
         them with the ask tool only where it isn't, then go on. `git show HEAD:<path>` is a file as this wish had it \
-        before the merge, and `git show \(Upstream.ref):<path>` is it as it is upstream. Leave no marker behind: the app \
+        before the merge, and `git show \(ref):<path>` is it as it is upstream. Leave no marker behind: the app \
         has to build. credits.json is already updated by Lamp: leave it. When it's all in, tell the person what came in \
         and what you kept of theirs.
         """

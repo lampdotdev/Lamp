@@ -93,7 +93,9 @@ export function exactWishLink(file, ask) {
  * What a remix starts from, read off a link (`?starter=newyork`, or `?repo=https://github.com/owner/name&commit=…`, beside
  * `ask`): a published page's Remix panel names it when the page is a starter's or a wish on GitHub (`RemixLink.Origin` in
  * Lamp). Only a starter's plain id, or an https github.com repository with a full 40-digit commit (a shallow fetch takes no abbreviation); null for anything else, and
- * for both at once. Lamp checks it all again (`Wish.remix`).
+ * for both at once. Lamp checks it all again (`Wish.remix`). A repository's link may also name its page (`page=`), where
+ * it can be tried in a browser: only https on `<owner>.github.io` for the repository's own owner, as Lamp writes it
+ * (`Following.shareLink`), so a link never sends anyone elsewhere.
  */
 export function remixFrom(search) {
   const params = new URLSearchParams(search ?? "");
@@ -107,9 +109,21 @@ export function remixFrom(search) {
     const name = found[2].replace(/\.git$/, "");
     if (!name) return null;
     const origin = { repo: `https://github.com/${found[1]}/${name}`, owner: found[1], name };
+    const page = pagesAddress(params.get("page"), found[1]);
+    if (page) origin.page = page;
     return commit === null ? origin : { ...origin, commit: commit.toLowerCase() };
   }
   return null;
+}
+
+/** A GitHub Pages address on the owner's own `<owner>.github.io`, or null. */
+function pagesAddress(text, owner) {
+  if (!text) return null;
+  let url;
+  try { url = new URL(text); } catch { return null; }
+  if (url.protocol !== "https:" || url.username || url.password || url.search || url.port) return null;
+  if (url.hostname.toLowerCase() !== `${owner.toLowerCase()}.github.io`) return null;
+  return url.href;
 }
 
 /** A remix's origin as the parameters Lamp reads, in its link and in the mark's value. */

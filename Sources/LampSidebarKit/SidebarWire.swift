@@ -230,6 +230,8 @@ public struct SidebarToolbar: Codable, Equatable {
     public var canShare: Bool
     /// Its changes can go back to the repository it came from: the share menu offers Send Changes Back.
     public var canContribute: Bool?
+    /// Its link can be copied: it's on GitHub as it is now, so the share menu offers Copy Link.
+    public var canCopyLink: Bool?
     /// It has versions to look back at.
     public var hasVersions: Bool
     public var details: Bool
@@ -586,6 +588,8 @@ public enum SidebarCommand: Codable, Equatable {
     /// Delete the wish, which the sidebar has already confirmed.
     case delete
     case copyWishFile
+    /// Copy Link: the wish's link as it is now, which gives whoever opens it their own copy to follow this one.
+    case copyLink
     /// Share…: Lamp makes the file and sends it back (`SidebarState.sharing`).
     case share
     case export

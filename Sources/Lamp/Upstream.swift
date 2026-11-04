@@ -52,8 +52,10 @@ enum Upstream {
     /// Merges `package` (the review's, from `source` when the wish came from a repository) into the wish's files and
     /// index, unsaved. `commit` is the commit of the repository the wish has; `arrival` the version that arrived. The
     /// wish's files are expected saved: a merge that fails leaves them as they were.
+    /// `ref` is where the staged latest is kept: `Upstream.ref` for where the wish came from, one of its own for each
+    /// other copy it follows (`Following.ref`), so each is measured against what was last brought in from it.
     static func merge(_ package: Sharing.Package, into project: LampProject, from source: RepoImport.Source?, commit: String?,
-                      arrival: String?) async throws -> Merged {
+                      arrival: String?, ref: String = Upstream.ref) async throws -> Merged {
         let fm = FileManager.default
         // The merge's own indexes, in Lamp's folder in the wish, so the wish's index is never touched before the result
         // goes in; cleared with the staged folders when it's done, whichever way it went.
