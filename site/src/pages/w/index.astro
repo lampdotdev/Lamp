@@ -1,6 +1,8 @@
 ---
 import Base from "../../layouts/Base.astro";
+import { Image } from "astro:assets";
 import LampLockup from "../../components/LampLockup.astro";
+import lampIcon from "../../assets/AppIcon.png";
 import { DOWNLOAD_URL } from "../../lib/download";
 ---
 
@@ -31,7 +33,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
             type="button"
             data-fullscreen
             aria-label="Full screen"
-            class="absolute top-3 right-3 z-10 grid size-9 cursor-pointer place-items-center rounded-full bg-black/45 text-white/90 backdrop-blur transition hover:bg-black/65 focus-visible:outline-2 focus-visible:outline-white"
+            class="absolute top-3 right-3 z-10 grid size-9 cursor-pointer place-items-center rounded-full bg-black/45 text-white/90 backdrop-blur hover:outline-2 hover:outline-offset-2 hover:outline-white focus-visible:outline-2 focus-visible:outline-white"
           >
             <svg aria-hidden="true" viewBox="0 0 16 16" class="size-4 fill-none stroke-current stroke-[1.6] [stroke-linecap:round] [stroke-linejoin:round]"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" /></svg>
           </button>
@@ -73,7 +75,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
               placeholder="What would you change? You can say later, too."
               class="w-full resize-none rounded-[6px] bg-white p-3 text-[16px] leading-relaxed ring-2 ring-tape/80 transition placeholder:text-[#6f6857] focus:ring-tape focus:outline-none"
             ></textarea>
-            <button type="button" data-remix disabled class="shared-button cursor-pointer disabled:cursor-default disabled:opacity-35 disabled:hover:translate-y-0">Remix</button>
+            <button type="button" data-remix disabled class="shared-button cursor-pointer disabled:cursor-default disabled:opacity-35">Remix</button>
           </div>
         </div>
         </div>
@@ -88,7 +90,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
 
     <!-- Remix: the change asked for, what Lamp is, for someone who may not have it, and the two ways on, side by side:
          opening it (on a Mac) or getting it. Dressed as the homepage's remix dialog (RemixDialog.astro): a slab with the
-         stripes up its left edge, rising in when it opens and leaning toward the pointer. -->
+         stripes across its top, rising in when it opens and leaning toward the pointer. -->
     <dialog data-remix-dialog aria-labelledby="remix-title" class="remix-popup make-host">
       <div class="make-slab">
       <div class="make-back" aria-hidden="true"></div>
@@ -104,7 +106,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
         <div class="remix-popup-body">
           <div class="remix-popup-words">
             <h2 id="remix-title" class="remix-popup-title"><span class="remix-popup-word">Change</span> <span data-remix-name></span> <span data-remix-to class="remix-popup-to"></span></h2>
-            <p data-remix-made class="remix-popup-text"></p>
+            <p class="remix-popup-text"><span data-remix-made></span> was made with <Image src={lampIcon} alt="" width={20} height={20} densities={[1, 2]} class="remix-popup-icon" />Lamp, a free Mac app you can use to tweak it and make it your own with no coding knowledge at all.</p>
             <div class="remix-popup-rows">
               <div data-remix-open class="remix-popup-row">
                 <span>Already have Lamp?</span>
@@ -204,9 +206,10 @@ import { DOWNLOAD_URL } from "../../lib/download";
   .shared-button {
     display: inline-flex; align-items: center; justify-content: center; min-height: 3.25rem; padding: 0 1.625rem;
     border-radius: 6px; background: var(--color-tape); color: var(--color-paper); font-size: 1.125rem; font-weight: 800;
-    transition: translate 0.2s ease;
   }
-  .shared-button:hover { translate: 0 -2px; }
+  /* Pointed at, a button is outlined in ink a little way out from its edge, as the tapes' printed buttons are
+     (lib/tapes.ts); one that can't be pressed yet isn't. */
+  .shared-button:hover:not(:disabled), .remix-popup-close:hover { outline: 3px solid var(--color-tape); outline-offset: 3px; }
   .shared-button:focus-visible { outline: 3px solid #1f8a4a; outline-offset: 3px; }
   /* The yellow of the stripes, as the homepage's remix dialog has its Download. */
   .shared-button-lit { background: #f6b81c; color: var(--color-tape); box-shadow: inset 0 0 0 2px var(--color-tape); }
@@ -228,13 +231,13 @@ import { DOWNLOAD_URL } from "../../lib/download";
     to { translate: 0 0; rotate: x 0deg; opacity: 1; }
   }
   @keyframes remix-popup-dim { from { opacity: 0; } }
-  .remix-popup-face { display: flex; max-height: calc(100dvh - 2rem); overflow-y: auto; }
+  .remix-popup-face { display: flex; flex-direction: column; max-height: calc(100dvh - 2rem); overflow-y: auto; }
   .remix-popup-stripes {
-    flex: 0 0 1.75rem; border-right: 2px solid var(--color-tape);
-    background: linear-gradient(90deg, #1f8a4a 0 16.6%, #7cbf3a 0 33.3%, #f6b81c 0 50%, #f08a1c 0 66.6%, #e2402a 0 83.3%, #d23778 0);
+    flex: 0 0 1.5rem; border-bottom: 2px solid var(--color-tape);
+    background: linear-gradient(180deg, #1f8a4a 0 16.6%, #7cbf3a 0 33.3%, #f6b81c 0 50%, #f08a1c 0 66.6%, #e2402a 0 83.3%, #d23778 0);
   }
   .remix-popup-close {
-    position: absolute; top: 1rem; right: 1rem; z-index: 1; display: grid; place-items: center; width: 2.25rem; height: 2.25rem;
+    position: absolute; top: 2.5rem; right: 1rem; z-index: 1; display: grid; place-items: center; width: 2.25rem; height: 2.25rem;
     border-radius: 6px; background: var(--color-paper); color: var(--color-tape); box-shadow: inset 0 0 0 2px var(--color-tape); cursor: pointer;
   }
   .remix-popup-close svg { width: 0.875rem; height: 0.875rem; fill: none; stroke: currentColor; stroke-width: 2.25; stroke-linecap: round; }
@@ -246,6 +249,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
   .remix-popup-title { margin: 0 3rem 0 0; font-size: clamp(2rem, 4.2vw, 3rem); line-height: 0.95; font-weight: 900; letter-spacing: -0.04em; overflow-wrap: break-word; text-wrap: balance; }
   .remix-popup-title > span { display: block; }
   .remix-popup-word { margin-bottom: 0.1em; font-family: var(--font-marker); font-size: 0.6em; font-weight: 400; letter-spacing: 0; }
+  /* Lamp's icon in the line, just before its name, sitting on the text as a letter would. */
+  .remix-popup-icon { display: inline-block; width: 1.2em; height: 1.2em; margin: 0 0.2em 0 0.1em; vertical-align: -0.25em; }
   .remix-popup-text { margin: 1rem 0 0; font-size: 1.0625rem; line-height: 1.5; color: #4a463c; }
   /* The change itself, under the name in the same lettering, smaller, since it can run long. */
   .remix-popup-to { margin-top: 0.2em; font-size: 0.55em; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
@@ -312,7 +317,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
       const chip = document.createElement("button");
       chip.type = "button";
       chip.textContent = idea;
-      chip.className = "cursor-pointer rounded-full bg-white px-3.5 py-1.5 text-left text-[16px] leading-snug font-semibold text-tape ring-1 ring-tape/25 transition ring-inset hover:ring-tape/60 focus-visible:outline-2 focus-visible:outline-tape";
+      chip.className = "cursor-pointer rounded-full bg-white px-3.5 py-1.5 text-left text-[16px] leading-snug font-semibold text-tape ring-1 ring-tape/25 ring-inset hover:outline-2 hover:outline-offset-2 hover:outline-tape focus-visible:outline-2 focus-visible:outline-tape";
       chip.addEventListener("click", () => {
         change.value = idea;
         change.dispatchEvent(new Event("input"));
@@ -335,7 +340,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
     $<HTMLElement>("[data-remix-open]").hidden = !mac;
     const dialog = $<HTMLDialogElement>("[data-remix-dialog]");
     $<HTMLElement>("[data-remix-name]").textContent = wish.name;
-    $<HTMLElement>("[data-remix-made]").textContent = `${wish.name} was made with Lamp, a free Mac app you can use to tweak it and make it your own with no coding knowledge at all.`;
+    $<HTMLElement>("[data-remix-made]").textContent = wish.name;
     remix.addEventListener("click", () => {
       $<HTMLElement>("[data-remix-to]").textContent = `→ ${change.value.trim()}`;
       dialog.showModal();
