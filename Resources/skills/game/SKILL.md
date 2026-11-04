@@ -278,6 +278,12 @@ game is written to keep the player's place through one:
     }, { from: ['js/elevation.js'], background: true });
     ```
 
+    Data the person asked to come live from the network (today's weather, road closures, a feed) is fetched inside the
+    build of the part made from it, and declared in its `from` when a file stands in for it offline, never awaited on its
+    own in the module that starts the game: a part keeps what it fetched when the code runs again, while a fetch outside
+    every part is waited for again at each change, with the game standing still. The log after each run says how long
+    the game's own start took outside its kept parts.
+
     The first build, as the game starts, is built whole. A part built from one being built (its `inputs`) is built
     again from the new one once that's in, so parts that must change together are one part. Keep a part's three.js
     objects in the value it returns (one object, or a plain object of them, as `{ group }`), so Lamp can compile them
