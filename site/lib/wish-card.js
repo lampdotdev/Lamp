@@ -43,7 +43,7 @@ export function cardElement(wish, { picture, icon, lamp }) {
   };
   const mark = h("div", { display: "flex", alignItems: "center", gap: 14, fontSize: 26, color: "rgba(255,255,255,0.82)" }, [
     img(lamp, { width: 40, height: 40 }),
-    h("div", { display: "flex" }, "A wish for Lamp · lamp.dev"),
+    h("div", { display: "flex" }, "Made with Lamp · lamp.dev"),
   ]);
   const name = (size, lines) => h("div", { display: "block", fontSize: size, fontWeight: 700, lineHeight: 1.08, letterSpacing: "-0.02em", lineClamp: lines }, wish.name);
   const line = (size, lines) => h("div", { display: "block", fontSize: size, lineHeight: 1.3, color: "rgba(255,255,255,0.82)", lineClamp: lines }, words);

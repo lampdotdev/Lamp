@@ -277,19 +277,19 @@ enum AppPlanner {
         default: return .failure(Refusal("`app` is an app's folder, as text: \(folders(members)). Nothing changed."))
         }
         if selector != nil, adding {
-            return .failure(Refusal("`app` changes an app the wish has; `another` adds a new one. Give one of them. Nothing changed."))
+            return .failure(Refusal("`app` changes an app the project has; `another` adds a new one. Give one of them. Nothing changed."))
         }
         if let selector {
             switch select(selector, in: members) {
             case .one(let member): return .success(.change(member))
             case .several(let found):
-                return .failure(Refusal("`app` \"\(selector)\" is more than one of the wish's apps (\(found.compactMap(\.slot).joined(separator: ", "))): give its folder. Nothing changed."))
+                return .failure(Refusal("`app` \"\(selector)\" is more than one of the project's apps (\(found.compactMap(\.slot).joined(separator: ", "))): give its folder. Nothing changed."))
             case .none:
-                return .failure(Refusal("The wish has no app in \"\(selector)\"" + (members.isEmpty ? "." : ": `app` is one of \(folders(members)).") + " Nothing changed."))
+                return .failure(Refusal("The project has no app in \"\(selector)\"" + (members.isEmpty ? "." : ": `app` is one of \(folders(members)).") + " Nothing changed."))
             }
         }
         if adding || members.isEmpty { return .success(members.isEmpty ? .first : .another) }
-        return .failure(Refusal("This wish already has \(members.count == 1 ? "an app" : "\(members.count) apps") (`app` \(folders(members))). "
+        return .failure(Refusal("This project already has \(members.count == 1 ? "an app" : "\(members.count) apps") (`app` \(folders(members))). "
             + "To change one, including when the person changed their mind or wants something else in its place, give its folder in `app`. "
             + "To add one more app of another kind beside it (an Android app beside a Mac app), ask the person first with `ask` and end your turn; give `another: true` only once they chose that. "
             + "Nothing changed."))
@@ -334,12 +334,12 @@ enum AppPlanner {
         if mode == .another {
             if let same = members.first(where: { $0.target.code == target.code }) {
                 let name = Parts.name(of: target.kind, integration: target.integration)
-                return .failure(Refusal("This wish already has \(name)" + (same.slot.map { $0 == "." ? " (`app` \".\")" : " (`app` \"\($0)\")" } ?? "")
-                    + ", and Lamp can't keep two apps of one kind in a wish yet. Nothing changed. To change that app, give its folder in `app`; "
+                return .failure(Refusal("This project already has \(name)" + (same.slot.map { $0 == "." ? " (`app` \".\")" : " (`app` \"\($0)\")" } ?? "")
+                    + ", and Lamp can't keep two apps of one kind in a project yet. Nothing changed. To change that app, give its folder in `app`; "
                     + "tell the person in a sentence that a second one can't be added for now."))
             }
             if target.kind == .device, let other = members.first(where: { $0.target.kind == .device }) {
-                return .failure(Refusal("A wish has one app for a device of its own for now, and this one has \(Parts.name(of: .device, integration: other.target.integration)). "
+                return .failure(Refusal("A project has one app for a device of its own for now, and this one has \(Parts.name(of: .device, integration: other.target.integration)). "
                                         + "Nothing changed. If the person wants this device's app instead, take that one away with remove_app, then ask again."))
             }
         }
@@ -399,9 +399,9 @@ enum AppPlanner {
         let listed = members.map(describe).joined(separator: ", ")
         switch find(named, in: members, table: table) {
         case .none:
-            return .failure(Refusal("The wish has no app \"\(named)\". Its apps: \(listed). Name one by its folder or a device it's on."))
+            return .failure(Refusal("The project has no app \"\(named)\". Its apps: \(listed). Name one by its folder or a device it's on."))
         case .several(let found):
-            return .failure(Refusal("\"\(named)\" is more than one of the wish's apps: \(found.map(describe).joined(separator: ", ")). Name one by its folder."))
+            return .failure(Refusal("\"\(named)\" is more than one of the project's apps: \(found.map(describe).joined(separator: ", ")). Name one by its folder."))
         case .one(let member):
             return .success(member.isMade ? .remove(member) : .cancel(member))
         }

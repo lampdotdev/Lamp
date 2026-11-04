@@ -79,7 +79,7 @@ untouched copy of the starter with the request written into its box (`openCopy`)
 
 Remix means changing the wish itself, everywhere Lamp says it: the desk, the site's and a README's remix links (which
 open the starter itself), and the wand mark in every app, which opens its chat. **Duplicate…** (`Store.remix`, in the
-wish's menu and File → Duplicate…, which, like Copy Wish File and Name This Version…, acts on the row picked while the
+wish's menu and File → Duplicate…, which, like Copy App File and Name This Version…, acts on the row picked while the
 desk is in front and otherwise on the chat in front, `Store.commandTarget`) is for making something else of it while keeping it as it is. It makes a new copy, "<name> Remix", with its code, history and icon on another background, and a link back
 to the original at the end of its chain, then builds it with its chat beside it; the original stays as it was. From the
 panel's menu, what's in the box goes as the copy's first request. A remix made with no change asked opens its chat on
@@ -102,7 +102,7 @@ the desk and grows into the chat's window, lit in the colors of the smoke an app
 (`LampTransition.Look.hues`), with a few sparks rising off it, and the chat fades in where it lands (`WishArrival`, drawn in
 a window of its own over the desk, so the chat is laid out once, at its real size). Where the person asked for less
 motion, or the chat opens on another screen than the bar's, it opens at once. "Not sure?" beside the bar opens a few
-ideas (`DeskIdeas`) and Help Me Find One.
+ideas (`DeskIdeas`) and Help me find my wish.
 
 **The devices** (`DeskDevices`) are down the side, since a wish for the TV or the phone is what Lamp
 is for and Settings is no place to find that out. Until Lamp has looked on the network (`localNetworkAsked`) they're an
@@ -118,7 +118,7 @@ has Set Up… (`DeskDevices.offersSetUp`), and Reconnect… and Forget… for a 
 never an address or a serial); what else is known is in its tip a moment after the pointer comes onto it (`DeviceTip`),
 never its address. macOS refusing the network is `LocalNetworkRefused` under the list.
 
-"Help me find one" (`Store.findWish`) is the site's wizard in the app, held in the ordinary chat: a new wish
+"Help me find my wish" (`Store.findWish`) is the site's wizard in the app, held in the ordinary chat: a new wish
 marked `finding` whose first request is `Agent.findingRequest`. The agent asks about the person's days in
 `ask` cards (`Agent.findRules`), never about apps, and ends by writing the wish into the message box with
 `write_wish`, word by word as a wish from the site arrives (`Store.writeIn`), for the person to change and
