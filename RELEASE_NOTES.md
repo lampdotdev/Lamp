@@ -5,6 +5,23 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.33.0
+
+- Share a link anyone can open in a browser: the game or app plays right on its page at lamp.dev, with who made it,
+  and anyone with Lamp can make their own copy from it, with a change in mind if they like. The link carries the
+  app's name, and Update Link keeps it current as you go.
+- Follow the copies you like and pull in what their makers did; Lamp puts the changes together for you.
+- Share from one place: the Share button shows the link with Copy, AirDrop, Messages, Mail and more, and Share Link
+  has a window of its own.
+- New apps are web apps, so they open anywhere, and Put on GitHub gives a web app a page people can visit.
+- Open a plain website from GitHub and it opens as an app that keeps its layout.
+- Changes to games land much sooner: Lamp looks at the open game in under a second and only when it helps, and it
+  answers your messages while it's still working on a change.
+- A game taking a change in shows one gentle sweep of color, not a run of them.
+- Unsaved chats and drafts are kept, and Lamp tells you if it couldn't save one.
+- Lamp no longer quits when a device on your network sends something it didn't expect.
+- Lamp has a new icon.
+
 ## 0.32.0
 
 - New starter: Chores, a to-do list you type into in plain words ("call mom friday 6pm"), with projects, labels and
