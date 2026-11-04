@@ -23,8 +23,29 @@ enum Publish {
     static func hasPage(_ project: LampProject) -> Bool { pageUse(project) != nil }
 
     static func pageUse(_ project: LampProject) -> PageUse? {
-        guard project.holdsApp, Parts.folders(in: project.dir).isEmpty else { return nil }
-        return project.platform.target.publishedPage(project)
+        pageApp(project).flatMap { $0.platform.target.publishedPage($0) }
+    }
+
+    /// The app whose page is played or used: the wish's own, or its one app when that's in a part of its own (a wish
+    /// laid out with its game in a folder). Nil for a wish of several apps, whose pages would each need a home.
+    static func pageApp(_ project: LampProject) -> LampProject? {
+        var wish = project
+        wish.partFolders = Parts.folders(in: project.dir)
+        if project.isPart || wish.partFolders.isEmpty { return project.holdsApp ? project : nil }
+        let apps = (wish.holdsApp ? [wish] : []) + Parts.load(wish)
+        return apps.count == 1 ? apps[0] : nil
+    }
+
+    /// The shape a page plays in, which the link's page frames it in: a web game is drawn on its fixed stage
+    /// (`GameKit.width` by `height`, fitted to any window with bars around it), so its frame is that shape and it shows
+    /// none; a web app or a screen lays itself out for whatever room it has, so it fills the frame. Nil without a page.
+    enum PageShape: Equatable { case ratio(Double), fill }
+    static func pageShape(_ project: LampProject) -> PageShape? {
+        switch pageUse(project) {
+        case .play: .ratio(Double(GameKit.width) / Double(GameKit.height))
+        case .use: .fill
+        case nil: nil
+        }
     }
 
     struct Failure: LocalizedError {
@@ -95,7 +116,7 @@ enum Publish {
     static func copyPage(of project: LampProject, into site: URL, scope: String) throws -> String {
         let fm = FileManager.default
         try fm.createDirectory(at: site, withIntermediateDirectories: true)
-        let web = project.dir.appendingPathComponent(GameKit.webFolder)
+        let web = (pageApp(project) ?? project).dir.appendingPathComponent(GameKit.webFolder)
         let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey]
         guard let items = fm.enumerator(at: web, includingPropertiesForKeys: keys) else { throw Failure(message: "\(project.name) has no page to play.") }
         for case let file as URL in items {

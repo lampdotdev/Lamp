@@ -186,8 +186,6 @@ private struct Chat: View {
                                    openRequest: { link.send(.contribute(.openRequest)) }, copy: { link.send(.contribute(.copy)) },
                                    close: { link.send(.contribute(.close)) }, width: nil)
                 }
-            } else if let card = state.wishLink {
-                WishLinkPanel(card: card)
             } else {
                 switch state.panel {
                 case .versions: VersionsPanel(state: state)
@@ -711,8 +709,11 @@ struct ChatBar: View {
     @State private var more = false
     @State private var deleting = false
     @State private var moving = false
-    /// The share button, where the share menu opens once Lamp has made the file.
+    /// The share button, where its popover opens, and the system's list after More.
     @State private var shareAnchor = Anchor()
+    @State private var sharingOpen = false
+    /// The Mac's way to send that was chosen while Lamp makes the wish's file, for a wish with no link.
+    @State private var waitingWay: SharePopover.Way?
 
     var body: some View {
         Group {
@@ -773,6 +774,8 @@ struct ChatBar: View {
             if let sharing = link.sharing { share(sharing) }
             link.sharing = nil
         }
+        // The file couldn't be made: nothing comes, so the next choice asks for it again.
+        .onChange(of: state?.shareFailures) { waitingWay = nil }
     }
 
     /// Lamp's icon and name before the app's: the chat sits beside someone else's window, so it says whose it is.
@@ -854,36 +857,69 @@ struct ChatBar: View {
 
     /// What the button for the rest shows (Versions goes beside Undo, the two being about the same thing).
     @ViewBuilder private func rest(_ state: SidebarState, _ toolbar: SidebarToolbar) -> some View {
-        Menu {
-            Button("Share Link…") { link.send(.wishLink(.open)) }
-            Button("Put on GitHub…") { link.send(.repo(.open)) }
-            if toolbar.canContribute == true { Button("Send Changes Back…") { link.send(.contribute(.open)) } }
-            Divider()
-            Button("Copy Wish File") { link.send(.copyWishFile) }
-            Button("Share…") { link.send(.share) }
-            Button("Export…") { link.send(.export) }
-        } label: {
-            ToolSymbol("square.and.arrow.up", "Share")
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .background(AnchorView(anchor: shareAnchor))
-        .disabled(!toolbar.canShare)
-        .help("Share this wish")
+        let shareLink = toolbar.shareLink.flatMap { URL(string: $0) }
+        ToolButton("square.and.arrow.up", "Share", on: sharingOpen) { sharingOpen.toggle() }
+            .background(AnchorView(anchor: shareAnchor))
+            .disabled(!toolbar.canShare)
+            .help("Share this wish")
+            .popover(isPresented: $sharingOpen, arrowEdge: .bottom) {
+                SharePopover(link: shareLink, canContribute: toolbar.canContribute == true) { shareAction($0, link: shareLink) }
+            }
         ToolButton("chevron.left.forwardslash.chevron.right", "Agent Details", on: toolbar.details) { link.send(.details(!toolbar.details)) }
             .help("Agent details")
         ToolButton("trash", "Delete Wish") { deleting = true }
             .help("Delete this wish")
     }
 
-    /// The share menu, at the share button, for the file Lamp made (`SidebarState.sharing`). This process can't read
-    /// Lamp's files, so the file comes whole and is kept here, where the service it's shared with reads it.
+    /// What was chosen in the share button's popover. Copying the link keeps it open, saying Copied; anything else
+    /// closes it.
+    private func shareAction(_ action: SharePopover.Action, link url: URL?) {
+        switch action {
+        case .copyLink:
+            guard let url else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(url.absoluteString, forType: .string)
+            return
+        case .makeLink, .editLink: link.send(.wishLink(.open))
+        case .github: link.send(.repo(.open))
+        case .contribute: link.send(.contribute(.open))
+        case .copyFile: link.send(.copyWishFile)
+        case .export: link.send(.export)
+        case .send(let way):
+            // The link goes when there is one. Without it the wish's file does, which Lamp makes first and hands over.
+            // One file at a time, until Lamp answers with it or says it failed (`SidebarState.shareFailures`): a way
+            // chosen meanwhile is the one it goes by.
+            if let url {
+                send(way, items: [url])
+            } else {
+                let waiting = waitingWay != nil
+                waitingWay = way
+                if !waiting { link.send(.share) }
+            }
+        }
+        sharingOpen = false
+    }
+
+    /// Sends with one of the Mac's ways, or shows the system's list for More, from the share button. After the popover
+    /// has closed, so the two never stand over each other.
+    private func send(_ way: SharePopover.Way, items: [Any]) {
+        DispatchQueue.main.async {
+            if let service = way.service {
+                service.perform(withItems: items)
+            } else if let view = shareAnchor.view, view.window != nil {
+                NSSharingServicePicker(items: items).show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
+            }
+        }
+    }
+
+    /// The file Lamp made (`SidebarState.sharing`), for the way chosen while it was being made. This process can't
+    /// read Lamp's files, so the file comes whole and is kept here, where the service it's shared with reads it.
     private func share(_ sharing: SidebarSharing) {
         SharedCopy.removeEarlierFolders()
-        guard let url = try? SharedCopy.keep(sharing), let view = shareAnchor.view, view.window != nil else { return }
-        NSSharingServicePicker(items: [url]).show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
+        let way = waitingWay ?? .more
+        waitingWay = nil
+        guard let url = try? SharedCopy.keep(sharing) else { return }
+        send(way, items: [url])
     }
 }
 
@@ -1210,66 +1246,4 @@ struct VersionsPanel: View {
                 .overlay(Image(systemName: "macwindow").foregroundStyle(.tertiary))
         }
     }
-}
-
-/// The Share Link card in the chat's place (`WishLinkCard`, as Lamp's window shows it in a sheet). What's typed is
-/// kept here while it's open, and taken afresh from Lamp only when Lamp changes it (a new picture).
-struct WishLinkPanel: View {
-    @EnvironmentObject private var link: ChatLink
-    let card: SidebarWishLink
-    @State private var values: WishLinkCard.Values
-    @State private var revision: Int
-
-    init(card: SidebarWishLink) {
-        self.card = card
-        _values = State(initialValue: Self.values(of: card))
-        _revision = State(initialValue: card.revision)
-    }
-
-    private static func values(of card: SidebarWishLink) -> WishLinkCard.Values {
-        WishLinkCard.Values(name: card.name, line: card.line, words: card.words, includePicture: card.includePicture, includeFile: card.includeFile ?? false)
-    }
-
-    private var changed: Bool {
-        guard let shown = card.shown else { return true }
-        let typed = SidebarWishLinkValues(name: values.name.trimmingCharacters(in: .whitespacesAndNewlines),
-                                          line: values.line.trimmingCharacters(in: .whitespacesAndNewlines),
-                                          words: values.words.trimmingCharacters(in: .whitespacesAndNewlines),
-                                          includePicture: values.includePicture, includeFile: values.includeFile)
-        // The file is the wish as it is now, so a link that carries it is always worth sending again.
-        return typed != SidebarWishLinkValues(name: shown.name, line: shown.line, words: shown.words, includePicture: shown.includePicture,
-                                              includeFile: shown.includeFile ?? false)
-            || (values.includePicture && card.newPicture) || values.includeFile
-    }
-
-    var body: some View {
-        ScrollView {
-            WishLinkCard(icon: card.icon.flatMap(NSImage.init(data:)), picture: card.picture.flatMap(NSImage.init(data:)),
-                         values: $values,
-                         limits: WishLinkCard.Limits(name: card.limits[safe: 0] ?? 60, line: card.limits[safe: 1] ?? 140,
-                                                     words: card.limits[safe: 2] ?? 2000),
-                         link: card.link, changed: changed,
-                         stage: card.sending ? .sending : card.problem.map(WishLinkCard.Stage.failed) ?? .editing,
-                         copied: card.copied && !changed,
-                         retake: card.canRetake ? { link.send(.wishLink(.retake)) } : nil, retaking: card.retaking,
-                         canIncludeFile: card.canIncludeFile ?? false, noLicense: card.noLicense,
-                         share: {
-                             link.send(.wishLink(.share(SidebarWishLinkValues(name: values.name, line: values.line, words: values.words,
-                                                                               includePicture: values.includePicture,
-                                                                               includeFile: values.includeFile))))
-                         },
-                         copy: { link.send(.wishLink(.copy)) }, stop: { link.send(.wishLink(.stop)) },
-                         close: { link.send(.wishLink(.close)) }, width: nil)
-        }
-        // A new picture is all Lamp changes on the card by itself: what's typed here stays as it is.
-        .onChange(of: card.revision) {
-            guard card.revision != revision else { return }
-            revision = card.revision
-            values.includePicture = card.includePicture
-        }
-    }
-}
-
-private extension Array {
-    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }

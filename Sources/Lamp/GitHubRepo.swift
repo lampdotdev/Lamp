@@ -168,6 +168,7 @@ enum GitHubRepo {
         let chain = Credits.read(tree.appendingPathComponent(Credits.file)) ?? credits
         let open = Publish.OpenInLamp(link: link, file: fileName)
         let build = Build(alone: root.platform.target.recipe.buildsAlone, app: root.platform.target.identity.name, others: !parts.isEmpty,
+                          // Web/ even for a wish whose one app is in a part: the export puts that app at the root (`Sharing.layout`).
                           page: Publish.hasPage(project) ? (site ? "" : TVTemplate.webFolder + "/") : nil)
         // The icon the shared file carries, as it's drawn: never a picture of the app running, which could show the
         // person's data.
@@ -866,11 +867,11 @@ enum GitHubRepo {
         }, signedIn: { [weak self] in self?.prepare(project) })
     }
 
-    /// Share Link's card in this card's place, for the person to see and change what the link shows before it's made:
+    /// Share Link's card, in its own window, for the person to see and change what the link shows before it's made:
     /// Put on GitHub never sends the wish's words or picture itself. This card is opened again once the link is out.
     func makeLink(_ project: LampProject) {
         close(project)
-        WishLinkCards.shared.open(project, inSidebar: true)
+        WishLinkCards.shared.open(project)
     }
 
     func openRepo(_ project: LampProject) {

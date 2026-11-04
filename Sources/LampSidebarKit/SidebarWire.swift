@@ -88,8 +88,9 @@ public struct SidebarState: Codable, Equatable {
     /// The wish's file after Share…, for the sidebar's own share menu: sent once, since only the sidebar can show
     /// that menu where the button is, and it can't read Lamp's files.
     public var sharing: SidebarSharing?
-    /// The Share Link card, while it's open in this chat (`SidebarCommand.wishLink`): shown in the chat's place.
-    public var wishLink: SidebarWishLink?
+    /// How many times making the wish's file for Share… failed (the chat says why): each one ends a wait for it, as the
+    /// file arriving does. Missing from a Lamp before it.
+    public var shareFailures: Int?
     /// The Put on GitHub card, while it's open in this chat (`SidebarCommand.repo`): shown in the chat's place.
     public var repo: SidebarRepo?
     /// The Send Changes Back card, while it's open in this chat (`SidebarCommand.contribute`): shown in the chat's place.
@@ -230,6 +231,8 @@ public struct SidebarToolbar: Codable, Equatable {
     public var canShare: Bool
     /// Its changes can go back to the repository it came from: the share menu offers Send Changes Back.
     public var canContribute: Bool?
+    /// The wish's Share Link, once it has one: the share button shows it first, to copy.
+    public var shareLink: String?
     /// It has versions to look back at.
     public var hasVersions: Bool
     public var details: Bool
@@ -597,7 +600,7 @@ public enum SidebarCommand: Codable, Equatable {
     case earlierVersions
     /// A version's name, or (empty) none.
     case nameVersion(String, String)
-    /// The Share Link card: open it, or what was done on it.
+    /// The Share Link card: open it.
     case wishLink(SidebarWishLinkCommand)
     /// The Put on GitHub card: open it, or what was done on it.
     case repo(SidebarRepoCommand)
@@ -719,83 +722,9 @@ public struct SidebarProblem: Codable, Equatable {
     }
 }
 
-/// The Share Link card as Lamp has it (`WishLinkCard`): what's typed on it is the sidebar's while it's open, and goes to
-/// Lamp with Copy Link or Update Link. Lamp's own changes to it (a new picture) come with a new `revision`.
-public struct SidebarWishLink: Codable, Equatable {
-    public var name: String
-    public var line: String
-    public var words: String
-    public var includePicture: Bool
-    public var includeFile: Bool?
-    public var canIncludeFile: Bool?
-    public var revision: Int
-    /// The picture, small enough to send with the chat, and the icon.
-    public var picture: Data?
-    public var icon: Data?
-    /// The link that's out, what it shows, and whether the picture on the card is another than the one it shows.
-    public var link: String?
-    public var shown: SidebarWishLinkValues?
-    public var newPicture: Bool
-    public var sending: Bool
-    public var problem: String?
-    public var copied: Bool
-    public var canRetake: Bool
-    public var retaking: Bool
-    public var limits: [Int]
-    /// The line said under Include the wish itself when the wish uses work that came with no license
-    /// (`ShareCheck.warningLine`). Missing from a Lamp before it.
-    public var noLicense: String?
-
-    public init(name: String, line: String, words: String, includePicture: Bool, includeFile: Bool = false, canIncludeFile: Bool = false,
-                revision: Int, picture: Data?, icon: Data?,
-                link: String?, shown: SidebarWishLinkValues?, newPicture: Bool, sending: Bool, problem: String?, copied: Bool,
-                canRetake: Bool, retaking: Bool, limits: [Int], noLicense: String? = nil) {
-        self.noLicense = noLicense
-        self.name = name
-        self.line = line
-        self.words = words
-        self.includePicture = includePicture
-        self.includeFile = includeFile
-        self.canIncludeFile = canIncludeFile
-        self.revision = revision
-        self.picture = picture
-        self.icon = icon
-        self.link = link
-        self.shown = shown
-        self.newPicture = newPicture
-        self.sending = sending
-        self.problem = problem
-        self.copied = copied
-        self.canRetake = canRetake
-        self.retaking = retaking
-        self.limits = limits
-    }
-}
-
-public struct SidebarWishLinkValues: Codable, Equatable {
-    public var name: String
-    public var line: String
-    public var words: String
-    public var includePicture: Bool
-    public var includeFile: Bool?
-
-    public init(name: String, line: String, words: String, includePicture: Bool, includeFile: Bool? = nil) {
-        self.name = name
-        self.line = line
-        self.words = words
-        self.includePicture = includePicture
-        self.includeFile = includeFile
-    }
-}
-
+/// The Share Link card is Lamp's own window (`WishLinkWindows`): the chat only asks for it.
 public enum SidebarWishLinkCommand: Codable, Equatable {
     case open
-    /// Copy Link or Update Link, with what's on the card.
-    case share(SidebarWishLinkValues)
-    case copy
-    case stop
-    case retake
-    case close
 }
 
 /// The Put on GitHub card as Lamp has it (`RepoCard`): everything on it is Lamp's, worked out before the person confirms.

@@ -112,7 +112,8 @@ starter this Lamp ships (all in `Conversation`; "How big a conversation grows" i
 ## The chat's one screen
 
 A wish's chat is one screen, drawn the same wherever it is (`ChatScreen`, in Sources/LampSidebarKit): its bar, the chat
-or a panel in its place (Versions, Share Link; the desk's Previous Versions… opens the chat on Versions), the
+or a panel in its place (Versions; the desk's Previous Versions… opens the chat on Versions; Share Link is a small
+window of Lamp's own, `WishLinkWindows`, which the chat's Share button only asks for), the
 message box, every card and line. It's drawn from the
 state Lamp makes for the wish (`SidebarState`, made by `SidebarServer.state(for:)`) and hands every click and word back
 as a command (`SidebarCommand`, done by `SidebarServer.handle`), through a `ChatLink`: the extension beside a Mac app

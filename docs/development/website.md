@@ -26,7 +26,10 @@ reel, and where less motion is asked for it doesn't play there. An expand button
 reaches, open it large (`watchReel`). The device icons are Phosphor's duotone set, with the
 fill in the sleeve's colors. Apps and games get the same weight on it, and
 every example is a real starter (`Resources/Starters`), with the pictures and changes it ships with; the devices it
-lists are only those a kind of app or a shipped device integration really reaches. Its Download buttons, and the
+lists are only those a kind of app or a shipped device integration really reaches. Lamp's mark is its icon with
+"Lamp" beside it (`LampLockup.astro`), in the menu bar and wherever the site names Lamp as a mark. Nothing on the site
+has a hard, offset shadow (a solid copy of a box set off behind it): that isn't part of its look; shadows are soft, as
+the 3D tapes' light casts them. Its Download buttons, and the
 menu bar's, are the paper's ink with paper-colored words (the last section's is the stripes' yellow with ink).
 A link from a Remix panel or a repository's README (`?ask=`, with `starter=` or `repo=` and `commit=` when it names
 what it's a copy of, and `from=` where it was pressed) opens the homepage's remix dialog (`RemixDialog.astro`, "Remixing a published page" in the wishes guide), as does the
@@ -39,7 +42,15 @@ buttons (Open in Lamp in ink, on a Mac; Download for Mac in the stripes' yellow)
 installed, so Open in Lamp watches whether Lamp answered: if the browser keeps its focus for two seconds, the
 dialog turns to getting Lamp, with Download first, and turns back should Lamp open late. Closed, it takes its
 parameters out of the address, so a reload doesn't bring it back. The ideas page keeps its own card
-(`WishDialog.astro`). The ideas page's Download buttons (`DownloadButton.astro`, in its first-idea section and opened wishes) are the
+(`WishDialog.astro`). A wish shared as a link has a page of its own (`src/pages/w/index.astro`, SHARED_WISHES.md),
+on the homepage's paper but without its menu bar, footer or tapes: "Made with" Lamp's lockup and "Learn more" at the
+top, "Made with Lamp" in plain ink at the bottom, and the stripes as one band across the page's foot. The thing someone
+made comes first, as big as the window allows and only as big as it is (a playing page in the shape Lamp sends with the link, else 16:9, the stage a web game is drawn on);
+under it its name, with who it's by and what it does under the name, and a card for making one's own with the changes
+Lamp suggests as plain pills and a Remix, there once a change is written, that opens a dialog dressed as the homepage's remix dialog ("Change" in marker over the name and the change, what Lamp is, and Open and Download side by side), a slab with thickness that leans toward the pointer as the remix dialog does. The page puts itself together as it opens: the wish
+opens from no height, cropped rather than squeezed (a page that plays loads only once it's all in view, so it starts at
+the size it plays at), its name fades in halfway through, and the card drops in from above the window as the boxes do in
+Lamp's welcome, running a little past its place and back; the wish's frame is black until the page in it draws; where less motion is asked for, it's simply there. The ideas page's Download buttons (`DownloadButton.astro`, in its first-idea section and opened wishes) are the
 lamp's bright orange with white words, about 3:1 at their lightest, a faint shadow under the words. That trade-off
 was weighed and accepted: the brightness is the point of the button, and the label is large, bold and the same
 wherever it appears. About 3:1 is the floor for those buttons, so a change that goes below it is a regression;

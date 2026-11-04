@@ -1,0 +1,416 @@
+---
+import Base from "../../layouts/Base.astro";
+import { Image } from "astro:assets";
+import LampLockup from "../../components/LampLockup.astro";
+import lampIcon from "../../assets/AppIcon.png";
+import { DOWNLOAD_URL } from "../../lib/download";
+---
+
+<!--
+  A wish shared as a link (lamp.dev/w/<id>): the wish itself, as big as the window allows, playing when Lamp sent its
+  page, else its picture; under it its name and what it does, and the ways to make one's own. It's on the homepage's
+  paper, with Lamp only a line at the top and the bottom and the stripes along the page's foot: the page is about the
+  thing someone made. The site is static and the wish is only known when the page is asked for, so this is built
+  empty and the server puts the wish in as #shared-wish (lib/shared-wish-page.js).
+-->
+<Base title="A wish · Lamp" description="A wish made with Lamp." bare>
+  <div data-page class="shared-page flex min-h-dvh flex-col overflow-x-clip bg-paper text-tape">
+    <header class="flex h-16 items-center justify-between gap-4 px-4 sm:px-6">
+      <a href="/" class="inline-flex items-center gap-[0.4em] rounded-sm text-[17px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-tape">
+        Made with <LampLockup size={26} />
+      </a>
+      <a href="/" class="rounded-sm text-[16px] font-bold underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-tape">Learn more</a>
+    </header>
+
+    <main class="flex flex-1 flex-col">
+      <!-- The thing itself, only as big as it is: a playing page in the shape Lamp sent with it, as large as the window
+           allows, and a picture as it is. It opens from nothing as the page is put together (`.built`), cropped rather than
+           squeezed: it's its own size all along, and its row grows to show it from the top down. -->
+      <section data-stage class="stage-grow grid px-3 pt-2 sm:px-6" aria-label="The wish">
+        <div class="stage-clip flex min-h-0 items-start justify-center">
+        <div data-play hidden class="play-frame relative overflow-hidden rounded-[10px] bg-black ring-1 ring-tape/15">
+          <button
+            type="button"
+            data-fullscreen
+            aria-label="Full screen"
+            class="absolute top-3 right-3 z-10 grid size-9 cursor-pointer place-items-center rounded-full bg-black/45 text-white/90 backdrop-blur hover:outline-2 hover:outline-offset-2 hover:outline-white focus-visible:outline-2 focus-visible:outline-white"
+          >
+            <svg aria-hidden="true" viewBox="0 0 16 16" class="size-4 fill-none stroke-current stroke-[1.6] [stroke-linecap:round] [stroke-linejoin:round]"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" /></svg>
+          </button>
+        </div>
+        <img data-picture hidden alt="" class="block max-h-[calc(100dvh-12rem)] w-auto max-w-full rounded-[10px] bg-black ring-1 ring-tape/15" />
+        </div>
+      </section>
+
+      <section class="mx-auto grid w-full max-w-[72rem] gap-x-14 gap-y-10 px-5 pt-12 pb-16 sm:px-8 md:grid-cols-[1fr_minmax(18rem,25rem)] md:items-start">
+        <div class="build-info flex min-w-0 items-start gap-4">
+          <img data-icon alt="" width="72" height="72" class="size-[72px] shrink-0" hidden />
+          <div class="min-w-0 pt-1">
+            <h1 data-name class="text-[clamp(2.5rem,6vw,4.25rem)] leading-[0.95] font-black tracking-[-0.04em] text-balance"></h1>
+            <p data-by hidden class="mt-2 text-xl font-extrabold italic"></p>
+            <p data-about class="mt-4 max-w-[40rem] text-xl leading-normal text-[#4a463c]"></p>
+          </div>
+        </div>
+
+        <!-- A slab with real thickness, as the homepage's remix dialog is (RemixDialog.astro): its face is the panel,
+             with a back and four edges behind it in 3D, leaning a little toward the pointer. -->
+        <div class="build-panel make-host">
+        <div data-slab class="make-slab">
+        <div class="make-back" aria-hidden="true"></div>
+        <div class="make-edge make-edge-top" aria-hidden="true"></div>
+        <div class="make-edge make-edge-bottom" aria-hidden="true"></div>
+        <div class="make-edge make-edge-left" aria-hidden="true"></div>
+        <div class="make-edge make-edge-right" aria-hidden="true"></div>
+        <div class="make-face flex flex-col gap-3 p-5">
+          <h2 id="make-own" class="text-[1.375rem] leading-tight font-black tracking-[-0.02em]">Make this your own using Lamp</h2>
+          <!-- What to change, and Remix, which takes it to Lamp: there only once something's written. -->
+          <div class="flex flex-col gap-3">
+            <!-- The changes Lamp suggests for it, as it suggests them beside the app: one puts its words in the box. -->
+            <div data-ideas hidden class="flex flex-wrap gap-2"></div>
+            <textarea
+              id="change"
+              data-change
+              rows="2"
+              aria-labelledby="make-own"
+              placeholder="What would you change? You can say later, too."
+              class="w-full resize-none rounded-[6px] bg-white p-3 text-[16px] leading-relaxed ring-2 ring-tape/80 transition placeholder:text-[#6f6857] focus:ring-tape focus:outline-none"
+            ></textarea>
+            <button type="button" data-remix disabled class="shared-button cursor-pointer disabled:cursor-default disabled:opacity-35">Remix</button>
+          </div>
+        </div>
+        </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="px-5 pb-8 text-center text-[15px] font-semibold">
+      Made with <a href="/" class="underline underline-offset-4">Lamp</a>
+    </footer>
+    <div class="stripe-foot h-6" aria-hidden="true"></div>
+
+    <!-- Remix: the change asked for, what Lamp is, for someone who may not have it, and the two ways on, side by side:
+         opening it (on a Mac) or getting it. Dressed as the homepage's remix dialog (RemixDialog.astro): a slab with the
+         stripes across its top, rising in when it opens and leaning toward the pointer. -->
+    <dialog data-remix-dialog aria-labelledby="remix-title" class="remix-popup make-host">
+      <div class="make-slab">
+      <div class="make-back" aria-hidden="true"></div>
+      <div class="make-edge make-edge-top" aria-hidden="true"></div>
+      <div class="make-edge make-edge-bottom" aria-hidden="true"></div>
+      <div class="make-edge make-edge-left" aria-hidden="true"></div>
+      <div class="make-edge make-edge-right" aria-hidden="true"></div>
+      <div class="make-face remix-popup-face">
+        <div class="remix-popup-stripes" aria-hidden="true"></div>
+        <button type="button" data-remix-close aria-label="Close" class="remix-popup-close">
+          <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+        </button>
+        <div class="remix-popup-body">
+          <div class="remix-popup-words">
+            <h2 id="remix-title" class="remix-popup-title"><span class="remix-popup-word">Change</span> <span data-remix-name></span> <span data-remix-to class="remix-popup-to"></span></h2>
+            <p class="remix-popup-text"><span data-remix-made></span> was made with <Image src={lampIcon} alt="" width={20} height={20} densities={[1, 2]} class="remix-popup-icon" />Lamp, a free Mac app you can use to tweak it and make it your own with no coding knowledge at all.</p>
+            <div class="remix-popup-rows">
+              <div data-remix-open class="remix-popup-row">
+                <span>Already have Lamp?</span>
+                <a data-open href="/" class="shared-button">Open</a>
+              </div>
+              <div class="remix-popup-row">
+                <span>Don't have it yet?</span>
+                <a href={DOWNLOAD_URL} data-download data-download-place="shared-remix" class="shared-button shared-button-lit"><span data-download-label>Download</span></a>
+              </div>
+            </div>
+            <!-- Empty until Download is pressed, when it says how the wish waits for Lamp. -->
+            <p data-next class="remix-popup-note empty:hidden" role="status" aria-live="polite"></p>
+          </div>
+        </div>
+      </div>
+      </div>
+    </dialog>
+  </div>
+</Base>
+
+<style>
+  /* The homepage's paper (index.astro). */
+  .shared-page {
+    background-image: radial-gradient(rgb(60 40 10 / 0.07) 1px, transparent 1.4px), radial-gradient(rgb(60 40 10 / 0.05) 1px, transparent 1.4px);
+    background-size: 5px 5px, 9px 9px;
+    background-position: 0 0, 3px 4px;
+  }
+  /* The sleeve's stripes, green to magenta, across the foot of the page. */
+  .stripe-foot {
+    background: linear-gradient(180deg, #1f8a4a 0 16.6%, #7cbf3a 0 33.3%, #f6b81c 0 50%, #f08a1c 0 66.6%, #e2402a 0 83.3%, #d23778 0);
+  }
+
+  /* A playing page's frame, in the shape Lamp sent with the link (`shape`, its width over its height, as --shape),
+     so the page fills it without bars of its own, as wide as the page allows and no taller than the window leaves room
+     for; a page that takes any shape ("fill") fills that room. A page can't say its shape from inside its frame, and
+     the wish's picture is its Mac window's, so neither decides it. A link that didn't say gets 16:9, the stage a web
+     game is drawn on (the web-game skill). */
+  .play-frame {
+    --room: max(12rem, calc(100dvh - 12rem));
+    --shape: 16 / 9;
+    width: min(100%, 100rem, calc(var(--room) * var(--shape))); aspect-ratio: var(--shape);
+  }
+  .play-frame.fills { width: min(100%, 100rem); height: max(22rem, calc(100dvh - 12rem)); aspect-ratio: auto; }
+
+  /* The page puts itself together once the wish is in it (`.built`, from the script): the wish opens from no height,
+     its name and what it is fade in about halfway through, and a moment after the panel drops in from above the window,
+     as the boxes do in Lamp's welcome (WelcomeScene.swift), running a little past where it rests and back. Without the script, or where less motion is asked for,
+     it's simply there. */
+  @media (scripting: enabled) and (prefers-reduced-motion: no-preference) {
+    .stage-grow { grid-template-rows: 0fr; transition: grid-template-rows 1s cubic-bezier(0.65, 0, 0.35, 1); }
+    .build-info { opacity: 0; translate: 0 10px; transition: opacity 0.6s ease 0.5s, translate 0.6s cubic-bezier(0.22, 0.8, 0.2, 1) 0.5s; }
+    .build-panel { opacity: 0; translate: 0 calc(-100dvh - 100%); }
+    .built .stage-grow { grid-template-rows: 1fr; }
+    .built :is(.build-info, .build-panel) { opacity: 1; translate: 0 0; }
+    .built .build-panel { animation: panel-drop 0.6s 0.7s both; }
+  }
+  /* It comes down fast and slows, runs a little past where it rests, and comes back to it. The overshoot is a set
+     distance rather than a share of the fall, which is as long as the window is tall. */
+  @keyframes panel-drop {
+    0% { opacity: 0; translate: 0 calc(-100dvh - 100%); animation-timing-function: cubic-bezier(0.2, 0.75, 0.4, 1); }
+    10% { opacity: 1; }
+    68% { translate: 0 22px; animation-timing-function: cubic-bezier(0.45, 0, 0.35, 1); }
+    100% { opacity: 1; translate: 0 0; }
+  }
+  /* The ring round the wish stays whole while the row it's in clips it. */
+  .stage-clip { overflow: clip; overflow-clip-margin: 2px; }
+
+  /* The slab, as the remix dialog's but chunkier: it rests turned a little more, so its thickness shows, and leans further as --lean-x
+     and --lean-y say (the pointer, from the script). */
+  .make-host { --depth: 60px; perspective: 1800px; }
+  .make-slab {
+    position: relative; transform-style: preserve-3d;
+    transform: rotateX(calc(4deg + var(--lean-x, 0deg))) rotateY(calc(-10deg + var(--lean-y, 0deg)));
+    transition: transform 0.35s ease-out;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .make-slab { transform: none; transition: none; }
+  }
+  /* Square corners, so the edges meet the face and the back without a gap, and a transparent outline on each part,
+     which has the browser smooth the borders of a layer turned in 3D rather than leave them stepped. */
+  .make-face, .make-back, .make-edge { outline: 1px solid transparent; }
+  .make-face { position: relative; background: #f7f2e3; transform: translateZ(0); }
+  .make-back {
+    position: absolute; inset: 0; background: var(--color-tape);
+    transform: translateZ(calc(-1 * var(--depth))); box-shadow: 0 40px 80px -20px rgb(0 0 0 / 0.5);
+  }
+  /* Each edge stands out of the face's own edge and runs back to the back, a hair longer than the slab is deep so no
+     seam shows where they meet. Lit from above: the top is the paper in light, which also keeps it from reading as a
+     dashed line where it's seen nearly side on against the face; the others are in shade. */
+  .make-edge { position: absolute; background: #2e2a24; --deep: calc(var(--depth) + 1px); }
+  .make-edge-top { top: 0; left: 0; width: 100%; height: var(--deep); transform-origin: top; transform: rotateX(-90deg); background: #e4dcc5; }
+  .make-edge-bottom { bottom: 0; left: 0; width: 100%; height: var(--deep); transform-origin: bottom; transform: rotateX(90deg); background: #14130f; }
+  .make-edge-left { top: 0; left: 0; width: var(--deep); height: 100%; transform-origin: left; transform: rotateY(90deg); }
+  .make-edge-right { top: 0; right: 0; width: var(--deep); height: 100%; transform-origin: right; transform: rotateY(-90deg); }
+
+  /* The homepage's buttons: ink with paper-colored words. */
+  .shared-button {
+    display: inline-flex; align-items: center; justify-content: center; min-height: 3.25rem; padding: 0 1.625rem;
+    border-radius: 6px; background: var(--color-tape); color: var(--color-paper); font-size: 1.125rem; font-weight: 800;
+  }
+  /* Pointed at, a button is outlined in ink a little way out from its edge, as the tapes' printed buttons are
+     (lib/tapes.ts); one that can't be pressed yet isn't. A dialog's close button has no outline at all. */
+  .shared-button:hover:not(:disabled) { outline: 3px solid var(--color-tape); outline-offset: 3px; }
+  .shared-button:focus-visible { outline: 3px solid #1f8a4a; outline-offset: 3px; }
+  /* The yellow of the stripes, as the homepage's remix dialog has its Download. */
+  .shared-button-lit { background: #f6b81c; color: var(--color-tape); box-shadow: inset 0 0 0 2px var(--color-tape); }
+
+  /* The Remix dialog: the slab above, in perspective over the page and otherwise unseen, rising in from the bottom
+     when it opens, as the homepage's remix dialog does. */
+  .remix-popup {
+    margin: auto; padding: 0; width: min(36rem, calc(100vw - 2rem)); max-height: none; overflow: visible;
+    background: transparent; border: 0; color: var(--color-tape);
+  }
+  .remix-popup::backdrop { background: rgb(27 26 23 / 0.6); }
+  @media (prefers-reduced-motion: no-preference) {
+    .remix-popup[open] .make-slab { animation: remix-popup-rise 0.7s cubic-bezier(0.2, 0.9, 0.25, 1.05) both; }
+    .remix-popup[open]::backdrop { animation: remix-popup-dim 0.4s ease both; }
+  }
+  /* The dialog has no resting turn of its own: it faces the pointer (the script's --lean-x and --lean-y), and lies flat
+     where less motion is asked for. */
+  .remix-popup .make-slab { transform: rotateX(var(--lean-x, 0deg)) rotateY(var(--lean-y, 0deg)); }
+  @keyframes remix-popup-rise {
+    from { translate: 0 70vh; rotate: x 18deg; opacity: 0; }
+    40% { opacity: 1; }
+    to { translate: 0 0; rotate: x 0deg; opacity: 1; }
+  }
+  @keyframes remix-popup-dim { from { opacity: 0; } }
+  .remix-popup-face { display: flex; flex-direction: column; max-height: calc(100dvh - 2rem); overflow-y: auto; }
+  .remix-popup-stripes {
+    flex: 0 0 1.5rem; border-bottom: 2px solid var(--color-tape);
+    background: linear-gradient(180deg, #1f8a4a 0 16.6%, #7cbf3a 0 33.3%, #f6b81c 0 50%, #f08a1c 0 66.6%, #e2402a 0 83.3%, #d23778 0);
+  }
+  .remix-popup-close {
+    position: absolute; top: 2.5rem; right: 1rem; z-index: 1; display: grid; place-items: center; width: 2.25rem; height: 2.25rem;
+    border-radius: 6px; background: var(--color-paper); color: var(--color-tape); cursor: pointer;
+  }
+  .remix-popup-close svg { width: 0.875rem; height: 0.875rem; fill: none; stroke: currentColor; stroke-width: 2.25; stroke-linecap: round; }
+  .remix-popup-close:focus-visible { outline: 3px solid #1f8a4a; outline-offset: 2px; }
+  .remix-popup-body { flex: 1; min-width: 0; }
+  .remix-popup-words { display: flex; flex-direction: column; min-width: 0; padding: 1.75rem; }
+  @media (min-width: 48rem) { .remix-popup-words { padding: 2.25rem; } }
+  /* "Remix" written in by hand a little smaller, over the wish's name. */
+  .remix-popup-title { margin: 0 3rem 0 0; font-size: clamp(2rem, 4.2vw, 3rem); line-height: 0.95; font-weight: 900; letter-spacing: -0.04em; overflow-wrap: break-word; text-wrap: balance; }
+  .remix-popup-title > span { display: block; }
+  .remix-popup-word { margin-bottom: 0.1em; font-family: var(--font-marker); font-size: 0.6em; font-weight: 400; letter-spacing: 0; }
+  /* Lamp's icon in the line, just before its name, sitting on the text as a letter would. */
+  .remix-popup-icon { display: inline-block; width: 1.2em; height: 1.2em; margin: 0 0.2em 0 0.1em; vertical-align: -0.25em; }
+  .remix-popup-text { margin: 1rem 0 0; font-size: 1.0625rem; line-height: 1.5; color: #4a463c; }
+  /* The change itself, under the name in the same lettering, smaller, since it can run long. */
+  .remix-popup-to { margin-top: 0.2em; font-size: 0.55em; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
+  /* The two ways on, side by side and as wide as each other: each question over its button. Off a Mac, only getting it. */
+  .remix-popup-rows { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 1rem; margin-top: 1.5rem; }
+  .remix-popup-row { display: flex; flex-direction: column; align-items: stretch; gap: 0.5rem; font-size: 1.0625rem; font-weight: 700; }
+  .remix-popup-row[hidden] { display: none; }
+  .remix-popup-note { margin: 1rem 0 0; font-size: 0.875rem; color: #4a463c; }
+</style>
+
+<script>
+  import { askFrom, copyWish, sharedWishLink, withAsk, wishLink } from "../../../lib/wish.js";
+  import { track } from "../../lib/analytics";
+
+  type Shared = { id: string; name: string; by?: string; ideas?: string[]; about: string; wish: string; picture: string; icon: string; file?: string; shared?: string; play?: string; shape?: number | "fill" };
+  const json = document.getElementById("shared-wish")?.textContent;
+  // Only ever a shared wish's page: on its own, there's nothing to show.
+  if (!json) location.replace("/ideas");
+  const wish = json ? (JSON.parse(json) as Shared) : null;
+
+  if (wish) {
+    const $ = <T extends Element>(selector: string) => document.querySelector<T>(selector)!;
+    $<HTMLElement>("[data-name]").textContent = wish.name;
+    // Who made it, as they gave their name when they shared it.
+    const by = $<HTMLElement>("[data-by]");
+    by.textContent = wish.by ? `by ${wish.by}` : "";
+    by.hidden = !wish.by;
+    const about = $<HTMLElement>("[data-about]");
+    about.textContent = wish.about;
+    about.hidden = !wish.about;
+    const icon = $<HTMLImageElement>("[data-icon]");
+    if (wish.icon) { icon.src = wish.icon; icon.hidden = false; }
+
+    if (wish.play) {
+      // The page plays from the link's own host (`playOrigin`), so it can't reach the site or another wish's storage.
+      const stage = $<HTMLElement>("[data-play]");
+      const frame = document.createElement("iframe");
+      frame.title = wish.name;
+      frame.allow = "fullscreen; gamepad; autoplay; clipboard-write";
+      frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-popups allow-modals allow-downloads");
+      frame.className = "absolute inset-0 size-full border-0 bg-black";
+      stage.prepend(frame);
+      if (wish.shape === "fill") stage.classList.add("fills");
+      else if (typeof wish.shape === "number" && wish.shape >= 0.2 && wish.shape <= 5) stage.style.setProperty("--shape", String(wish.shape));
+      stage.hidden = false;
+      $<HTMLButtonElement>("[data-fullscreen]").addEventListener("click", () => stage.requestFullscreen?.());
+    } else if (wish.picture) {
+      const picture = $<HTMLImageElement>("[data-picture]");
+      picture.src = wish.picture;
+      picture.alt = `${wish.name}, as it looks`;
+      picture.hidden = false;
+    } else {
+      $<HTMLElement>("[data-stage]").hidden = true;
+    }
+
+    // A request brought by the link (a published page's Remix…) waits in the box.
+    const change = $<HTMLTextAreaElement>("[data-change]");
+    change.value = askFrom(location.search) ?? "";
+    const fit = () => { change.style.height = "auto"; change.style.height = `${change.scrollHeight + 4}px`; };
+    change.addEventListener("input", fit);
+    requestAnimationFrame(fit);
+    const ideas = $<HTMLElement>("[data-ideas]");
+    for (const idea of wish.ideas ?? []) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.textContent = idea;
+      chip.className = "cursor-pointer rounded-full bg-white px-3.5 py-1.5 text-left text-[16px] leading-snug font-semibold text-tape ring-1 ring-tape/25 ring-inset hover:outline-2 hover:outline-offset-2 hover:outline-tape focus-visible:outline-2 focus-visible:outline-tape";
+      chip.addEventListener("click", () => {
+        change.value = idea;
+        change.dispatchEvent(new Event("input"));
+        change.focus();
+        track("idea_suggestion", { idea: wish.name, place: "shared" });
+      });
+      ideas.append(chip);
+    }
+    ideas.hidden = !wish.ideas?.length;
+
+    // Remix takes the change to Lamp, so it's there once something's written. It opens a dialog with the change, what
+    // Lamp is, and, since a page can't tell whether Lamp is installed, Open for whoever has it (on a Mac) beside
+    // Download for whoever doesn't. Open is the exact wish when it came with the link, so the copy follows it
+    // (`Following` in Lamp); else its words.
+    const remix = $<HTMLButtonElement>("[data-remix]");
+    const ready = () => { remix.disabled = !change.value.trim(); };
+    change.addEventListener("input", ready);
+    ready();
+    const mac = /Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2;
+    $<HTMLElement>("[data-remix-open]").hidden = !mac;
+    const dialog = $<HTMLDialogElement>("[data-remix-dialog]");
+    $<HTMLElement>("[data-remix-name]").textContent = wish.name;
+    $<HTMLElement>("[data-remix-made]").textContent = wish.name;
+    remix.addEventListener("click", () => {
+      $<HTMLElement>("[data-remix-to]").textContent = `→ ${change.value.trim()}`;
+      dialog.showModal();
+    });
+    $<HTMLButtonElement>("[data-remix-close]").addEventListener("click", () => dialog.close());
+    dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+    const open = $<HTMLAnchorElement>("[data-open]");
+    const link = () => (wish.file && wish.shared ? sharedWishLink(wish.shared, change.value) : wishLink(withAsk(wish.wish, change.value))) ?? "/";
+    open.href = link();
+    change.addEventListener("input", () => { open.href = link(); });
+    open.addEventListener("click", () => track("idea_sent", { idea: wish.name, place: "shared-remix" }));
+
+    // Download copies the wish (and the change) with Lamp's mark, for Lamp to find when it first opens, and says so
+    // under it.
+    const download = $<HTMLAnchorElement>("[data-download]");
+    const next = $<HTMLElement>("[data-next]");
+    download.addEventListener("click", () => {
+      track("idea_download", { idea: wish.name, place: "shared-remix" });
+      copyWish(withAsk(wish.wish, change.value)).then((copied) => {
+        $<HTMLElement>("[data-download-label]").textContent = "Downloading…";
+        next.textContent = copied === "marked" ? "Open Lamp when it's ready. This wish will be there."
+          : copied === "plain" ? "The wish is copied. Paste it into Lamp when it's ready."
+          : "Copy the wish's name, and ask Lamp for it when it's ready.";
+      });
+    });
+    track("idea_opened", { idea: wish.name, place: "shared" });
+
+    // Put together once there's something to grow to: at once for a page that plays (its frame has its size), when the
+    // picture has loaded (or failed to, or taken too long), and at once without either. Two frames first, so the
+    // closed state is drawn before it opens. A page that plays starts only once it's all in view, so it starts at the
+    // size it plays at.
+    const opening = $<HTMLElement>("[data-stage]");
+    const play = () => {
+      const frame = opening.querySelector("iframe");
+      if (frame && wish.play && !frame.src) frame.src = wish.play;
+    };
+    const build = () => requestAnimationFrame(() => requestAnimationFrame(() => {
+      $<HTMLElement>("[data-page]").classList.add("built");
+      if (getComputedStyle(opening).transitionDuration.split(",").every((time) => parseFloat(time) === 0)) return play();
+      opening.addEventListener("transitionend", (event) => { if (event.target === opening) play(); });
+      setTimeout(play, 1400);
+    }));
+    const shown = $<HTMLImageElement>("[data-picture]");
+    if (!wish.play && wish.picture && !shown.complete) {
+      let started = false;
+      const once = () => { if (!started) { started = true; build(); } };
+      shown.addEventListener("load", once);
+      shown.addEventListener("error", once);
+      setTimeout(once, 2500);
+    } else build();
+
+    // The panel leans toward the pointer, as the homepage's remix dialog does: turned toward it across, tipped back from
+    // it up and down. The dialog faces it: the pointer at its top right, it turns to the top right. Each by how far the
+    // pointer is from its middle (half a window away at most). While the dialog is open, the panel behind it holds still.
+    if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const clamp = (v: number) => Math.max(-1, Math.min(1, v));
+      addEventListener("pointermove", (event) => {
+        for (const slab of document.querySelectorAll<HTMLElement>(".make-slab")) {
+          if (dialog.open !== !!slab.closest("dialog")) continue;
+          const box = slab.getBoundingClientRect();
+          const x = clamp((event.clientX - (box.left + box.width / 2)) / (innerWidth / 2));
+          const y = clamp((event.clientY - (box.top + box.height / 2)) / (innerHeight / 2));
+          const facing = !!slab.closest("dialog");
+          slab.style.setProperty("--lean-x", `${(facing ? -y * 12 : y * 7).toFixed(2)}deg`);
+          slab.style.setProperty("--lean-y", `${(x * (facing ? 14 : 9)).toFixed(2)}deg`);
+        }
+      }, { passive: true });
+    }
+  }
+</script>

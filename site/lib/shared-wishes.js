@@ -12,8 +12,15 @@ import { redis, reserve } from "./quota.js";
 /** The most each piece may hold. Lamp holds the sharer to the same numbers, so a longer one is refused, not cut. */
 export const LIMITS = {
   name: 60,
+  /** Who shared it, as they want to be named on its page: their name, or nothing. */
+  by: 60,
   line: 140,
   words: 2000,
+  /** The changes Lamp suggests for the wish (`RemixSuggestions`), each a line; the page offers them to remix with. */
+  ideas: 3,
+  idea: 100,
+  /** A playing page's shape, its width over its height (`shape`), within these; or "fill", a page that takes any. */
+  shape: [0.2, 5],
   picture: 1_500_000,
   icon: 300_000,
   /** Pixels on a side, for both pictures. */
@@ -105,20 +112,25 @@ function picture(value, max, { square = false } = {}) {
 /** What a share sends, checked. Null when anything is off. */
 export function readShare(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
-  const known = ["name", "line", "words", "picture", "icon"];
+  const known = ["name", "by", "line", "words", "ideas", "shape", "picture", "icon"];
   if (Object.keys(body).some((key) => !known.includes(key))) return null;
   const name = tidy(body.name, LIMITS.name);
   const words = tidy(body.words, LIMITS.words, { lines: true });
   const line = body.line == null || body.line === "" ? "" : tidy(body.line, LIMITS.line);
+  const by = body.by == null || body.by === "" ? "" : tidy(body.by, LIMITS.by);
+  const ideas = body.ideas == null ? [] : Array.isArray(body.ideas) && body.ideas.length <= LIMITS.ideas
+    ? body.ideas.map((idea) => tidy(idea, LIMITS.idea)) : [null];
+  const shape = body.shape == null ? null : body.shape === "fill" ? "fill"
+    : typeof body.shape === "number" && body.shape >= LIMITS.shape[0] && body.shape <= LIMITS.shape[1] ? Math.round(body.shape * 10000) / 10000 : undefined;
   const shot = picture(body.picture, LIMITS.picture);
   const icon = picture(body.icon, LIMITS.icon, { square: true });
-  if (!name || !words || line == null || !shot || !icon) return null;
-  return { name, line, words, picture: shot.bytes ? shot : null, icon: icon.bytes ? icon : null };
+  if (!name || !words || line == null || by == null || ideas.includes(null) || shape === undefined || !shot || !icon) return null;
+  return { name, by, line, words, ideas, shape, picture: shot.bytes ? shot : null, icon: icon.bytes ? icon : null };
 }
 
 /** What anyone may see of a shared wish: never its secret. */
 export const shown = (record) => record && ({
-  id: record.id, name: record.name, line: record.line, words: record.words,
+  id: record.id, name: record.name, by: record.by ?? "", line: record.line, words: record.words, ideas: record.ideas ?? [], shape: record.shape ?? null,
   picture: record.picture, icon: record.icon, file: record.file ?? null, updated: record.updated,
   page: record.page ? { version: record.page.version } : null,
 });
@@ -336,7 +348,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       const picture = share.picture && { url: await put("picture", share.picture), width: share.picture.width, height: share.picture.height };
       const icon = share.icon && { url: await put("icon", share.icon) };
       const time = now().toISOString();
-      const words = { name: share.name, line: share.line, words: share.words, picture: picture || null, icon: icon || null };
+      const words = { name: share.name, by: share.by, line: share.line, words: share.words, ideas: share.ideas, shape: share.shape, picture: picture || null, icon: icon || null };
       if (method === "PUT") {
         await kept.replace({ ...earlier, ...words, updated: time });
         uploaded = [];

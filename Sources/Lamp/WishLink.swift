@@ -16,8 +16,12 @@ enum WishLink {
     /// The most each piece may hold, in characters. The card holds the sharer to them, so the site never refuses.
     enum Limit {
         static let name = 60
+        static let by = 60
         static let line = 140
         static let words = 2000
+        /// The changes Lamp suggests for the wish (`RemixSuggestions`), which the page offers to remix with.
+        static let ideas = 3
+        static let idea = 100
         /// The wish's file goes in parts of at most this many bytes (a request to the site's function holds 4.5 MB), and
         /// is at most `fileTotal`.
         static let filePart = 3_000_000
@@ -38,8 +42,15 @@ enum WishLink {
     /// What the link shows, as the sharer left it on the card.
     struct Words: Codable, Equatable {
         var name: String
+        /// Who shared it, as the page names them under the wish's name; empty for nobody. Nil in links from before.
+        var by: String? = nil
         var line: String
         var words: String
+        /// The changes Lamp suggests for it, the page's to offer. Nil in links from before.
+        var ideas: [String]? = nil
+        /// The shape its page plays in (`Publish.pageShape`): "fill", or its width over its height. Nil for a wish with no
+        /// page, and in links from before.
+        var shape: String? = nil
         /// Which picture goes with it (a digest of it), or none.
         var picture: String?
         /// The wish's file goes with it. Nil in links from before files could go.
@@ -93,9 +104,12 @@ enum WishLink {
         return clip(request?.text.trimmed ?? line(of: project), Limit.words)
     }
 
-    /// The picture the desk shows of the wish, read as the app's own file: nil when there's none.
+    /// The picture the desk shows of the wish, read as the app's own file, or else its one app's when that's in a part
+    /// of its own (a game in its folder): nil when there's none.
     static func picture(of project: LampProject) -> Data? {
-        if let data = AppFile.read(Runtime.previewURL(project), in: project), NSImage(data: data) != nil { return data }
+        for app in [project] + [Publish.pageApp(project)].compactMap({ $0 }).filter({ $0.dir != project.dir }) {
+            if let data = AppFile.read(Runtime.previewURL(app), in: project), NSImage(data: data) != nil { return data }
+        }
         return Starters.shippedPreview(of: project).flatMap { try? Data(contentsOf: $0) }
     }
 
@@ -154,6 +168,9 @@ enum WishLink {
     /// Shares the wish, or changes what its link shows, and answers the link as it is now.
     static func publish(_ words: Words, picture: Data?, icon: Data?, replacing earlier: Shared?) async throws -> Shared {
         var body: [String: Any] = ["name": words.name.trimmed, "line": words.line.trimmed, "words": words.words.trimmed]
+        if let by = words.by?.trimmed, !by.isEmpty { body["by"] = by }
+        if let ideas = words.ideas, !ideas.isEmpty { body["ideas"] = ideas }
+        if let shape = words.shape { body["shape"] = shape == "fill" ? shape : Double(shape) ?? NSNull() }
         body["picture"] = picture?.base64EncodedString() ?? NSNull()
         body["icon"] = icon?.base64EncodedString() ?? NSNull()
         var request = URLRequest(url: earlier.map { address(for: $0.id) } ?? endpoint)
@@ -295,8 +312,8 @@ enum WishLink {
     }
 }
 
-/// The Share Link card of each wish while it's open, in Lamp's window or in the chat beside the app. One card per wish:
-/// opened from either chat, it's the same card, so what's typed on it and the link it makes are the same.
+/// The Share Link card of each wish while it's open, in a window of its own (`WishLinkWindows`). One card per wish:
+/// opened from either chat or the desk, it's the same card, so what's typed on it and the link it makes are the same.
 @MainActor final class WishLinkCards: ObservableObject {
     static let shared = WishLinkCards()
 
@@ -310,18 +327,23 @@ enum WishLink {
         private(set) var image: NSImage?
         private(set) var iconImage: NSImage?
         var shared: WishLink.Shared?
+        /// The changes Lamp suggests for the wish, as it has them now: they go with the link, not shown on the card.
+        var ideas: [String] = []
+        /// The shape the wish's page plays in, as `Words.shape` keeps it; nil for a wish with no page.
+        var shape: String?
         var stage: WishLinkCard.Stage = .editing
         var copied = false
         var retaking = false
-        /// Where it's shown: the chat beside the app, or Lamp's window.
-        var inSidebar: Bool
-        /// Bumped when Lamp changes the values itself (a new picture), so the chat beside the app takes them.
-        var revision = 0
 
         /// What the link would show with what's on the card.
         var words: WishLink.Words {
-            WishLink.Words(name: values.name.trimmed, line: values.line.trimmed, words: values.words.trimmed,
-                           picture: values.includePicture ? pictureDigest : nil, file: values.includeFile ? true : nil)
+            // What the page offers to make their own version from: what it does, as the card says it, and the wish's
+            // first request only when that's empty. The card no longer shows the words themselves: the link shares the
+            // wish, not a message.
+            WishLink.Words(name: values.name.trimmed, by: values.by.trimmed, line: values.line.trimmed,
+                           words: values.line.trimmed.isEmpty ? values.words.trimmed : values.line.trimmed,
+                           ideas: ideas.isEmpty ? nil : ideas, shape: shape,
+                           picture: pictureDigest, file: values.includeFile ? true : nil)
         }
         /// A link that carries the wish is always worth sending again: the file is the wish as it is now.
         var changed: Bool { shared?.shown != words || values.includeFile }
@@ -331,24 +353,25 @@ enum WishLink {
 
     func card(for project: LampProject) -> Card? { cards[project.id] }
 
-    func open(_ project: LampProject, inSidebar: Bool) {
-        if cards[project.id] != nil {
-            cards[project.id]?.inSidebar = inSidebar
-            return
-        }
+    /// Opens the card in its own window, or brings that window forward.
+    func open(_ project: LampProject) {
+        defer { WishLinkWindows.shared.show(project) }
+        guard cards[project.id] == nil else { return }
         let shared = WishLink.kept(for: project)
         let picture = WishLink.picture(of: project)
         let digest = picture.map(Self.digest)
-        let values = shared.map { WishLinkCard.Values(name: $0.shown.name, line: $0.shown.line, words: $0.shown.words,
-                                                      includePicture: $0.shown.picture != nil && picture != nil,
-                                                      includeFile: $0.shown.file == true && Self.canIncludeFile(project)) }
-            ?? WishLinkCard.Values(name: WishLink.clip(project.untitled ? "" : project.name, WishLink.Limit.name),
-                                   line: WishLink.line(of: project), words: WishLink.firstRequest(of: project, store: Store.shared),
-                                   includePicture: picture != nil, includeFile: Self.canIncludeFile(project))
-        var card = Card(values: values, pictureDigest: digest, shared: shared, inSidebar: inSidebar)
+        // The link is called what the wish is called, now: it isn't asked on the card.
+        let name = WishLink.clip(project.title, WishLink.Limit.name)
+        // The wish itself always goes with its link when its kind can go as a file: the link shares the wish.
+        let values = shared.map { WishLinkCard.Values(name: name, by: $0.shown.by ?? WishLink.sharer, line: $0.shown.line, words: $0.shown.words,
+                                                      includeFile: Self.canIncludeFile(project)) }
+            ?? WishLinkCard.Values(name: name, by: WishLink.sharer, line: WishLink.line(of: project), words: WishLink.firstRequest(of: project, store: Store.shared),
+                                   includeFile: Self.canIncludeFile(project))
+        var card = Card(values: values, pictureDigest: digest, shared: shared)
+        card.shape = Publish.pageShape(project).map { if case .ratio(let ratio) = $0 { String(format: "%.4f", ratio) } else { "fill" } }
+        card.ideas = (RemixSuggestions.load(project) ?? []).prefix(WishLink.Limit.ideas).map(\.text)
+            .map { $0.trimmed }.filter { !$0.isEmpty && $0.count <= WishLink.Limit.idea }
         card.picture = picture
-        // The picture the link shows is the one it was made with, as long as the app's own hasn't changed since.
-        if let shown = shared?.shown.picture, shown != digest { card.values.includePicture = picture != nil }
         cards[project.id] = card
         Task {
             let icon = await Sharing.sharedIcon(of: project)
@@ -372,14 +395,19 @@ enum WishLink {
         if case .failed = cards[project.id]?.stage { cards[project.id]?.stage = .editing }
     }
 
-    func close(_ project: LampProject) { cards[project.id] = nil }
+    func close(_ project: LampProject) {
+        cards[project.id] = nil
+        WishLinkWindows.shared.close(project)
+    }
 
     /// Shares what's on the card, or changes what the link shows, and copies the link.
     func share(_ project: LampProject) {
         guard let card = cards[project.id], card.stage != .sending, card.values.isComplete else { return }
         cards[project.id]?.stage = .sending
         let words = card.words
-        let source = card.values.includePicture ? card.picture : nil
+        // A name changed on the card is the one the next link starts with.
+        if let by = words.by, by != WishLink.sharer { WishLink.sharer = by }
+        let source = card.picture
         let iconSource = card.icon
         Task {
             do {
@@ -449,6 +477,11 @@ enum WishLink {
         (url as NSURL).write(to: board)
         board.setString(url.absoluteString, forType: .string)
         cards[project.id]?.copied = true
+        // The copy button's tick is for a moment, so a second copy shows too.
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            cards[project.id]?.copied = false
+        }
     }
 
     /// Takes the link down, and the card with it.
@@ -460,7 +493,8 @@ enum WishLink {
                 try await WishLink.remove(shared)
                 WishLink.keep(nil, for: project)
                 Store.shared.refreshInstalled(project)
-                cards[project.id] = nil
+                // Its window goes with it, as Cancel takes it.
+                close(project)
             } catch {
                 cards[project.id]?.stage = .failed(error.localizedDescription)
             }
@@ -484,9 +518,7 @@ enum WishLink {
             guard let data else { return }
             cards[project.id]?.picture = data
             cards[project.id]?.pictureDigest = Self.digest(data)
-            cards[project.id]?.values.includePicture = true
             cards[project.id]?.copied = false
-            cards[project.id]?.revision += 1
         }
     }
 
@@ -496,5 +528,13 @@ enum WishLink {
 }
 
 extension WishLink {
-    static let cardLimits = WishLinkCard.Limits(name: Limit.name, line: Limit.line, words: Limit.words)
+    static let cardLimits = WishLinkCard.Limits(name: Limit.name, line: Limit.line, words: Limit.words, by: Limit.by)
+
+    /// The name a link says it's by: what the person last gave on the card, kept in Lamp's own settings; until they have,
+    /// their name on this Mac, which they see on the card before anything goes.
+    static var sharer: String {
+        get { UserDefaults.standard.string(forKey: sharerKey) ?? clip(NSFullUserName(), Limit.by) }
+        set { UserDefaults.standard.set(newValue, forKey: sharerKey) }
+    }
+    private static let sharerKey = "wishLinkSharer"
 }
