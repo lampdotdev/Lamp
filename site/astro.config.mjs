@@ -32,7 +32,7 @@ function localAPI() {
         if (req.url === "/api/idea-event") { res.statusCode = 204; return res.end(); }
         const path = req.url.split("?")[0];
         const shared = /^\/w\/([^/]+)(\/card\.png)?$/.exec(path);
-        const played = /^\/w\/([^/]+)\/play\/(\d+)\/(.+)$/.exec(path);
+        const played = /^\/w\/([^/]+)\/play\/(\d+)\/(.*)$/.exec(path);
         const handler = path === "/api/first-idea" ? idea : path === "/api/wishes" ? share : path === "/api/wish-file" ? file
           : played ? play : shared ? (shared[2] ? card : page) : null;
         if (!handler) return next();
