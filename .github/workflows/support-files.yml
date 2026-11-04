@@ -2,7 +2,8 @@
 # README promises people may build with, and with the Xcode of the macOS before the current one: the apps are
 # compiled on the person's Mac with whatever Apple's tools they have, not with the Xcode Lamp itself is built with.
 # A construct only a newer compiler accepts fails here, on the pull request, rather than on someone's Mac after a
-# release. The starters' own Swift is checked with them (scripts/check-starters.sh).
+# release. The starters' own Swift is checked with them (scripts/check-starters.sh), as are the controller kit and
+# page host for the Mac, iOS simulator and iOS device (scripts/check-controller-kit.sh).
 name: Support files
 
 on:
@@ -10,9 +11,12 @@ on:
     paths:
       - "Sources/Lamp/Template*.swift"
       - "Sources/Lamp/GameKit.swift"
+      - "Sources/LampRelayKit/**"
       - "Resources/GameKit/**"
       - "Resources/Starters/**"
       - "scripts/check-starters.sh"
+      - "scripts/check-controller-kit.sh"
+      - "scripts/controller-kit.sh"
       - "scripts/fetch-starters.sh"
       - ".github/workflows/support-files.yml"
   push:
@@ -44,6 +48,9 @@ jobs:
         run: |
           sudo xcode-select -s "/Applications/Xcode_${{ matrix.xcode }}.app"
           xcodebuild -version
+
+      - name: Type-check the controller kit and page host
+        run: scripts/check-controller-kit.sh
 
       - name: Fetch the starters
         # Each starter's tree is its repository at the commit Resources/Starters/<folder>/starter.md pins.
