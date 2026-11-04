@@ -487,22 +487,20 @@ enum Runtime {
         return tail.isEmpty ? nil : tail
     }
 
-    /// A report the app repeats on a clock (a game's frame rate every ten seconds, a timer's tick): lines that differ only
-    /// in their numbers and come three times or more are kept once, the newest, where it stands. The agent reads every
-    /// look's log tail again with each request, and thirty lines of the same report said nothing the last one didn't.
-    /// Anything that reads as a problem is kept whole, and so is a line that comes once or twice: two statuses or two
-    /// missing files differ in their numbers, and each is evidence.
+    /// What a log tail repeats without saying anything new, kept once, the newest, where it stands: Lamp's own report of
+    /// how the game kept to its frames, written every ten seconds (lamp-game.js's "Lamp: N frames a second"), and a line
+    /// printed again word for word, its time aside. The agent reads every look's log tail again with each request, and
+    /// thirty lines of the same report said nothing the last one didn't. Any other line is kept, whatever it repeats:
+    /// lines that differ in their numbers (statuses, missing files, places in the code) are each evidence.
     static func newestOfEach<Lines: Collection>(_ lines: Lines) -> [Substring] where Lines.Element == Substring {
-        let shapes = lines.map { $0.replacingOccurrences(of: "[0-9]+([.,:][0-9]+)*", with: "#", options: .regularExpression) }
-        var counts: [String: Int] = [:]
-        for shape in shapes { counts[shape, default: 0] += 1 }
+        let stamp = #"^\[[0-9]+(\.[0-9]+)? s\] "#
+        let shapes = lines.map { line -> String in
+            let text = line.replacingOccurrences(of: stamp, with: "", options: .regularExpression)
+            return text.hasPrefix("Lamp: ") && text.contains(" frames a second") ? "Lamp: frames a second" : text
+        }
         var seen = Set<String>()
         var kept: [Substring] = []
-        for (line, shape) in zip(lines, shapes).reversed() {
-            let periodic = counts[shape, default: 0] >= 3
-                && line.range(of: "error|fail|warn|exception|crash|fatal|assert", options: [.regularExpression, .caseInsensitive]) == nil
-            if line.isEmpty || !periodic || seen.insert(shape).inserted { kept.append(line) }
-        }
+        for (line, shape) in zip(lines, shapes).reversed() where line.isEmpty || seen.insert(shape).inserted { kept.append(line) }
         return kept.reversed()
     }
 
