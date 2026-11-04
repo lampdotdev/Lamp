@@ -109,6 +109,15 @@ A capability given to one engine must be given to all of them that can take it, 
   with `AppFolder` (never through a link). They're data: a model, a picture, an atlas's XML; nothing is run, opened or
   made executable, and an archive is read by Lamp for the files the index names, never unpacked. No command runs, so
   there's nothing to approve; what the agent fetches with its own commands is still judged as fetching (#830).
+- **Someone's shared copy, fetched for the agent** (`shared_copy`, `SharedCopies`, "Pulling in from a link" in the
+  wishes guide): Lamp asks lamp.dev for the link's file as following does, at most the site's size, and opens it as any
+  shared file is opened (`Sharing.open`) with the review's fixed checks (`Sharing.inspect`), whose findings go to the
+  agent; no AI review runs, since nothing goes in until the agent writes it into the app as its own change. Only what that
+  opening lists (each app's code, data, notes and the licenses its credits name, as plain files inside the file) is laid
+  out, in a folder of the wish's own in Lamp's temporary folder (`SharedCopies.folder(for:)`), never anything else the
+  file holds. Nothing there is run or built. The agent's file tools read it without asking and can't change it, and
+  another wish's copies are refused, whatever the settings say (`Privacy.verdict`); commands may read it and not write it
+  (`(deny file-write*)` for it in Lamp's profile, a `read` entry for it in Codex's). It's cleared a day on.
 - **What Lamp fetches for itself** (`StarterDownloads`, `LlamaInstall`, `Downloads`): llama.cpp's server and libraries
   come from Lamp's own release at the size and SHA-256 the bundle pins, and each program and library is checked for the
   certificate that signed Lamp, once unpacked and again before the server starts; a starter's tree comes from its repository's
