@@ -45,8 +45,8 @@ parameters out of the address, so a reload doesn't bring it back. The ideas page
 (`WishDialog.astro`). A wish shared as a link has a page of its own (`src/pages/w/index.astro`, SHARED_WISHES.md),
 is for playing it, and Lamp and remixing stay out of the way. Unlike the rest of the site it's plain and neutral, in
 the manner of shadcn/ui: the wish on black, as games are best seen, between white bars of grays and thin borders,
-with no paper, tapes, stripes or color of its own, so nothing competes with it. A header has the wish's name and who it's by on the left and "Made with Lamp" in gray on the
-right, then the thing someone made fills the rest of the window, only as big as it is (a playing page in the shape Lamp
+with no paper, tapes, stripes or color of its own, so nothing competes with it. A header has the wish's name and who it's by on the left, then "Updated <date>" for a link with releases (a sparkle and
+darker words until opened, opening what's new), and "Made with Lamp" in gray on the right, then the thing someone made fills the rest of the window, only as big as it is (a playing page in the shape Lamp
 sends with the link, else 16:9, the stage a web game is drawn on). What it does isn't on the page (it's in the link's
 preview). Making one's own is a slim band at the foot: a box that reads as a prompt box, with the changes Lamp suggests
 turning in it as its placeholder and a send button that opens Remix with what's written, or else the change it shows.

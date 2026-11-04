@@ -20,15 +20,15 @@ import { DOWNLOAD_URL } from "../../lib/download";
     <header class="flex h-14 items-center justify-between gap-4 border-b border-zinc-200 bg-white px-4 sm:px-6">
       <div class="flex min-w-0 items-baseline gap-2">
         <img data-icon alt="" width="24" height="24" class="size-6 shrink-0 self-center" hidden />
-        <h1 data-name class="min-w-[6rem] truncate text-[15px] font-semibold"></h1>
+        <h1 data-name class="min-w-0 truncate text-[15px] font-semibold"></h1>
         <p data-by hidden class="hidden min-w-0 shrink-[3] truncate text-sm text-zinc-500 sm:block"></p>
+        <!-- When the maker last released a version, opening what's new in each, in plain words Lamp wrote: there only
+             when there's some. Gray once this browser has opened it; until then darker, with a sparkle. -->
+        <button type="button" data-news hidden popovertarget="news" class="news-button shrink-0 cursor-pointer rounded-md px-1.5 py-0.5 -my-0.5 text-sm whitespace-nowrap text-zinc-500 hover:bg-zinc-100 hover:text-zinc-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-400">
+          <svg data-news-new hidden aria-hidden="true" viewBox="0 0 16 16" class="news-sparkle"><path d="M8 0.8l1.6 4.2 4.2 1.6-4.2 1.6L8 12.4 6.4 8.2 2.2 6.6 6.4 5zM13 10.5l0.7 1.8 1.8 0.7-1.8 0.7L13 15.5l-0.7-1.8-1.8-0.7 1.8-0.7z" /></svg><span data-news-label></span>
+        </button>
       </div>
       <div class="flex shrink-0 items-center gap-4 text-sm">
-        <!-- What's new in each version the maker released, in plain words Lamp wrote: there only when there's some,
-             with a dot that pulses while there's a version this browser hasn't opened the list since. -->
-        <button type="button" data-news hidden popovertarget="news" aria-label="What's new" class="news-button relative -mx-2 cursor-pointer rounded-md px-2 py-1 font-medium text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-400">
-          What's new<span data-news-dot hidden class="news-dot" aria-hidden="true"></span>
-        </button>
         <a href="/" class="rounded-md text-zinc-500 hover:text-zinc-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-400">Made with Lamp</a>
       </div>
     </header>
@@ -148,28 +148,18 @@ import { DOWNLOAD_URL } from "../../lib/download";
     .built .bars-toggle, .built .bars-toggle svg { transition: background-color 0.35s, color 0.35s, rotate 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
   }
 
-  /* What's new: a plain white list hanging under the header's button, its versions newest first. The dot beside the
-     button pulses while there's a version this browser hasn't seen, and is still where less motion is asked for. */
+  /* What's new: the header's "Updated" button, with a sparkle and darker words until this browser has opened it, and
+     a plain white list hanging under it, its versions newest first. */
   .news-button[hidden] { display: none; }
-  .news-dot {
-    position: absolute; top: 0.125rem; right: -0.125rem; width: 0.4375rem; height: 0.4375rem; border-radius: 9999px;
-    background: var(--color-zinc-950);
-  }
-  .news-dot[hidden] { display: none; }
-  @media (prefers-reduced-motion: no-preference) {
-    .news-dot::after {
-      content: ""; position: absolute; inset: 0; border-radius: inherit; background: inherit;
-      animation: news-pulse 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
-    }
-  }
-  @keyframes news-pulse { 75%, 100% { scale: 2.6; opacity: 0; } }
+  .news-button.unseen { color: var(--color-zinc-950); font-weight: 500; }
+  .news-sparkle { display: inline-block; width: 0.75rem; height: 0.75rem; margin: 0 0.3rem 0 0; vertical-align: -0.0625rem; fill: currentColor; }
+  .news-sparkle[hidden] { display: none; }
   .news-list {
-    position: fixed; inset: auto; top: calc(3.5rem + 0.5rem); right: 0.75rem; margin: 0; padding: 1rem 1.25rem 1.25rem;
+    position: fixed; inset: auto; top: calc(3.5rem + 0.5rem); left: 0.75rem; margin: 0; padding: 1rem 1.25rem 1.25rem;
     width: min(22rem, calc(100vw - 1.5rem)); max-height: calc(100dvh - 5.5rem); overflow-y: auto;
     border: 1px solid var(--color-zinc-200); border-radius: 0.5rem; background: white; color: var(--color-zinc-950);
     box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
   }
-  @media (min-width: 640px) { .news-list { right: 1.5rem; } }
   @media (prefers-reduced-motion: no-preference) {
     .news-list:popover-open { animation: remix-popup-in 0.15s ease-out both; }
   }
@@ -249,8 +239,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
     const icon = $<HTMLImageElement>("[data-icon]");
     if (wish.icon) { icon.src = wish.icon; icon.hidden = false; }
 
-    // What's new: each version the maker released, newest first. The dot pulses while the newest is one this browser
-    // hasn't seen the list since; a first visit counts what's there as seen, so it marks only what came after.
+    // What's new: each version the maker released, newest first, opened from "Updated <date>" beside the name, which
+    // has a sparkle until this browser has opened it since the newest one.
     const releases = (wish.releases ?? []).filter((release) => release.lines?.length);
     if (releases.length) {
       const list = $<HTMLElement>("[data-news-releases]");
@@ -266,18 +256,30 @@ import { DOWNLOAD_URL } from "../../lib/download";
         list.append(item);
       }
       const button = $<HTMLButtonElement>("[data-news]");
-      const dot = $<HTMLElement>("[data-news-dot]");
-      const SEEN = `lamp.shared.seen.${wish.id}`;
+      const sparkle = $<SVGElement>("[data-news-new]");
       const newest = releases[0].date;
+      $<HTMLElement>("[data-news-label]").textContent =
+        `Updated ${new Intl.DateTimeFormat(undefined, { month: "numeric", day: "numeric", year: "2-digit" }).format(new Date(newest))}`;
+      const SEEN = `lamp.shared.seen.${wish.id}`;
       let seen: string | null = null;
-      try { seen = localStorage.getItem(SEEN); if (seen == null) localStorage.setItem(SEEN, newest); } catch {}
-      dot.hidden = seen == null || seen >= newest;
-      button.setAttribute("aria-label", dot.hidden ? "What's new" : "What's new, with something since your last visit");
+      try { seen = localStorage.getItem(SEEN); } catch {}
+      const mark = (unseen: boolean) => {
+        sparkle.toggleAttribute("hidden", !unseen);
+        button.classList.toggle("unseen", unseen);
+        button.setAttribute("aria-label", unseen ? "What's new, not yet seen" : "What's new");
+      };
+      mark(seen == null || seen < newest);
       button.hidden = false;
-      $<HTMLElement>("[data-news-list]").addEventListener("toggle", (event) => {
+      // The list hangs under the button, kept inside the window.
+      const panel = $<HTMLElement>("[data-news-list]");
+      panel.addEventListener("beforetoggle", (event) => {
         if ((event as ToggleEvent).newState !== "open") return;
-        dot.hidden = true;
-        button.setAttribute("aria-label", "What's new");
+        const width = Math.min(352, innerWidth - 24);
+        panel.style.left = `${Math.max(12, Math.min(button.getBoundingClientRect().left - 4, innerWidth - width - 12))}px`;
+      });
+      panel.addEventListener("toggle", (event) => {
+        if ((event as ToggleEvent).newState !== "open") return;
+        mark(false);
         try { localStorage.setItem(SEEN, newest); } catch {}
       });
     }

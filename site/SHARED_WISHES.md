@@ -37,11 +37,11 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   (its play address in `play`) and its own title, description and preview tags in place of the built page's; `npm run
   dev` gives it its own server's. On its own, `/w/` goes to the ideas page.
 - What's new (`releases` on the record): each version the sharer released (Release Update, `WishReleases` in Lamp),
-  newest first, with when it went out and the plain lines Lamp wrote for it and the sharer kept. The page's header has a
-  "What's new" button beside "Made with Lamp" when there are any, opening the list under it (a popover); a dot on it
-  pulses while the newest release is newer than what this browser last saw (`lamp.shared.seen.<id>` in localStorage,
-  set when the list opens; a first visit counts what's there as seen, so the dot marks only what came after). A change
-  from a Lamp that doesn't send `releases` keeps the ones the link has.
+  newest first, with when it went out and the plain lines Lamp wrote for it and the sharer kept. The page's header says
+  "Updated <date of the newest>" after the name and who it's by, when there are any, and opens the list under it (a
+  popover). Until this browser has opened it since the newest release (`lamp.shared.seen.<id>` in localStorage), it's
+  darker with a sparkle; after, gray like the byline. A change from a Lamp that doesn't send `releases` keeps the ones
+  the link has.
 - The preview card (`/w/<id>/card.png`, `lib/wish-card.js`, `api/wish-card.js`): 1200×630, drawn by `@vercel/og`
   with Geist (`lib/fonts`, SIL Open Font License) on the first-idea section's night sky. The page names it in
   `og:image` and `twitter:image` with Twitter's large card.
