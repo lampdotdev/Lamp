@@ -53,7 +53,7 @@ enum AppTransition {
     }
 
     /// The open app stands still taking the change in (a game running its code again, or opening its page again): the
-    /// stripes roll up it turn after turn, from the glow already over it, until the change is on screen (`land`).
+    /// stripes roll up it every few seconds, from the glow already over it, until the change is on screen (`land`).
     static func turn(_ project: LampProject) {
         guard glowing[project.id] != nil, canShow(project) else { return }
         send(.turn, to: project)
