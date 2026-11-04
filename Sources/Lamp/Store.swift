@@ -778,6 +778,9 @@ final class Store: ObservableObject {
         /// How each of the turn's changes reached the app, in order: told to the agent with its look and tallied at
         /// the turn's end, so what went in live and what waited can be seen and learned from.
         var outcomes: [ChangeOutcome] = []
+        /// Each log of the turn's apps, by its path, as it was before the latest change went in (`markLog`): what it
+        /// logs after that and never did before is told to the agent (`untoldLogErrors`) and fixed by the turn's end.
+        var logWatch: [String: LogErrors.Watch] = [:]
         /// When the request began to be worked on, and when each of its changes reached the screen (went into the open
         /// app, or the app opened with it; not one waiting for Reload): the pace the person watching sees, tallied at
         /// the turn's end (`paceTally`) so the rule asking for it (`Agent.liveNote`) can be judged by what happens.
@@ -5424,6 +5427,40 @@ final class Store: ObservableObject {
                 if let crash = await asPartOf(project, app, { await self.install(app) }) ?? nil { crashes[app.id] = crash }
             }
         }
+        // Errors the turn's changes brought that the agent never heard of (it ended right after the change went in, or a
+        // first draft broke before it drew) go back to it like a crash: once, its fix joining this turn's commit.
+        if crashes.isEmpty, edited, !owner.stopped {
+            await letLogSettle(owner)
+            if !owner.stopped, let note = endingLogNote(project, in: owner) {
+                log(project, .status, "Fixing an error…")
+                guard await runAgent(note + "\n\nLook at these as part of this request.", on: project) else { return TurnResult(end: .failed, watched: watched) }
+                project = current(project) ?? project
+                if owner.asked { return TurnResult(end: .replied, watched: watched) }
+                let fixing = ([project] + parts(of: project)).filter { Runtime.sourcesChanged($0) }
+                for app in fixing {
+                    guard let app = current(app) else { continue }
+                    guard await asPartOf(project, app, { await self.buildFixingErrors(app) }) ?? true else {
+                        return TurnResult(end: owner.asked ? .replied : .failed, watched: watched)
+                    }
+                }
+                project = current(project) ?? project
+                // Saved whatever was built: a step or a look in the fix may have built and put in the repair already.
+                switch await Versions.commitAll(committed ? "-q --amend --no-edit" : "-qm 'Fix an error'", in: project.dir) {
+                case .saved: (committed, unsaved) = (true, false)
+                case .failed: unsaved = true
+                case .nothingToSave: break
+                }
+                for app in fixing {
+                    guard let app = current(app), !owner.stopped else { continue }
+                    if let crash = await asPartOf(project, app, { await self.install(app) }) ?? nil { crashes[app.id] = crash }
+                }
+                await letLogSettle(owner)
+            }
+            // Left after all: the chat says so in a line, as plainly as for a crash, and the agent's answer says why.
+            if crashes.isEmpty, !owner.stopped {
+                for app in newLogErrors(in: owner) { log(project, .status, Self.errorsLeftLine(app.name)) }
+            }
+        }
         // The change is in the app either way. Without a version of its own it can't be gone back to by
         // itself, and the person should know that rather than find it out from Undo. Not on a Mac with no git yet,
         // where nothing has versions until Apple's tools come (`saveFirstVersion`).
@@ -5465,7 +5502,8 @@ final class Store: ObservableObject {
         if changed {
             let crash = await install(project)
             // The update said it's in; a draft that hasn't drawn says so after it.
-            if let window = settleDraft(project, in: owner), window != .content, let line = Self.draftLine(name, window, updated: true) {
+            if let window = settleDraft(project, in: owner), window != .content, !Self.brokeBeforeDrawing(window, hasNewLogErrors(project, in: owner)),
+               let line = Self.draftLine(name, window, updated: true) {
                 log(project, .status, line)
             }
             // A device app that couldn't go on its device (not set up, not on the network) didn't crash: the chat
@@ -5487,7 +5525,9 @@ final class Store: ObservableObject {
             // The look opened it behind the user's windows. Now it's theirs: it shows itself, as when it's
             // opened again. An app that lives in the menu bar opens its panel (see LampWindows).
             bringForward(project, app)
-            if let line = Self.draftLine(name, settleDraft(project, in: owner), updated: owner.updatedInPlace) { log(project, .status, line) }
+            let window = settleDraft(project, in: owner)
+            if !Self.brokeBeforeDrawing(window, hasNewLogErrors(project, in: owner)),
+               let line = Self.draftLine(name, window, updated: owner.updatedInPlace) { log(project, .status, line) }
         } else if project.onDevice, let run = deviceRuns[project.id], deviceRunBuilt[project.id] == Runtime.builtFingerprint(project) {
             // The look put it on the device already, as it is now. One that went to the preview on this Mac
             // didn't, so the change goes on the device below.
@@ -5497,6 +5537,16 @@ final class Store: ObservableObject {
             return project.onDevice || owner.stopped ? nil : crash
         }
         return nil
+    }
+
+    /// What the chat says of an app whose errors the turn didn't fix: no log, no internals, only that something isn't right.
+    nonisolated static func errorsLeftLine(_ name: String) -> String { "Something in \(name) still isn't working" }
+
+    /// Whether the app has logged errors since the turn's latest change that it never did before.
+    func hasNewLogErrors(_ project: LampProject, in turn: Turn?) -> Bool {
+        guard Privacy.sharesLog, let turn, let watch = turn.logWatch[Runtime.logURL(project).path],
+              let data = AppFile.read(Runtime.logURL(project), in: project) else { return false }
+        return !LogErrors.errors(in: LogErrors.since(watch.mark, in: data), besides: watch.known).isEmpty
     }
 
     /// What the agent is asked after apps of the wish died on launch: a wish's one app as ever, each of several by name
@@ -6195,6 +6245,88 @@ final class Store: ObservableObject {
         return notes.isEmpty ? nil : notes.joined(separator: "\n\n")
     }
 
+    // MARK: Errors a change brought
+
+    /// Notes where an app's log is just before a change goes into it (a live change, a game's page, an install), so what
+    /// it logs from then on can be told apart from what came before. The turn's first mark of a log also notes every
+    /// error it and the launch before it already held, which are never said to be new. Not when the person keeps what the
+    /// app prints from the agent (Settings → Building).
+    func markLog(_ project: LampProject) {
+        guard Privacy.sharesLog, let turn = turns[project.id] ?? turns[wish(of: project).id], !turn.stopped else { return }
+        let url = Runtime.logURL(project), key = url.path
+        let data = AppFile.read(url, in: project)
+        var watch = turn.logWatch[key] ?? {
+            let before = AppFile.read(Runtime.folder(project).appendingPathComponent("previous-log.txt"), in: project)
+            let known = [data, before].compactMap { $0.map { String(decoding: $0, as: UTF8.self) } }.map(LogErrors.keys)
+            return LogErrors.Watch(project: project, known: known.reduce(into: Set()) { $0.formUnion($1) })
+        }()
+        let sources = Runtime.fingerprint(project)
+        if turn.logWatch[key] != nil, watch.sources == sources { return }
+        watch.sources = sources
+        watch.project = project
+        watch.mark = LogErrors.mark(of: data)
+        watch.marked = Date()
+        watch.told = []
+        turn.logWatch[key] = watch
+    }
+
+    /// The errors each of the turn's apps logged since its latest change and never before, by app.
+    func newLogErrors(in turn: Turn) -> [(key: String, id: String, name: String, found: [LogErrors.Found])] {
+        // Asked again each time: the person may stop sharing what the app prints while the turn goes on.
+        guard Privacy.sharesLog else { return [] }
+        return turn.logWatch.sorted { $0.key < $1.key }.compactMap { key, watch in
+            guard let data = AppFile.read(URL(fileURLWithPath: key), in: watch.project) else { return nil }
+            let found = LogErrors.errors(in: LogErrors.since(watch.mark, in: data), besides: watch.known)
+            let app = current(watch.project) ?? watch.project
+            // A wish of one app is said by its name; one of several by which of them it is.
+            let alone = apps(of: wish(of: app)).count < 2
+            return found.isEmpty ? nil : (key, app.id, alone ? wish(of: app).name : placeName(app), found)
+        }
+    }
+
+    /// Gives an app that just took a change a moment to run it before its log is read: a change that throws does so as
+    /// it runs. Only as long as what's left of that moment, so a step well past it waits for nothing.
+    func letLogSettle(_ turn: Turn) async {
+        guard let latest = (turn.logWatch.values.map(\.marked) + turn.shown.suffix(1)).max() else { return }
+        let left = 0.75 - Date().timeIntervalSince(latest)
+        if left > 0 { try? await Task.sleep(for: .milliseconds(Int(left * 1000))) }
+    }
+
+    /// What the agent hasn't heard of the errors its latest change brought, each once, carried by every tool's answer
+    /// beside what's held for Reload (`untoldHolds`), whichever engine asks. The rule for what to do with them is the
+    /// prompt's (`Agent.Rules.finish`).
+    func untoldLogErrors(_ project: LampProject) -> String? {
+        guard Privacy.sharesLog, let turn = turns[project.id] ?? turns[wish(of: project).id] else { return nil }
+        var said: [String] = []
+        for app in newLogErrors(in: turn) {
+            let untold = app.found.filter { turn.logWatch[app.key]?.told.contains($0.key) == false }
+            guard !untold.isEmpty else { continue }
+            turn.logWatch[app.key]?.told.formUnion(untold.map(\.key))
+            said.append(Self.logErrorsNote(untold, app: app.name, several: turn.logWatch.count > 1))
+        }
+        return said.isEmpty ? nil : said.joined(separator: "\n\n")
+    }
+
+    nonisolated static func logErrorsNote(_ found: [LogErrors.Found], app: String, several: Bool) -> String {
+        "Note from Lamp: \(several ? app : "the app") logged errors since your latest change went in that it never logged before. "
+            + "The lines before each say where it was:\n\n" + LogErrors.listing(found)
+    }
+
+    /// What the turn's end hands the agent: errors it hasn't heard of, and those of a window that hasn't drawn even when
+    /// it has, since an app that logs errors and never draws broke rather than hid behind another window.
+    private func endingLogNote(_ project: LampProject, in turn: Turn) -> String? {
+        if let untold = untoldLogErrors(project) { return untold }
+        let broken = newLogErrors(in: turn).filter { !windowDrew($0.id, in: turn) }
+        guard !broken.isEmpty else { return nil }
+        return broken.map { Self.logErrorsNote($0.found, app: $0.name, several: turn.logWatch.count > 1) }.joined(separator: "\n\n")
+    }
+
+    /// Every note a tool's answer carries about what became of the agent's changes.
+    func untoldNotes(_ project: LampProject) -> String? {
+        let notes = [untoldHolds(project), untoldLogErrors(project)].compactMap { $0 }
+        return notes.isEmpty ? nil : notes.joined(separator: "\n\n")
+    }
+
     /// A change the open game hasn't taken whole, for the agent, with what's waiting by name, so it never says the person
     /// sees it. The chat says the same in plain words (`ReloadLine`).
     static func holdNote(_ hold: PageLive.Hold, name: String) -> String {
@@ -6220,6 +6352,12 @@ final class Store: ObservableObject {
     private func awaitStep(_ project: LampProject) async {
         guard let turn = turns[project.id] ?? turns[wish(of: project).id], let app = stepped(project) else { return }
         await awaitStep(of: app, in: turn)
+    }
+
+    /// After `awaitStep`: what the step put in has had its moment to run before the answer reads the log.
+    private func settleLogAfterStep(_ project: LampProject) async {
+        guard let turn = turns[project.id] ?? turns[wish(of: project).id] else { return }
+        await letLogSettle(turn)
     }
 
     func awaitStep(of app: LampProject, in turn: Turn) async {
@@ -7239,14 +7377,14 @@ final class Store: ObservableObject {
             case "device_integration": (status, answer) = await agentIntegration(arguments, for: project)
             case "ask", "progress", "write_wish", "device_permission":
                 (status, answer) = talk(name, arguments, for: project)
-                if name == "progress" { await awaitStep(project) }
+                if name == "progress" { await awaitStep(project); await settleLogAfterStep(project) }
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
             }
             if status != 200 {
                 return reply(["content": [["type": "text", "text": answer["error"] as? String ?? "Lamp couldn't do that."]], "isError": true])
             }
-            let text = [answer["text"] as? String ?? "", untoldHolds(project)].compactMap { $0 }.joined(separator: "\n\n")
+            let text = [answer["text"] as? String ?? "", untoldNotes(project)].compactMap { $0 }.joined(separator: "\n\n")
             var content: [[String: Any]] = [["type": "text", "text": text]]
             for picture in Self.pictureData(answer["screenshots"] as? [String] ?? [], in: project) {
                 content.append(["type": "image", "data": picture["data"] ?? "", "mimeType": picture["mimeType"] ?? "image/png"])
@@ -10031,6 +10169,7 @@ final class Store: ObservableObject {
         // it held this change back by as long as it had left. It's ended, and whatever comes next builds the whole app.
         await supersedeLiveBuild(of: project)
         liveBuildFailed.remove(project.id)
+        markLog(project)
         var copy = env
         copy["LAMP_LIVE"] = "1"
         copy["LAMP_LIVE_COPY"] = "1"
@@ -10094,6 +10233,7 @@ final class Store: ObservableObject {
         // page goes in with the game installed again, so the open game, its phones and any that join have the same page.
         if place == .mac, GamePhones.changed(project), !PageLive.shared.takesPhonePage(project, at: place) { return false }
         note("Updating \(project.name) in place…", for: project)
+        if place == .mac { markLog(project) }
         let outcome = await PageLive.shared.put(project, at: place)
         switch outcome {
         case .cannot:
@@ -10396,6 +10536,7 @@ final class Store: ObservableObject {
     /// that wasn't open, and a copy that is open takes the change as a request's would.
     private func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false, reload: Bool = false,
                          early: Bool = false, saysReady: Bool = true, onDevice: Bool = false, quiet: Bool = false) async -> String? {
+        markLog(project)
         let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload, early: early, saysReady: saysReady, onDevice: onDevice, quiet: quiet)
         // Whatever didn't put the change into the open app (it waits for Reload, was kept open, reopened, failed)
         // lets the glow go; a reopened copy gets the light once its window is up (`AppTransition.landWhenShown`). A game's
@@ -10692,7 +10833,8 @@ final class Store: ObservableObject {
                 owner?.outcomes.append(wasOpen ? .reopened : .opened)
                 if let drew, await !drew.value {
                     // A window that draws after the wait still draws: when its page says so, the line says it's ready.
-                    if owner?.stopped != true, let line = Self.draftLine(project.name, .pending, updated: false) {
+                    if owner?.stopped != true, !Self.brokeBeforeDrawing(.pending, hasNewLogErrors(project, in: owner)),
+                       let line = Self.draftLine(project.name, .pending, updated: false) {
                         log(project, .status, line)
                         let late = LateFrame(opened: opened, line: line, began: owner?.began, turn: owner)
                         frames.whenDrawn(app: id, launch: app.processIdentifier) { [weak self] in self?.frameArrived(app: id, late) }
@@ -13860,7 +14002,7 @@ final class Store: ObservableObject {
         }
         if route == "/mcp" { return await mcp(request.body, for: project, fileTools: request.path.contains("files=1")) }
         var answer = await agentRoute(request, route: route, for: project)
-        if !["/agent/approve", "/agent/steer"].contains(route), answer.0 == 200, let text = answer.1["text"] as? String, let note = untoldHolds(project) {
+        if !["/agent/approve", "/agent/steer"].contains(route), answer.0 == 200, let text = answer.1["text"] as? String, let note = untoldNotes(project) {
             answer.1["text"] = text + "\n\n" + note
         }
         return answer
@@ -13897,7 +14039,7 @@ final class Store: ObservableObject {
         if route == "/agent/talk" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             let answer = talk(body["tool"] as? String ?? "", body["arguments"] as? [String: Any] ?? [:], for: project)
-            if body["tool"] as? String == "progress" { await awaitStep(project) }
+            if body["tool"] as? String == "progress" { await awaitStep(project); await settleLogAfterStep(project) }
             return answer
         }
         if route == "/agent/setup" {
@@ -15038,6 +15180,16 @@ final class Store: ObservableObject {
         case .blank?: return "\(name) is open, but its window looks blank"
         case .noPicture?: return "\(name) is open, but its window couldn't be checked"
         case .closed?, .stopped?: return nil
+        }
+    }
+
+    /// A window that hasn't drawn while its app logs errors it never did before didn't stay behind another window: it
+    /// broke. Its errors go to the agent to fix (the turn's end) rather than the chat saying it hasn't drawn yet.
+    nonisolated static func brokeBeforeDrawing(_ window: DraftWindow?, _ newErrors: Bool) -> Bool {
+        guard newErrors else { return false }
+        switch window {
+        case .pending?, .timedOut?: return true
+        default: return false
         }
     }
 
