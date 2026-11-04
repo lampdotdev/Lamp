@@ -22,9 +22,8 @@ import { together } from "../../lib/text";
     </header>
 
     <main class="flex flex-1 flex-col">
-      <!-- The thing itself, only as big as it is: a playing page takes the shape of its picture (the app as it looked
-           when it was shared), as large as the window allows; without a picture it fills the window but for the bar
-           above and the line about it below. -->
+      <!-- The thing itself, only as big as it is: a playing page in the shape web games are drawn in, as large as the
+           window allows, and a picture as it is. -->
       <section data-stage class="flex justify-center px-3 pt-2 sm:px-6" aria-label="The wish">
         <div data-play hidden class="play-frame relative overflow-hidden rounded-[10px] bg-[#111] ring-1 ring-tape/15">
           <button
@@ -92,14 +91,12 @@ import { together } from "../../lib/text";
     background: linear-gradient(180deg, #1f8a4a 0 16.6%, #7cbf3a 0 33.3%, #f6b81c 0 50%, #f08a1c 0 66.6%, #e2402a 0 83.3%, #d23778 0);
   }
 
-  /* A playing page's frame. With its picture's shape (--ratio, set by the script), it's as wide as the page allows and
-     no taller than the window leaves room for; without one, it fills that room. */
+  /* A playing page's frame: 16:9, the stage a web game is drawn on (the web-game skill), so a game fills it without
+     bars of its own, as wide as the page allows and no taller than the window leaves room for. A page can't say its
+     shape from inside its frame, and the wish's picture is its Mac window's, so neither decides it. */
   .play-frame {
-    --room: max(22rem, calc(100dvh - 12rem));
-    width: 100%; max-width: 100rem; height: var(--room);
-  }
-  .play-frame[style*="--ratio"] {
-    width: min(100%, calc(var(--room) * var(--ratio))); height: auto; aspect-ratio: var(--ratio);
+    --room: max(12rem, calc(100dvh - 12rem));
+    width: min(100%, 100rem, calc(var(--room) * 16 / 9)); aspect-ratio: 16 / 9;
   }
 
   /* The homepage's buttons: ink with paper-colored words, or outlined in ink. */
@@ -122,14 +119,6 @@ import { together } from "../../lib/text";
   // Only ever a shared wish's page: on its own, there's nothing to show.
   if (!json) location.replace("/ideas");
   const wish = json ? (JSON.parse(json) as Shared) : null;
-
-  /** A picture's width over its height, once it's loaded; nothing if it won't load. */
-  const shapeOf = (src: string) => new Promise<number | undefined>((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve(img.naturalHeight ? img.naturalWidth / img.naturalHeight : undefined);
-    img.onerror = () => resolve(undefined);
-    img.src = src;
-  });
 
   if (wish) {
     const $ = <T extends Element>(selector: string) => document.querySelector<T>(selector)!;
@@ -154,13 +143,8 @@ import { together } from "../../lib/text";
       frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-popups allow-modals allow-downloads");
       frame.className = "absolute inset-0 size-full border-0 bg-white";
       stage.prepend(frame);
+      stage.hidden = false;
       $<HTMLButtonElement>("[data-fullscreen]").addEventListener("click", () => stage.requestFullscreen?.());
-      // A page can't say how big it wants to be from inside its frame, so the frame takes its picture's shape. It's
-      // shown once that's known, so it doesn't jump.
-      (wish.picture ? shapeOf(wish.picture) : Promise.resolve(undefined)).then((ratio) => {
-        if (ratio) stage.style.setProperty("--ratio", String(ratio));
-        stage.hidden = false;
-      });
     } else if (wish.picture) {
       const picture = $<HTMLImageElement>("[data-picture]");
       picture.src = wish.picture;
