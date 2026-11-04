@@ -23,9 +23,9 @@ function localAPI() {
       const store = memoryStore();
       const share = createShareHandler({ store, limited: false });
       const file = createFileHandler({ store, limited: false });
-      // The shared wish's page is the ideas page with its card open, which this server draws as you work on it.
-      // A shared page plays from this same server: there's no play host of its own here.
-      const page = createPageHandler({ store, template: async (origin) => (await fetch(`${origin}/ideas`)).text(), playOrigin: (url) => url.origin });
+      // The shared wish's page, which this server draws as you work on it. A shared page plays from this same server:
+      // there's no play host of its own here.
+      const page = createPageHandler({ store, template: async (origin) => (await fetch(`${origin}/w/`)).text(), playOrigin: (url) => url.origin });
       const play = createPlayHandler({ store, anyHost: true });
       const card = createCardHandler({ store });
       server.middlewares.use(async (req, res, next) => {

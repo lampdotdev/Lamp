@@ -1,0 +1,176 @@
+---
+import Base from "../../layouts/Base.astro";
+import { DOWNLOAD_URL } from "../../lib/download";
+import { together } from "../../lib/text";
+---
+
+<!--
+  A wish shared as a link (lamp.dev/w/<id>): the wish itself, as big as the window allows, playing when Lamp sent its
+  page, else its picture; under it its name and what it does, and the ways to make one's own. Lamp is only a small
+  mark at the top and a line at the bottom: the page is about the thing someone made. The site is static and the wish
+  is only known when the page is asked for, so this is built empty and the server puts the wish in as #shared-wish
+  (lib/shared-wish-page.js).
+-->
+<Base title="A wish · Lamp" description="A wish made with Lamp." bare>
+  <div class="flex min-h-dvh flex-col bg-page">
+    <header class="flex h-14 items-center justify-between gap-4 px-4 sm:px-6">
+      <a href="/" class="group flex items-center gap-2 rounded-sm text-[14px] font-semibold text-muted transition hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-graphite">
+        <span class="lamp-mark size-[18px] shrink-0" aria-hidden="true"></span>
+        Made with Lamp
+      </a>
+      <a
+        href={DOWNLOAD_URL}
+        data-download-place="shared-top"
+        class="rounded-sm text-[14px] font-semibold text-muted underline decoration-muted/30 underline-offset-4 transition hover:text-ink hover:decoration-ink/50 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-graphite"
+      >
+        Get Lamp
+      </a>
+    </header>
+
+    <main class="flex flex-1 flex-col">
+      <!-- The thing itself. Playing, it fills the window but for the bar above and the line about it below. -->
+      <section data-stage class="px-3 sm:px-6" aria-label="The wish">
+        <div data-play hidden class="relative mx-auto h-[calc(100dvh-14rem)] min-h-[22rem] max-w-[100rem] overflow-hidden rounded-2xl bg-[#111] shadow-[0_24px_60px_-30px_rgba(0,0,0,0.45)] ring-1 ring-black/10">
+          <button
+            type="button"
+            data-fullscreen
+            aria-label="Full screen"
+            class="absolute top-3 right-3 z-10 grid size-9 cursor-pointer place-items-center rounded-full bg-black/45 text-white/90 backdrop-blur transition hover:bg-black/65 focus-visible:outline-2 focus-visible:outline-white"
+          >
+            <svg aria-hidden="true" viewBox="0 0 16 16" class="size-4 fill-none stroke-current stroke-[1.6] [stroke-linecap:round] [stroke-linejoin:round]"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" /></svg>
+          </button>
+        </div>
+        <div data-shot hidden class="relative mx-auto max-w-[72rem] overflow-hidden rounded-2xl bg-panel ring-1 ring-black/5">
+          <img data-backdrop alt="" class="absolute inset-0 size-full scale-125 object-cover opacity-60 blur-3xl" />
+          <div class="relative flex justify-center p-4 sm:p-8">
+            <img data-picture alt="" class="max-h-[58dvh] w-auto max-w-full rounded-xl shadow-[0_30px_60px_-25px_rgba(0,0,0,0.45)]" />
+          </div>
+        </div>
+      </section>
+
+      <section class="mx-auto grid w-full max-w-[72rem] gap-8 px-5 pt-8 pb-12 sm:px-8 md:grid-cols-[1fr_minmax(18rem,24rem)] md:items-start md:gap-12">
+        <div class="flex items-start gap-4">
+          <img data-icon alt="" width="72" height="72" class="size-[72px] shrink-0 drop-shadow-[0_8px_14px_rgba(0,0,0,0.18)]" hidden />
+          <div class="min-w-0 pt-1">
+            <h1 data-name class="font-display text-4xl leading-tight font-bold tracking-tight text-balance sm:text-5xl"></h1>
+            <p data-about class="mt-2 max-w-[40rem] text-lg leading-snug text-muted text-pretty"></p>
+          </div>
+        </div>
+
+        <div class="flex flex-col gap-3">
+          <!-- On a Mac: Lamp opens this wish (the exact one, when it came with the link), with what to change in its box. -->
+          <div data-mac hidden class="flex flex-col gap-3">
+            <label for="change" class="text-[15px] font-semibold">Make your own version</label>
+            <textarea
+              id="change"
+              data-change
+              rows="2"
+              placeholder="What would you change? You can say later, too."
+              class="w-full resize-none rounded-xl bg-page p-3 text-[16px] leading-relaxed ring-1 ring-[#d2d2d7] transition placeholder:text-muted/80 focus:ring-2 focus:ring-graphite/30 focus:outline-none"
+            ></textarea>
+            <a
+              data-open
+              href="/"
+              class="inline-flex h-12 items-center justify-center rounded-full bg-ink px-7 text-[16px] font-semibold text-page transition hover:-translate-y-px focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-graphite"
+            >
+              Open in Lamp
+            </a>
+          </div>
+          <a
+            href={DOWNLOAD_URL}
+            data-download
+            data-download-place="shared"
+            class="inline-flex h-12 items-center justify-center rounded-full px-7 text-[16px] font-semibold text-ink ring-1 ring-[#d2d2d7] transition ring-inset hover:-translate-y-px hover:ring-ink/40 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-graphite"
+          >
+            <span data-download-label>Download Lamp</span>
+          </a>
+          <p data-next class="text-center text-sm text-muted">{together("Free, for Macs with Apple Silicon and macOS 14 or later")}</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="px-5 pb-8 text-center text-sm text-muted sm:px-8">
+      <a href="/" class="underline decoration-muted/30 underline-offset-4 transition hover:text-ink hover:decoration-ink/50">Lamp</a>{" "}{together("makes software just for you, and lets you remix what others made.")}
+    </footer>
+  </div>
+</Base>
+
+<style>
+  /* Lamp's L in its stripes, small: the one mark of Lamp's own over the wish. */
+  .lamp-mark {
+    clip-path: polygon(0 0, 38% 0, 38% 64%, 100% 64%, 100% 100%, 0 100%);
+    background: linear-gradient(150deg, #1f8a4a 0 16.6%, #7cbf3a 0 33.3%, #f6b81c 0 50%, #f08a1c 0 66.6%, #e2402a 0 83.3%, #d23778 0);
+  }
+</style>
+
+<script>
+  import { askFrom, copyWish, sharedWishLink, withAsk, wishLink } from "../../../lib/wish.js";
+  import { track } from "../../lib/analytics";
+
+  type Shared = { id: string; name: string; about: string; wish: string; picture: string; icon: string; file?: string; shared?: string; play?: string };
+  const json = document.getElementById("shared-wish")?.textContent;
+  // Only ever a shared wish's page: on its own, there's nothing to show.
+  if (!json) location.replace("/ideas");
+  const wish = json ? (JSON.parse(json) as Shared) : null;
+
+  if (wish) {
+    const $ = <T extends Element>(selector: string) => document.querySelector<T>(selector)!;
+    $<HTMLElement>("[data-name]").textContent = wish.name;
+    const about = $<HTMLElement>("[data-about]");
+    about.textContent = wish.about;
+    about.hidden = !wish.about;
+    const icon = $<HTMLImageElement>("[data-icon]");
+    if (wish.icon) { icon.src = wish.icon; icon.hidden = false; }
+
+    if (wish.play) {
+      // The page plays from the link's own host (`playOrigin`), so it can't reach the site or another wish's storage.
+      const stage = $<HTMLElement>("[data-play]");
+      const frame = document.createElement("iframe");
+      frame.src = wish.play;
+      frame.title = wish.name;
+      frame.allow = "fullscreen; gamepad; autoplay; clipboard-write";
+      frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-popups allow-modals allow-downloads");
+      frame.className = "absolute inset-0 size-full border-0 bg-white";
+      stage.prepend(frame);
+      stage.hidden = false;
+      $<HTMLButtonElement>("[data-fullscreen]").addEventListener("click", () => stage.requestFullscreen?.());
+    } else if (wish.picture) {
+      $<HTMLImageElement>("[data-picture]").src = $<HTMLImageElement>("[data-backdrop]").src = wish.picture;
+      $<HTMLImageElement>("[data-picture]").alt = `${wish.name}, as it looks`;
+      $<HTMLElement>("[data-shot]").hidden = false;
+    } else {
+      $<HTMLElement>("[data-stage]").hidden = true;
+    }
+
+    // A request brought by the link (a published page's Remix…) waits in the box.
+    const change = $<HTMLTextAreaElement>("[data-change]");
+    change.value = askFrom(location.search) ?? "";
+    const fit = () => { change.style.height = "auto"; change.style.height = `${change.scrollHeight + 2}px`; };
+    change.addEventListener("input", fit);
+    requestAnimationFrame(fit);
+
+    // A page can't tell whether Lamp is installed, so a Mac gets Open in Lamp beside Download. The exact wish when it
+    // came with the link, so the copy follows it (`Following` in Lamp); else its words.
+    const mac = /Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2;
+    $<HTMLElement>("[data-mac]").hidden = !mac;
+    const open = $<HTMLAnchorElement>("[data-open]");
+    const link = () => (wish.file && wish.shared ? sharedWishLink(wish.shared, change.value) : wishLink(withAsk(wish.wish, change.value))) ?? "/";
+    open.href = link();
+    change.addEventListener("input", () => { open.href = link(); });
+    open.addEventListener("click", () => track("idea_sent", { idea: wish.name, place: "shared" }));
+
+    // Download copies the wish (and the change) with Lamp's mark, for Lamp to find when it first opens.
+    const download = $<HTMLAnchorElement>("[data-download]");
+    const next = $<HTMLElement>("[data-next]");
+    download.addEventListener("click", () => {
+      track("idea_download", { idea: wish.name, place: "shared" });
+      copyWish(withAsk(wish.wish, change.value)).then((copied) => {
+        $<HTMLElement>("[data-download-label]").textContent = "Downloading…";
+        next.textContent = copied === "marked" ? "Open Lamp when it's ready. This wish will be there."
+          : copied === "plain" ? "The wish is copied. Paste it into Lamp when it's ready."
+          : "Copy the wish's name, and ask Lamp for it when it's ready.";
+      });
+    });
+    track("idea_opened", { idea: wish.name, place: "shared" });
+  }
+</script>

@@ -100,15 +100,15 @@ test("without its store or quota it answers unavailable rather than sharing", as
   assert.equal((await send(handler, "POST", share)).status, 503);
 });
 
-test("the page is the ideas page with the shared wish's card, its words escaped, and its own preview", async () => {
+test("the page is the shared wish's own, with the wish in it, its words escaped, and its own preview", async () => {
   const store = memoryStore();
   const { id } = await (await send(createShareHandler({ store, limited: false }), "POST", share)).json();
-  const ideas = `<!DOCTYPE html><html><head><title>Ideas · Lamp</title><meta name="description" content="Ideas"><link rel="canonical" href="https://lamp.dev/ideas"><meta property="og:title" content="Ideas · Lamp"><meta name="twitter:card" content="summary"></head><body><dialog data-wish></dialog></body></html>`;
-  const response = await createPageHandler({ store, template: async () => ideas })(new Request(`https://lamp.dev/api/wish-page?id=${id}`));
+  const built = `<!DOCTYPE html><html><head><title>A wish · Lamp</title><meta name="description" content="A wish made with Lamp."><link rel="canonical" href="https://lamp.dev/w/"><meta property="og:title" content="A wish · Lamp"><meta name="twitter:card" content="summary"></head><body><section data-stage></section></body></html>`;
+  const response = await createPageHandler({ store, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}`));
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.ok(html.includes("<dialog data-wish>"), "the ideas page's card");
-  assert.ok(!html.includes("Ideas · Lamp") && !html.includes('content="summary"'), "the ideas page's own preview is gone");
+  assert.ok(html.includes("<section data-stage>"), "the built page");
+  assert.ok(!html.includes("A wish · Lamp") && !html.includes('content="summary"'), "the built page's own preview is gone");
   assert.ok(html.includes(`<meta property="og:image" content="https://lamp.dev/w/${id}/card.png?v=`));
   assert.ok(html.includes(`<meta name="twitter:card" content="summary_large_image">`));
   const card = JSON.parse(/<script type="application\/json" id="shared-wish">(.*?)<\/script>/.exec(html)[1]);
@@ -117,15 +117,15 @@ test("the page is the ideas page with the shared wish's card, its words escaped,
   assert.ok(!html.includes("<watered>"), "nothing the sharer wrote can close the script");
   assert.equal(response.headers.get("x-robots-tag"), "noindex");
 
-  const gone = await createPageHandler({ store, template: async () => ideas })(new Request("https://lamp.dev/api/wish-page?id=2345678922"));
+  const gone = await createPageHandler({ store, template: async () => built })(new Request("https://lamp.dev/api/wish-page?id=2345678922"));
   assert.equal(gone.status, 404);
 });
 
-test("the ideas page the function serves is the one the site builds", () => {
+test("the page the function serves is the one the site builds", () => {
   const config = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
-  assert.equal(config.functions["api/wish-page.js"].includeFiles, "dist/ideas/index.html");
-  const dialog = readFileSync(new URL("../src/components/WishDialog.astro", import.meta.url), "utf8");
-  assert.ok(dialog.includes('getElementById("shared-wish")'));
+  assert.equal(config.functions["api/wish-page.js"].includeFiles, "dist/w/index.html");
+  const page = readFileSync(new URL("../src/pages/w/index.astro", import.meta.url), "utf8");
+  assert.ok(page.includes('getElementById("shared-wish")'));
 });
 
 test("the card is a 1200×630 PNG, with or without a picture", async () => {
@@ -264,18 +264,16 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   assert.equal((await play(new Request(`https://play.lamp.dev/api/wish-play?id=${id}&v=1&path=index.html`))).status, 404, "only on the link's own host");
   assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=2&path=index.html`))).status, 404, "only the version it has");
 
-  const ideas = "<html><head><title>Ideas</title></head><body></body></html>";
-  const page = await (await createPageHandler({ store, env, template: async () => ideas })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
-  assert.match(page, new RegExp(`<iframe src="https://${own}/w/${id}/play/1/"`));
+  const built = "<html><head><title>A wish</title></head><body></body></html>";
+  const page = await (await createPageHandler({ store, env, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
+  assert.match(page, new RegExp(`"play":"https://${own}/w/${id}/play/1/"`), "it plays from the link's own host, from its folder");
   assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=`))).status, 200, "the folder is its index.html");
   assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=index`))).status, 200, "a .html file by its clean name");
   const folder = await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=dir`));
   assert.match(await folder.text(), new RegExp(`<base href="/w/${id}/play/1/dir/">`), "a folder without its slash keeps its own files in place");
   assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=dir/`))).status, 200);
-  assert.match(page, /data-remix-shared/);
-  assert.match(page, /"play":true/);
-  const without = await (await createPageHandler({ store, env: {}, template: async () => ideas })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
-  assert.doesNotMatch(without, /<iframe/, "with no play host, nothing plays");
+  const without = await (await createPageHandler({ store, env: {}, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
+  assert.doesNotMatch(without, /"play"/, "with no play host, nothing plays");
 
   // The page goes with the wish itself, and one sent again later plays at a new address.
   assert.equal((await send_("", "DELETE")).status, 204);

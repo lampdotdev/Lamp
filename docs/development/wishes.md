@@ -369,9 +369,9 @@ copy is shared as its Share Link with the wish itself included (`WishLink`, SHAR
 the file kept in lamp.dev's Blob store; the card ticks Include the wish itself whenever the wish can go as a file), and
 each Update Link sends the file again, which counts the link's version up. A wish with a page (a web app, a web
 game, a screen: `Publish.hasPage`) sends that too (`WishLink.playablePage`, the page Put on GitHub builds, which
-stays as it is), and its link opens on it, playing, with Remix… in a bar under it: whoever has the link tries the
-wish first and remixes it after (SHARED_WISHES.md). The version is what followers ask for (`latest` in
-lib/shared-wishes.js, `GET /api/wishes?id=`, `WishLink.latest`). The card's "Or open this exact one in Lamp" is `lamp://wish?shared=<id>`
+stays as it is), and its link's page opens on it, playing, with the ways to make one's own under it: whoever has the
+link tries the wish first and remixes it after (SHARED_WISHES.md). The version is what followers ask for (`latest` in
+lib/shared-wishes.js, `GET /api/wishes?id=`, `WishLink.latest`). The page's Open in Lamp is `lamp://wish?shared=<id>`
 (`sharedWishLink` in lib/wish.js, `Wish.Shared`): Lamp asks for the file's latest, fetches it and reviews it as any shared
 file (`Store.takeShared`), and the copy it makes follows that link, marked as the one it started from, at the version it
 arrived as (`finishImport`, `Following.brought`).

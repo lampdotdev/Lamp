@@ -4,12 +4,12 @@ Lamp's Share Wish menu has **Share Link…**: the person reviews what the link w
 its words and, if they keep it, a picture of the app, which they can leave out or take again), and Copy Link puts it
 on lamp.dev and copies `https://lamp.dev/w/<id>`. Whoever opens the link makes their own version from the words. If the
 person ticks **Include the wish itself**, the wish's shared file (`<name>.lampapp`, made as Share… makes it, with its
-license and key checks) goes too, and the page offers that exact wish to anyone with Lamp ("Or open this exact one in Lamp", on a Mac), which reviews it
+license and key checks) goes too, and the page offers that exact wish to anyone with Lamp (Open in Lamp, on a Mac), which reviews it
 before it opens, as any shared file, and makes a copy that follows the link. Never the chat or the app's data.
 
-- The wish to play (`/w/<id>` for a wish sent with its page): a web app, a web game or a screen fills the page, so
-  whoever opens the link tries it first, with a slim bar under it (its name, its line, **Remix…**, which opens the card
-  below over it). Lamp sends the page with the wish's file (`WishLink.playablePage`: the page Put on GitHub puts on
+- The wish to play (`/w/<id>` for a wish sent with its page): a web app, a web game or a screen plays at the top of
+  the link's page, nearly as tall as the window, with a button for full screen, so whoever opens the link tries it
+  first. Lamp sends the page with the wish's file (`WishLink.playablePage`: the page Put on GitHub puts on
   GitHub Pages, what it saves kept under the link), zipped, in parts to `api/wish-file.js` with `what=page`; the site
   unpacks it (`readPage`: index.html at its root, never a link or a path that steps up, at most 3,000 files) into Blob,
   each version in a folder of its own, and drops the last one. Blob hands HTML out as a download and refuses frames, so
@@ -17,14 +17,17 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   own host under the play host (`playOrigin`: `<id in hex>.play.lamp.dev`), so one shared page can never read what
   another saved in the browser, and never on lamp.dev itself; framed only by the site (`frame-ancestors`). A page's
   version counts up for the link (`pageVersion`), so an address never plays two different pages. The page goes with
-  the wish's file: taking the file away takes the page too. Without a play host, the card shows as before.
-- The page (`/w/<id>`, `lib/shared-wish-page.js`, served by `api/wish-page.js` through a rewrite in `vercel.json`):
-  the ideas page with the shared wish's card open on it, the same card (`WishDialog.astro`) the
-  ideas page's wishes open in, so it has their Download Lamp (which copies the wish with Lamp's mark, FIRST_IDEA.md)
-  and, on a Mac, their "Already have Lamp? Open it with this wish" (`lamp://wish?text=…`), which waits for the click
-  as theirs does. Closed, it leaves the visitor among more ideas. The function serves the built ideas page
-  (`dist/ideas/index.html`, bundled with it by `includeFiles`) with the wish in `#shared-wish` and its own title,
-  description and preview tags in place of the ideas page's; `npm run dev` gives it its own server's ideas page.
+  the wish's file: taking the file away takes the page too. Without a play host, the page shows the wish's picture.
+- The page (`/w/<id>`, `src/pages/w/index.astro` filled by `lib/shared-wish-page.js`, served by `api/wish-page.js`
+  through a rewrite in `vercel.json`): a page of the wish's own, about the thing someone made, with Lamp only a small
+  mark at the top ("Made with Lamp", and Get Lamp) and a line at the bottom. The wish fills the top, playing or as its
+  picture on a blurred copy of itself; under it its icon, name and what it does, and the ways to make one's own: a box
+  for what to change, **Open in Lamp** on a Mac (`lamp://wish?shared=<id>` with the change, so the copy follows the
+  link, or `lamp://wish?text=…` for a link without the wish's file), and **Download Lamp**, which copies the wish and
+  the change with Lamp's mark (FIRST_IDEA.md). A request the link brought (`?ask=`) waits in the box. The function
+  serves the built page (`dist/w/index.html`, bundled with it by `includeFiles`) with the wish in `#shared-wish`
+  (its play address in `play`) and its own title, description and preview tags in place of the built page's; `npm run
+  dev` gives it its own server's. On its own, `/w/` goes to the ideas page.
 - The preview card (`/w/<id>/card.png`, `lib/wish-card.js`, `api/wish-card.js`): 1200×630, drawn by `@vercel/og`
   with Geist (`lib/fonts`, SIL Open Font License) on the first-idea section's night sky. The page names it in
   `og:image` and `twitter:image` with Twitter's large card.
@@ -36,7 +39,7 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
 - Following (`GET /api/wishes?id=`, `latest` in `lib/shared-wishes.js`): public, with no quota, for the Lamps that
   follow a link: `{format: 1, id, name, version, file}`, the file's version counting up each time it's sent again
   (Update Link), 0 with no file. The count is the link's (`fileVersion`), so a file taken away and sent again later is
-  still newer than any before. The page's "Or open this exact one in Lamp" is `lamp://wish?shared=<id>`
+  still newer than any before. The page's Open in Lamp is `lamp://wish?shared=<id>`
   (`sharedWishLink` in `lib/wish.js`): Lamp asks this for the file, and the copy it makes follows the link
   (`Following` in Lamp).
 - The API Lamp talks to (`api/wishes.js`, `lib/shared-wishes.js`): `POST` shares and answers `{id, url, secret}`;

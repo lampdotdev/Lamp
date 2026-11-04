@@ -39,7 +39,9 @@ buttons (Open in Lamp in ink, on a Mac; Download for Mac in the stripes' yellow)
 installed, so Open in Lamp watches whether Lamp answered: if the browser keeps its focus for two seconds, the
 dialog turns to getting Lamp, with Download first, and turns back should Lamp open late. Closed, it takes its
 parameters out of the address, so a reload doesn't bring it back. The ideas page keeps its own card
-(`WishDialog.astro`). The ideas page's Download buttons (`DownloadButton.astro`, in its first-idea section and opened wishes) are the
+(`WishDialog.astro`). A wish shared as a link has a page of its own (`src/pages/w/index.astro`, SHARED_WISHES.md),
+plain white rather than the homepage's paper and tapes, with Lamp only a small striped L and "Made with Lamp" at the top
+and a line at the bottom: the page is about the thing someone made, as big as the window allows. The ideas page's Download buttons (`DownloadButton.astro`, in its first-idea section and opened wishes) are the
 lamp's bright orange with white words, about 3:1 at their lightest, a faint shadow under the words. That trade-off
 was weighed and accepted: the brightness is the point of the button, and the label is large, bold and the same
 wherever it appears. About 3:1 is the floor for those buttons, so a change that goes below it is a regression;
