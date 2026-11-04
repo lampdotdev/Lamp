@@ -54,6 +54,12 @@ enum GitHubRelease {
         var errorDescription: String? { message }
     }
 
+    /// The code went up but GitHub's release of it didn't: said as such, since the repository has the update.
+    struct TagFailure: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
     /// Whether the wish is on GitHub and can be released there: one Lamp put up (`GitHubRepo.kept`), or the person's own
     /// repository it was opened from. Nil for a wish that isn't on GitHub, which Put on GitHub… puts there first.
     static func find(_ project: LampProject) async -> Found? {
@@ -97,14 +103,14 @@ enum GitHubRelease {
                                             mergeErrors: false, timeout: 60)
         if existing.ok, let at = existing.output.split(whereSeparator: \.isWhitespace).first.map(String.init) {
             guard at == commit else {
-                throw Failure(message: "The code is on GitHub, but \(repo) already has a tag \(version.tag) on another commit, so no release was made.")
+                throw TagFailure(message: "\(repo) already has a tag \(version.tag) on another commit, so no release was made.")
             }
             return
         }
         let made = await Subprocess.run(gh, ["release", "create", version.tag, "--repo", repo, "--target", commit,
                                              "--title", version.tag, "--notes", version.notes], timeout: 60)
         guard made.ok else {
-            throw Failure(message: "The code is on GitHub, but its release \(version.tag) couldn't be made: \(made.output.trimmed.suffix(200))")
+            throw TagFailure(message: "GitHub didn't make release \(version.tag): \(made.output.trimmed.suffix(200))")
         }
     }
 }

@@ -579,7 +579,9 @@ enum WishLink {
             settled()
             cards[id]?.gitHubRetry = version
             // Said plainly, apart from the link, which works whatever happened here.
-            cards[id]?.gitHubStage = .failed("The link is updated, but \(target.repo) on GitHub isn't: \(Self.problem(error))")
+            cards[id]?.gitHubStage = .failed(error is GitHubRelease.TagFailure
+                ? "The link and \(target.repo) are updated, but \(Self.problem(error))"
+                : "The link is updated, but \(target.repo) on GitHub isn't: \(Self.problem(error))")
         }
     }
 
