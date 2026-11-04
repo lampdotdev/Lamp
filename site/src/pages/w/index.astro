@@ -48,7 +48,16 @@ import { together } from "../../lib/text";
           </div>
         </div>
 
-        <div class="flex flex-col gap-3 rounded-[10px] border-2 border-tape bg-[#f7f2e3] p-5">
+        <!-- A slab with real thickness, as the homepage's remix dialog is (RemixDialog.astro): its face is the panel,
+             with a back and four edges behind it in 3D, leaning a little toward the pointer. -->
+        <div class="make-host">
+        <div data-slab class="make-slab">
+        <div class="make-back" aria-hidden="true"></div>
+        <div class="make-edge make-edge-top" aria-hidden="true"></div>
+        <div class="make-edge make-edge-bottom" aria-hidden="true"></div>
+        <div class="make-edge make-edge-left" aria-hidden="true"></div>
+        <div class="make-edge make-edge-right" aria-hidden="true"></div>
+        <div class="make-face flex flex-col gap-3 p-5">
           <h2 id="make-own" class="text-[1.375rem] leading-tight font-black tracking-[-0.02em]">Make this your own using Lamp</h2>
           <!-- On a Mac: Lamp opens this wish (the exact one, when it came with the link), with what to change in its box. -->
           <div data-mac hidden class="flex flex-col gap-3">
@@ -68,6 +77,8 @@ import { together } from "../../lib/text";
             <span data-download-label>Download Lamp</span>
           </a>
           <p data-next class="text-center text-sm text-[#4a463c]">{together("Free, for Macs with Apple Silicon and macOS 14 or later")}</p>
+        </div>
+        </div>
         </div>
       </section>
     </main>
@@ -91,13 +102,40 @@ import { together } from "../../lib/text";
     background: linear-gradient(180deg, #1f8a4a 0 16.6%, #7cbf3a 0 33.3%, #f6b81c 0 50%, #f08a1c 0 66.6%, #e2402a 0 83.3%, #d23778 0);
   }
 
-  /* A playing page's frame: 16:9, the stage a web game is drawn on (the web-game skill), so a game fills it without
-     bars of its own, as wide as the page allows and no taller than the window leaves room for. A page can't say its
-     shape from inside its frame, and the wish's picture is its Mac window's, so neither decides it. */
+  /* A playing page's frame, in the shape Lamp sent with the link (`shape`, its width over its height, as --shape),
+     so the page fills it without bars of its own, as wide as the page allows and no taller than the window leaves room
+     for; a page that takes any shape ("fill") fills that room. A page can't say its shape from inside its frame, and
+     the wish's picture is its Mac window's, so neither decides it. A link that didn't say gets 16:9, the stage a web
+     game is drawn on (the web-game skill). */
   .play-frame {
     --room: max(12rem, calc(100dvh - 12rem));
-    width: min(100%, 100rem, calc(var(--room) * 16 / 9)); aspect-ratio: 16 / 9;
+    --shape: 16 / 9;
+    width: min(100%, 100rem, calc(var(--room) * var(--shape))); aspect-ratio: var(--shape);
   }
+  .play-frame.fills { width: min(100%, 100rem); height: max(22rem, calc(100dvh - 12rem)); aspect-ratio: auto; }
+
+  /* The slab, as the remix dialog's: it rests turned a little, so its thickness shows, and leans further as --lean-x
+     and --lean-y say (the pointer, from the script). */
+  .make-host { --depth: 22px; perspective: 1800px; }
+  .make-slab {
+    position: relative; transform-style: preserve-3d;
+    transform: rotateX(calc(3deg + var(--lean-x, 0deg))) rotateY(calc(-6deg + var(--lean-y, 0deg)));
+    transition: transform 0.35s ease-out;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .make-slab { transform: none; transition: none; }
+  }
+  .make-face { position: relative; border-radius: 3px; background: #f7f2e3; transform: translateZ(0); }
+  .make-back {
+    position: absolute; inset: 0; border-radius: 3px; background: var(--color-tape);
+    transform: translateZ(calc(-1 * var(--depth))); box-shadow: 0 40px 80px -20px rgb(0 0 0 / 0.5);
+  }
+  /* Each edge stands out of the face's own edge and runs back to the back, lit from above. */
+  .make-edge { position: absolute; background: #2e2a24; }
+  .make-edge-top { top: 0; left: 0; width: 100%; height: var(--depth); transform-origin: top; transform: rotateX(-90deg); background: #4a443b; }
+  .make-edge-bottom { bottom: 0; left: 0; width: 100%; height: var(--depth); transform-origin: bottom; transform: rotateX(90deg); background: #14130f; }
+  .make-edge-left { top: 0; left: 0; width: var(--depth); height: 100%; transform-origin: left; transform: rotateY(90deg); }
+  .make-edge-right { top: 0; right: 0; width: var(--depth); height: 100%; transform-origin: right; transform: rotateY(-90deg); }
 
   /* The homepage's buttons: ink with paper-colored words, or outlined in ink. */
   .shared-button {
@@ -114,7 +152,7 @@ import { together } from "../../lib/text";
   import { askFrom, copyWish, sharedWishLink, withAsk, wishLink } from "../../../lib/wish.js";
   import { track } from "../../lib/analytics";
 
-  type Shared = { id: string; name: string; by?: string; ideas?: string[]; about: string; wish: string; picture: string; icon: string; file?: string; shared?: string; play?: string };
+  type Shared = { id: string; name: string; by?: string; ideas?: string[]; about: string; wish: string; picture: string; icon: string; file?: string; shared?: string; play?: string; shape?: number | "fill" };
   const json = document.getElementById("shared-wish")?.textContent;
   // Only ever a shared wish's page: on its own, there's nothing to show.
   if (!json) location.replace("/ideas");
@@ -143,6 +181,8 @@ import { together } from "../../lib/text";
       frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-popups allow-modals allow-downloads");
       frame.className = "absolute inset-0 size-full border-0 bg-white";
       stage.prepend(frame);
+      if (wish.shape === "fill") stage.classList.add("fills");
+      else if (typeof wish.shape === "number" && wish.shape > 0.2 && wish.shape < 5) stage.style.setProperty("--shape", String(wish.shape));
       stage.hidden = false;
       $<HTMLButtonElement>("[data-fullscreen]").addEventListener("click", () => stage.requestFullscreen?.());
     } else if (wish.picture) {
@@ -199,5 +239,19 @@ import { together } from "../../lib/text";
       });
     });
     track("idea_opened", { idea: wish.name, place: "shared" });
+
+    // The panel leans toward the pointer, as the remix dialog does: turned toward it across, tipped back from it up and
+    // down, by how far it is from the panel's middle (half a window away at most).
+    const slab = $<HTMLElement>("[data-slab]");
+    if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      addEventListener("pointermove", (event) => {
+        const box = slab.getBoundingClientRect();
+        const clamp = (v: number) => Math.max(-1, Math.min(1, v));
+        const x = clamp((event.clientX - (box.left + box.width / 2)) / (innerWidth / 2));
+        const y = clamp((event.clientY - (box.top + box.height / 2)) / (innerHeight / 2));
+        slab.style.setProperty("--lean-x", `${(y * 7).toFixed(2)}deg`);
+        slab.style.setProperty("--lean-y", `${(x * 9).toFixed(2)}deg`);
+      }, { passive: true });
+    }
   }
 </script>

@@ -9,7 +9,8 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
 
 - The wish to play (`/w/<id>` for a wish sent with its page): a web app, a web game or a screen (the wish's own, or its
   one app's when that's in a part of its own, `Publish.pageApp`) plays at the top of
-  the link's page, as large as the window allows in the 16:9 a web game is drawn in, with a button for full screen, so whoever opens the link tries it
+  the link's page, as large as the window allows in the shape Lamp sends with it (`shape` in the page's JSON: its width
+  over its height, or `"fill"` for a page that takes any shape; without one, the 16:9 a web game is drawn in), with a button for full screen, so whoever opens the link tries it
   first. Lamp sends the page with the wish's file (`WishLink.playablePage`: the page Put on GitHub puts on
   GitHub Pages, what it saves kept under the link), zipped, in parts to `api/wish-file.js` with `what=page`; the site
   unpacks it (`readPage`: index.html at its root, never a link or a path that steps up, at most 3,000 files) into Blob,
@@ -22,7 +23,7 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
 - The page (`/w/<id>`, `src/pages/w/index.astro` filled by `lib/shared-wish-page.js`, served by `api/wish-page.js`
   through a rewrite in `vercel.json`): a page of the wish's own, about the thing someone made, on the homepage's paper,
   with Lamp only "Made with Lamp" at the top ("Learn more" beside it) and the bottom. The wish fills the top, playing
-  or as its picture, only as big as it is (a page that plays is 16:9, a web game's stage: it can't say its shape
+  or as its picture, only as big as it is (a page that plays takes the shape sent with it: it can't say its shape
   from inside its frame, and the picture is of its Mac window); under it its icon, name, who it's by and what it does, and the ways to make one's own: a box
   for what to change with the changes Lamp suggests for it above it (`RemixSuggestions`, sent with the link; one puts its
   words in the box), **Open in Lamp** on a Mac (`lamp://wish?shared=<id>` with the change, so the copy follows the
