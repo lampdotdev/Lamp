@@ -229,6 +229,72 @@ final class GitHubRepoTests: XCTestCase {
         return pushed
     }
 
+    /// A release on the link updates the repository too (`GitHubRelease`): its what's-new lines are the commit's message,
+    /// and the release GitHub gets is tagged with its version at that commit, with the lines as its notes. A try again
+    /// after a later step failed finds the tag there on the same commit, and makes no second release.
+    func testAReleaseIsTheCommitsMessageAndATaggedRelease() async throws {
+        let fm = FileManager.default
+        let place = root.appendingPathComponent(UUID().uuidString)
+        try fm.createDirectory(at: place, withIntermediateDirectories: true)
+        let bare = place.appendingPathComponent("tally.git")
+        XCTAssertEqual(TestShell.run("git init -q --bare -b main \(Sandbox.quoted(bare.path))").status, 0)
+        let gh = place.appendingPathComponent("gh")
+        // GitHub's release, as a tag in the bare repository; every call is written down.
+        try """
+        #!/bin/zsh
+        print -r -- "$*" >> "$0.calls"
+        [[ "$1 $2" == "repo view" ]] && echo PRIVATE
+        [[ "$1 $2" == "release create" ]] && git --git-dir \(Sandbox.quoted(bare.path)) tag "$3" "$7"
+        exit 0
+        """.write(to: gh, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: gh.path)
+        let surroundings = ["GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_COUNT": "1",
+                            "GIT_CONFIG_KEY_0": "url.\(bare.absoluteString).insteadOf",
+                            "GIT_CONFIG_VALUE_0": "https://github.com/someone/tally.git"]
+        for (name, value) in surroundings { setenv(name, value, 1) }
+        let keptURL = GitHubRepo.keptURL
+        GitHubRepo.keptURL = place.appendingPathComponent("kept.json")
+        defer {
+            for name in surroundings.keys { unsetenv(name) }
+            GitHubRepo.keptURL = keptURL
+        }
+
+        let wish = try Template.scaffold(name: "Tally", platform: .mac, in: place)
+        try Template.writeOwnedFiles(for: wish)
+        func put(isNew: Bool, release: GitHubRelease.Version? = nil) async throws -> GitHubRepo.Repo {
+            let staged = try GitHubRepo.stage(wish, repo: "someone/tally", link: nil, isPublic: false)
+            defer { try? fm.removeItem(at: staged.folder.deletingLastPathComponent()) }
+            let up = try await GitHubRepo.upload(staged, of: wish, to: "someone/tally", gh: gh.path, login: "someone", isNew: isNew,
+                                                 expected: GitHubRepo.kept(for: wish)?.commit, isPrivate: true, license: false,
+                                                 release: release) { _ in }
+            GitHubRepo.keep(up.repo, for: wish)
+            return up.repo
+        }
+        _ = try await put(isNew: true)
+        try "Counts by twos now\n".write(to: wish.dir.appendingPathComponent("APP.md"), atomically: true, encoding: .utf8)
+        let release = GitHubRelease.Version(number: 2, lines: ["Counts by twos now", "Bigger numbers"])
+        let released = try await put(isNew: false, release: release)
+
+        let message = TestShell.run("git --git-dir \(Sandbox.quoted(bare.path)) log -1 --format=%B main")
+        XCTAssertEqual(message.output.trimmingCharacters(in: .whitespacesAndNewlines), "Counts by twos now\nBigger numbers")
+        let tagged = TestShell.run("git --git-dir \(Sandbox.quoted(bare.path)) rev-parse v2^{commit}")
+        XCTAssertEqual(tagged.output.trimmingCharacters(in: .whitespacesAndNewlines), released.commit)
+        let calls = try String(contentsOf: URL(fileURLWithPath: gh.path + ".calls"), encoding: .utf8)
+        XCTAssertTrue(calls.contains("release create v2 --repo someone/tally --target \(released.commit ?? "")"), calls)
+        XCTAssertTrue(calls.contains("--notes - Counts by twos now\n- Bigger numbers"), calls)
+
+        // Tried again (the page failed after the release, say): the tag is there on that commit, so nothing more is made.
+        try await GitHubRelease.tag(release, of: "someone/tally", at: released.commit ?? "", gh: gh.path)
+        let again = try String(contentsOf: URL(fileURLWithPath: gh.path + ".calls"), encoding: .utf8)
+        XCTAssertEqual(again.components(separatedBy: "release create").count, 2, again)
+
+        // A tag made by hand is often annotated: its own object, on the same commit, is still this release's.
+        XCTAssertEqual(TestShell.run("git --git-dir \(Sandbox.quoted(bare.path)) -c user.name=x -c user.email=x@x tag -a v3 -m v3 \(released.commit ?? "")").status, 0)
+        try await GitHubRelease.tag(GitHubRelease.Version(number: 3, lines: []), of: "someone/tally", at: released.commit ?? "", gh: gh.path)
+        let annotated = try String(contentsOf: URL(fileURLWithPath: gh.path + ".calls"), encoding: .utf8)
+        XCTAssertFalse(annotated.contains("release create v3"), annotated)
+    }
+
     /// An account's own site (owner.github.io, in any case) is served at the account's root; any other repository's
     /// page under its name.
     func testAnAccountSitesPageIsAtTheRoot() {

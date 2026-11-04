@@ -61,6 +61,14 @@ enum GitHubRepo {
 
     static func kept(for project: LampProject) -> Repo? { readKept()[key(project)] }
 
+    /// The wish is on GitHub: a repository Lamp made and pushed it to. One made by a first Put on GitHub that failed
+    /// before anything went up has no commit yet, and stays Put on GitHub's to finish; a record from a Lamp before
+    /// commits were kept had no license kept either, and is up.
+    static func isUp(_ project: LampProject) -> Bool {
+        guard let kept = kept(for: project) else { return false }
+        return kept.commit != nil || kept.license == nil
+    }
+
     static func keep(_ repo: Repo, for project: LampProject) {
         var all = readKept()
         all[key(project)] = repo
@@ -484,8 +492,12 @@ enum GitHubRepo {
     /// `expected` is the commit the repository must be at for the wish to go over it: the one Lamp last pushed, or for
     /// the person's own repository the wish was opened from, the one it was opened at. A repository that has moved on
     /// since is refused rather than overwritten (a push of a commit on top of its tip would quietly undo what's there).
+    /// `release` is a release of the wish's (Release Update, `GitHubRelease`): its lines are the commit's message, and once
+    /// the code is up it's made a release of the repository's too, tagged with its version, before the page goes up.
+    /// `pushed` hears when everything is up and only GitHub's building of the page is left to wait for.
     static func upload(_ staged: Staged, of project: LampProject, to repo: String, gh: String, login: String, isNew: Bool, expected: String? = nil,
                        isPrivate: Bool, license: Bool, picture: Bool? = nil, authors shown: [Author]? = nil,
+                       release: GitHubRelease.Version? = nil, pushed: @escaping @Sendable () -> Void = {},
                        step: @escaping @Sendable (String) -> Void) async throws -> (repo: Repo, changed: Bool) {
         let fm = FileManager.default
         let url = url(repo)
@@ -577,28 +589,36 @@ enum GitHubRepo {
             }
             if changed {
                 let author = try await author(login: login, git: git, in: clone)
-                _ = try await commit(["commit", "-q", "-m", "Update \(project.name) from Lamp"], as: author, shown: shown, git: git, in: clone)
+                let message = release?.message ?? "Update \(project.name) from Lamp"
+                _ = try await commit(["commit", "-q", "-m", message], as: author, shown: shown, git: git, in: clone)
             }
             work = clone
         }
         if changed {
-            step("Uploading…")
+            step("Uploading to GitHub…")
             let pushed = await Subprocess.run(git, signedIn + ["push", "-q", remote, "HEAD:\(branch)"], cwd: work, timeout: 600)
             guard pushed.ok else { throw Failure(message: "GitHub didn't take it: \(pushed.output.trimmed.suffix(200))") }
         }
         var record = Repo(repo: repo, url: url, license: license, commit: await head(git, in: work),
                           isPublic: await isPublic(repo, gh: gh), version: staged.version, page: kept(for: project)?.page, picture: picture)
+        if let release, let commit = record.commit {
+            // Kept first: the code is up whatever happens to the release.
+            keep(record, for: project)
+            step("Making release \(release.tag) on GitHub…")
+            try await GitHubRelease.tag(release, of: repo, at: commit, gh: gh)
+        }
         // A site is served from the main branch as it is: Pages turned on for it, and waited for.
         if let site = staged.site, record.isPublic == true, let commit = record.commit {
             keep(record, for: project)
+            pushed()
             try await Publish.servePage(repo, commit: commit, changed: changed, gh: gh, branch: branch, step: step)
             record.page = site
             return (record, changed || kept(for: project)?.page != site)
         }
-        guard let page = staged.page, record.isPublic == true, let commit = record.commit else { return (record, changed) }
+        guard let page = staged.page, record.isPublic == true, let commit = record.commit else { pushed(); return (record, changed) }
         keep(record, for: project)
         // The page's Open in Lamp and Remix… start from the code just pushed with it, which is the game it plays.
-        step("Putting up its page…")
+        step("Putting up its page on GitHub…")
         let open = Publish.OpenInLamp(link: page.link, file: nil, origin: .repository(url: url, commit: commit))
         try Data(Publish.withCreditBar(page.html, credits: page.credits, open: open, suggestions: page.suggestions,
                                        name: project.name, about: page.about).utf8)
@@ -607,10 +627,11 @@ enum GitHubRepo {
         var chain = page.chain
         if let last = chain.remixOf.indices.last, chain.remixOf[last].url == url { chain.remixOf[last].commit = commit }
         try chain.encoded().write(to: page.folder.appendingPathComponent(Credits.file))
-        let pushed = try await Publish.pushPage(page.folder, to: repo, gh: gh, login: login, authors: shown, message: "\(project.name)'s page, from Lamp")
-        try await Publish.servePage(repo, commit: pushed.commit, changed: pushed.changed, gh: gh, step: step)
+        let pagePushed = try await Publish.pushPage(page.folder, to: repo, gh: gh, login: login, authors: shown, message: "\(project.name)'s page, from Lamp")
+        pushed()
+        try await Publish.servePage(repo, commit: pagePushed.commit, changed: pagePushed.changed, gh: gh, step: step)
         record.page = page.url
-        return (record, changed || pushed.changed || kept(for: project)?.page != page.url)
+        return (record, changed || pagePushed.changed || kept(for: project)?.page != page.url)
     }
 
     /// Copies `item` to `to`, a folder into what's there already, file by file.
@@ -679,6 +700,20 @@ enum GitHubRepo {
     /// `staged.folder` on main for a new repository or in a clone beside it on the repository's branch for one that's
     /// up, and a page's in its folder on the page branch. What the card shows, before anything goes.
     static func authors(for staged: Staged, repo: String, isNew: Bool, gh: String, login: String) async throws -> [Author] {
+        try await authors(repo: repo, isNew: isNew, code: staged.folder, page: staged.page?.folder, gh: gh, login: login)
+    }
+
+    /// Who a release's commits to a repository that's up are made as (`GitHubRelease`), found in folders of their own
+    /// set up as `upload`'s will be, so the release card says it before anything goes.
+    static func authors(releasingTo repo: String, withPage: Bool, gh: String, login: String) async throws -> [Author] {
+        let work = Sharing.workFolder.appendingPathComponent("lamp-github-authors-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: work) }
+        let code = work.appendingPathComponent("repo"), page = work.appendingPathComponent("page")
+        for folder in [code, page] { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+        return try await authors(repo: repo, isNew: false, code: code, page: withPage ? page : nil, gh: gh, login: login)
+    }
+
+    private static func authors(repo: String, isNew: Bool, code: URL, page: URL?, gh: String, login: String) async throws -> [Author] {
         let git = git
         func ready(_ folder: URL, branch: String, remote: String?) async throws -> URL {
             for arguments in [["init", "-q", "-b", branch]] + (remote.map { [["remote", "add", "origin", $0]] } ?? []) {
@@ -689,10 +724,10 @@ enum GitHubRepo {
         }
         var authors: [Author] = []
         if isNew {
-            authors.append(try await author(login: login, git: git, in: try await ready(staged.folder, branch: "main", remote: nil)))
+            authors.append(try await author(login: login, git: git, in: try await ready(code, branch: "main", remote: nil)))
         } else {
             // `upload` clones it here, which replaces this.
-            let clone = staged.folder.deletingLastPathComponent().appendingPathComponent("clone")
+            let clone = code.deletingLastPathComponent().appendingPathComponent("clone")
             try? FileManager.default.removeItem(at: clone)
             try FileManager.default.createDirectory(at: clone, withIntermediateDirectories: true)
             let branch = await Subprocess.run(gh, ["repo", "view", repo, "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"], mergeErrors: false, timeout: 30)
@@ -700,10 +735,10 @@ enum GitHubRepo {
             authors.append(try await author(login: login, git: git, in: try await ready(clone, branch: name, remote: "https://github.com/\(repo).git")))
             try? FileManager.default.removeItem(at: clone)
         }
-        if let page = staged.page {
+        if let page {
             // `pushPage` starts its own afresh here.
-            authors.append(try await author(login: login, git: git, in: try await ready(page.folder, branch: Publish.pageBranch, remote: nil)))
-            try? FileManager.default.removeItem(at: page.folder.appendingPathComponent(".git"))
+            authors.append(try await author(login: login, git: git, in: try await ready(page, branch: Publish.pageBranch, remote: nil)))
+            try? FileManager.default.removeItem(at: page.appendingPathComponent(".git"))
         }
         return authors
     }
@@ -753,7 +788,16 @@ enum GitHubRepo {
         ["-c", "credential.helper=", "-c", "credential.helper=!\(gh) auth git-credential"]
     }
 
-    /// The commit a work folder is at, as the credits take one.
+    /// Keeps what went up, and passes it on: the repository's website, and the chat beside each installed app, which
+    /// names the repository and commit for a remix (`Sidebar.install`).
+    @MainActor static func settle(_ kept: Repo, before: Repo?, of project: LampProject, gh: String) async {
+        keep(kept, for: project)
+        if kept.isPublic == true { await offerWebsite(kept.repo, page: kept.page, gh: gh) }
+        if before?.repo != kept.repo || before?.commit != kept.commit || before?.isPublic != kept.isPublic || before?.version != kept.version {
+            for app in Store.shared.apps(of: project) { Store.shared.refreshInstalled(app) }
+        }
+    }
+
     /// A public repository with no website of its own gets one, which GitHub shows beside its description: a game's page
     /// once it's up (in place of the remix link Lamp set before it had one), else the remix link. One the person set is
     /// never changed.
@@ -780,7 +824,7 @@ enum GitHubRepo {
         let head = await Subprocess.run(git, signedIn(gh: gh) + ["ls-remote", "https://github.com/\(repo).git", "HEAD"], mergeErrors: false, timeout: 60)
         let now = head.output.split(whereSeparator: \.isWhitespace).first.map(String.init)
         let behind = head.ok && now != nil && now != origin.commit
-            ? "\(repo) has changes on GitHub that \(project.name) doesn't have yet. Check for Updates… first, then put it on GitHub." : nil
+            ? "\(repo) has changes on GitHub that \(project.name) doesn't have yet. Check for Updates… first, then try again." : nil
         return (repo, isPublic, origin.commit, behind)
     }
 
@@ -810,9 +854,6 @@ enum GitHubRepo {
         var gh: String?
         var staged: GitHubRepo.Staged?
         var kept: GitHubRepo.Repo?
-        /// The repository is the person's own one the wish was opened from (`ownOrigin`): it's put back there as an
-        /// update, adding no license, though Lamp has no record of putting it up.
-        var existing = false
         /// The commit the repository must still be at when it goes up (`upload`'s `expected`).
         var expected: String?
         var copied = false
@@ -848,6 +889,8 @@ enum GitHubRepo {
 
     func open(_ project: LampProject, canShowPicture: Bool = true) {
         guard cards[project.id] == nil else { return }
+        // Once it's up, a release updates it, with what's new and on its link too (`GitHubRelease`).
+        if GitHubRepo.isUp(project) { return WishLinkCards.shared.open(project) }
         let kept = GitHubRepo.kept(for: project)
         let picture = canShowPicture ? WishLink.picture(of: project) : nil
         cards[project.id] = Card(kept: kept, license: kept.map { $0.license ?? false } ?? true, picture: picture,
@@ -877,14 +920,10 @@ enum GitHubRepo {
                 cards[project.id]?.expected = kept.commit
                 repo = known
                 isPublic = await GitHubRepo.isPublic(known, gh: gh) ?? false
-            } else if let own = await GitHubRepo.ownOrigin(of: project, login: login, gh: gh) {
-                // Never over commits there the wish hasn't taken: they'd be lost.
-                if let behind = own.behind { return set(project, .refused(behind)) }
-                repo = own.repo
-                isPublic = own.isPublic
-                cards[project.id]?.existing = true
-                cards[project.id]?.expected = own.commit
-                cards[project.id]?.license = false
+            } else if await GitHubRepo.ownOrigin(of: project, login: login, gh: gh) != nil {
+                // The person's own repository it came from is where it's on GitHub already: a release puts it back there.
+                close(project)
+                return WishLinkCards.shared.open(project)
             } else {
                 repo = await Publish.freeName(for: project, login: login, gh: gh)
                 isNew = true
@@ -910,7 +949,7 @@ enum GitHubRepo {
                 cards[project.id]?.repo = repo
                 cards[project.id]?.staged = staged
                 cards[project.id]?.isPublic = isPublic
-                if cards[project.id]?.kept == nil, cards[project.id]?.existing != true, !GitHubRepo.canOfferLicense(staged.credits) { cards[project.id]?.license = false }
+                if cards[project.id]?.kept == nil, !GitHubRepo.canOfferLicense(staged.credits) { cards[project.id]?.license = false }
                 cards[project.id]?.stage = .ready
             } catch {
                 set(project, .refused(((error as? LocalizedError)?.recoverySuggestion).map { "\(error.localizedDescription) \($0)" } ?? error.localizedDescription))
@@ -951,7 +990,7 @@ enum GitHubRepo {
         guard let card = cards[project.id], card.canPut, let staged = card.staged, let repo = card.repo,
               let gh = card.gh, let login = card.login else { return }
         // A first try that made the repository before failing kept it (`upload`): this goes on with it.
-        let isNew = !card.existing && (card.kept ?? GitHubRepo.kept(for: project))?.repo != repo
+        let isNew = (card.kept ?? GitHubRepo.kept(for: project))?.repo != repo
         set(project, .working("Starting…"))
         let before = GitHubRepo.kept(for: project)
         Task {
@@ -965,12 +1004,7 @@ enum GitHubRepo {
                     Task { @MainActor in GitHubRepoCards.shared.cards[id]?.stage = .working(step) }
                 }
                 let (kept, changed) = uploaded
-                GitHubRepo.keep(kept, for: project)
-                // The chat beside the installed app names the repository and commit for a remix (`Sidebar.install`).
-                if kept.isPublic == true { await GitHubRepo.offerWebsite(kept.repo, page: kept.page, gh: gh) }
-                if before?.repo != kept.repo || before?.commit != kept.commit || before?.isPublic != kept.isPublic || before?.version != kept.version {
-                    for app in Store.shared.apps(of: project) { Store.shared.refreshInstalled(app) }
-                }
+                await GitHubRepo.settle(kept, before: before, of: project, gh: gh)
                 try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent())
                 cards[project.id]?.staged = nil
                 cards[project.id]?.kept = kept
@@ -1044,7 +1078,7 @@ enum GitHubRepo {
         return SidebarRepo(name: project.name, icon: card.icon, stage: card.stage, repo: card.repo, url: card.kept?.url,
                            credit: credits.basedOn, openInLamp: remix ?? link.map { url in url.host.map { $0 + url.path } ?? url.absoluteString },
                            notes: notes, size: size, copied: card.copied,
-                           update: card.kept != nil || card.existing, canPut: card.canPut, isPrivate: card.isPrivate, license: card.license,
+                           update: card.kept != nil, canPut: card.canPut, isPrivate: card.isPrivate, license: card.license,
                            canChooseLicense: card.staged.map { GitHubRepo.canOfferLicense($0.credits) } ?? true,
                            page: page, pageUp: pageUp, privateGame: !isPublic && Publish.hasPage(project),
                            plays: Publish.pageUse(project).map { $0 == .play },

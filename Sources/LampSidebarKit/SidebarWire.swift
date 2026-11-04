@@ -231,6 +231,8 @@ public struct SidebarToolbar: Codable, Equatable {
     public var canShare: Bool
     /// Its changes can go back to the repository it came from: the share menu offers Send Changes Back.
     public var canContribute: Bool?
+    /// It's on GitHub already (`GitHubRepo.isUp`): the share menu leaves out Put on GitHub, since a release updates it.
+    public var onGitHub: Bool?
     /// The wish's Share Link, once it has one: the share button shows it first, to copy.
     public var shareLink: String?
     /// It has versions to look back at.
@@ -744,7 +746,7 @@ public struct SidebarRepo: Codable, Equatable {
     public var notes: [String]
     public var size: String?
     public var copied: Bool
-    /// It's up already: Put on GitHub adds the wish as it is now as a new commit.
+    /// The repository is made already: its one-time choices aren't asked again.
     public var update: Bool
     /// Put on GitHub can be pressed: it's ready, or a try failed and can be made again.
     public var canPut: Bool

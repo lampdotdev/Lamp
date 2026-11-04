@@ -324,7 +324,8 @@ so they start from the game that's played. The bar is written as the page is pus
 the same (`Publish.pushPage`); Pages is turned on for that branch, or asked to build, and the card waits until GitHub says
 it built that very commit (an earlier build's "built" is the page as it was), saying so if it's still building after ten
 minutes (`Publish.servePage`). Pages the person set to serve another branch are left alone, and the card says so. The code
-is kept as soon as it's up, so a page that fails is tried again by Put on GitHub on top of it. Where the page plays is
+is kept as soon as it's up, so a page that fails is tried again on top of it (Put on GitHub's card the first time,
+Try GitHub Again on a release's after). Where the page plays is
 kept with the repository (`GitHubRepo.Repo.page`), and the card's done state offers Play (Open Page for an app) and
 Copy Page Link.
 
@@ -386,7 +387,28 @@ that made them, never Lamp's own versions, one an Undo took back, or anything be
 went through, the wish's file with it, records a release in the wish's folder (`.lamp/releases.json`, not versioned:
 the version it was made at, when, and its lines, the first share's always empty), which is where the next release's
 changes start, and refreshes each of the wish's installed apps; one that failed keeps its lines on the card to try again.
-A link shared before releases were kept starts from its last few versions. The wish's shared file carries what its app
+A link shared before releases were kept starts from its last few versions.
+
+A wish that's on GitHub (`GitHubRelease.find`: a repository Lamp put it in, `GitHubRepo.isUp`, or the person's own one
+it was opened from, `GitHubRepo.ownOrigin`) is released there too, from the same card: a box, "Also update GitHub
+(owner/name)", ticked each time the card opens, and shown only once `gh` is signed in (else one gray line saying so). The
+link always goes first; GitHub follows only once the link went through, with the same release: the wish staged and
+uploaded as Put on GitHub does (`GitHubRepo.stage`, `upload`: the same checks, the README and page as before), the
+release's lines as the commit's message, then a GitHub release tagged `v<n>`, n the release's number, kept on it in
+`.lamp/releases.json` (`Release.number`, one more than the latest's, so it keeps counting past the 200 releases the
+history keeps; the first share is v1), with the lines as its notes (`GitHubRelease.tag`: one already there on the same
+commit, peeled when it's annotated, is the one made by a try that failed later; one on another commit is refused, never
+moved). A press waits for the repository to be found (`gitHubFinding`) before it decides where the release goes. Finding it
+also finds who the commits are made as (`GitHubRepo.authors(releasingTo:)`), and when the person's git signs them with
+an address that shows on GitHub, the card says so under the box, as Put on GitHub's does; the upload holds the commits
+to what was said (`GitHubRepo.commit`'s `shown`). The
+card stays busy until everything is pushed, then only GitHub Pages' build is waited for with the card free; a release
+that's still waiting then neither speaks on the card once a newer one started (`gitHubOperation`) nor writes its record
+over a newer push's. GitHub says how it went in a line of its own (`WishLinkCard.GitHubStage`), so a failure there never
+hides the link's, which works whatever GitHub does; Try GitHub Again runs that half alone with the same version and
+lines, and only while the wish is still at the version released (else the card says to release again). A link that
+fails sends nothing to GitHub, and says so. The first link of a wish that's on GitHub makes the link and releases there too, as v1
+(or the next number), with no lines, the commit's message then the old "Update <name> from Lamp". The wish's shared file carries what its app
 shows (`releases.json` at its root, dates and lines only), and a copy opened or updated from it keeps that apart
 (`.lamp/releases-received.json`), so the copy's What's New… shows the original's releases beside its own, while its own
 link shows only its own. The releases that say something go with every share (`releases`, at most

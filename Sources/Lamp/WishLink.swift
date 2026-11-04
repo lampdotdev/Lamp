@@ -369,6 +369,17 @@ enum WishLink {
         var retaking = false
         /// Lamp is writing what's new for the release (`WishReleases.write`).
         var writingNotes = false
+        /// The app's repository on GitHub, which a release goes to too while its box is ticked (`GitHubRelease`), or why
+        /// it can't from here.
+        var gitHub: GitHubRelease.Target?
+        var gitHubNote: String?
+        var gitHubStage: WishLinkCard.GitHubStage?
+        /// Finding the repository, which a release waits for, so a press before it's known still goes to GitHub.
+        var gitHubFinding: Task<Void, Never>?
+        /// The GitHub half running now: an older one, still waiting for its page, no longer speaks on the card.
+        var gitHubOperation: UUID?
+        /// The release whose GitHub half failed, for Try GitHub Again, with the version of the wish it was of.
+        var gitHubRetry: GitHubRetry?
 
         /// What the link would show with what's on the card.
         var words: WishLink.Words {
@@ -383,6 +394,11 @@ enum WishLink {
         /// A link that carries the wish is always worth sending again: the file is the wish as it is now. So is one with
         /// something to say about what's new.
         var changed: Bool { shared?.shown != words || values.includeFile || !values.notes.trimmed.isEmpty }
+    }
+
+    struct GitHubRetry {
+        var version: GitHubRelease.Version
+        var source: String?
     }
 
     @Published private(set) var cards: [String: Card] = [:]
@@ -414,6 +430,15 @@ enum WishLink {
         Task {
             let icon = await Sharing.sharedIcon(of: project)
             cards[project.id]?.icon = icon
+        }
+        cards[project.id]?.gitHubFinding = Task {
+            switch await GitHubRelease.find(project) {
+            case .ready(let target):
+                cards[project.id]?.gitHub = target
+                cards[project.id]?.gitHubNote = GitHubRepo.note(for: target.authors)
+            case .note(let note): cards[project.id]?.gitHubNote = note
+            case nil: break
+            }
         }
         if shared != nil {
             Task {
@@ -453,6 +478,13 @@ enum WishLink {
         cards[project.id]?.stage = .sending
         cards[project.id]?.writingNotes = false
         let words = card.words
+        // GitHub follows the link, with the same version and what's new, while its box is ticked.
+        let wantsGitHub = card.values.alsoGitHub
+        let finding = card.gitHubFinding
+        // An earlier release still waiting for its page no longer speaks on the card, from now on.
+        cards[project.id]?.gitHubOperation = nil
+        cards[project.id]?.gitHubStage = nil
+        cards[project.id]?.gitHubRetry = nil
         // A link's first share is where the first release's changes start, and says nothing itself.
         let notes = card.shared == nil ? [] : WishReleases.lines(from: card.values.notes)
         // A name changed on the card is the one the next link starts with.
@@ -460,6 +492,9 @@ enum WishLink {
         let source = card.picture
         let iconSource = card.icon
         Task {
+            // Where GitHub is, once it's known.
+            await finding?.value
+            let toGitHub = wantsGitHub ? cards[project.id]?.gitHub : nil
             do {
                 let (picture, icon) = await Task.detached(priority: .userInitiated) {
                     (source.flatMap(NSImage.init(data:)).flatMap(WishLink.jpeg), WishLink.iconPNG(iconSource))
@@ -520,18 +555,75 @@ enum WishLink {
                 // The release is kept only once the wish itself went with it, so one that failed is tried again with its
                 // lines, and the next release's changes start here. What's new goes into each of the wish's installed
                 // apps, a Mac app in a part of the wish too.
-                WishReleases.record(release, in: project)
+                let number = WishReleases.record(release, in: project)
                 cards[project.id]?.values.notes = ""
                 // The link goes into the installed app too, for a Mac without Lamp (`RemixPanel`).
                 for app in [project] + Store.shared.apps(of: project).filter({ $0.id != project.id }) { Store.shared.refreshInstalled(app) }
                 guard cards[project.id] != nil else { return }
                 cards[project.id]?.shared = shared
-                cards[project.id]?.stage = pageProblem.map { .failed($0) } ?? .editing
                 copy(project)
+                if let toGitHub {
+                    await releaseOnGitHub(project, to: toGitHub, version: GitHubRelease.Version(number: number, lines: notes),
+                                          source: Versions.savedVersion(of: project.dir), picture: source, then: pageProblem)
+                } else {
+                    cards[project.id]?.stage = pageProblem.map { .failed($0) } ?? .editing
+                }
             } catch {
-                cards[project.id]?.stage = .failed(Self.problem(error))
+                // Nothing went to GitHub: it follows the link, so the card says so with the link's own problem.
+                cards[project.id]?.stage = .failed(Self.problem(error) + (toGitHub == nil ? "" : " GitHub wasn't updated either."))
             }
         }
+    }
+
+    /// The release's GitHub half, after the link went up: the card stays busy until everything is on GitHub, then only
+    /// GitHub's building of the page is waited for, with the card free again. `linkProblem` is what the card said of the
+    /// link, kept beside whatever GitHub says.
+    /// `source` is the wish's version the release is of, which a try again must still be at.
+    private func releaseOnGitHub(_ project: LampProject, to target: GitHubRelease.Target, version: GitHubRelease.Version, source: String?,
+                                 picture: Data?, then linkProblem: String?) async {
+        let id = project.id
+        let operation = UUID()
+        cards[id]?.gitHubOperation = operation
+        let settled: @MainActor () -> Void = { [weak self] in
+            guard self?.cards[id]?.gitHubOperation == operation, self?.cards[id]?.stage == .sending else { return }
+            self?.cards[id]?.stage = linkProblem.map { .failed($0) } ?? .editing
+        }
+        /// What this release says on the card, while it's still the latest.
+        let say: @MainActor (WishLinkCard.GitHubStage) -> Void = { [weak self] stage in
+            guard self?.cards[id]?.gitHubOperation == operation else { return }
+            self?.cards[id]?.gitHubStage = stage
+        }
+        say(.working("Updating GitHub…"))
+        do {
+            try await GitHubRelease.release(project, to: target, version: version, picture: picture,
+                                            pushed: { Task { @MainActor in settled() } },
+                                            step: { step in Task { @MainActor in say(.working(step)) } })
+            settled()
+            say(.done(version.tag))
+        } catch {
+            settled()
+            guard cards[id]?.gitHubOperation == operation else { return }
+            cards[id]?.gitHubRetry = GitHubRetry(version: version, source: source)
+            // Said plainly, apart from the link, which works whatever happened here.
+            say(.failed(error is GitHubRelease.TagFailure
+                ? "The link and \(target.repo) are updated, but \(Self.problem(error))"
+                : "The link is updated, but \(target.repo) on GitHub isn't: \(Self.problem(error))"))
+        }
+    }
+
+    /// Tries the GitHub half of the last release again, with the same version and what's new.
+    func retryGitHub(_ project: LampProject) {
+        guard let card = cards[project.id], card.stage != .sending, let target = card.gitHub, let retry = card.gitHubRetry else { return }
+        cards[project.id]?.gitHubRetry = nil
+        // Only the version that was released: a change since would go up under this release's number and words.
+        guard Versions.savedVersion(of: project.dir) == retry.source, retry.source != nil else {
+            cards[project.id]?.gitHubStage = .failed("\(project.name) has changed since this release. Release Update puts the new version on the link and GitHub.")
+            return
+        }
+        cards[project.id]?.stage = .sending
+        cards[project.id]?.gitHubOperation = nil
+        let linkProblem: String? = if case .failed(let problem) = card.stage { problem } else { nil }
+        Task { await releaseOnGitHub(project, to: target, version: retry.version, source: retry.source, picture: card.picture, then: linkProblem) }
     }
 
     /// What the card says went wrong: the headline, and the why and what to do when there is one (a wish Lamp won't let

@@ -88,7 +88,8 @@ enum Sharing {
         let link = WishLink.kept(for: project)?.url
         let popover = NSPopover()
         popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView: SharePopover(link: link, canContribute: Contribute.canContribute(project)) { action in
+        popover.contentViewController = NSHostingController(rootView: SharePopover(link: link, canContribute: Contribute.canContribute(project),
+                                                                                          onGitHub: GitHubRepo.isUp(project)) { action in
             chose(action, for: project, link: link, origin: origin, window: window, clicked: clicked)
         })
         self.popover?.close()
@@ -101,7 +102,8 @@ enum Sharing {
     }
 
     /// What was chosen in the popover. Copying the link keeps it open, saying Copied; anything else closes it. The
-    /// Share Link card has a window of its own; Put on GitHub opens in the wish's chat, where it lives.
+    /// Share Link card has a window of its own; Put on GitHub opens in the wish's chat, where it lives, the first time
+    /// (after that a release on the link updates it, `GitHubRelease`).
     @MainActor private static func chose(_ action: SharePopover.Action, for project: LampProject, link: URL?, origin: Origin,
                                          window: NSWindow, clicked: NSRect) {
         if action == .copyLink {

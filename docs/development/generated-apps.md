@@ -271,7 +271,12 @@ for a wish with one, to lamp.dev's remix link
 for the site's counts); then the wish's ideas (`RemixSuggestions`, a starter's tweaks), each that link with its request.
 A private repository, which Lamp can't fetch without a sign-in, offers the Share Link and the shared file instead; the
 card stages again when a new repository is made private (`setPrivate`). A public repository with no website of its own
-gets the remix link as its website, or its page once it's up (`offerWebsite`, `from=github`); one the person set is left alone. One commit per Put on GitHub, on top of
+gets the remix link as its website, or its page once it's up (`offerWebsite`, `from=github`); one the person set is left alone.
+Put on GitHub's card is for the first time only, since it asks what GitHub takes once (public or private, the license,
+the README's picture). Once the wish is up (`GitHubRepo.isUp`) the share popover leaves Put on GitHub… out, and the
+card, asked for anyway (from a chat of an older Lamp), opens Share Link's card instead, as it does for the person's own
+repository a wish was opened from (`ownOrigin`): a release there updates GitHub too (`GitHubRelease`, "Releases" in the wishes guide), staged and
+uploaded as before with the choices made the first time (`Repo.license`, `Repo.picture`). One commit per update, on top of
 what's there (a shallow clone, the tree replaced; unchanged when only the export's own marks differ), never the wish's
 own history, which holds every version and the chat's attachments. Its commits, the page's and Send Changes Back's
 are made as `GitHubRepo.author` says: someone whose git signs commits (`commit.gpgSign`, read where the commit is made, so
@@ -483,7 +488,7 @@ some file of the repository's really changed, so a change it already has is noth
 checked for keys once more as it is (`ShareCheck.secrets`). The fork is made with `gh` when
 the person has none (`Contribute.fork`), and the one commit is pushed to a branch of it and a pull request opened on
 the repository (`Contribute.send`). The request's text (`Contribute.summary`) is the wish's line, the names its
-versions since it arrived were given (never the requests themselves, never the chat) and the files changed. The person's own repository is refused (Put on GitHub updates it).
+versions since it arrived were given (never the requests themselves, never the chat) and the files changed. The person's own repository is refused (a release on its link updates it, `GitHubRelease`).
 
 On a Mac without Lamp (an app copied over, or kept after Lamp was removed), the wand is on all the same
 (`LampMagic.isOn` when `LampMagic.lampInstalled` is false) and the chat beside the app is the sidebar extension with

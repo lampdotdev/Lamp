@@ -401,7 +401,7 @@ enum Publish {
             default: continue
             }
         }
-        throw Failure(message: "GitHub is still putting the page up. It should be at \(url) in a few minutes; Put on GitHub again if it isn't.")
+        throw Failure(message: "GitHub is still putting the page up. It should be at \(url) in a few minutes; try again if it isn't.")
     }
 
     /// Where GitHub Pages serves `repo` ("owner/name"): an account's own site, a repository named owner.github.io in any
