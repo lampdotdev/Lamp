@@ -237,7 +237,7 @@ enum Upstream {
     /// A version of this wish's own history as a merge base: its tree as a shared file carries it, committed on its own.
     private static func ownMark(_ version: String, in project: LampProject, indexes: URL) async throws -> String {
         let tree = try await filteredTree(of: version, in: project, indexes: indexes)
-        let made = await run("git -c user.name=Lamp -c user.email=lamp@localhost commit-tree \(tree) -m 'This wish as it was shared'", in: project)
+        let made = await run("git -c user.name=Lamp -c user.email=lamp@localhost commit-tree \(tree) -m 'This app as it was shared'", in: project)
         guard made.status == 0, let mark = Credits.validCommit(made.output) else { throw Failure(message: "Lamp couldn't prepare the merge.") }
         return mark
     }

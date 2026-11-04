@@ -205,7 +205,7 @@ struct LampProject: Identifiable, Hashable {
     /// its folder and everything that asks `untitled` go by), so the screen says what it is instead: a wish,
     /// theirs from the site or one still to be told. Nothing is an app until Lamp has made something; the
     /// name Lamp or the person gives it takes over everywhere at once.
-    var title: String { !untitled ? name : fromWish ? "Your wish" : finding ? "Finding a wish" : "New wish" }
+    var title: String { !untitled ? name : fromWish ? "Your wish" : finding ? "Finding a wish" : "New app" }
     var isDeviceSetup: Bool { deviceSetup != nil }
     /// Nothing here is an app yet, or ever: a wish being found, or a device's setup.
     var makesNoApp: Bool { finding || isDeviceSetup }
@@ -2129,8 +2129,8 @@ final class Store: ObservableObject {
         Task {
             guard let latest = await WishLink.latest(shared.id), let file = latest.file else {
                 let alert = NSAlert()
-                alert.messageText = "Lamp couldn't get the shared wish"
-                alert.informativeText = "The link may be old, the wish may have been taken down, or it was shared without the wish itself."
+                alert.messageText = "Lamp couldn't get the shared app"
+                alert.informativeText = "The link may be old, the app may have been taken down, or it was shared without the app itself."
                 alert.runModal()
                 return
             }
@@ -2145,7 +2145,7 @@ final class Store: ObservableObject {
     /// turns out bigger is dropped as soon as it passes the limit, so nothing larger is ever held.
     nonisolated static func fetch(_ request: URLRequest, upTo limit: Int) async throws -> Data {
         let (bytes, response) = try await URLSession.shared.bytes(for: request)
-        let refusal = Sharing.ImportError("Lamp couldn't get the shared wish.", detail: "The link may be old, or the wish was taken down.")
+        let refusal = Sharing.ImportError("Lamp couldn't get the shared app.", detail: "The link may be old, or the app was taken down.")
         // A `data:` address answers with no status: only the site's dev server gives one (`WishLink.latest`).
         if let http = response as? HTTPURLResponse { guard http.statusCode == 200 else { throw refusal } }
         else { guard request.url?.scheme == "data" else { throw refusal } }
@@ -2215,7 +2215,7 @@ final class Store: ObservableObject {
     private func refuseRemix() {
         NSApp.activate()
         NSAlert(error: Sharing.ImportError("Lamp can't open this link.",
-                                           detail: "It doesn't name one of Lamp's wishes or a repository on GitHub.")).runModal()
+                                           detail: "It doesn't name an app made with Lamp or a repository on GitHub.")).runModal()
     }
 
     func take(wish: String) {
@@ -3648,7 +3648,7 @@ final class Store: ObservableObject {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.lampApp, .folder]
         panel.canChooseDirectories = true
-        panel.message = "Choose a shared wish file, or a folder cloned from GitHub"
+        panel.message = "Choose a shared app file, or a folder cloned from GitHub"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         importApp(from: url)
     }
@@ -3656,10 +3656,10 @@ final class Store: ObservableObject {
     /// Open from GitHub…: the address of a wish's repository, which Lamp fetches and opens as it would the shared file.
     func chooseRepository() {
         let alert = NSAlert()
-        alert.messageText = "Open a wish from GitHub"
-        alert.informativeText = "Paste the address of a repository on GitHub: a wish Lamp put there, or a project Lamp can make into an app."
+        alert.messageText = "Open an app from GitHub"
+        alert.informativeText = "Paste the address of a repository on GitHub: an app Lamp put there, or a project Lamp can make into one."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
-        field.placeholderString = "https://github.com/someone/wish"
+        field.placeholderString = "https://github.com/someone/app"
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
         alert.addButton(withTitle: "Open")
@@ -3668,7 +3668,7 @@ final class Store: ObservableObject {
         guard let source = RepoImport.source(from: field.stringValue) else {
             let refusal = NSAlert()
             refusal.messageText = "That isn't a repository on GitHub"
-            refusal.informativeText = "An address looks like https://github.com/someone/wish, with a branch or commit after it if you like."
+            refusal.informativeText = "An address looks like https://github.com/someone/app, with a branch or commit after it if you like."
             refusal.runModal()
             return
         }
@@ -4194,7 +4194,7 @@ final class Store: ObservableObject {
         }
         let arrival = await Versions.list(project).first { Self.arrivalMessages.contains($0.message) }?.id
         let place = following.map { Following.title(of: $0) }
-            ?? (original != nil ? "the original" : source.map { "\($0.owner)/\($0.name) on GitHub" } ?? "the shared wish")
+            ?? (original != nil ? "the original" : source.map { "\($0.owner)/\($0.name) on GitHub" } ?? "the shared app")
         let merged: Upstream.Merged
         do {
             merged = try await Upstream.merge(package, into: project, from: source, commit: commit, arrival: arrival, ref: ref, accepted: accepted)

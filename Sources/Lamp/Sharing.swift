@@ -56,7 +56,7 @@ enum Sharing {
         anchors.allObjects.first { $0.origin == origin && $0.window === window && !$0.isHiddenOrHasHiddenAncestor }
     }
 
-    /// Before Share…, Copy Wish File, Export… or a drag makes the file: a wish using work that came with no license says
+    /// Before Share…, Copy App File, Export… or a drag makes the file: a wish using work that came with no license says
     /// so once, and goes only with Share Anyway. The answer is kept for the wish until it takes in more such work
     /// (`ShareCheck.accepted`), so the same question isn't asked at every copy.
     @MainActor static func askToShare(_ project: LampProject) -> Bool {

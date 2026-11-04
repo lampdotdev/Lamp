@@ -1679,8 +1679,8 @@ extension TVTemplate {
           var WIRE = 7;
           // Lamp's own name in its room, as the keeper of the wish's shared collections: never one of the wish's apps.
           var KEEPER = 'lamp';
-          var REASONS = { connecting: "Connecting to the wish's other apps…",
-                          away: "Can't reach the wish's other apps. Keep this device on the same Wi‑Fi as them." };
+          var REASONS = { connecting: "Connecting to the apps that go with this one…",
+                          away: "Can't reach the apps that go with this one. Keep this device on the same Wi‑Fi as them." };
           var UNCLAIMED = 'This app needs Lamp to put it on this TV once more before it can reach the wish\'s other apps: press Play in Lamp on your Mac.';
           var C = /*LAMP_WISH_CRYPTO*/;
           var on = { peers: [], apps: [], message: [], state: [], change: [], file: [] };
@@ -1722,7 +1722,7 @@ extension TVTemplate {
           if (host) pipe = null;
           var where = window.location ? window.location.protocol : '';
           var stranded = !host && !bridge && !pipe && (where === 'https:' || where === 'lamp-game:');
-          var STRANDED = "Can't reach the wish's other apps on this device yet.";
+          var STRANDED = "Can't reach the apps that go with this one on this device yet.";
           // Two ways to the others, used together: Lamp's room while Lamp is open on the Mac, and a link straight to each
           // app of the wish that listens (a TV page can't listen itself), at the address it was last reached at or said it
           // listens, else looked for on this network at the wish's port for it. Each is sealed the same way, with the

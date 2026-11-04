@@ -123,7 +123,7 @@ struct WishDesk: View {
                 Button { withAnimation(Self.slide) { panelShown.toggle() } } label: {
                     Label(panelShown ? "Hide Details" : "Show Details", systemImage: "sidebar.right")
                 }
-                .help(panelShown ? "Hide what the picked wish is" : "Show what the picked wish is")
+                .help(panelShown ? "Hide what the picked app is" : "Show what the picked app is")
             } }
         }
         .modifier(ClearToolbar())
@@ -934,7 +934,7 @@ struct WishDrag: NSViewRepresentable {
     }
 
     /// What a drag hands over: the wish's shared file, or the app itself where an app belongs. The file is made again
-    /// as the drag starts, in the background, and is the one Share… and Copy Wish File hand on: it takes the old one's
+    /// as the drag starts, in the background, and is the one Share… and Copy App File hand on: it takes the old one's
     /// place whole, in one step, so an app given it by this drag or an earlier one finds a file there whenever it
     /// reads it, and dragging again and again leaves one file per wish.
     final class Payload: @unchecked Sendable {

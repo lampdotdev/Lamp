@@ -389,20 +389,20 @@ enum GitHubRepo {
                 + "Or, in Lamp, choose File → Open from GitHub… and paste `\(url(remix))`."
         } else {
             if let link = open.link {
-                text += "[Make your own](\(link.absoluteString)) from this wish, with Lamp or by getting Lamp from that page. "
+                text += "[Make your own](\(link.absoluteString)) from this app, with Lamp or by getting Lamp from that page. "
             }
             if let file = open.file {
-                text += (open.link == nil ? "Download" : "Or download") + " [\(file)](\(file)) and open it with Lamp (double-click it, or File → Import Shared Wish…): "
-                    + "you get this exact wish, yours to change, with the credits below kept. The code here is what that file holds."
+                text += (open.link == nil ? "Download" : "Or download") + " [\(file)](\(file)) and open it with Lamp (double-click it, or File → Import Shared App…): "
+                    + "you get this exact app, yours to change, with the credits below kept. The code here is what that file holds."
             } else if let repo {
                 text += (open.link == nil ? "In" : "Or, in") + " Lamp, choose File → Open from GitHub… and paste `\(url(repo))`: "
-                    + "you get this exact wish, yours to change, with the credits below kept."
+                    + "you get this exact app, yours to change, with the credits below kept."
             }
         }
         if build.alone {
             text += "\n\n## Build it yourself\n\n"
             text += "With Apple's Command Line Tools installed (`xcode-select --install`):\n\n```sh\nzsh build.sh\n```\n\n"
-            if build.others { text += "That builds \(build.app); the wish's other apps, in their folders, are built by Lamp.\n\n" }
+            if build.others { text += "That builds \(build.app); the apps that go with it, in their folders, are built by Lamp.\n\n" }
             text += "The AI inside the app, and anything it does with other apps or devices, goes through Lamp, so those need Lamp open on the same Mac.\n\n"
         } else if let page = build.page {
             text += "\n\n## Running it\n\nIt's a web page with no build step: serve " + (page.isEmpty ? "the repository's top folder" : "`\(page)`")

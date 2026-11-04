@@ -1191,8 +1191,8 @@ extension Template {
 
         /** The words for a state of this app's link, the same in every language Lamp's apps are written in. */
         fun reason(state: State): String = when (state) {
-            State.CONNECTING -> "Connecting to the wish's other apps…"
-            State.AWAY -> "Can't reach the wish's other apps. Keep this device on the same Wi‑Fi as them."
+            State.CONNECTING -> "Connecting to the apps that go with this one…"
+            State.AWAY -> "Can't reach the apps that go with this one. Keep this device on the same Wi‑Fi as them."
             else -> ""
         }
 
@@ -1377,7 +1377,7 @@ extension Template {
             if (begun) { if (closed) { closed = false; rebuild(); reach() }; return }
             begun = true
             if (wishKey == null) {
-                statusFlow.value = Status(State.AWAY, "This copy wasn't opened from Lamp, so it can't reach the wish's other apps. Open it from Lamp on your Mac.")
+                statusFlow.value = Status(State.AWAY, "This copy wasn't opened from Lamp, so it can't reach the apps that go with it. Open it from Lamp on your Mac.")
                 stateFlow.value = State.AWAY
                 return
             }

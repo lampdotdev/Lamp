@@ -170,8 +170,8 @@ struct MixView: View {
     private var dropZone: some View {
         VStack(spacing: 14) {
             Image(systemName: "arrow.triangle.merge").font(.system(size: 34, weight: .light)).foregroundStyle(Paper.muted)
-            Text("Drop a wish file someone sent you").font(.system(size: 17, weight: .medium))
-            Text("A copy of one of your wishes, with their changes.\nYou'll pick which to bring into yours.")
+            Text("Drop an app file someone sent you").font(.system(size: 17, weight: .medium))
+            Text("A copy of one of your apps, with their changes.\nYou'll pick which to bring into yours.")
                 .multilineTextAlignment(.center).foregroundStyle(Paper.muted)
             Button("Choose File…", action: choose).buttonStyle(PaperButtonStyle(.outline)).padding(.top, 4)
         }

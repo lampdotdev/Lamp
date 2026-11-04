@@ -130,7 +130,7 @@ public enum RemixLink {
             return "Opens lamp.dev with your request. Lamp is a free Mac app; it opens a copy of \(offer.name.isEmpty ? "it" : offer.name) with your request ready to send."
         }
         if offer.shareLink != nil {
-            return "Opens this wish's page with your request. Lamp is a free Mac app; it opens on this exact wish and changes it as you ask."
+            return "Opens this app's page with your request. Lamp is a free Mac app; it opens on this exact app and changes it as you ask."
         }
         return "Opens lamp.dev with your request. Lamp is a free Mac app; it makes its own version of \(offer.name.isEmpty ? "it" : offer.name) and changes it as you ask."
     }

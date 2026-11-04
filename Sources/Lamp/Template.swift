@@ -15628,12 +15628,12 @@ enum Template {
         /// The words for a state of this app's link, the same in every language Lamp's apps are written in.
         static func reason(_ state: State) -> String {
             switch state {
-            case .connecting: "Connecting to the wish's other apps…"
-            case .away: "Can't reach the wish's other apps. Keep this device on the same Wi‑Fi as them."
+            case .connecting: "Connecting to the apps that go with this one…"
+            case .away: "Can't reach the apps that go with this one. Keep this device on the same Wi‑Fi as them."
             #if os(macOS)
-            case .localNetworkDenied: "To reach the wish's other apps, allow Local Network for this app in System Settings, Privacy & Security."
+            case .localNetworkDenied: "To reach the apps that go with this one, allow Local Network for this app in System Settings, Privacy & Security."
             #else
-            case .localNetworkDenied: "To reach the wish's other apps, allow Local Network for this app in Settings."
+            case .localNetworkDenied: "To reach the apps that go with this one, allow Local Network for this app in Settings."
             #endif
             default: ""
             }
@@ -16321,7 +16321,7 @@ enum Template {
         private func open() {
             guard !closed else { return }
             guard let key = Self.key else {
-                status = Status(state: .away, reason: "This copy wasn't opened from Lamp, so it can't reach the wish's other apps. Open it from Lamp on your Mac.", lastSeen: nil)
+                status = Status(state: .away, reason: "This copy wasn't opened from Lamp, so it can't reach the apps that go with it. Open it from Lamp on your Mac.", lastSeen: nil)
                 return
             }
             Task { @MainActor in
@@ -17085,7 +17085,7 @@ enum Template {
     }
 
     /// How the wish's other apps stand, ready to drop in: a line for each ("TV app connected", "Open the iPhone app on
-    /// your iPhone."), or what keeps this app from them ("To reach the wish's other apps, allow Local Network…"), with a
+    /// your iPhone."), or what keeps this app from them ("To reach the apps that go with this one, allow Local Network…"), with a
     /// dot of its color. Nothing while this app is alone, with no other app or copy open. Give a peer name for that app's line alone. It
     /// takes the font and colors of where it's put, so style it as the rest of the app; or show `LampWish`'s own
     /// `status` and `peer(_:)?.status` in a view of your own.

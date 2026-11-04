@@ -768,7 +768,7 @@ struct ChatBar: View {
             Button("Move to Trash", role: .destructive) { link.send(.delete) }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The wish, its chat, its history and what it saved are moved to the Trash.")
+            Text("The app, its chat, its history and what it saved are moved to the Trash.")
         }
         .onChange(of: link.sharing?.id) {
             if let sharing = link.sharing { share(sharing) }
@@ -851,7 +851,7 @@ struct ChatBar: View {
             link.send(.panel(state.panel == .versions ? nil : .versions))
         }
         .disabled(!toolbar.hasVersions)
-        .help(toolbar.hasVersions ? "See earlier versions of this wish, name them, and go back to one"
+        .help(toolbar.hasVersions ? "See earlier versions of this app, name them, and go back to one"
               : "No versions yet: each change Lamp makes is saved as one")
     }
 
@@ -861,14 +861,14 @@ struct ChatBar: View {
         ToolButton("square.and.arrow.up", "Share", on: sharingOpen) { sharingOpen.toggle() }
             .background(AnchorView(anchor: shareAnchor))
             .disabled(!toolbar.canShare)
-            .help("Share this wish")
+            .help("Share this app")
             .popover(isPresented: $sharingOpen, arrowEdge: .bottom) {
                 SharePopover(link: shareLink, canContribute: toolbar.canContribute == true) { shareAction($0, link: shareLink) }
             }
         ToolButton("chevron.left.forwardslash.chevron.right", "Agent Details", on: toolbar.details) { link.send(.details(!toolbar.details)) }
             .help("Agent details")
-        ToolButton("trash", "Delete Wish") { deleting = true }
-            .help("Delete this wish")
+        ToolButton("trash", "Delete App") { deleting = true }
+            .help("Delete this app")
     }
 
     /// What was chosen in the share button's popover. Copying the link keeps it open, saying Copied; anything else

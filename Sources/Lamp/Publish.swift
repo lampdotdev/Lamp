@@ -147,7 +147,7 @@ enum Publish {
         var text = "# \(project.name), \(plays ? "to play" : "to use")\n\n"
         if let line = AppDescription.description(of: project) { text += line + "\n\n" }
         text += "**\(plays ? "Play" : "Open") it:** \(pageURL(repo))\n\n"
-        text += "The wish itself, to open in [Lamp](https://lamp.dev) and change, is on the [main branch](\(GitHubRepo.url(repo))).\n\n"
+        text += "The app itself, to open in [Lamp](https://lamp.dev) and change, is on the [main branch](\(GitHubRepo.url(repo))).\n\n"
         text += creditsSection(credits)
         let runtime = ["lamp-game.js", "lamp-phaser.js", "lamp-controllers.js", GamePage.deviceFile, GamePage.buildFile, "lamp.js"].filter(has)
         if !runtime.isEmpty {

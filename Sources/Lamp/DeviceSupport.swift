@@ -1504,7 +1504,7 @@ enum DeviceSupport {
     '     status = LampWish_status()     ' { state: "away", reason: "..." }
 
     function LampWish_status() as Object
-        return { state: "away", reason: "This app can't reach the wish's other apps yet." }
+        return { state: "away", reason: "This app can't reach the apps that go with it yet." }
     end function
 
     ' The wish's other apps open now: none can be reached from a Roku yet.
