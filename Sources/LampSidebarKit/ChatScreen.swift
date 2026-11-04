@@ -753,6 +753,8 @@ struct ChatBar: View {
                         tryOn(state)
                         undo(toolbar)
                         if more { versions(state, toolbar) }
+                        // Share is always there, beside the button for the rest: it's what people come back for.
+                        share(toolbar)
                         // Its own symbol says it's on (filled), so it has no lit circle behind it.
                         ToolButton(more ? "ellipsis.rectangle.fill" : "ellipsis.rectangle", more ? "Fewer Buttons" : "More Buttons",
                                    on: more, plain: true) {
@@ -761,8 +763,6 @@ struct ChatBar: View {
                         .help(more ? "Show the title again" : "Agent details, delete and versions")
                         // Changed where it stands, the symbol simply filled: not faded or slid in as a new button.
                         .transaction { $0.animation = nil }
-                        // Share is always there, in the top right corner: it's what people come back for.
-                        share(toolbar)
                     }
                 }
             } else {
