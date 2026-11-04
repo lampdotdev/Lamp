@@ -284,7 +284,9 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   assert.deepEqual(Buffer.from(await served.arrayBuffer()), html);
   assert.equal((await play(new Request(`https://lamp.dev/api/wish-play?id=${id}&v=1&path=index.html`))).status, 404, "never on the site's own host");
   assert.equal((await play(new Request(`https://play.lamp.dev/api/wish-play?id=${id}&v=1&path=index.html`))).status, 404, "only on the link's own host");
-  assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=2&path=index.html`))).status, 404, "only the version it has");
+  const gone = await play(new Request(`https://${own}/api/wish-play?id=${id}&v=2&path=index.html`));
+  assert.equal(gone.status, 404, "only the version it has");
+  assert.equal(gone.headers.get("origin-agent-cluster"), "?1", "a cluster of its own on every answer, errors too");
 
   const built = "<html><head><title>A wish</title></head><body></body></html>";
   const page = await (await createPageHandler({ store, env, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
