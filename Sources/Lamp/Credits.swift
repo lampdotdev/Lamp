@@ -54,8 +54,10 @@ struct Credits: Codable, Equatable {
         /// opened from there (`RepoImport`), so a remix of a remix links each repository.
         var url: String?
         /// The commit of that repository this wish has: the one it was opened from (`RepoImport`), the last one merged
-        /// in (`Upstream`), or the last one Put on GitHub pushed. The base the next update is merged against and the
-        /// parent a contribution goes back on top of; shown nowhere.
+        /// in (`Upstream`), or the last one Put on GitHub pushed. The base the next update is merged against; shown
+        /// nowhere. From a shared file it says only what the wish is on top of (the file names the commit before the
+        /// one it went up in), so a contribution measures the wish's changes in its own history and goes on the
+        /// repository's latest (`Contribute`).
         var commit: String?
     }
 

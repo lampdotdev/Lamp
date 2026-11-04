@@ -314,7 +314,7 @@ carries (`.github/workflows`, `.gitignore`), with the tree's own over them file 
 address when it has none (a repository put up before Lamp wrote it, or a folder's git remote, `RepoImport.repository`).
 The person's folder is only read, never changed or removed. The chain's last link also takes the commit the tree is
 at (`Credits.Remix.commit`, from the clone's HEAD, `RepoImport.repository`): the commit of its repository the wish
-has, which an update is merged from and a contribution goes back on top of. Put on GitHub keeps the commit it pushed
+has, which an update is merged from (a contribution goes on the repository's latest instead, below). Put on GitHub keeps the commit it pushed
 in the wish's record (`GitHubRepo.Repo.commit`), and an export names the kept repository and commit on the chain when
 its caller names no place (`Sharing.export`), so a file shared from a wish that's on GitHub says where it lives too.
 A wish opened from one repository and put on another gets a second link for the new place (`Credits.remixed`,
@@ -418,7 +418,9 @@ repository is (`RepoImport.open`) and staged as the import would install it, and
 (`Upstream.stage`: the code the review read, an Android app's moved into this Mac's package as `AndroidFiles.install`
 moves it, the app's files, its notes and declarations, never Lamp's own files or the icon's pictures), each a tree in
 the wish's git made in an index of the merge's own (`.lamp/merge`), the second committed on top of the first at
-`refs/lamp/upstream`. `git merge-tree` merges the wish's files, the base and that commit three ways and the result
+`refs/lamp/upstream`, and kept as well at `refs/lamp/snapshot/<commit>` for the commit the credits move on to with it
+(`Upstream.snapshot`, with the manifest and credits.json the update came with beside it), which Send Changes Back
+measures the wish's own changes from. `git merge-tree` merges the wish's files, the base and that commit three ways and the result
 goes into the index and the files (`git read-tree --reset -u`), with the version saved first so Versions can bring the
 wish back. What changed only upstream or only here is in place with no agent; the icon's pictures follow when the
 icon changed upstream, for the design as git merged it (`Sharing.installArtwork`, never the file's design in place of
@@ -445,13 +447,35 @@ changed here" in the gallery).
 
 A wish that came from a repository can send its changes back: Send Changes Back… in the chat's Share popover
 (`SidebarToolbar.canContribute`, `Contribute`, its card `ContributeCards` and `ContributeCard`, shaped as Put on
-GitHub's). It stages the wish as Put on GitHub does (`GitHubRepo.stage`: the same checks for licenses and keys), forks
-the repository to the person's account with `gh` when they have no fork (`Contribute.fork`), fetches the recorded
-commit into a folder of Lamp's, puts the staged tree over it with the repository's README and license left as its
-owner wrote them (read first) and its credits.json keeping its chain and taking only what the wish newly uses, commits that once in the person's name,
-pushes it to a branch of the fork and opens a pull request on the repository (`Contribute.send`). The request's text
-(`Contribute.summary`) is the wish's line, the names its versions since it arrived were given (never the requests
-themselves, never the chat) and the files changed. The person's own repository is refused (Put on GitHub updates it).
+GitHub's). What goes is only what the wish changed, on top of where the repository is now, worked out before the card
+offers to send (`Contribute.prepare`) from the saved version the card shows, which must still be the wish's when it
+goes. The change is measured in the wish's own history, never from the commit its credits name (a shared file names
+the commit before the one it went up in): from the snapshot of the last update it took in, kept by the commit its
+credits moved on to (`Upstream.snapshot`, so an update undone isn't counted), else the version it arrived as
+(`Contribute.base`), to the version sent, each side as a shared file carries it (`Upstream.filteredTree`: never Lamp's
+own files, in each of the wish's apps), and only files the export of that version carries, as the export writes them
+(the same checks for licenses and keys, and `capabilities.json` written from what passed its checks, never the
+version's own bytes); a settings file Lamp writes (`icon.json`, `capabilities.json`) counts only when what it says
+changed (`Contribute.change`). A plain site's paths go back to its repository's layout (`StaticSite.layOut`: the page
+at the root, Lamp's files in `.lamp-wish/`). The repository's latest commit is fetched into a folder of Lamp's with the person's
+sign-in, and git replays the change on it three ways (`Contribute.replay`, `git merge-tree` on commits made of each
+side, which a git from before merge-tree took trees needs): files the wish didn't
+touch stay as the owner has them, and a file both changed in the same place stops it, asking for Check for Updates…
+first. An Android app's touched files go back to the repository's package (its build file's namespace): their paths,
+the package in them, and the build file without the id Lamp set for this Mac. The manifest keeps the repository's
+identity, name and date and takes the line, kind, device and apps wherever the wish changed them since its base
+(`Contribute.manifest`): measured from the manifest kept with the last update's snapshot or the one the wish last
+arrived with (`Sharing.arrivedManifest`), else, for a wish that arrived before Lamp kept it, the repository's at the
+commit its credits name; a key the repository also changed, differently, stops it like a file does; credits.json keeps its chain and takes the work the export credits that the base didn't (the base's credits.json:
+the arrival version's, or the one kept with the update's snapshot, never Lamp's running record, which takes in work
+added here too); the
+icon's pictures go when its design changed; and a shared file beside the code is made again from the tree with the
+change in it, zipped so the same files make the same bytes (`Contribute.remakeSharedFile`, `Sharing.zip`), only once
+some file of the repository's really changed, so a change it already has is nothing to send. What would be pushed is
+checked for keys once more as it is (`ShareCheck.secrets`). The fork is made with `gh` when
+the person has none (`Contribute.fork`), and the one commit is pushed to a branch of it and a pull request opened on
+the repository (`Contribute.send`). The request's text (`Contribute.summary`) is the wish's line, the names its
+versions since it arrived were given (never the requests themselves, never the chat) and the files changed. The person's own repository is refused (Put on GitHub updates it).
 
 On a Mac without Lamp (an app copied over, or kept after Lamp was removed), the wand is on all the same
 (`LampMagic.isOn` when `LampMagic.lampInstalled` is false) and the chat beside the app is the sidebar extension with

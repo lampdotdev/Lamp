@@ -23,6 +23,12 @@ enum Upstream {
     static let ref = "refs/lamp/upstream"
     static let remote = "upstream"
 
+    /// What an update from where the wish came from brought in (the staged tree `ref` named then), kept by the commit
+    /// of it the wish's credits moved on to with it. A version's credits.json names that commit only while the version
+    /// has what the update brought, so a contribution measures the wish's own changes against the snapshot its credits
+    /// name (`Contribute.base`), and an update taken back with Undo is no longer counted.
+    static func snapshot(_ commit: String) -> String { "refs/lamp/snapshot/" + commit }
+
     struct Failure: LocalizedError {
         let message: String
         var errorDescription: String? { message }
@@ -176,6 +182,24 @@ enum Upstream {
             throw Failure(message: "Lamp couldn't put the merged files in place.")
         }
         if keptMark != theirsMark { _ = await run("git update-ref \(ref) \(keptMark)", in: project) }
+        if ref == Upstream.ref, let commit = Credits.validCommit(package.credits?.origin(own: GitHubRepo.kept(for: project)?.url)?.commit) {
+            // With the manifest and credits that came with it beside the files (a version's tree as a shared file
+            // carries it leaves them out), so a change of the line, the kind or the apps since, and work credited since,
+            // are measured from what the update said.
+            var mark = keptMark
+            let kept = ["lamp-app.json", Credits.file].filter { FileManager.default.fileExists(atPath: package.folder.appendingPathComponent($0).path) }
+            if !kept.isEmpty {
+                let index = Sandbox.quoted(indexes.appendingPathComponent("snapshot").path)
+                var command = "rm -f \(index) && GIT_INDEX_FILE=\(index) git read-tree \(keptMark)"
+                for name in kept {
+                    command += " && blob=$(git hash-object -w -- \(Sandbox.quoted(package.folder.appendingPathComponent(name).path)))"
+                        + " && GIT_INDEX_FILE=\(index) git update-index --add --cacheinfo 100644,$blob,\(name)"
+                }
+                let made = await run(command + " && \(signed) commit-tree $(GIT_INDEX_FILE=\(index) git write-tree) -p \(keptMark) -m 'With its manifest and credits'", in: project)
+                if made.status == 0, let withThem = Credits.validCommit(made.output.split(separator: "\n").last.map(String.init)) { mark = withThem }
+            }
+            _ = await run("git update-ref \(snapshot(commit)) \(mark)", in: project)
+        }
         // The icon's pictures live outside the versions: the package's go in when its icon changed upstream, for the
         // design as git merged it (icon.json is in the files), never in place of a design changed here. The
         // description the same way, from the shared file's manifest.
@@ -379,7 +403,7 @@ enum Upstream {
     }
 
     /// A git command in the wish's folder, as Lamp's git runs (`Versions.git`), with what it printed.
-    private static func run(_ command: String, in project: LampProject) async -> (status: Int32, output: String) {
+    static func run(_ command: String, in project: LampProject) async -> (status: Int32, output: String) {
         let said = Said()
         let status = await Versions.git(command, cwd: project.dir) { said.add($0) }
         return (status, said.lines.joined(separator: "\n"))

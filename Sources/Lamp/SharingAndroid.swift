@@ -72,8 +72,13 @@ enum AndroidFiles {
     /// The package the sender's code is written in: its build file's namespace, when that's a package name.
     static func senderPackage(in package: Sharing.Package) -> String? {
         guard let build = package.sources.first(where: { package.path(of: $0) == Template.androidAppFolder + "/build.gradle.kts" }),
-              let text = try? String(contentsOf: build, encoding: .utf8),
-              let match = text.firstMatch(of: #/namespace\s*=\s*"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+)"/#) else { return nil }
+              let text = try? String(contentsOf: build, encoding: .utf8) else { return nil }
+        return namespace(in: text)
+    }
+
+    /// The namespace a build file names, when that's a package name.
+    static func namespace(in buildFile: String) -> String? {
+        guard let match = buildFile.firstMatch(of: #/namespace\s*=\s*"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+)"/#) else { return nil }
         return String(match.1)
     }
 
@@ -99,8 +104,11 @@ enum AndroidFiles {
     /// they said it. Set by a block of its own at the end of the file, which Gradle runs after the sender's, so
     /// nothing of theirs is rewritten (a one-line `defaultConfig { … }` keeps its other settings and its braces).
     static func settingApplicationID(in text: String, to id: String) -> String {
-        text + (text.hasSuffix("\n") ? "" : "\n")
-            + "\n// Set by Lamp when the app was opened from a shared file: the id Lamp installs and opens it by.\n"
+        text + (text.hasSuffix("\n") ? "" : "\n") + applicationIDBlock(id)
+    }
+
+    static func applicationIDBlock(_ id: String) -> String {
+        "\n// Set by Lamp when the app was opened from a shared file: the id Lamp installs and opens it by.\n"
             + "android { defaultConfig { applicationId = \"\(id)\" } }\n"
     }
 

@@ -198,8 +198,8 @@ starter.md`, with the starter's line and three changes, where it lives (`reposit
 committed) by `build.sh`, CI and anyone running the tests; build.sh bundles only its listing (above), and a person's
 Lamp fetches the tree itself when the starter is opened. It's read as a repository
 is opened (`Starters.copy`: `RepoImport.open` and `Sharing.install`, so Lamp's own files in it are never copied, and
-the copy names the starter at that commit on its chain, which Update from GitHub… merges against and Send Changes
-Back… goes on top of). A copy made before starters named a repository gets the address from the starter this Lamp
+the copy names the starter at that commit on its chain, which Update from GitHub… merges against; Send Changes
+Back… measures the copy's changes from the version it began with, "From Lamp"). A copy made before starters named a repository gets the address from the starter this Lamp
 ships (`Starters.located`) and is merged against the version it began with ("From Lamp", an arrival like a shared
 file's). A starter of a kind Lamp doesn't share yet has none. A starter based on someone else's work (New York,
 Home HQ) still credits that work in its credits.json; its repository is Lamp's version.

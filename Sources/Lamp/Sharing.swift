@@ -422,7 +422,7 @@ enum Sharing {
         guard measure.count <= maxFiles else { throw ImportError("\(project.name) has too many files to share.") }
         guard measure.bytes <= maxUnpackedBytes else { throw ImportError("\(project.name) is too big to share.") }
         let output = work.appendingPathComponent("\(project.name).lampapp")
-        try run("/usr/bin/ditto", ["-c", "-k", "--norsrc", stage.path, output.path])
+        try zip(stage, to: output)
         // Media is already compressed, so the archive can be as big as what went in: make sure it's one Lamp opens.
         let size = (try? output.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         guard size <= maxArchiveBytes else { throw ImportError("\(project.name) is too big to share.") }
@@ -962,7 +962,20 @@ enum Sharing {
         // Its capabilities too, written by Lamp from what passed the checks; a file that declares none takes
         // away what an app being updated declared.
         try package.capabilities.save(for: project)
+        keepArrivedManifest(from: package.folder, in: project)
         return try installIcon(package, into: project)
+    }
+
+    /// Where the manifest a wish's files last arrived with is kept, in Lamp's own folder: what Send Changes Back measures a
+    /// change of the wish's line, kind or apps from (`Contribute.baseManifest`), since the files don't hold the manifest.
+    static let arrivedManifest = ".lamp/manifest-arrived.json"
+
+    static func keepArrivedManifest(from folder: URL, in project: LampProject) {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("lamp-app.json")),
+              (try? JSONSerialization.jsonObject(with: data)) is [String: Any] else { return }
+        let url = project.dir.appendingPathComponent(arrivedManifest)
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
     }
 
     /// The shared icon into the app: its design (icon.json) and its artwork, which lives in Lamp's own folder outside
@@ -1039,6 +1052,32 @@ enum Sharing {
         guard result.ok else { throw ImportError("Couldn't read the Lamp app file.") }
         return result.output
     }
+
+    /// A folder as a zip that's the same bytes whenever its files are: entries in order of their paths, each dated the
+    /// same, with no folder entries or the Mac's extended attributes. Two exports of an unchanged wish then differ only
+    /// in what the manifest says of when it was made (`Manifest.exportedAt`), and a file remade from a repository's tree
+    /// (`Contribute`) shows only what changed in it.
+    static func zip(_ folder: URL, to output: URL) throws {
+        let fm = FileManager.default
+        let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey]
+        var names: [String] = []
+        for case let file as URL in fm.enumerator(at: folder, includingPropertiesForKeys: keys) ?? FileManager.DirectoryEnumerator() {
+            let values = try? file.resourceValues(forKeys: Set(keys))
+            guard values?.isRegularFile == true, values?.isSymbolicLink != true else { continue }
+            let name = relativePath(of: file, in: folder)
+            // One path a line is what zip reads: a name that can't be one isn't a name Lamp writes.
+            guard !name.contains("\n") else { throw ImportError("Couldn't read or write the Lamp app file.") }
+            try fm.setAttributes([.modificationDate: zipDate], ofItemAtPath: file.path)
+            names.append(name)
+        }
+        names.sort()
+        let made = Subprocess.runBlocking("/usr/bin/zip", ["-X", "-D", "-q", output.path, "-@"], cwd: folder, env: ["TZ": "UTC"],
+                                          timeout: 120, input: Data(names.map { $0 + "\n" }.joined().utf8))
+        guard made.ok else { throw ImportError("Couldn't read or write the Lamp app file.") }
+    }
+
+    /// The date every entry of a zip of Lamp's carries: the start of 2020, in the zone `zip` is told to write.
+    static let zipDate = Date(timeIntervalSince1970: 1_577_836_800)
 
     private static func run(_ tool: String, _ arguments: [String]) throws {
         guard Subprocess.runBlocking(tool, arguments, timeout: 120).ok else {
