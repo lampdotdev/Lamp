@@ -24,9 +24,18 @@ import { DOWNLOAD_URL } from "../../lib/download";
         <p data-by hidden class="hidden min-w-0 shrink-[3] truncate text-sm text-zinc-500 sm:block"></p>
       </div>
       <div class="flex shrink-0 items-center gap-4 text-sm">
+        <!-- What's new in each version the maker released, in plain words Lamp wrote: there only when there's some,
+             with a dot that pulses while there's a version this browser hasn't opened the list since. -->
+        <button type="button" data-news hidden popovertarget="news" aria-label="What's new" class="news-button relative -mx-2 cursor-pointer rounded-md px-2 py-1 font-medium text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-400">
+          What's new<span data-news-dot hidden class="news-dot" aria-hidden="true"></span>
+        </button>
         <a href="/" class="rounded-md text-zinc-500 hover:text-zinc-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-400">Made with Lamp</a>
       </div>
     </header>
+    </div>
+    <div id="news" data-news-list popover class="news-list" aria-labelledby="news-title">
+      <h2 id="news-title" class="news-title">What's new</h2>
+      <ol data-news-releases class="news-releases"></ol>
     </div>
 
     <!-- The thing itself, as big as the room between the header and the band allows, and only as big as it is: a
@@ -139,6 +148,39 @@ import { DOWNLOAD_URL } from "../../lib/download";
     .built .bars-toggle, .built .bars-toggle svg { transition: background-color 0.35s, color 0.35s, rotate 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
   }
 
+  /* What's new: a plain white list hanging under the header's button, its versions newest first. The dot beside the
+     button pulses while there's a version this browser hasn't seen, and is still where less motion is asked for. */
+  .news-button[hidden] { display: none; }
+  .news-dot {
+    position: absolute; top: 0.125rem; right: -0.125rem; width: 0.4375rem; height: 0.4375rem; border-radius: 9999px;
+    background: var(--color-zinc-950);
+  }
+  .news-dot[hidden] { display: none; }
+  @media (prefers-reduced-motion: no-preference) {
+    .news-dot::after {
+      content: ""; position: absolute; inset: 0; border-radius: inherit; background: inherit;
+      animation: news-pulse 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+    }
+  }
+  @keyframes news-pulse { 75%, 100% { scale: 2.6; opacity: 0; } }
+  .news-list {
+    position: fixed; inset: auto; top: calc(3.5rem + 0.5rem); right: 0.75rem; margin: 0; padding: 1rem 1.25rem 1.25rem;
+    width: min(22rem, calc(100vw - 1.5rem)); max-height: calc(100dvh - 5.5rem); overflow-y: auto;
+    border: 1px solid var(--color-zinc-200); border-radius: 0.5rem; background: white; color: var(--color-zinc-950);
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  }
+  @media (min-width: 640px) { .news-list { right: 1.5rem; } }
+  @media (prefers-reduced-motion: no-preference) {
+    .news-list:popover-open { animation: remix-popup-in 0.15s ease-out both; }
+  }
+  .news-title { margin: 0; font-size: 0.9375rem; font-weight: 600; }
+  .news-releases { margin: 0.5rem 0 0; padding: 0; list-style: none; }
+  /* The list's items are made by the script, so they're reached through :global (scoped styles miss them). */
+  .news-releases :global(> li + li) { margin-top: 0.875rem; padding-top: 0.875rem; border-top: 1px solid var(--color-zinc-100); }
+  .news-releases :global(time) { display: block; font-size: 0.75rem; color: var(--color-zinc-500); }
+  .news-releases :global(ul) { margin: 0.25rem 0 0; padding: 0 0 0 1rem; list-style: disc; font-size: 0.875rem; line-height: 1.5; }
+  .news-releases :global(li li::marker) { color: var(--color-zinc-400); }
+
   /* Plain buttons: dark with white words, or outlined. */
   .shared-button {
     display: inline-flex; align-items: center; justify-content: center; height: 2.25rem; padding: 0 1rem;
@@ -190,7 +232,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
   import { askFrom, copyWish, sharedWishLink, withAsk, wishLink } from "../../../lib/wish.js";
   import { track } from "../../lib/analytics";
 
-  type Shared = { id: string; name: string; by?: string; ideas?: string[]; about: string; wish: string; picture: string; icon: string; file?: string; shared?: string; play?: string; shape?: number | "fill" };
+  type Release = { date: string; lines: string[] };
+  type Shared = { id: string; name: string; by?: string; ideas?: string[]; releases?: Release[]; about: string; wish: string; picture: string; icon: string; file?: string; shared?: string; play?: string; shape?: number | "fill" };
   const json = document.getElementById("shared-wish")?.textContent;
   // Only ever a shared wish's page: on its own, there's nothing to show.
   if (!json) location.replace("/ideas");
@@ -205,6 +248,39 @@ import { DOWNLOAD_URL } from "../../lib/download";
     by.hidden = !wish.by;
     const icon = $<HTMLImageElement>("[data-icon]");
     if (wish.icon) { icon.src = wish.icon; icon.hidden = false; }
+
+    // What's new: each version the maker released, newest first. The dot pulses while the newest is one this browser
+    // hasn't seen the list since; a first visit counts what's there as seen, so it marks only what came after.
+    const releases = (wish.releases ?? []).filter((release) => release.lines?.length);
+    if (releases.length) {
+      const list = $<HTMLElement>("[data-news-releases]");
+      const day = new Intl.DateTimeFormat(undefined, { month: "long", day: "numeric", year: "numeric" });
+      for (const release of releases) {
+        const item = document.createElement("li");
+        const when = document.createElement("time");
+        when.dateTime = release.date;
+        when.textContent = day.format(new Date(release.date));
+        const lines = document.createElement("ul");
+        for (const line of release.lines) lines.append(Object.assign(document.createElement("li"), { textContent: line }));
+        item.append(when, lines);
+        list.append(item);
+      }
+      const button = $<HTMLButtonElement>("[data-news]");
+      const dot = $<HTMLElement>("[data-news-dot]");
+      const SEEN = `lamp.shared.seen.${wish.id}`;
+      const newest = releases[0].date;
+      let seen: string | null = null;
+      try { seen = localStorage.getItem(SEEN); if (seen == null) localStorage.setItem(SEEN, newest); } catch {}
+      dot.hidden = seen == null || seen >= newest;
+      button.setAttribute("aria-label", dot.hidden ? "What's new" : "What's new, with something since your last visit");
+      button.hidden = false;
+      $<HTMLElement>("[data-news-list]").addEventListener("toggle", (event) => {
+        if ((event as ToggleEvent).newState !== "open") return;
+        dot.hidden = true;
+        button.setAttribute("aria-label", "What's new");
+        try { localStorage.setItem(SEEN, newest); } catch {}
+      });
+    }
 
     // Keys reach a framed page only while its frame has focus. On GitHub Pages the game is the page and has them from
     // the start, so here the frame takes focus when it loads and again after the page's own buttons, unless the person

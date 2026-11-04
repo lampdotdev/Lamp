@@ -71,7 +71,7 @@ private struct WishLinkWindowContent: View {
                          limits: WishLink.cardLimits, link: card.shared?.url.absoluteString, changed: card.changed,
                          stage: card.stage, copied: card.copied,
                          retake: cards.canRetake(project) ? { cards.retake(project) } : nil, retaking: card.retaking,
-                         canIncludeFile: card.values.includeFile, noLicense: noLicense,
+                         canIncludeFile: card.values.includeFile, noLicense: noLicense, writingNotes: card.writingNotes,
                          share: { cards.share(project) }, copy: { cards.copy(project) }, stop: { cards.stop(project) },
                          close: { cards.close(project) }, width: 440)
                 // Under the window's clear title bar, so the close button sits on the card.

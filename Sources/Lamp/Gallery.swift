@@ -919,6 +919,10 @@ enum Gallery {
                  stage: .failed("Disk Map can't be shared. The license of Engine is missing from it. Ask Lamp to put LICENSE-engine back."), canIncludeFile: true),
         wishLink("Shared and copied", link: true, copied: true),
         wishLink("Shared, changed since", link: true, changed: true),
+        wishLink("Release, writing what's new", link: true, changed: true, writingNotes: true),
+        wishLink("Release, with what's new", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish,
+                                                         notes: "Rings show how much each folder grew this week\nClick a ring's middle to go back up"),
+                 link: true, changed: true),
         wishLink("Carrying the wish", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includeFile: true), canIncludeFile: true),
         wishLink("No license", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includeFile: true),
                  canIncludeFile: true, noLicense: "Found Code by Someone came with no license. Make sure you're comfortable sharing it."),
@@ -929,7 +933,8 @@ enum Gallery {
 
     private static func wishLink(_ name: String, values: WishLinkCard.Values? = nil, picture: Bool = true, retake: Bool = true,
                                  stage: WishLinkCard.Stage = .editing, link: Bool = false, copied: Bool = false,
-                                 changed: Bool = false, canIncludeFile: Bool = false, noLicense: String? = nil, width: CGFloat? = 440) -> Entry {
+                                 changed: Bool = false, canIncludeFile: Bool = false, noLicense: String? = nil, writingNotes: Bool = false,
+                                 width: CGFloat? = 440) -> Entry {
         Entry(group: "Share Link", name: name) {
             let folder = Starters.folder?.appendingPathComponent("diskmap")
             let card = WishLinkCard(
@@ -938,7 +943,7 @@ enum Gallery {
                 values: .constant(values ?? .init(name: "Disk Map", line: diskMapLine, words: diskMapWish)),
                 limits: WishLink.cardLimits, link: link ? "https://lamp.dev/w/AyTkit4xCc" : nil, changed: !link || changed,
                 stage: stage, copied: copied, retake: retake ? {} : nil, retaking: false, canIncludeFile: canIncludeFile, noLicense: noLicense,
-                share: {}, copy: {}, stop: {}, close: {}, width: width)
+                writingNotes: writingNotes, share: {}, copy: {}, stop: {}, close: {}, width: width)
             return AnyView(card
                 .background(Paper.page, in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))

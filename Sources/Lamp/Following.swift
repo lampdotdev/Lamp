@@ -7,7 +7,7 @@ import Foundation
 /// can pull in: the agent's merge brings it into their changes (`Store.mergeUpdate`).
 ///
 /// A copy is shared as its Share Link with the wish itself (`WishLink`: `lamp.dev/w/<id>`, the file kept in lamp.dev's
-/// Blob store, sent again with each Update Link). Opening it with Lamp (`lamp://wish?shared=<id>`, `Wish.Shared`) asks the
+/// Blob store, sent again with each Release Update). Opening it with Lamp (`lamp://wish?shared=<id>`, `Wish.Shared`) asks the
 /// site for the file's latest (`WishLink.latest`), reviews it as any shared file, and the copy follows that link from
 /// then on. A wish opened from GitHub follows its repository as before (`AppUpdates.origin`, the chain's last link,
 /// whose commit moves with each update and goes back with Undo), and a repository can be followed by its address too.
