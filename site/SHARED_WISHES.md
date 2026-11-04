@@ -84,7 +84,7 @@ Without the first two, sharing answers 503 and Lamp says it couldn't share; link
   limits and sends the picture as a fresh JPEG, which leaves behind whatever the file carried besides its pixels.
 - `QUOTAS` in `lib/shared-wishes.js`: 10 shares or changes an hour per address, 200 an hour and 1,000 a day overall;
   60 takedowns an hour per address. A file's and a page's parts: 200 an hour per address and 3,000 a day overall (`PART_QUOTAS`);
-  putting them together counts as a share. A file, and a page, is at most 48 MB (`FILE_LIMITS`). As for bug reports, only expiring counters and a keyed hash of the address are
+  putting them together counts as a share. A file, and a page as it's sent, is at most 48 MB (`FILE_LIMITS`); a page unpacks to at most 128 MB and 3,000 files (`PAGE_LIMITS`), which Lamp checks before sending it. As for bug reports, only expiring counters and a keyed hash of the address are
   kept. Nothing a request holds is logged.
 - Only the hash of each secret is kept. The page is `noindex`; what the sharer wrote reaches it only as JSON in a
   script that isn't run, which the card reads as text.

@@ -408,7 +408,8 @@ export async function takeDown(id, { env = process.env, fetcher = fetch } = {}) 
 // MARK: The wish's page
 
 /** The most a playable page may hold: as many bytes as the wish's file, in at most this many files. */
-export const PAGE_LIMITS = { files: 3000, total: FILE_LIMITS.total };
+// A page is sent packed within `FILE_LIMITS.total`; what it unpacks to may be more, since a big 3D game's data packs small.
+export const PAGE_LIMITS = { files: 3000, total: 128_000_000 };
 
 /**
  * A zip's files, read from its central directory: stored or deflated, never a link, a folder, an absolute path or one
