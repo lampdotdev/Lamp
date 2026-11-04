@@ -30,15 +30,25 @@ final class MacSDKCheckTests: XCTestCase {
     }
 
     /// An Xcode that builds were set to use and that has since been removed: installed again, it's back where it was.
-    func testARemovedXcodeNeedsReinstalling() {
+    /// An SDK Lamp was given that's still there doesn't hide it: the build's compiler is found through the folder.
+    func testARemovedXcodeNeedsReinstalling() throws {
         let developer = root.appendingPathComponent("Xcode.app/Contents/Developer").path
         XCTAssertEqual(SetupCheck.macSDKRepair(env: ["DEVELOPER_DIR": developer, "SDKROOT": ""]), .reinstallXcode)
+        let sdk = try XCTUnwrap(realSDK(), "This Mac has no macOS SDK to name.")
+        XCTAssertEqual(SetupCheck.macSDKRepair(env: ["DEVELOPER_DIR": developer, "SDKROOT": sdk]), .reinstallXcode)
     }
 
-    /// The look is the build's own: an SDK the build is told to use (`SDKROOT`) that isn't there fails it too. What puts it
-    /// right depends on the tools this Mac builds with, Xcode's or the Command Line Tools.
-    func testAnSDKTheBuildIsToldToUseMustBeThere() throws {
+    /// An SDK the build is told to use (`SDKROOT`) that isn't there fails the build too, but the tools are fine: it's
+    /// said as Lamp's setting, never as tools to reinstall, which would remove a working folder.
+    func testAMissingSDKSettingIsNotTakenForBrokenTools() throws {
         try XCTSkipUnless(SetupCheck.buildToolsInstalled(), "This Mac has no Apple tools to look at.")
-        XCTAssertNotNil(SetupCheck.macSDKRepair(env: ["SDKROOT": root.appendingPathComponent("MacOSX.sdk").path]))
+        XCTAssertEqual(SetupCheck.macSDKRepair(env: ["SDKROOT": root.appendingPathComponent("MacOSX.sdk").path]), .sdkSetting)
+    }
+
+    /// The SDK this Mac's tools find by themselves.
+    private func realSDK() -> String? {
+        let found = Subprocess.runBlocking("/usr/bin/env", ["-u", "SDKROOT", "/usr/bin/xcrun", "--no-cache", "--sdk", "macosx", "--show-sdk-path"],
+                                           mergeErrors: false, timeout: 30)
+        return found.ok ? found.output.trimmingCharacters(in: .whitespacesAndNewlines) : nil
     }
 }

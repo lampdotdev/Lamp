@@ -31,12 +31,16 @@ struct SetupCheck {
         case xcodeAgreement(developer: String)
         /// The Xcode builds use has no macOS SDK, or is gone: installed again, it has one where it was.
         case reinstallXcode
+        /// Lamp was started with an SDK to build with (`SDKROOT`) that isn't there. The tools themselves are fine, so
+        /// nothing of theirs is touched: opened again from Finder, Lamp has no such setting.
+        case sdkSetting
 
         var text: String {
             switch self {
             case .reinstallTools: return "Apple's app-building tools on this Mac are incomplete. Reinstall them to build apps."
             case .xcodeAgreement: return "Xcode needs you to accept Apple's terms before apps can be built."
             case .reinstallXcode: return "Xcode on this Mac can't build Mac apps as it is. Reinstall it from the App Store."
+            case .sdkSetting: return "Lamp was opened with a macOS SDK that isn't on this Mac. Quit Lamp and open it from Finder to build apps."
             }
         }
 
@@ -45,6 +49,7 @@ struct SetupCheck {
             case .reinstallTools: return "Reinstall…"
             case .xcodeAgreement: return "Open Xcode"
             case .reinstallXcode: return "Open App Store"
+            case .sdkSetting: return "Check Again"
             }
         }
     }
@@ -120,6 +125,7 @@ struct SetupCheck {
                              }) -> ToolsRepair? {
         let look = run(env)
         guard !look.ok, !look.timedOut, look.status != -1 else { return nil }
+        if look.status == 3 { return .sdkSetting }
         return repair(developer: DeveloperTools.folder(env: env), said: look.output + look.errors)
     }
 
@@ -130,10 +136,21 @@ struct SetupCheck {
         return said.lowercased().contains("license") ? .xcodeAgreement(developer: developer) : .reinstallXcode
     }
 
-    /// Prints the SDK a build would use, or fails as the build would.
-    static let sdkLook = Shell.compatibleSDK + #"""
-    sdk="${SDKROOT:-$(/usr/bin/xcrun --no-cache --sdk macosx --show-sdk-path)}" || exit 1
-    [[ -n "$sdk" && ( -e "$sdk/SDKSettings.json" || -e "$sdk/SDKSettings.plist" ) ]] || { print -u2 "No macOS SDK at '$sdk'."; exit 1 }
+    /// Prints the SDK a build would use, or fails as the build would: 2 when the developer folder is what's wrong (gone,
+    /// terms not accepted, no SDK of its own to fall back on), 3 when only an `SDKROOT` Lamp was given is. The folder is
+    /// looked at without that `SDKROOT`, which would otherwise hide a removed Xcode, since neither `Shell.compatibleSDK`
+    /// nor the SDK's own lookup asks the folder then; and a bad `SDKROOT` is never taken for a folder that needs reinstalling.
+    static let sdkLook = #"""
+    given="${SDKROOT:-}"
+    /usr/bin/env -u SDKROOT /usr/bin/xcrun --no-cache --find swiftc >/dev/null || exit 2
+
+    """# + Shell.compatibleSDK + #"""
+    sdk="${SDKROOT:-$(/usr/bin/xcrun --no-cache --sdk macosx --show-sdk-path)}" || exit 2
+    if [[ -z "$sdk" || ! ( -e "$sdk/SDKSettings.json" || -e "$sdk/SDKSettings.plist" ) ]]; then
+      print -u2 "No macOS SDK at '$sdk'."
+      [[ -n "$given" ]] && exit 3
+      exit 2
+    fi
     print -r -- "$sdk"
 
     """#
@@ -143,9 +160,11 @@ struct SetupCheck {
 
     /// Takes away Command Line Tools that have no macOS SDK, after macOS asks the person for their password, so Apple's
     /// installer puts them there again: it won't while they're there. Only that folder, and only while it's the one
-    /// builds use. False when the person said no or it couldn't be removed.
+    /// builds use, and only while they still have no SDK, looked at again here: a folder is never removed on an older look.
+    /// False when it isn't to be removed, the person said no or it couldn't be.
     static func removeIncompleteTools() async -> Bool {
         guard DeveloperTools.folder(env: Pretend.buildEnvironment) == commandLineTools else { return true }
+        guard await Task.detached(operation: { macSDKRepair() }).value == .reinstallTools else { return false }
         let script = "do shell script \"/bin/rm -rf \(commandLineTools)\" with administrator privileges"
             + " with prompt \"Lamp needs to remove Apple's incomplete app-building tools to install them again.\""
         return await Subprocess.run("/usr/bin/osascript", ["-e", script], timeout: nil).ok

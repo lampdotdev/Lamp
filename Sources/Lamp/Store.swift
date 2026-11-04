@@ -1304,6 +1304,8 @@ final class Store: ObservableObject {
             NSWorkspace.shared.open(URL(fileURLWithPath: developer).deletingLastPathComponent().deletingLastPathComponent())
         case .reinstallXcode:
             NSWorkspace.shared.open(URL(string: "macappstore://itunes.apple.com/app/id497799835")!)
+        case .sdkSetting:
+            Task { await recheckSetup() }
         }
         pollSetup()   // looks again until they can build, whatever put them right
     }
