@@ -1,22 +1,25 @@
 import SwiftUI
 import AppKit
 
-/// Share Link: what a wish's link will show anyone who has it (its name, its picture and what it does), laid out to be
-/// read and changed before anything leaves the Mac (the picture, which may show the person's own things, can be left out
-/// or taken again), then the link and what can be done with it. Drawn from plain values, so its window
+/// Share Link: what a wish's link will show anyone who has it (its name, its picture, what it does and who it's by),
+/// laid out to be read and changed before anything leaves the Mac (the picture, which may show the person's own things,
+/// can be left out or taken again), then the link and what can be done with it. Drawn from plain values, so its window
 /// (`WishLinkWindows`) and the gallery show the same card.
 public struct WishLinkCard: View {
     /// What the person can change on the card.
     public struct Values: Equatable {
         public var name: String
+        /// Who it's by, under its name on the page: the person's name, or nothing.
+        public var by: String
         public var line: String
         public var words: String
         public var includePicture: Bool
         /// The wish itself goes with the link, for anyone with Lamp to open that exact one: always, when it can.
         public var includeFile: Bool
 
-        public init(name: String, line: String, words: String, includePicture: Bool, includeFile: Bool = false) {
+        public init(name: String, by: String = "", line: String, words: String, includePicture: Bool, includeFile: Bool = false) {
             self.name = name
+            self.by = by
             self.line = line
             self.words = words
             self.includePicture = includePicture
@@ -34,10 +37,12 @@ public struct WishLinkCard: View {
         public var name: Int
         public var line: Int
         public var words: Int
-        public init(name: Int, line: Int, words: Int) {
+        public var by: Int
+        public init(name: Int, line: Int, words: Int, by: Int = 60) {
             self.name = name
             self.line = line
             self.words = words
+            self.by = by
         }
     }
 
@@ -126,6 +131,14 @@ public struct WishLinkCard: View {
                         .padding(.horizontal, 8).padding(.vertical, 6)
                         .background(Paper.card, in: RoundedRectangle(cornerRadius: 6))
                         .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
+                }
+                field("By") {
+                    TextField("By", text: clipped(\.by, limits.by), prompt: Text("Your name, optional"))
+                        .textFieldStyle(.plain)
+                        .padding(.horizontal, 8).padding(.vertical, 6)
+                        .background(Paper.card, in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
+                        .help("Shown under the wish's name on its page")
                 }
                 // The wish always goes with its link when it can: what the person must know before it does.
                 if canIncludeFile, let noLicense {

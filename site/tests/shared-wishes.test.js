@@ -47,6 +47,9 @@ test("only a checked wish is taken: known fields, plain words within their limit
   assert.equal(readShare({ ...share, name: "Plant\u0000\nPal" }).name, "Plant Pal");
   assert.equal(readShare({ ...share, extra: 1 }), null);
   assert.equal(readShare({ ...share, name: "x".repeat(LIMITS.name + 1) }), null);
+  assert.equal(readShare(share).by, "", "nobody named, with no byline");
+  assert.equal(readShare({ ...share, by: "  A  Maker " }).by, "A Maker");
+  assert.equal(readShare({ ...share, by: "x".repeat(LIMITS.by + 1) }), null);
   assert.equal(readShare({ ...share, name: "e\u0301".repeat(LIMITS.name) }).name.length, LIMITS.name * 2, "counted as Lamp counts");
   assert.equal(readShare({ ...share, words: "  " }), null);
   assert.equal(readShare({ ...share, picture: Buffer.from("<svg></svg>").toString("base64") }), null);
@@ -114,6 +117,7 @@ test("the page is the shared wish's own, with the wish in it, its words escaped,
   const card = JSON.parse(/<script type="application\/json" id="shared-wish">(.*?)<\/script>/.exec(html)[1]);
   assert.equal(card.wish, store.records.get(id).words);
   assert.equal(card.about, "Reminds me when each plant needs water.");
+  assert.equal(card.by, "", "a wish shared with no name has no byline");
   assert.ok(!html.includes("<watered>"), "nothing the sharer wrote can close the script");
   assert.equal(response.headers.get("x-robots-tag"), "noindex");
 
@@ -230,7 +234,7 @@ test("the site and Lamp agree on the limits", () => {
   const swift = readFileSync(new URL("../../Sources/Lamp/WishLink.swift", import.meta.url), "utf8");
   assert.ok(swift.includes(`static let filePart = ${FILE_LIMITS.part.toLocaleString("en").replaceAll(",", "_")}`), "filePart");
   assert.ok(swift.includes(`static let fileTotal = ${FILE_LIMITS.total.toLocaleString("en").replaceAll(",", "_")}`), "fileTotal");
-  for (const [name, value] of Object.entries({ name: LIMITS.name, line: LIMITS.line, words: LIMITS.words })) {
+  for (const [name, value] of Object.entries({ name: LIMITS.name, by: LIMITS.by, line: LIMITS.line, words: LIMITS.words })) {
     assert.ok(swift.includes(`static let ${name} = ${value}`), name);
   }
 });

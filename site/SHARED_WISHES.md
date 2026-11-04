@@ -1,7 +1,7 @@
 # Wishes shared as links
 
 The chat's Share Wish popover has **Make a Link…** (a gear beside the link, to change it, once it has one): the person reviews what the link will show (the wish's name, what it
-does and, if they keep it, a picture of the app, which they can leave out or take again), and Copy Link puts it
+does, who it's by (their name on the Mac until they change it, which Lamp remembers) and, if they keep it, a picture of the app, which they can leave out or take again), and Copy Link puts it
 on lamp.dev and copies `https://lamp.dev/w/<id>`. Whoever opens the link makes their own version from the words, which Lamp sends as what the wish does (its first request when that's empty). The
 wish's shared file (`<name>.lampapp`, made as Share… makes it, with its
 license and key checks) goes too, whenever its kind can go as a file, and the page offers that exact wish to anyone with Lamp (Open in Lamp, on a Mac), which reviews it
@@ -21,7 +21,7 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
 - The page (`/w/<id>`, `src/pages/w/index.astro` filled by `lib/shared-wish-page.js`, served by `api/wish-page.js`
   through a rewrite in `vercel.json`): a page of the wish's own, about the thing someone made, with Lamp only a small
   mark at the top ("Made with Lamp", and Get Lamp) and a line at the bottom. The wish fills the top, playing or as its
-  picture on a blurred copy of itself; under it its icon, name and what it does, and the ways to make one's own: a box
+  picture on a blurred copy of itself; under it its icon, name, who it's by and what it does, and the ways to make one's own: a box
   for what to change, **Open in Lamp** on a Mac (`lamp://wish?shared=<id>` with the change, so the copy follows the
   link, or `lamp://wish?text=…` for a link without the wish's file), and **Download Lamp**, which copies the wish and
   the change with Lamp's mark (FIRST_IDEA.md). A request the link brought (`?ask=`) waits in the box. The function
@@ -71,7 +71,7 @@ Without the first two, sharing answers 503 and Lamp says it couldn't share; link
 
 ## Limits and privacy
 
-- What's taken: a name (60 characters), a line (140), the words (2,000), a PNG or JPEG picture (1.5 MB, 4,096 px a
+- What's taken: a name (60 characters), who it's by (60, or nothing), a line (140), the words (2,000), a PNG or JPEG picture (1.5 MB, 4,096 px a
   side) and a square PNG icon (300 KB), checked by their bytes; nothing else. Lamp holds the sharer to the same
   limits and sends the picture as a fresh JPEG, which leaves behind whatever the file carried besides its pixels.
 - `QUOTAS` in `lib/shared-wishes.js`: 10 shares or changes an hour per address, 200 an hour and 1,000 a day overall;

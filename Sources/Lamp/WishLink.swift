@@ -16,6 +16,7 @@ enum WishLink {
     /// The most each piece may hold, in characters. The card holds the sharer to them, so the site never refuses.
     enum Limit {
         static let name = 60
+        static let by = 60
         static let line = 140
         static let words = 2000
         /// The wish's file goes in parts of at most this many bytes (a request to the site's function holds 4.5 MB), and
@@ -38,6 +39,8 @@ enum WishLink {
     /// What the link shows, as the sharer left it on the card.
     struct Words: Codable, Equatable {
         var name: String
+        /// Who shared it, as the page names them under the wish's name; empty for nobody. Nil in links from before.
+        var by: String? = nil
         var line: String
         var words: String
         /// Which picture goes with it (a digest of it), or none.
@@ -154,6 +157,7 @@ enum WishLink {
     /// Shares the wish, or changes what its link shows, and answers the link as it is now.
     static func publish(_ words: Words, picture: Data?, icon: Data?, replacing earlier: Shared?) async throws -> Shared {
         var body: [String: Any] = ["name": words.name.trimmed, "line": words.line.trimmed, "words": words.words.trimmed]
+        if let by = words.by?.trimmed, !by.isEmpty { body["by"] = by }
         body["picture"] = picture?.base64EncodedString() ?? NSNull()
         body["icon"] = icon?.base64EncodedString() ?? NSNull()
         var request = URLRequest(url: earlier.map { address(for: $0.id) } ?? endpoint)
@@ -319,7 +323,7 @@ enum WishLink {
             // What the page offers to make their own version from: what it does, as the card says it, and the wish's
             // first request only when that's empty. The card no longer shows the words themselves: the link shares the
             // wish, not a message.
-            WishLink.Words(name: values.name.trimmed, line: values.line.trimmed,
+            WishLink.Words(name: values.name.trimmed, by: values.by.trimmed, line: values.line.trimmed,
                            words: values.line.trimmed.isEmpty ? values.words.trimmed : values.line.trimmed,
                            picture: values.includePicture ? pictureDigest : nil, file: values.includeFile ? true : nil)
         }
@@ -341,10 +345,10 @@ enum WishLink {
         // The link is called what the wish is called, now: it isn't asked on the card.
         let name = WishLink.clip(project.title, WishLink.Limit.name)
         // The wish itself always goes with its link when its kind can go as a file: the link shares the wish.
-        let values = shared.map { WishLinkCard.Values(name: name, line: $0.shown.line, words: $0.shown.words,
+        let values = shared.map { WishLinkCard.Values(name: name, by: $0.shown.by ?? WishLink.sharer, line: $0.shown.line, words: $0.shown.words,
                                                       includePicture: $0.shown.picture != nil && picture != nil,
                                                       includeFile: Self.canIncludeFile(project)) }
-            ?? WishLinkCard.Values(name: name, line: WishLink.line(of: project), words: WishLink.firstRequest(of: project, store: Store.shared),
+            ?? WishLinkCard.Values(name: name, by: WishLink.sharer, line: WishLink.line(of: project), words: WishLink.firstRequest(of: project, store: Store.shared),
                                    includePicture: picture != nil, includeFile: Self.canIncludeFile(project))
         var card = Card(values: values, pictureDigest: digest, shared: shared)
         card.picture = picture
@@ -383,6 +387,8 @@ enum WishLink {
         guard let card = cards[project.id], card.stage != .sending, card.values.isComplete else { return }
         cards[project.id]?.stage = .sending
         let words = card.words
+        // A name changed on the card is the one the next link starts with.
+        if let by = words.by, by != WishLink.sharer { WishLink.sharer = by }
         let source = card.values.includePicture ? card.picture : nil
         let iconSource = card.icon
         Task {
@@ -505,5 +511,13 @@ enum WishLink {
 }
 
 extension WishLink {
-    static let cardLimits = WishLinkCard.Limits(name: Limit.name, line: Limit.line, words: Limit.words)
+    static let cardLimits = WishLinkCard.Limits(name: Limit.name, line: Limit.line, words: Limit.words, by: Limit.by)
+
+    /// The name a link says it's by: what the person last gave on the card, kept in Lamp's own settings; until they have,
+    /// their name on this Mac, which they see on the card before anything goes.
+    static var sharer: String {
+        get { UserDefaults.standard.string(forKey: sharerKey) ?? clip(NSFullUserName(), Limit.by) }
+        set { UserDefaults.standard.set(newValue, forKey: sharerKey) }
+    }
+    private static let sharerKey = "wishLinkSharer"
 }
