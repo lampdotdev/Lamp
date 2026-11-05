@@ -64,20 +64,20 @@ public struct SharePopover: View {
                     .background(Paper.card, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Paper.rule))
                     .help(link.absoluteString)
-                Button(copied ? "Copied" : "Copy") {
+                Button {
                     act(.copyLink)
                     copied = true
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
-                }
-                .buttonStyle(PaperButtonStyle(.ink))
-                .frame(minWidth: 66)
-                // What the link shows, changed or taken down, in its own window.
-                Button { act(.editLink) } label: {
-                    Image(systemName: "gearshape").font(.system(size: 13, weight: .semibold))
+                } label: {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.system(size: 13, weight: .semibold))
                 }
                 .buttonStyle(PaperButtonStyle(.outline, square: true))
-                .help("Change what the link shows, or stop sharing it")
-                .accessibilityLabel("Edit Link")
+                .help(copied ? "Copied" : "Copy the link")
+                .accessibilityLabel(copied ? "Copied" : "Copy Link")
+                // The link's window: what it shows, a new release of the app, or taking it down.
+                Button("New Release") { act(.editLink) }
+                    .buttonStyle(PaperButtonStyle(.ink))
+                    .help("Put the app as it is now on the link, or change what the link shows")
             }
         } else {
             Button { act(.makeLink) } label: {
