@@ -592,7 +592,7 @@ enum Contribute {
             body += "Files changed: " + changed.prefix(40).map { "`\($0)`" }.joined(separator: ", ") + (changed.count > 40 ? ", and \(changed.count - 40) more" : "") + ".\n\n"
         }
         // The owner brings it in from Lamp, where their agent hears of it, rather than with GitHub's merge button.
-        body += "If this is your Lamp app, open it in Lamp to see these changes, ask about them and bring them in.\n\n"
+        body += "If this is your Lamp app, open Lamp to see these changes, try them and bring them in.\n\n"
         body += "To try it, open this repository with Lamp (File → Open from GitHub…) once it has the changes, or build it with `./build.sh`."
         return ("\(project.name): changes from a remix", body)
     }

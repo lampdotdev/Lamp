@@ -498,7 +498,7 @@ checked for keys once more as it is (`ShareCheck.secrets`). The fork is made wit
 the person has none (`Contribute.fork`), and the one commit is pushed to a branch of it and a pull request opened on
 the repository (`Contribute.send`). The request's text (`Contribute.summary`) is the wish's line, the names its
 versions since it arrived were given (never the requests themselves, never the chat) and the files changed. The person's own repository is refused (a release on its link updates it, `GitHubRelease`). The request's text tells
-its owner to open the app in Lamp, where its chat shows the request and brings it in (`SuggestedChanges`, in
+its owner to open the app in Lamp, where the desk shows the request and brings it in (`SuggestedChanges`, in
 [wishes](wishes.md)); one merged on GitHub instead makes their Share Link card offer Bring In Changes before their next
 release (`BringIn`).
 

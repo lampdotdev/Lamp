@@ -16,6 +16,18 @@ struct SuggestionsPanel: View {
     /// The app whose changes show.
     let wish: String
     let back: () -> Void
+    /// The gallery's made-up app and record, in place of the store's.
+    var preview: Preview? = nil
+
+    /// What the gallery shows the panel with: an app, its record, and how far along a try or a bring-in is.
+    struct Preview {
+        var project: LampProject
+        var record: SuggestedChanges.Record
+        var yours: Set<String> = []
+        var picked: Int? = nil
+        var standing: [Int: SuggestedChanges.Standing] = [:]
+        var trial: SuggestionTrial.Running? = nil
+    }
 
     @State private var picked: Int?
     @State private var topic: String?
@@ -27,8 +39,9 @@ struct SuggestionsPanel: View {
     /// The files the person changed since their last release, for Good to Know.
     @State private var yours: Set<String> = []
 
-    private var project: LampProject? { store.projects.first { $0.id == wish } }
+    private var project: LampProject? { preview?.project ?? store.projects.first { $0.id == wish } }
     private var record: SuggestedChanges.Record? {
+        if let preview { return preview.record }
         _ = store.suggestionsRevision
         return project.flatMap(SuggestedChanges.record(for:))
     }
@@ -38,7 +51,9 @@ struct SuggestionsPanel: View {
             content(project, record)
                 .onAppear { newHere = Set(record.open.filter(record.isNew).map(\.number)) }
                 .onChange(of: store.suggestionsRevision) { newHere.formUnion(record.open.filter(record.isNew).map(\.number)) }
-                .task(id: wish) { yours = await SuggestedChanges.yourChanges(in: project) }
+                .task(id: wish) {
+                    if let preview { yours = preview.yours } else { yours = await SuggestedChanges.yourChanges(in: project) }
+                }
         } else {
             VStack(spacing: 12) {
                 header(nil, nil)
@@ -53,7 +68,7 @@ struct SuggestionsPanel: View {
 
     private func content(_ project: LampProject, _ record: SuggestedChanges.Record) -> some View {
         let shown = Self.shown(record, topic: topic, search: search, summaries: record.summaries)
-        let chosen = picked.flatMap(record.about) ?? shown.first(where: { !record.isHidden($0) })
+        let chosen = (picked ?? preview?.picked).flatMap(record.about) ?? shown.first(where: { !record.isHidden($0) })
         return VStack(spacing: 0) {
             header(project, record)
             Divider().overlay(Paper.rule)
@@ -63,7 +78,8 @@ struct SuggestionsPanel: View {
                 Group {
                     if let chosen {
                         SuggestionDetail(project: project, record: record, request: chosen, yours: yours,
-                                         next: shown.first { $0.number != chosen.number && record.isNew($0) }) { picked = $0 }
+                                         next: shown.first { $0.number != chosen.number && record.isNew($0) },
+                                         given: preview?.standing[chosen.number], givenTrial: preview?.trial) { picked = $0 }
                             .id(chosen.number)
                     } else {
                         Text("Nothing here right now.").foregroundStyle(Paper.muted).frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -74,7 +90,7 @@ struct SuggestionsPanel: View {
         }
         .onChange(of: chosen.map { "\($0.number) \($0.head)" }, initial: true) {
             // Shown means seen, at the head shown.
-            if let chosen, record.isNew(chosen) { store.sawSuggestions([(chosen.number, chosen.head)], in: project) }
+            if preview == nil, let chosen, record.isNew(chosen) { store.sawSuggestions([(chosen.number, chosen.head)], in: project) }
         }
     }
 
@@ -234,19 +250,25 @@ struct SuggestionDetail: View {
     let yours: Set<String>
     /// The next new one, offered once this one is in.
     let next: SuggestedChanges.Request?
+    /// The gallery's: where it stands, and a try of it.
+    var given: SuggestedChanges.Standing? = nil
+    var givenTrial: SuggestionTrial.Running? = nil
     let pick: (Int) -> Void
 
     private var summary: SuggestionSummaries.Summary? { record.summaries[String(request.number)] }
     private var standing: SuggestedChanges.Standing {
-        SuggestedChanges.standing(of: request.number, in: record, bringingIn: store.fetchingSuggestion[project.id] == request.number,
+        if let given { return given }
+        return SuggestedChanges.standing(of: request.number, in: record, bringingIn: store.fetchingSuggestion[project.id] == request.number,
                                   holds: store.suggestionHolds[project.id]?[request.number] ?? (record.taken(request.number) != nil))
     }
-    private var trial: SuggestionTrial.Running? { store.trials[project.id].flatMap { $0.number == request.number ? $0 : nil } }
+    private var trial: SuggestionTrial.Running? {
+        (givenTrial ?? store.trials[project.id]).flatMap { $0.number == request.number ? $0 : nil }
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                if case .broughtIn = standing, record.taken(request.number)?.head == request.head {
+                if case .broughtIn = standing, given != nil || record.taken(request.number)?.head == request.head {
                     broughtIn
                 } else {
                     explained
@@ -483,4 +505,85 @@ extension Store {
         SuggestedChanges.change(project) { $0.hidden[String(number)] = nil }
         suggestionsRevision += 1
     }
+}
+
+extension Gallery {
+    /// The desk's panel of changes sent, in each state it's in, from made-up requests to a made-up app.
+    static let suggestionEntries: [Entry] = [
+        panel("Many changes, explained"),
+        panel("One without an explanation yet", picked: 9),
+        panel("Set aside", picked: 18),
+        panel("Trying it", trial: .building),
+        panel("Trying it, open", trial: .open),
+        panel("Trying it, stopped", trial: .failed("It changes some of the same lines you did. Bring it in instead, and Lamp fits the two together.")),
+        panel("Brought in", picked: 1, standing: .broughtIn(leftOut: [])),
+        panel("Released, still open on GitHub", picked: 2, standing: .held(tag: "v4")),
+        panel("Nothing sent yet", empty: true),
+    ]
+
+    private static let littleHouse = LampProject(id: "gallery-little-house", name: "The Little House", exe: "LittleHouse",
+                                                 dir: URL(fileURLWithPath: "/nonexistent"))
+
+    private static func panel(_ name: String, picked: Int? = nil, standing: SuggestedChanges.Standing? = nil,
+                              trial: SuggestionTrial.Running.Stage? = nil, empty: Bool = false) -> Entry {
+        Entry(group: "Sent to you", name: name) {
+            var preview = SuggestionsPanel.Preview(project: littleHouse, record: empty ? SuggestedChanges.Record(repo: "someone/little-house") : sentRecord,
+                                                   yours: ["Sources/Fire.swift"], picked: picked)
+            if let standing, let picked { preview.standing[picked] = standing }
+            if let trial {
+                let running = SuggestionTrial.Running(wish: littleHouse.id, number: 1, generation: "gallery", folder: URL(fileURLWithPath: "/nonexistent"))
+                running.stage = trial
+                preview.trial = running
+            }
+            return AnyView(SuggestionsPanel(wish: littleHouse.id, back: {}, preview: preview)
+                .frame(width: 940, height: 600)
+                .background(Paper.page))
+        }
+    }
+
+    /// A public app's changes: many people, some of them about the same thing.
+    private static let sentRecord: SuggestedChanges.Record = {
+        let sent: [(String, String, String, [String], String?)] = [
+            ("sam", "A brighter, louder fire", "The fire", ["The fire burns brighter and flickers more.", "A new Crackle slider in the mixer, for the sound of the logs."], "Made the fire cozier for winter. Hope you like it!"),
+            ("priya", "Rain you can turn off", "Sounds", ["A switch in the mixer turns the rain off."], nil),
+            ("diego", "A cat asleep by the fire", "The fire", ["A sleeping cat curls up on the rug by the fire."], "My kids asked for a cat."),
+            ("mei", "Snow instead of rain in December", "The window", ["In December the window shows snow falling."], nil),
+            ("jonas", "Bigger buttons for small screens", "Buttons and layout", ["Buttons grow on a small window."], nil),
+            ("aisha", "A softer clock tick", "Sounds", ["The clock ticks more quietly."], nil),
+            ("tom", "Blue flames", "The fire", ["The flames can be blue."], nil),
+            ("lena", "A bookshelf you can browse", "Other", ["A shelf of books by the wall opens to a list of titles."], nil),
+            ("kofi", "Thunder now and then", "Sounds", [], nil),
+            ("rae", "Spanish words on every button", "Buttons and layout", ["Every button can read in Spanish."], nil),
+            ("ben", "A moon over the lake", "The window", ["A moon rises over the lake at night."], nil),
+            ("yuki", "Fire that dies down at night", "The fire", ["Late at night the fire burns low."], nil),
+            ("omar", "A sleep timer that fades out", "Sounds", ["The sounds fade out after a time you choose."], nil),
+            ("ines", "Fewer logs on the fire", "The fire", ["The fire has fewer logs."], nil),
+            ("pat", "A darker room", "Colors", ["The room is darker."], nil),
+            ("zoe", "Warmer lamp light", "Colors", ["The lamp glows a warmer orange."], nil),
+            ("max", "A rug that changes color", "Colors", ["Clicking the rug changes its color."], nil),
+            ("ana", "Crickets in summer", "Sounds", ["Crickets chirp on summer nights."], nil),
+        ]
+        var record = SuggestedChanges.Record(repo: "someone/little-house")
+        record.topics = ["The fire", "Sounds", "The window", "Buttons and layout", "Colors"]
+        let now = Date()
+        for (index, change) in sent.enumerated() {
+            let number = index + 1
+            let head = String(repeating: String(number % 10), count: 40)
+            let updated = ISO8601DateFormatter().string(from: now.addingTimeInterval(-Double(index) * 4 * 3600 - 2 * 3600))
+            record.open.append(SuggestedChanges.Request(number: number, login: change.0, title: "Little House: changes from a remix", head: head,
+                                                        url: "https://github.com", note: change.4, updated: updated))
+            // One still to be explained, which shows its sender's own title.
+            if number != 9 {
+                record.summaries[String(number)] = SuggestionSummaries.Summary(made: "", headline: change.1, points: change.3, topic: change.2, partial: false)
+            }
+            let fire = change.2 == "The fire"
+            record.files[String(number)] = SuggestedChanges.FileList(head: head, files: [
+                SuggestedChanges.ChangedFile(path: fire ? "Sources/Fire.swift" : "Sources/Room\(number).swift", status: "modified"),
+            ])
+            if number > 12 { record.seen[String(number)] = head }
+        }
+        // Not for Me, on the last one.
+        record.hidden["18"] = record.open[17].head
+        return record
+    }()
 }
