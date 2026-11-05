@@ -581,6 +581,17 @@ final class Store: ObservableObject {
     @Published var updateChecks: [String: AppUpdates.Check] = [:]
     /// Goes up as a wish follows another copy or stops (`Following`), which is kept outside the store.
     @Published var followingRevision = 0
+    /// Goes up when what's known of a wish's suggested changes moves (`SuggestedChanges`), for the desk and its panel.
+    @Published var suggestionsRevision = 0
+    /// Whether each wish still has what it brought in of each request, as the panel shows it (`refreshSuggestionHolds`).
+    var suggestionHolds: [String: [Int: Bool]] = [:]
+    /// The request being fetched for Bring In…, by wish.
+    var fetchingSuggestion: [String: Int] = [:]
+    var suggestionTimer: Timer?
+    /// The wish whose suggested changes the desk shows in place of its list (`SuggestionsPanel`), while it does.
+    @Published var suggestionsOpen: String?
+    /// The try of a suggested change open for each wish, at most one in all (`SuggestionTrial`).
+    @Published var trials: [String: SuggestionTrial.Running] = [:]
     /// Copies an update was prepared in that are going, by the app they went into: a message sent to one meanwhile goes
     /// to that app (`AppUpdates`).
     @Published var retiringCopies: [String: String] = [:]
@@ -739,7 +750,10 @@ final class Store: ObservableObject {
     /// The version whose Name… alert is showing.
     @Published var naming: VersionNaming?
     /// Bumped when a version is named, so open version lists reload.
-    @Published var versionsRevision = 0
+    @Published var versionsRevision = 0 {
+        // An Undo or a going back can take away what a request brought in: the panel says so (`SuggestedChanges`).
+        didSet { for project in projects where !project.isPart && SuggestedChanges.record(for: project) != nil { Task { await refreshSuggestionHolds(project) } } }
+    }
     /// One span of Lamp owning an app: a chat turn, a rebuild, an undo, an icon redesign. Everything that
     /// belongs to that span lives here and goes with it, so Stop, Delete and quit have one thing to cancel,
     /// and nothing has to be kept in step across a dozen dictionaries. `busy` is the set of apps that have
@@ -3842,6 +3856,9 @@ final class Store: ObservableObject {
         var following: Following.Followed? = nil
         /// What changed in the wish's own repository on GitHub, brought in (`BringIn`): Update always merges it.
         var bringingIn: BringIn.Pull? = nil
+        /// Someone's suggested change to try in a copy (`SuggestionTrial`): the review's one choice is Try It, and the
+        /// wish itself is left alone.
+        var trying = false
     }
 
     /// Whether the wish's files differ from the version that arrived last (a shared file opened, or updated from): any
@@ -3878,7 +3895,7 @@ final class Store: ObservableObject {
     /// that review (`ImportReview.opening`). During the welcome the file is kept and the welcome gives way to it
     /// (`OnboardingView.arrive`); its review opens as the welcome ends.
     func importApp(from file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil,
-                   bringingIn: BringIn.Pull? = nil) {
+                   bringingIn: BringIn.Pull? = nil, trying: Bool = false) {
         NSApp.activate()
         Task {
             // A file that launched Lamp arrives before Lamp has looked at setup: the look is waited for, so
@@ -3895,7 +3912,7 @@ final class Store: ObservableObject {
                 }
                 return
             }
-            review(file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn)
+            review(file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn, trying: trying)
         }
     }
 
@@ -3906,7 +3923,7 @@ final class Store: ObservableObject {
 
     /// Unpacks a shared app and shows its review.
     private func review(_ file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil,
-                        bringingIn: BringIn.Pull? = nil) {
+                        bringingIn: BringIn.Pull? = nil, trying: Bool = false) {
         // The newest request wins: a file opened while an earlier one is still unpacking, or a Cancel
         // meanwhile, makes the earlier result unwanted when it arrives.
         let request = UUID()
@@ -3929,8 +3946,9 @@ final class Store: ObservableObject {
             var pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file), existing: existingCopy(of: package, updating: target))
             pending.following = following
             pending.bringingIn = bringingIn
+            pending.trying = trying
             // Only where the two met: a wish that can't be lined up keeps Update.
-            if Mix.isOn, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
+            if Mix.isOn, !trying, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
                let into = Mix.copy(of: package, among: projects), await Mix.meeting(package, history: history, with: into) != nil {
                 pending.existing = into
                 pending.mixFile = file
@@ -4003,6 +4021,8 @@ final class Store: ObservableObject {
         }
         importRequest = nil
         pendingImport = nil
+        // Someone's suggested change, accepted: a try of it goes now, and not before, so Cancel on the review keeps it.
+        if pending.bringingIn?.request != nil { endTrial(of: project) }
         showChat(project.id)
         // A request that came with the wish's link goes into the app it updates, as into a new one (`finishImport`):
         // in the box, ready to send, whether or not the file has anything new.
@@ -4216,7 +4236,7 @@ final class Store: ObservableObject {
             }
         }
         let arrival = await Versions.list(project).first { Self.arrivalMessages.contains($0.message) }?.id
-        let place = following.map { Following.title(of: $0) } ?? bringingIn.map { "\($0.repo) on GitHub" }
+        let place = following.map { Following.title(of: $0) } ?? bringingIn.map { $0.request != nil ? "@\($0.from ?? "someone")'s suggested changes" : "\($0.repo) on GitHub" }
             ?? (original != nil ? "the original" : source.map { "\($0.owner)/\($0.name) on GitHub" } ?? "the shared app")
         let merged: Upstream.Merged
         do {
@@ -5004,6 +5024,9 @@ final class Store: ObservableObject {
             await settleUpdate(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
             await settlePull(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
             await settleBringIn(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
+            // A request the agent was asked to bring in: its review, once the wish is free (`suggested_changes`).
+            bringInSuggestionAfterTurn(wish(of: current(project) ?? project))
+            await refreshSuggestionHolds(wish(of: current(project) ?? project))
             // The scaffold's early build is the turn's until it's settled, whichever way the turn ended (a question, a
             // failure, a Stop): released before it, the next turn's build could run beside it on the same files.
             await owner.early?.value
@@ -6166,8 +6189,8 @@ final class Store: ObservableObject {
             saveUsage(project)
         }
         if outcome.triedTool {
-            // No launch allows this, so whatever else this engine is doing beside a turn stops with it.
-            SideAnswer.stop(run.engine, version: outcome.version)
+            // No launch allows this, so whatever else this engine is doing stops with it: beside a turn or for a summary.
+            SideAnswer.stopAll(run.engine, version: outcome.version)
             for other in sideRuns.values where other.engine == run.engine { other.cancel() }
         } else if outcome.failed {
             sideRests[run.engine] = .now + SideAnswer.restAfterFailure
@@ -6179,7 +6202,7 @@ final class Store: ObservableObject {
         let turn = turns[project.id]
         let stillTrue = index != nil && queued[project.id]?[index!].sendNow == false && turn === started && turn?.asked == false
             && turn?.paused == false && !queueWaitsForReload(in: project)
-        let shown = outcome.reply != nil && stillTrue
+        let shown = SideAnswer.mayShow(outcome, engine: run.engine) && stillTrue
         Conversation.note(project, engine: run.engine, "side answer \(shown ? "shown" : "not shown")"
             + " after \(took.formatted(.units(allowed: [.seconds], fractionalPart: .show(length: 1))))"
             + (outcome.failure.map { " (\($0))" } ?? "") + ", input \(usage.input), cache read \(usage.cacheRead),"
@@ -7404,6 +7427,7 @@ final class Store: ObservableObject {
             case "network_devices": (status, answer) = await NetworkDevices.answer()
             case "lampify": (status, answer) = await lampify(arguments, for: project)
             case "shared_copy": (status, answer) = await sharedCopyCall(arguments, for: project)
+            case "suggested_changes": (status, answer) = await suggestedChangesCall(arguments, for: project)
             case "device_integration": (status, answer) = await agentIntegration(arguments, for: project)
             case "ask", "progress", "write_wish", "device_permission":
                 (status, answer) = talk(name, arguments, for: project)
@@ -9309,15 +9333,42 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Goes back to the version before the current one. Like any restore, this is itself a new version.
-    func undo(_ project: LampProject) async {
+    /// What Undo does with the app's versions as they are: throw away what's unsaved, undo the latest version, or
+    /// nothing. Given the version it's `expecting` to undo (Undo under a request brought in), it undoes that one or does
+    /// nothing at all: never what's unsaved, and never another version.
+    enum UndoStep: Equatable {
+        case discardUnsaved(current: String)
+        case undo(undoing: String, target: String)
+        case refused
+        case nothing
+    }
+
+    nonisolated static func undoStep(in versions: [AppVersion], unsaved: Bool, expecting: String? = nil) -> UndoStep {
+        if let expecting {
+            guard !unsaved, let step = Versions.undoTarget(in: versions), step.undoing.id == expecting else { return .refused }
+            return .undo(undoing: step.undoing.id, target: step.target.id)
+        }
+        // A turn that was stopped, or never got the app building, leaves its changes unsaved: Undo discards those first.
+        if unsaved, let current = versions.first { return .discardUnsaved(current: current.id) }
+        guard let step = Versions.undoTarget(in: versions) else { return .nothing }
+        return .undo(undoing: step.undoing.id, target: step.target.id)
+    }
+
+    /// Goes back to the version before the current one. Like any restore, this is itself a new version. `expecting` is
+    /// the version this Undo was offered for: decided only once the app is held, so nothing done to it in between is
+    /// what gets undone or thrown away (`undoStep`).
+    func undo(_ project: LampProject, expecting: String? = nil) async {
         guard begin(project) != nil else { return }
         defer { finish(project) }
         dropPausedRequest(project)
         let versions = await Versions.list(project)
         let unsaved = await Versions.hasUnsavedChanges(project)
-        // A turn that was stopped, or never got the app building, leaves its changes unsaved: Undo discards those first.
-        if let current = versions.first, unsaved {
+        let step = Self.undoStep(in: versions, unsaved: unsaved, expecting: expecting)
+        if step == .refused {
+            log(project, .status, "Nothing was undone: the app changed since")
+            return
+        }
+        if case .discardUnsaved(let id) = step, let current = versions.first(where: { $0.id == id }) {
             _ = await Versions.restoreFiles(project, to: current)
             let restored = await followRestored(project)
             log(restored, .status, "Discarded the unfinished change")
@@ -9325,7 +9376,11 @@ final class Store: ObservableObject {
             await rebuildParts(of: restored, onlyChanged: true)
             return
         }
-        let undo = Versions.undoTarget(in: versions)
+        var undo: (undoing: AppVersion, target: AppVersion)? = nil
+        if case .undo(let undoing, let target) = step, let from = versions.first(where: { $0.id == undoing }),
+           let to = versions.first(where: { $0.id == target }) {
+            undo = (from, to)
+        }
         let renaming = undo.flatMap { self.renaming(project, to: $0.target, in: versions) }
         guard let (undoing, target) = undo,
               await Versions.restore(project, to: target, message: "Undid “\(undoing.label)”",
@@ -13304,6 +13359,10 @@ final class Store: ObservableObject {
         workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
             Task { @MainActor in await Store.shared.renewPhoneApps() }
         }
+        // Changes someone suggested to an app on GitHub: now, and every quarter of an hour (`SuggestedChanges`). A try of
+        // one left from before (a crash, a quit that couldn't wait) goes first, with all it made.
+        Task.detached { SuggestionTrial.sweep() }
+        startCheckingSuggestions()
     }
 
     /// The person's apps Lamp knows on the phone `udid`: those it keeps for renewal there, and those put there before
@@ -14115,6 +14174,9 @@ final class Store: ObservableObject {
         }
         if route == "/agent/shared" {
             return await sharedCopyCall((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
+        }
+        if route == "/agent/suggested" {
+            return await suggestedChangesCall((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
         }
         if route == "/agent/approve" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]

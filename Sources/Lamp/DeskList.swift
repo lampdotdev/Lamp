@@ -397,6 +397,14 @@ struct DeskListRow: View {
                     } else if let about = item.entry?.about {
                         Text(about).font(.system(size: 12.5)).foregroundStyle(Paper.muted).lineLimit(1).truncationMode(.tail)
                     }
+                    // Changes people sent that haven't been seen: plain words in the row's own gray, which open them.
+                    if !opening, let project, case let new = store.newSuggestions(project), new > 0 {
+                        Button { store.suggestionsOpen = project.id } label: {
+                            Text("\(new) new \(new == 1 ? "change" : "changes") sent").font(.system(size: 12)).foregroundStyle(Paper.muted)
+                                .underline(true, color: Paper.rule)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if !compact {

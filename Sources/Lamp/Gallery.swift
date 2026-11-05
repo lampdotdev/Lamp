@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + shareEntries + wishLinkEntries + contributeEntries + remixEntries + transitionEntries + deviceEntries
+    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + shareEntries + wishLinkEntries + contributeEntries + remixEntries + transitionEntries + deviceEntries + suggestionEntries
 
     private static let useRowStatuses: [EngineUseRow.Status] = [
         .use, .gettingReady, .downloading(0.4), .failed(ErrorMessages.noConnection),
@@ -810,6 +810,12 @@ enum Gallery {
     /// width is picked, since it's only ever a sheet over Lamp's window, never in the wand's panel.
     private static let importEntries: [Entry] = [
         review("Checking", nil),
+        // Someone's suggested change, before it's tried in a copy (`SuggestionTrial`).
+        review("Trying a suggested change", ImportReview(summary: "A cozy little room on a rainy night, with a brighter fire and a Crackle slider.",
+                                                         capabilities: ["Plays sounds"], concerns: [], risk: .low,
+                                                         reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true,
+                                                         detected: found()),
+               app: "The Little House", existing: "The Little House", trying: true),
         review("Looks safe", ImportReview(summary: "Keeps a list of the plants on your balcony and reminds you when each needs water.",
                                           capabilities: ["Saves your plants and when you last watered them"], concerns: [],
                                           risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true,
@@ -875,11 +881,11 @@ enum Gallery {
 
     private static func review(_ name: String, _ review: ImportReview?, app: String = "Drive Anywhere", description: String? = nil,
                                existing: String? = nil, changedHere: Bool = false, android: Bool = false, prepared: Bool = false,
-                               mix: Bool = false) -> Entry {
+                               mix: Bool = false, trying: Bool = false) -> Entry {
         Entry(group: "Shared app", name: name) {
             AnyView(ImportReviewCard(name: app, description: description,
                                      icon: nil, review: review, existing: existing, changedHere: changedHere, cancel: {}, open: {}, update: {}, android: android,
-                                     prepared: prepared, mix: mix ? {} : nil)
+                                     prepared: prepared, mix: mix ? {} : nil, trying: trying)
                 .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
@@ -1200,9 +1206,10 @@ private struct GalleryView: View {
     /// The widths a card is drawn at: the chat at its widest (cards stop at 620), and at its narrowest, beside an app
     /// or in Lamp's panel.
     enum Width: String, CaseIterable, Identifiable {
-        case chat = "Widest", wand = "Narrowest"
+        case chat = "Widest", wand = "Narrowest", window = "Window"
         var id: Self { self }
-        var points: CGFloat { self == .chat ? 680 : 360 }
+        /// A panel of the desk's is drawn at the window's width.
+        var points: CGFloat { self == .window ? 960 : self == .chat ? 680 : 360 }
     }
 
     enum Look: String, CaseIterable, Identifiable {

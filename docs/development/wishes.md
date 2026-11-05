@@ -427,6 +427,50 @@ brings couldn't be made: `taken` names the commit with the version that saved it
 must still have, with no Undo or going back to before it since (`BringIn.holds`, by `Lamp-Undid` and `Lamp-Restored`,
 each followed to the version it went back to),
 else it's offered again from Lamp's push. Bringing in changes the wish, so it's released with a new Release Update.
+Someone's request on the repository is brought in from Lamp too, never with GitHub's merge button, so the agent always
+knows what came in (`SuggestedChanges`; design/suggested-changes/README.md). Lamp asks GitHub with the person's sign-in
+which requests are open on the branch it pushes (at launch, every quarter of an hour, after a release, and when the agent
+asks). Nothing goes in the chat: the desk says quietly how many are new (a line under the app's row, and "Sent to you" at
+the foot of its side column), and the person goes to them in the desk's panel (`SuggestionsPanel`), which takes the list's
+place with Back. The record is the app's on one repository (its instance with the repository's name), and every change
+to it is one read and one write under a lock (`SuggestedChanges.change`), so a look at GitHub writes only what GitHub
+says and never what the person marked. A request is new until it's shown in the panel, kept by the head shown (`seen`):
+new commits make it new again, and one closed and opened again at the same head is as it was; Mark All as Seen marks
+those the list shows when it's clicked. Not for Me sets one aside at its head (`hidden`), saying nothing on GitHub, until
+its sender changes it. What each does is said in plain words by `SuggestionSummaries`: made only along a way that can't
+act (`AppAI.toolFree`: OpenRouter, a model on this Mac, or Claude Code and Codex only through
+`SideAnswer.Run`'s checked launch), from the request's title, note and changed code marked as someone else's and the
+app's APP.md read without following a link (`AppFile`), checked before it's kept (its shape and lengths, a topic from
+the app's list of at most eight, and no word on safety), kept by what it was made from and its format and shown or
+saved only while the request and APP.md are still that, one job after another (each waits for the one before, as an
+actor alone wouldn't), with a daily limit; without one, the sender's own title
+shows. What Lamp knows for sure (the files it takes away, the person's own
+changes to the same files, other requests on them) is worked out from the files (`SuggestedChanges.facts`). Try It First
+(`SuggestionTrial`, for a wish of one Mac app) runs the shared-app review, then makes a copy of the wish under an
+identity of its own in a folder of Lamp's, merges the request into it as Bring In would (`Upstream.merge`, the same
+base), builds it and opens it with none of the person's data and no token; it stops at a conflict, and everything it
+made goes when it ends, whatever ends it (its build stopped and waited for first, found by the folder it works in),
+and at the next launch; it's pinned to the request's head and a
+fingerprint of what it copied, files git ignores included. The `suggested_changes` tool (the same for every
+engine) lays a request out in the wish's folder of fetched copies (`SharedCopies`), read-only: its words marked as the
+sender's, never Lamp's, and its change as a diff; with `bring_in` the review opens once the turn ends. Bring Into My App
+is Bring In Changes with the request's head (`refs/pull/<n>/head`) in the repository's latest's place,
+measured from where the request branched (GitHub's `merge_base_commit`), or from the head last brought in of it while the
+wish still has that; it counts once saved, pinned at the head reviewed (`SuggestedChanges.accept`). The next release
+gives its commit each pinned head as one more parent (`GitHubRepo.upload`'s `merging`, a commit even when the files are
+unchanged), which GitHub reads to mark the request merged, by ancestry alone. So a head goes only when the release
+really has its change (`SuggestedChanges.parents`): the version that brought it in still holds (`BringIn.holds(version:)`),
+the request still points at the pinned head (one rewritten since stays open, the panel saying it sent more), none of its
+files, over the whole request from where it branched, is one the release wouldn't export as the request has it, in the
+repository's own paths (a copy of the wish with the change staged into it as the merge stages it, exported as a release
+exports it, and put in the place of the repository as the request found it as an upload does, hidden folders kept:
+`SuggestedChanges.notCarried`, `GitHubRepo.overlay`; each path compared as git has it, mode and type with the bytes; a
+check that can't be made counts as not carried),
+and no other open request that isn't going is at its head or under it (GitHub's compare, by request number), since that
+request would be marked merged with it. Every page of open requests is read, and only GitHub's answer of closed ends one;
+a reopened one is open again. What a push went with is kept before its tag (`SuggestedChanges.pushed`); a request released without being a
+parent is held by that release, and the panel's Close Request… comments with the release and commit. Merged is only what
+GitHub says (`SuggestedChanges.find` asks for each request that went).
 The release then goes on top of what was brought in, and what changed on GitHub since Lamp's push stays as GitHub has it
 unless it's the app's (`GitHubRepo.keptFromGitHub`), on that push and every one after (`Repo.ownFiles`): a README or
 license edited there, a file only GitHub has; the app's

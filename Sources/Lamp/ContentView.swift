@@ -345,7 +345,8 @@ struct ImportReviewView: View {
                          cancel: store.cancelImport, open: store.confirmImport, update: store.confirmUpdate,
                          android: pending.package.platform.target.recipe.language == .kotlin, prepared: pending.prepared != nil,
                          mixWaits: mixing.stage == .mixing,
-                         mix: pending.mixFile.map { file in { store.cancelImport(); openWindow(id: "mix"); MixModel.shared.open(file, store: store) } })
+                         mix: pending.mixFile.map { file in { store.cancelImport(); openWindow(id: "mix"); MixModel.shared.open(file, store: store) } },
+                         trying: pending.trying, tryIt: store.confirmTrial)
             .task { icon = await Sharing.icon(of: pending.package) }
             .background(WindowFinder { sheet = $0; fit() })
             // The window can be moved with the sheet down, and the Dock can come and go.
@@ -391,6 +392,10 @@ struct ImportReviewCard: View {
     /// Another mix is being saved, which the window finishes first: Mix… waits for it.
     var mixWaits = false
     var mix: (() -> Void)? = nil
+    /// Someone's suggested change, to try in a copy of `existing` (`SuggestionTrial`): Try It is the one choice, held to
+    /// the same checks as opening.
+    var trying = false
+    var tryIt: () -> Void = {}
 
     /// The heights of what stays put, measured as laid out: the app's name and description at the top, the
     /// review's summary, the line about the copy already here when there is one, and the buttons.
@@ -442,10 +447,10 @@ struct ImportReviewCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     // The name is the sender's: shown as written, never as formatting, and on one line whose
                     // end (the closing quote and the question mark) stays in view however long it is.
-                    Text(verbatim: prepared ? "Your update is ready" : "Open “\(name)”?").font(.title2.bold())
+                    Text(verbatim: prepared ? "Your update is ready" : trying ? "Try these changes to “\(name)”?" : "Open “\(name)”?").font(.title2.bold())
                         .lineLimit(1).truncationMode(.middle)
                     // The sender's words, said to be theirs.
-                    if let description, !prepared {
+                    if let description, !prepared, !trying {
                         Text(verbatim: "Described by the person who shared it with you as: \(description)")
                             .font(.callout).foregroundStyle(.secondary).lineLimit(5)
                             .fixedSize(horizontal: false, vertical: true)
@@ -515,7 +520,16 @@ struct ImportReviewCard: View {
                 .padding(.vertical, 20)
             }
 
-            if let existing {
+            if let existing, trying {
+                Label {
+                    Text(verbatim: "Lamp opens a copy of “\(existing)” with these changes and none of your data. Your app stays as it is, and the copy goes when you quit it.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "square.on.square").foregroundStyle(.secondary)
+                }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.existing] = $0 }
+            } else if let existing {
                 // The buttons say what each does; this is what someone would worry about before choosing Update.
                 Label {
                     Text(verbatim: mix != nil
@@ -549,7 +563,19 @@ struct ImportReviewCard: View {
             // (`ImportReview.opening`); anything less takes a deliberate click.
             Button("Cancel", role: .cancel, action: cancel)
                 .keyboardShortcut(.cancelAction)
-            if existing != nil, let mix {
+            if trying {
+                // The copy's code runs as an opened app's does, so it follows the same rule.
+                switch review?.opening {
+                case .byReturn:
+                    Button("Try It", action: tryIt)
+                        .keyboardShortcut(.defaultAction)
+                case .anyway:
+                    Button("Try It Anyway", role: .destructive, action: tryIt)
+                case .byClick, nil:
+                    Button("Try It", action: tryIt)
+                        .disabled(review == nil)
+                }
+            } else if existing != nil, let mix {
                 switch review?.opening {
                 case .anyway: Button("Keep Both Anyway", role: .destructive, action: open)
                 case .byReturn, .byClick, nil: Button("Keep Both", action: open).disabled(review == nil)

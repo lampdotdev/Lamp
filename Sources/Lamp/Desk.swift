@@ -91,24 +91,14 @@ struct WishDesk: View {
     var body: some View {
         HStack(spacing: 0) {
             sidebar
-            VStack(alignment: .leading, spacing: 14) {
-                // Above every chat too, so it's seen wherever the person is, not only in the chat that couldn't save.
-                if let trouble = store.saveTrouble {
-                    ChatLook.Banner(banner: SidebarBanner(text: trouble.text, button: Store.SaveTrouble.button, needsYou: true)) {
-                        store.retrySaving()
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
-                header
-                list.onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { listWidth = $0 }
-            }
-            .padding(.top, Self.top).padding(.horizontal, 20)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            if panelShown, panelFits, let item = items(sections).first(where: { $0.id == current }) {
-                DeskDetail(item: item, kept: sections.kept.contains(item.id), remixes: remixes(of: item)) { open(item, asking: $0) }
-                    .frame(width: Self.panelWidth)
-                    .overlay(alignment: .leading) { Self.separator }
-                    .transition(.move(edge: .trailing))
+            // Changes people sent, when the person goes to them: in place of the list, with Back.
+            if let wish = store.suggestionsOpen {
+                // Its own for each app: what's picked, searched and filtered in one isn't carried to another.
+                SuggestionsPanel(wish: wish) { store.suggestionsOpen = nil }
+                    .id(wish)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                deskList
             }
         }
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { deskWidth = $0 }
@@ -119,7 +109,7 @@ struct WishDesk: View {
         .navigationTitle("Lamp")
         .toolbar {
             // Only where the panel has room to show: in a narrower window the list keeps the space.
-            if panelFits { ToolbarItem(placement: .primaryAction) {
+            if panelFits, store.suggestionsOpen == nil { ToolbarItem(placement: .primaryAction) {
                 Button { withAnimation(Self.slide) { panelShown.toggle() } } label: {
                     Label(panelShown ? "Hide Details" : "Show Details", systemImage: "sidebar.right")
                 }
@@ -169,6 +159,29 @@ struct WishDesk: View {
         }
     }
 
+    @ViewBuilder private var deskList: some View {
+            VStack(alignment: .leading, spacing: 14) {
+                // Above every chat too, so it's seen wherever the person is, not only in the chat that couldn't save.
+                if let trouble = store.saveTrouble {
+                    ChatLook.Banner(banner: SidebarBanner(text: trouble.text, button: Store.SaveTrouble.button, needsYou: true)) {
+                        store.retrySaving()
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                header
+                list.onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { listWidth = $0 }
+            }
+            .padding(.top, Self.top).padding(.horizontal, 20)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            if panelShown, panelFits, let item = items(sections).first(where: { $0.id == current }) {
+                DeskDetail(item: item, kept: sections.kept.contains(item.id), remixes: remixes(of: item)) { open(item, asking: $0) }
+                    .frame(width: Self.panelWidth)
+                    .overlay(alignment: .leading) { Self.separator }
+                    .transition(.move(edge: .trailing))
+            }
+    }
+
+
     /// The person's devices: what a new wish can be for. Settings at the foot. Its first line starts
     /// where the bar does beside it.
     private var sidebar: some View {
@@ -179,6 +192,7 @@ struct WishDesk: View {
                 }
                 .padding(.horizontal, 12).padding(.top, Self.top).padding(.bottom, 20)
             }
+            sentToYou
             HStack(spacing: 4) {
                 SettingsLink {
                     Image(systemName: "gearshape")
@@ -209,6 +223,32 @@ struct WishDesk: View {
         .frame(width: 220)
         .background(Paper.panel)
         .overlay(alignment: .trailing) { Self.separator }
+    }
+
+    /// The way to the changes people sent: as quiet as the rest of the column, there only once someone has sent some,
+    /// with how many are new. It opens at the app with the most new.
+    @ViewBuilder private var sentToYou: some View {
+        let wishes = store.wishesWithSuggestions
+        if !wishes.isEmpty {
+            let new = store.newSuggestionsInAll
+            Button {
+                store.suggestionsOpen = store.suggestionsOpen == nil ? (wishes.max { store.newSuggestions($0) < store.newSuggestions($1) } ?? wishes[0]).id : nil
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "tray.and.arrow.down").font(.system(size: 13))
+                    Text("Sent to you").font(.system(size: 13))
+                    Spacer()
+                    if new > 0 { Text("\(new) new").font(.system(size: 12)).foregroundStyle(Paper.muted) }
+                }
+                .foregroundStyle(Paper.ink)
+                .padding(.horizontal, 10).frame(height: 30)
+                .background(Paper.ink.opacity(store.suggestionsOpen == nil ? 0.05 : 0.1), in: RoundedRectangle(cornerRadius: 7))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 12).padding(.bottom, 8)
+            .accessibilityLabel(new > 0 ? "Sent to you, \(new) new" : "Sent to you")
+        }
     }
 
     private var list: some View {
