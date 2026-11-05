@@ -1064,6 +1064,9 @@ enum Sharing {
             let name = relativePath(of: file, in: folder)
             // One path a line is what zip reads: a name that can't be one isn't a name Lamp writes.
             guard !name.contains("\n") else { throw ImportError("Couldn't read or write the Lamp app file.") }
+            // The folder is Lamp's own copy, and a copy of a file locked in Finder is locked too, which refuses a new
+            // date: it's unlocked first (`removeStaged` would anyway), never the person's own file.
+            try fm.setAttributes([.immutable: false, .appendOnly: false], ofItemAtPath: file.path)
             try fm.setAttributes([.modificationDate: zipDate], ofItemAtPath: file.path)
             names.append(name)
         }

@@ -226,7 +226,7 @@ final class SharingScreenTests: XCTestCase {
         }
         XCTAssertFalse(has(ScreenKit.webAppPage.swift))
         XCTAssertFalse(has(".lamp"))
-        XCTAssertTrue(try fm.contentsOfDirectory(atPath: staged.folder.path).contains { $0.hasSuffix(".lampapp") })
+        XCTAssertFalse(try fm.contentsOfDirectory(atPath: staged.folder.path).contains { $0.hasSuffix(".lampapp") })
 
         let package = try Sharing.open(staged.folder)
         defer { try? fm.removeItem(at: package.folder) }
