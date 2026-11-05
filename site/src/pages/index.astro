@@ -644,6 +644,8 @@ open "build/Lamp Dev.app"</code></pre>
     /* The project's links, one line under the windows. */
     .home { --foot: 34px; }
     .window-footer { display: flex; align-items: center; position: fixed; left: calc(var(--edge) + 4px); right: var(--edge); bottom: 0; height: var(--foot); }
+    /* It sits on the site's paper, outside the window, so it keeps the light page's ink whatever the content's theme. */
+    .window-footer { --color-paper: #f2ecda; --color-tape: #1b1a17; --color-muted-ink: #5d584b; color: var(--color-tape); }
     /* Until a part's been added, the headline stands in the middle of the window. */
     :global(html[data-asking]:not([data-has-part])) .app-window-body main { min-height: 100%; display: flex; flex-direction: column; justify-content: center; padding-bottom: 3rem; }
     :global(body:has(.app-window) > footer) { display: none; }
