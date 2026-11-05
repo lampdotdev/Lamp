@@ -23,7 +23,7 @@ done (Lamp), and Undo takes back the newest change. Without the script, and for 
 page in order. The chat is drawn as Lamp draws the chat beside an app (LampSidebarKit), from the same colors
 (`Paper.swift`) and shapes: a title bar with the red light (it puts the chat away; Lamp's mark at the corner brings it
 back), Lamp's mark and Undo; what's asked in ink bubbles and what Lamp says in paper ones, both with Messages' tail;
-"Need inspiration?" over the requests as outlined tiles whose gray icons (Phosphor's bold set) take their own color
+the requests as outlined tiles whose gray icons (Phosphor's bold set) take their own color
 under the pointer; and the round message box with the round ink Send. Where there's room it's a window of its own
 down the right edge, off the window's edges with round corners and a window's shadow; on a phone it's a box under the
 headline, and what it adds arrives under it. It follows the Mac's light or dark appearance, as Lamp does, and is dark

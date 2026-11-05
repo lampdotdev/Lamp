@@ -107,8 +107,7 @@ const lit = (hue: number) => `linear-gradient(${hsb(hue, 0.45, 1)}, ${hsb(hue, 0
           </div>
           <div data-log class="chat-log" aria-live="polite"></div>
           <div data-asks class="chat-ideas">
-            <p class="chat-ideas-label">Need inspiration?</p>
-            {asks.map((item) => (
+              {asks.map((item) => (
               <button type="button" data-ask={item.part} data-done={item.done} class="chat-idea" style={`--lit: ${lit(item.hue)}`}>
                 <span class="idea-icon" aria-hidden="true" set:html={item.icon} />
                 <span data-ask-text>{item.ask}</span>
@@ -234,7 +233,6 @@ open "build/Lamp Dev.app"</code></pre>
   };
 
   const ideas = chat.querySelector<HTMLElement>("[data-asks]")!;
-  const label = ideas.querySelector<HTMLElement>(".chat-ideas-label")!;
   const undo = chat.querySelector<HTMLButtonElement>("[data-undo]")!;
   // The ideas in their first order, so one put back by Undo goes back where it was.
   const order = [...ideas.querySelectorAll<HTMLButtonElement>("[data-ask]")];
@@ -250,11 +248,9 @@ open "build/Lamp Dev.app"</code></pre>
     askText(button).textContent = on ? "Make it light again" : "Make it dark";
     return on;
   };
-  // What's left to pick: the heading over the ideas only while there are some to add, and once they've all been
-  // added, a word that the rest is Lamp's.
+  // Once every part has been added, a word that the rest is Lamp's.
   const settle = () => {
     const left = !!ideas.querySelector("[data-ask]:not([data-ask=dark])");
-    label.hidden = !left;
     if (!left && !toldAll) {
       toldAll = true;
       say("lamp", "That's everything on this page. In Lamp, you can ask for anything.");
@@ -472,7 +468,6 @@ open "build/Lamp Dev.app"</code></pre>
   /* The ideas, one under another as in a narrow chat: an outline only, so they stay quieter than what's written, each
      with its icon on a gray squircle that takes its own color under the pointer. */
   .chat-ideas { display: flex; flex-direction: column; gap: 8px; flex: none; padding: 0 20px 12px; }
-  .chat-ideas-label { font-size: 13px; color: var(--chat-muted); }
   .chat-idea {
     display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; text-align: left; cursor: pointer;
     font-size: 13px; color: var(--chat-ink); box-shadow: inset 0 0 0 1px var(--chat-line); transition: box-shadow 0.15s ease;
