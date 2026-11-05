@@ -40,17 +40,12 @@ export function cardElement(wish, { picture, icon, lamp }) {
     backgroundColor: "#1c1f3f",
     backgroundImage: "radial-gradient(70% 55% at 50% 115%, rgba(255,176,92,0.55), rgba(255,176,92,0) 72%), radial-gradient(60% 60% at 90% -15%, rgba(91,75,224,0.55), rgba(91,75,224,0) 70%), radial-gradient(45% 45% at 0% 30%, rgba(61,56,201,0.35), rgba(61,56,201,0) 70%)",
   };
-  const mark = h("div", { display: "flex", alignItems: "center", gap: 14, fontSize: 26, color: "rgba(255,255,255,0.82)" }, [
-    img(lamp, { width: 40, height: 40 }),
-    h("div", { display: "flex" }, "Made with Lamp · lamp.dev"),
-  ]);
   const name = (size, lines) => h("div", { display: "block", fontSize: size, fontWeight: 700, lineHeight: 1.08, letterSpacing: "-0.02em", lineClamp: lines }, wish.name);
   const line = (size, lines) => h("div", { display: "block", fontSize: size, lineHeight: 1.3, color: "rgba(255,255,255,0.82)", lineClamp: lines }, words);
 
-  // Lamp's mark goes at the top: X lays the page's title over the bottom left of a large card.
+  // Only the app: the link's preview already names lamp.dev. Lamp's own icon stands in only for an app without one.
   if (!shot) {
     return h("div", { ...sky, flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "56px 96px", textAlign: "center" }, [
-      h("div", { display: "flex", marginBottom: 36 }, [mark]),
       img(icon || lamp, { width: 156, height: 156, borderRadius: icon ? 0 : 34 }),
       h("div", { display: "flex", flexDirection: "column", alignItems: "center", gap: 18, marginTop: 28 }, [name(64, 2), line(30, 2)]),
     ]);
@@ -60,9 +55,8 @@ export function cardElement(wish, { picture, icon, lamp }) {
   const scale = Math.min(box.width / wish.picture.width, box.height / wish.picture.height);
   const size = { width: Math.round(wish.picture.width * scale), height: Math.round(wish.picture.height * scale) };
   return h("div", { ...sky, padding: "64px 56px 56px 72px", gap: 48, alignItems: "center" }, [
-    h("div", { display: "flex", flexDirection: "column", width: 440, height: "100%" }, [
-      mark,
-      h("div", { display: "flex", flexDirection: "column", gap: 20, marginTop: 36 }, [
+    h("div", { display: "flex", flexDirection: "column", justifyContent: "center", width: 440, height: "100%" }, [
+      h("div", { display: "flex", flexDirection: "column", gap: 20 }, [
         img(icon || lamp, { width: 112, height: 112, borderRadius: icon ? 0 : 24 }),
         name(58, 2),
         line(28, 3),

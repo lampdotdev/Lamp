@@ -30,7 +30,8 @@ export function builtWishPage() {
 function previewTags(wish, origin) {
   const link = linkFor(origin, wish.id, wish.name);
   const card = `${origin}/w/${wish.id}/card.png?v=${encodeURIComponent(wish.updated ?? "")}`;
-  const title = `${wish.name} · Made with Lamp`;
+  // Only the app: the preview shows lamp.dev beside it already.
+  const title = wish.name;
   const description = summary(wish);
   return [
     `<title>${escape(title)}</title>`,

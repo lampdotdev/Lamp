@@ -44,7 +44,8 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   like the byline. A change from a Lamp that doesn't send `releases` keeps the ones
   the link has.
 - The preview card (`/w/<id>/card.png`, `lib/wish-card.js`, `api/wish-card.js`): 1200×630, drawn by `@vercel/og`
-  with Geist (`lib/fonts`, SIL Open Font License) on a night sky with the lamp's warm light. The page names it in
+  with Geist (`lib/fonts`, SIL Open Font License) on a night sky with the lamp's warm light. It's only about the app (its
+  icon, name, line and picture), and its page's title is only the app's name: the preview names lamp.dev already. The page names it in
   `og:image` and `twitter:image` with Twitter's large card.
 - The wish's file (`api/wish-file.js`, `createFileHandler` in `lib/shared-wishes.js`), only with the link's secret:
   `PUT ?id=&part=<n>&of=<count>` sends one part as raw bytes (at most 3 MB, since a request to a function holds 4.5 MB),
