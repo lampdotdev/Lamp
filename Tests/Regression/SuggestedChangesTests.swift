@@ -361,4 +361,45 @@ final class SuggestedChangesTests: XCTestCase {
         let left = await SuggestedChanges.notCarried(from: change.start, to: change.head, in: change.tree, for: world.wish)
         XCTAssertEqual(left, [".github/scripts/check.sh"])
     }
+
+    /// A file the repository already tracks that a .gitignore names (`style.css`) stays tracked when the upload commits:
+    /// changed by a request, it's carried, as the upload's own clone has it.
+    func testATrackedFileAGitignoreNamesIsStillCarried() async throws {
+        let world = try world()
+        // Made as a Mac app, which needs nothing of the web app kit, then turned into a plain site.
+        let made = try Template.scaffold(name: "Drive", platform: .mac, in: world.place.appendingPathComponent("Sites"))
+        let metaURL = made.dir.appendingPathComponent(".lamp/meta.json")
+        var meta = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: metaURL)) as? [String: Any])
+        meta["platform"] = "web-app"
+        try JSONSerialization.data(withJSONObject: meta).write(to: metaURL)
+        try FileManager.default.removeItem(at: made.dir.appendingPathComponent("Sources"))
+        let site = try XCTUnwrap(Store.readWish(at: made.dir))
+        XCTAssertEqual(site.platform, .webApp)
+        try ScreenKit.markSite(site)
+        for (path, text) in ["Web/index.html": "<html>hello</html>\n", "Web/style.css": "body {}\n", "APP.md": "# Drive\n"] {
+            let url = site.dir.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        }
+        _ = try sh("git init -q -b main && printf '.lamp/\\n' > .gitignore && git add -A && git -c user.name=Lamp -c user.email=lamp@localhost commit -qm first", in: site.dir)
+        let change = try request(on: site, in: world.place, ["index.html": "<html>hello, again</html>\n"])
+
+        try "style.css\n".write(to: change.tree.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
+        let start = try sh("git add -A && git -c user.name=Lamp -c user.email=lamp@localhost commit -qm ignore && git rev-parse HEAD", in: change.tree)
+        try "body { color: red; }\n".write(to: change.tree.appendingPathComponent("style.css"), atomically: true, encoding: .utf8)
+        let head = try sh("git add -A && git -c user.name=Lamp -c user.email=lamp@localhost commit -qm css && git rev-parse HEAD", in: change.tree)
+        // What the upload itself commits for it: the file stays tracked, with the request's mode and blob.
+        try "style.css\n".write(to: site.dir.appendingPathComponent("Web/.gitignore"), atomically: true, encoding: .utf8)
+        try "body { color: red; }\n".write(to: site.dir.appendingPathComponent("Web/style.css"), atomically: true, encoding: .utf8)
+        let exported = try GitHubRepo.stage(site, repo: nil, link: nil, isPublic: false, withPage: false)
+        defer { try? FileManager.default.removeItem(at: exported.folder.deletingLastPathComponent()) }
+        let upload = world.place.appendingPathComponent("real-upload")
+        _ = try sh("git clone -q \(Sandbox.quoted(change.tree.path)) \(Sandbox.quoted(upload.path)) && git -C \(Sandbox.quoted(upload.path)) checkout -q \(start)", in: world.place)
+        try await GitHubRepo.overlay(exported.folder, onto: upload, keeping: [], git: GitHubRepo.git)
+        let uploaded = try sh("git add -A && git ls-files -s -- style.css", in: upload)
+        let wanted = try sh("git ls-files -s -- style.css", in: change.tree)
+        XCTAssertEqual(uploaded, wanted, "Real upload carries the exact mode and blob")
+        let left = await SuggestedChanges.notCarried(from: start, to: head, in: change.tree, for: site)
+        XCTAssertEqual(left, [], "An already tracked file stays tracked even when gitignore matches it")
+    }
 }

@@ -257,14 +257,10 @@ enum SuggestedChanges {
         // (`GitHubRepo.overlay`): what it keeps of GitHub's (a hidden folder at the top, the files kept as GitHub has
         // them) is there whatever the request did to it.
         let upload = work.appendingPathComponent("upload")
-        guard (try? fm.createDirectory(at: upload, withIntermediateDirectories: true)) != nil,
-              await Subprocess.run("/bin/zsh", ["-c", "\(Sandbox.quoted(git)) archive \(start) | tar -x -C \(Sandbox.quoted(upload.path))"],
-                                   cwd: tree, timeout: 120).ok,
-              // Its commit is only for putting back what the upload keeps: made with plumbing, which signs only when asked.
-              await Subprocess.run("/bin/zsh", ["-c", "\(Sandbox.quoted(git)) init -q && \(Sandbox.quoted(git)) add -A && "
-                                                + "\(Sandbox.quoted(git)) update-ref HEAD $(GIT_AUTHOR_NAME=Lamp GIT_AUTHOR_EMAIL=lamp@localhost "
-                                                + "GIT_COMMITTER_NAME=Lamp GIT_COMMITTER_EMAIL=lamp@localhost \(Sandbox.quoted(git)) commit-tree "
-                                                + "$(\(Sandbox.quoted(git)) write-tree) -m start)"], cwd: upload, timeout: 120).ok else { return nil }
+        // A checkout of the start in the request's own clone, as the upload's clone is checked out: what git already
+        // tracks there it goes on tracking, even where a .gitignore names it, and HEAD puts back what the upload keeps.
+        guard await Subprocess.run(git, ["worktree", "add", "-q", "--detach", upload.path, start], cwd: tree, timeout: 120).ok else { return nil }
+        defer { _ = Subprocess.runBlocking(git, ["worktree", "remove", "--force", upload.path], cwd: tree, timeout: 60) }
         let keeping = (GitHubRepo.kept(for: project)?.ownFiles ?? [])
             .filter { ["README.md", "LICENSE"].contains($0) || !fm.fileExists(atPath: exported.folder.appendingPathComponent($0).path) }
         guard (try? await GitHubRepo.overlay(exported.folder, onto: upload, keeping: keeping, git: git)) != nil else { return nil }
