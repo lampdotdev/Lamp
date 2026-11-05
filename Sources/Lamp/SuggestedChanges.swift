@@ -75,7 +75,7 @@ enum SuggestedChanges {
     // MARK: What Lamp keeps
 
     /// A test points this at a folder of its own.
-    nonisolated(unsafe) static var keptURL = Edition.supportFolder.appendingPathComponent("GitHub SuggestedChanges.json")
+    nonisolated(unsafe) static var keptURL = Edition.supportFolder.appendingPathComponent("GitHub Suggestions.json")
     private static func key(_ project: LampProject) -> String { project.instance.isEmpty ? project.id : project.instance }
 
     static func record(for project: LampProject) -> Record? { read()[key(project)] }
