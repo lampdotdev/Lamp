@@ -13,8 +13,8 @@ import LampSidebarKit
 /// so a request rewritten since is never counted as brought in. The next Release Update gives its commit each pinned head
 /// as one more parent (`parents`), which is what GitHub reads to mark a request merged, by ancestry alone. So a head goes
 /// only when the release really has its change: the version that brought it in is still in the wish's history
-/// (`BringIn.holds(version:)`), the request still points there, every file it changes came in as it has it (`notCarried`,
-/// over the whole request; not knowing counts as not), and no other open request that isn't going is at its head or
+/// (`BringIn.holds(version:)`), the request still points there, every file it changes would go up with the release as
+/// it has it (`notCarried`, over the whole request, in the release's own export; not knowing counts as not), and no other open request that isn't going is at its head or
 /// under it (that one would be marked merged with it). One that can't go is released all the same, and its card offers Close Request…, saying which release has it.
 /// Whether a request was merged is GitHub's to say: the card asks it (`ended`) rather than trusting a push went through.
 enum SuggestedChanges {
@@ -39,7 +39,7 @@ enum SuggestedChanges {
         var head: String
         var base: String
         var takenIn: String
-        /// Files it changes, over the whole request, that bringing it in didn't stage as it has them (`notCarried`): it's
+        /// Files it changes, over the whole request, that a release wouldn't put up as it has them (`notCarried`): it's
         /// never marked merged by a release, which wouldn't have them.
         var leftOut: [String]? = nil
         /// Whether what it changes was checked against what a release carries; unchecked never goes as a parent.

@@ -441,8 +441,9 @@ gives its commit each pinned head as one more parent (`GitHubRepo.upload`'s `mer
 unchanged), which GitHub reads to mark the request merged, by ancestry alone. So a head goes only when the release
 really has its change (`SuggestedChanges.parents`): the version that brought it in still holds (`BringIn.holds(version:)`),
 the request still points at the pinned head (one rewritten since stays open, its card saying it sent more), none of its
-files, over the whole request from where it branched, is one bringing it in doesn't stage as the request has it (each
-side staged as the merge stages it: `SuggestedChanges.notCarried`; a check that can't be made counts as not carried),
+files, over the whole request from where it branched, is one the release wouldn't export as the request has it, in the
+repository's own paths (a copy of the wish with the change staged into it as the merge stages it, exported as a release
+exports it: `SuggestedChanges.notCarried`; a check that can't be made counts as not carried),
 and no other open request that isn't going is at its head or under it (GitHub's compare, by request number), since that
 request would be marked merged with it. Every page of open requests is read, and only GitHub's answer of closed ends one;
 a reopened one is open again. What a push went with is kept before its tag (`SuggestedChanges.pushed`); a request released without being a

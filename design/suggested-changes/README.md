@@ -77,11 +77,17 @@ A new request, or a new head on an open one, logs the card again at the end of t
   base is the head brought in then, so only the new commits come in.
 - `BringIn.Pull` gains the request's number, its sender and the files it changes that a release can't carry
   (`leftOut`, from `notCarried`). That check covers the whole request, from where it branched to its head, however
-  many times it's brought in. Each side is staged exactly as the merge stages it (`RepoImport.open`,
-  `Upstream.stage`). A file the request has must come out byte for byte the same, and one it takes away must be
-  one the import had. A Mac app's README, a hidden file, a file Lamp writes itself, or anything else a shared app
-  doesn't hold is therefore left out. If the check can't run, the pull isn't `checked`, and it never goes as a
-  parent.
+  many times it's brought in. It's made in the layout the release exports, the repository's own paths:
+  - A copy of the wish gets the change as the merge would stage it (`RepoImport.open`, `Upstream.stage`): files
+    the start had and the head took away are removed, and the head's files are written over the rest.
+  - That copy is exported as a release exports it (`GitHubRepo.stage`).
+  - A file the request has must come out of that export byte for byte, and one it takes away must not come out at
+    all.
+
+  So whatever the import or the export leaves out, or writes itself, is left out: a Mac app's README, a hidden file,
+  a file Lamp writes itself, or a watch app's code in a Mac app with no iPhone app. A plain site's page, which is
+  `Web/index.html` in the app, comes out at the root as the request has it, so it counts as carried. If the check
+  can't run, the pull isn't `checked`, and it never goes as a parent.
 - `Store.mergeUpdate`, `BringIn.given` and `Pending` take the pull unchanged, so the merge is measured against
   that one base and never a guess.
 - `BringIn.accept` hands a request's pull to `SuggestedChanges.accept`. It pins the head that was reviewed, with
