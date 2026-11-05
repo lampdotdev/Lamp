@@ -28,8 +28,8 @@ under the pointer; and the round message box with the round ink Send. Where ther
 down the right edge, off the window's edges with round corners and a window's shadow; on a phone it's pinned to the foot of the
 window over the page, never more than about two fifths of it, so what it adds stays in sight above it: the requests
 as small pills that wrap, and only the latest exchange of the conversation. The red light puts it away into Lamp's mark at
-the corner; the mark brings it back. The page keeps room under its foot exactly as tall as whatever covers it (the chat, or
-the mark), and each part that comes in is scrolled to: its end just above the chat (or the window's foot), or its top
+the corner; the mark brings it back. The content keeps just enough room under it to be scrolled clear of whatever covers the
+window's foot (the chat, or the mark; the footer may sit behind it), and each part that comes in is scrolled to: its end just above the chat (or the window's foot), or its top
 just under the menu bar when it's too tall for the room between. Until one's been picked, a soft light
 passes over the requests in turn every few seconds (not where less motion is asked for). It follows the Mac's light or dark appearance, as Lamp does, and is dark
 when the page is. Every starter shown is a real one (`Resources/Starters`, listed in `src/lib/starters.ts` with the

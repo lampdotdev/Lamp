@@ -351,10 +351,15 @@ open "build/Lamp Dev.app"</code></pre>
   chat.querySelector("[data-close]")!.addEventListener("click", () => show(false));
   reopen.addEventListener("click", () => show(true));
 
-  // On a phone the page keeps room under its foot exactly as tall as what covers it (the chat, or Lamp's mark once it's
-  // put away), so the end of the page can always be scrolled clear of it.
+  // On a phone the content keeps just enough room under it that its end can be scrolled clear of what covers the
+  // window's foot (the chat, or Lamp's mark once it's put away); the footer may sit behind the chat.
+  const home = document.querySelector<HTMLElement>(".home")!;
+  const footer = document.querySelector("footer");
   const covered = () => !narrow() ? 0 : chat.hidden ? reopen.getBoundingClientRect().height + 12 : chat.getBoundingClientRect().height + 10;
-  const room = () => { document.body.style.paddingBottom = narrow() ? `${Math.ceil(covered())}px` : ""; };
+  const room = () => {
+    const needed = covered() + 16 - (footer?.getBoundingClientRect().height ?? 0);
+    home.style.paddingBottom = narrow() && needed > 64 ? `${Math.ceil(needed)}px` : "";
+  };
   new ResizeObserver(room).observe(chat);
   addEventListener("resize", room);
   new MutationObserver(room).observe(reopen, { attributes: true, attributeFilter: ["hidden"] });
