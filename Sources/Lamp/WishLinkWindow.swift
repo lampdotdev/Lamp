@@ -87,7 +87,7 @@ private struct WishLinkWindowContent: View {
                          canIncludeFile: card.values.includeFile || (card.gitHub != nil && card.values.alsoGitHub)
                             || (card.values.putOnGitHub && card.firstPush?.isPublic == true), noLicense: noLicense,
                          writingNotes: card.writingNotes, gitHub: card.gitHub?.repo, gitHubNote: card.gitHubNote, gitHubStage: card.gitHubStage,
-                         retryGitHub: card.gitHubRetry == nil ? nil : { cards.retryGitHub(project) },
+                         checkingGitHub: card.gitHubFinding != nil, retryGitHub: card.gitHubRetry == nil ? nil : { cards.retryGitHub(project) },
                          gitHubSetup: card.firstPush.map { GitHubRelease.setup($0, of: project) },
                          setUpGitHub: .init(fix: { cards.fixGitHub(project) }, setPrivate: { cards.setGitHubPrivate(project, $0) },
                                             setLicense: { cards.setGitHubLicense(project, $0) }, setPicture: { cards.setGitHubPicture(project, $0) }),
