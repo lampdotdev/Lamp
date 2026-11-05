@@ -60,6 +60,8 @@ A chevron at the window's right, centered on the band, slides it and the header 
 browser), the wish growing to the whole window on black, and from the same place brings both back. Remix's dialog is a plain white card: the change, one line on Lamp, and
 Get Lamp and Open in Lamp (on a Mac). As the page opens the wish fades up and the band after it; the wish's frame is
 black until the page in it draws; where less motion is asked for, it's simply there. The ideas page is on the same paper: the categories as plain tabs, the ideas as flat cards with
-a thin edge, and its first-idea section a plain ink card. Its Download buttons (`DownloadButton.astro`, in that section
+a thin edge, and its first-idea section a plain ink card. An opened idea (`WishDialog.astro`) leads with what it is and
+getting it as it is (Lamp makes it from its words, and anything can be changed once it's open); changing the words
+first is folded away under the buttons, open only when a link brought words of its own. Its Download buttons (`DownloadButton.astro`, in that section
 and in opened ideas) are the site's ink button. Everything on the site, links and small text included, is held to
 4.5:1.
