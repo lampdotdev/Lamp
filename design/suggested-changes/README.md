@@ -43,7 +43,8 @@ front of the person: the desk says quietly that there are some, and the person g
 6. **Releasing.** The next Release Update marks the request **Merged** on GitHub, credited to its sender. The panel
    says "In vN · waiting for GitHub" until GitHub itself says the request is merged.
 7. **Saying no.** Not for Me sets a change aside quietly. Nothing is said on GitHub, so its sender hears nothing. It
-   comes back if they send more to it.
+   comes back if they send more to it. An app whose changes are all set aside stays in "Sent to you" and the panel's
+   menu, counting none as new, so Put Back can always be reached.
 
 Near-duplicate changes aren't grouped; the topics and Good to Know's "other changes touch the same files" are what
 the person picks between them by.
@@ -53,7 +54,7 @@ the person picks between them by.
 | Open | what it does | Show the Code, Not for Me, Try It First, Bring Into My App |
 | Rewritten after it was brought in | Sent more changes since you brought it in | the same |
 | Being fetched | Getting it ready… | none |
-| Brought in | In your app · goes to GitHub with your next release | Undo, Open, and "Next: …" |
+| Brought in | In your app · goes to GitHub with your next release | Undo (only while this bring-in is what Undo would take back and nothing is unsaved), Open, and "Next: …" |
 | Released as a parent | In vN · waiting for GitHub | Show the Code |
 | Released, not a parent | In vN · still open on GitHub | Close Request… (with a comment) |
 | Merged | In vN, or Merged on GitHub | none |
@@ -104,14 +105,17 @@ by someone else (the title, the note and the changed code from `pulls/N/files`, 
   version, so it's made again only when one of those changes. A failure isn't kept. Freshness is checked three times:
   - **Fetching.** GitHub lists a request's files as they are when asked, so the head is asked again after; if it
     moved, nothing is made from what was read.
-  - **Saving.** An answer is kept only if the request is still what it was made from, so a late one never stands over
-    a newer one.
-  - **Showing.** The panel shows an account only while its request is still what it was made from; otherwise the
-    sender's title shows until a new one is made.
+  - **Saving.** An answer is kept only if the request and the app's APP.md, both read again as it's kept, are still
+    what it was made from, so a late one never stands over a newer one.
+  - **Showing.** The panel reads APP.md afresh each time it draws and shows an account only while its request and
+    APP.md are still what it was made from, and its headline holds to six words; otherwise the sender's title shows
+    until a new one is made. The format is part of the key, so accounts kept under an older format are made again.
 
   The same check after listing guards the files Good to Know reads.
-- **Bounded.** One is made at a time, which also keeps two from both adding a topic past the limit (the topic list is
-  read and written in one step besides). No more than 60 are made a day, or $0.50 spent.
+- **Bounded.** One is made at a time: each job waits for the one asked for before it to finish, since an actor lets
+  another call in at every await, and checks what's kept and spent as it starts. So the same request is never asked
+  about twice, no two questions are out at once, and the daily limit (60, or $0.50) is checked against what was spent,
+  overshot at most by one answer's cost. The topic list is read and written in one step besides.
 
 Good to Know is never the model's. It's worked out from the files (`SuggestedChanges.facts`):
 
@@ -144,10 +148,11 @@ Good to Know is never the model's. It's worked out from the files (`SuggestedCha
   anything a crash left is swept (`SuggestionTrial.sweep`).
 - **It can't come back.** Each try has a generation; a build or a launch that finishes after its try ended takes what
   it made away instead of opening it.
-- **Pinned.** What was tried is kept (`Record.tried`): the request's head, and the app's files the copy was made from,
-  saved or not, as one git tree (`SuggestionTrial.snapshot(of:)`, through a scratch index so the app's own is never
-  touched). Bring In works out the same of the app as it is and says so before its review when either differs, so a
-  change not yet saved counts even though the app's version is the same.
+- **Pinned.** What was tried is kept (`Record.tried`): the request's head, and a fingerprint of exactly what the try
+  copied (`SuggestionTrial.snapshot(of:)`): every file at the top of the app's folder but Lamp's own folder and what a
+  build makes, saved or not and whether git ignores it or not, by path, kind, executable bit and bytes, links by where
+  they point and never followed. Git's history isn't part of it. Bring In works out the same of the app as it is and
+  says so before its review when either differs.
 
 ## How it works underneath
 

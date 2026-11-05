@@ -38,17 +38,12 @@ struct SuggestionsPanel: View {
     @State private var newHere: Set<Int> = []
     /// The files the person changed since their last release, for Good to Know.
     @State private var yours: Set<String> = []
-    /// The app's own description as its accounts were made from it, read once: an account made from anything else (an
-    /// older head, title, note or description) isn't shown.
-    @State private var about: String?
 
     private var project: LampProject? { preview?.project ?? store.projects.first { $0.id == wish } }
     private var record: SuggestedChanges.Record? {
         if let preview { return preview.record }
         _ = store.suggestionsRevision
-        guard var record = project.flatMap(SuggestedChanges.record(for:)) else { return nil }
-        record.summaries = about.map { SuggestionSummaries.fresh(record, about: $0) } ?? [:]
-        return record
+        return project.flatMap(Self.shownRecord(for:))
     }
 
     var body: some View {
@@ -58,7 +53,6 @@ struct SuggestionsPanel: View {
                 .onChange(of: store.suggestionsRevision) { newHere.formUnion(record.open.filter(record.isNew).map(\.number)) }
                 .task(id: wish) {
                     if let preview { yours = preview.yours; return }
-                    about = SuggestionSummaries.about(project)
                     yours = await SuggestedChanges.yourChanges(in: project)
                 }
         } else {
@@ -214,6 +208,14 @@ struct SuggestionsPanel: View {
 
     // MARK: What shows
 
+    /// The app's record as the panel shows it: only accounts made from each request and the app's description as they
+    /// are when it's drawn, APP.md read afresh each time, so an edit to it hides an older account at once.
+    static func shownRecord(for project: LampProject) -> SuggestedChanges.Record? {
+        guard var record = SuggestedChanges.record(for: project) else { return nil }
+        record.summaries = SuggestionSummaries.fresh(record, about: SuggestionSummaries.about(project))
+        return record
+    }
+
     /// The open requests, newest first, in the topic chosen and matching the search (the line's words, the sender, the
     /// topic or the number).
     static func shown(_ record: SuggestedChanges.Record, topic: String?, search: String,
@@ -251,6 +253,8 @@ struct SuggestionsPanel: View {
 /// One request, said in full: what it does, what its sender wrote, what Lamp knows for sure, and what can be done.
 struct SuggestionDetail: View {
     @EnvironmentObject private var store: Store
+    /// Whether Undo would take back this request and nothing else (`SuggestedChanges.undoable`).
+    @State private var undoable = false
     let project: LampProject
     let record: SuggestedChanges.Record
     let request: SuggestedChanges.Request
@@ -283,6 +287,9 @@ struct SuggestionDetail: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     if isIn { broughtIn } else { explained }
+                }
+                .task(id: "\(store.versionsRevision) \(store.busy.contains(project.id))") {
+                    undoable = given == nil && isIn ? await SuggestedChanges.undoable(request.number, in: project) : false
                 }
                 .padding(24)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -426,9 +433,13 @@ struct SuggestionDetail: View {
             .fixedSize(horizontal: false, vertical: true)
         Text(SuggestedChanges.words(standing) ?? "").font(.system(size: 14)).foregroundStyle(Paper.muted).fixedSize(horizontal: false, vertical: true)
         HStack(spacing: 10) {
-            Button("Undo") { Task { await store.undo(project) } }
-                .buttonStyle(PaperButtonStyle(.outline, height: 34))
-                .disabled(store.busy.contains(project.id))
+            // Only while this bring-in is the latest change and nothing is unsaved: otherwise Undo would take back
+            // something else. Versions goes further back.
+            if undoable || given != nil {
+                Button("Undo") { store.undoSuggestion(project, number: request.number) }
+                    .buttonStyle(PaperButtonStyle(.outline, height: 34))
+                    .disabled(store.busy.contains(project.id))
+            }
             Button("Open \(project.name)") { store.change(project, asking: "") }
                 .buttonStyle(PaperButtonStyle(.ink, height: 34))
         }
@@ -534,7 +545,7 @@ extension Store {
         _ = suggestionsRevision
         return wishes.filter { wish in
             guard !wish.isPart, let record = SuggestedChanges.record(for: wish) else { return false }
-            return record.open.contains { !record.isHidden($0) }
+            return record.isListed
         }
     }
 

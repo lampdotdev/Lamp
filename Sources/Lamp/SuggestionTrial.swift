@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 
 /// Try It First: someone's suggested change, opened in a copy of the person's app that's never on the desk and never
@@ -99,18 +100,47 @@ enum SuggestionTrial {
         return nil
     }
 
-    /// The app's files as they are, saved or not, as one git tree: what a try copies (all but Lamp's own folder and what
-    /// a build makes), read through a scratch index so the app's own is never touched. Nil when it can't be read.
+    /// What a try leaves out of its copy at the top of the app's folder.
+    static let notCopied: Set<String> = [".lamp", "build", ".build"]
+
+    /// One fingerprint of exactly what a try copies: every file at the top of the app's folder but `notCopied`, ignored
+    /// by git or not, saved or not. Each is taken by its path, kind, executable bit and bytes, a link by where it points,
+    /// never followed. Git's history isn't part of it (`.git`): what's built is the files. Nil when any of it can't be
+    /// read.
     static func snapshot(of dir: URL) async -> String? {
-        let index = ".lamp/snapshot-index-\(UUID().uuidString)"
-        var output = ""
-        let status = await Versions.git("""
-            export GIT_INDEX_FILE="$PWD/\(index)"
-            if git rev-parse -q --verify HEAD >/dev/null; then git read-tree HEAD; fi
-            git add -A 2>/dev/null && git rm -r -q --cached --ignore-unmatch -- .lamp build .build >/dev/null 2>&1 && git write-tree; code=$?
-            rm -f "$GIT_INDEX_FILE"; exit $code
-            """, cwd: dir, onLine: { output += $0 })
-        return status == 0 ? Credits.validCommit(output.trimmed) : nil
+        await Task.detached { fingerprint(of: dir) }.value
+    }
+
+    static func fingerprint(of dir: URL) -> String? {
+        let fm = FileManager.default
+        var hasher = SHA256()
+        func add(_ text: String) { hasher.update(data: Data((text + "\u{0}").utf8)) }
+        func walk(_ folder: URL, _ relative: String) -> Bool {
+            guard let names = try? fm.contentsOfDirectory(atPath: folder.path) else { return false }
+            for name in names.sorted() {
+                let path = relative.isEmpty ? name : relative + "/" + name
+                if relative.isEmpty && (notCopied.contains(name) || name == ".git") { continue }
+                let url = folder.appendingPathComponent(name)
+                guard let attributes = try? fm.attributesOfItem(atPath: url.path), let type = attributes[.type] as? FileAttributeType else { return false }
+                switch type {
+                case .typeDirectory:
+                    add("d " + path)
+                    guard walk(url, path) else { return false }
+                case .typeSymbolicLink:
+                    guard let target = try? fm.destinationOfSymbolicLink(atPath: url.path) else { return false }
+                    add("l " + path + " " + target)
+                case .typeRegular:
+                    let executable = ((attributes[.posixPermissions] as? Int) ?? 0) & 0o111 != 0
+                    guard let data = AppFile.read(url, inFolder: dir) else { return false }
+                    add("f " + path + (executable ? " x " : " - ") + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined())
+                default:
+                    add("o " + path)
+                }
+            }
+            return true
+        }
+        guard walk(dir, "") else { return nil }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     // MARK: Taking it all away
@@ -215,7 +245,7 @@ enum SuggestionTrial {
             try fm.createDirectory(at: copy.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
             try JSONEncoder().encode(manifest(for: copy, wish: project.id, number: number)).write(to: folder.appendingPathComponent("trial.json"))
             // The code and its history, as a remix copies them, and none of what a remix carries over besides.
-            for item in try fm.contentsOfDirectory(atPath: project.dir.path) where ![".lamp", "build", ".build"].contains(item) {
+            for item in try fm.contentsOfDirectory(atPath: project.dir.path) where !notCopied.contains(item) {
                 try fm.copyItem(at: project.dir.appendingPathComponent(item), to: copy.dir.appendingPathComponent(item))
             }
             try Template.saveMeta(copy)

@@ -132,6 +132,9 @@ enum SuggestedChanges {
                 && taken(request.number)?.head != request.head
         }
         var newCount: Int { open.filter(isNew).count }
+        /// Whether the panel lists the app: it has open requests, set aside or not, so Not for Me's section and Put Back
+        /// stay reachable once every one is set aside. Only new ones are counted.
+        var isListed: Bool { open.contains { ended[String($0.number)] == nil } }
 
         /// The files a request changes, when they were listed at the head it's at.
         func files(of request: Request) -> [ChangedFile]? {
@@ -419,6 +422,13 @@ enum SuggestedChanges {
                                       checked: pull.checked == true))
             record.seen[String(number)] = pull.head
         }
+    }
+
+    /// Whether Undo would take back request `number`'s bring-in and nothing else: it's the version Undo would undo, and
+    /// nothing is unsaved (which Undo would throw away first).
+    static func undoable(_ number: Int, in project: LampProject) async -> Bool {
+        guard let taken = record(for: project)?.taken(number), !(await Versions.hasUnsavedChanges(project)) else { return false }
+        return Versions.undoTarget(in: await Versions.list(project))?.undoing.id == taken.takenIn
     }
 
     // MARK: Releasing
@@ -769,6 +779,15 @@ extension Store {
             }
             SuggestedChanges.change(project) { $0.ended[String(number)] = .closed }
             suggestionsRevision += 1
+        }
+    }
+
+    /// Undo under a request brought in: only while that bring-in is what Undo would take back and nothing is unsaved,
+    /// asked again as it's pressed.
+    func undoSuggestion(_ project: LampProject, number: Int) {
+        Task {
+            guard await SuggestedChanges.undoable(number, in: project) else { return }
+            await undo(project)
         }
     }
 

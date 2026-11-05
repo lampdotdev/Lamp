@@ -566,6 +566,31 @@ final class SuggestedChangesTests: XCTestCase {
         XCTAssertEqual(try sh("git status --porcelain -- Sources/Counter.swift", in: world.wish.dir), "M Sources/Counter.swift")
     }
 
+    /// Undo under a brought-in request takes back only that: it's offered while the bring-in is what Undo would undo and
+    /// nothing is unsaved, and not once anything came after it.
+    @MainActor
+    func testUndoUnderARequestTakesBackOnlyThatRequest() async throws {
+        let world = try world()
+        let first = try await release(world, isNew: true)
+        try XCTUnwrap(first.commit).write(to: world.mergeBase, atomically: true, encoding: .utf8)
+        _ = try openRequest(world, number: 6, ["Sources/Counter.swift": "let step = 6\n"])
+        _ = await SuggestedChanges.find(world.wish, kept: first, gh: world.gh.path)
+        _ = try await bringIn(world, number: 6)
+        var undoable = await SuggestedChanges.undoable(6, in: world.wish)
+        XCTAssertTrue(undoable)
+
+        // Unsaved work: Undo would throw it away first.
+        try "let other = 1\n".write(to: world.wish.dir.appendingPathComponent("Sources/Other.swift"), atomically: true, encoding: .utf8)
+        undoable = await SuggestedChanges.undoable(6, in: world.wish)
+        XCTAssertFalse(undoable)
+
+        // Saved after it: Undo would take back that, not the request.
+        let saved = await Versions.save(world.wish, message: "Added Other")
+        XCTAssertTrue(saved)
+        undoable = await SuggestedChanges.undoable(6, in: world.wish)
+        XCTAssertFalse(undoable)
+    }
+
     /// A change to the same lines the person changed isn't settled in a copy: the try stops and says so, and leaves its
     /// folder for the caller to take away.
     @MainActor

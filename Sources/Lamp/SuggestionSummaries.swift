@@ -16,7 +16,9 @@ actor SuggestionSummaries {
     static let shared = SuggestionSummaries()
 
     /// Goes up when what an account is made from, or how, changes: every kept account is then made again.
-    static let format = 1
+    /// 2: headlines of six words at most.
+    static let format = 2
+    static let headlineWords = 6
     /// How many parts of the app requests are sorted under, "Other" included.
     static let maxTopics = 8
     static let other = "Other"
@@ -66,15 +68,37 @@ actor SuggestionSummaries {
         summary.made == hash(title: request.title, note: request.note ?? "", head: request.head, about: about)
     }
 
-    /// The record's accounts that are of its open requests as they are now; an older one is never shown.
+    /// The record's accounts that are of its open requests as they are now, and still hold to what's shown; an older one
+    /// is never shown.
     static func fresh(_ record: SuggestedChanges.Record, about: String) -> [String: Summary] {
         record.summaries.filter { key, summary in
-            record.request(Int(key) ?? -1).map { isFresh(summary, for: $0, about: about) } ?? false
+            summary.headline.split(separator: " ").count <= headlineWords
+                && record.request(Int(key) ?? -1).map { isFresh(summary, for: $0, about: about) } ?? false
         }
     }
 
-    /// Makes the request's account when there's none for what it is now. Whether one was made.
+    // MARK: One at a time
+
+    /// The job before this one, which each waits for: an actor lets another call in at every await, so without this two
+    /// could pass the same checks and both ask.
+    private var last: Task<Bool, Never>?
+
+    /// The model's answer, in place of `AppAI.toolFree`, for a test. Nil asks the real routes.
+    nonisolated(unsafe) static var answering: ((String) async -> (String, Double)?)?
+
+    /// Makes the request's account when there's none for what it is now, after every job asked for before it has
+    /// finished, and with what's kept and spent checked as it starts. Whether one was made.
     func make(for request: SuggestedChanges.Request, in project: LampProject, repo: String, gh: String) async -> Bool {
+        let before = last
+        let job = Task { () -> Bool in
+            _ = await before?.value
+            return await self.makeNow(for: request, in: project, repo: repo, gh: gh)
+        }
+        last = job
+        return await job.value
+    }
+
+    private func makeNow(for request: SuggestedChanges.Request, in project: LampProject, repo: String, gh: String) async -> Bool {
         let key = String(request.number)
         let about = Self.about(project)
         let made = Self.hash(title: request.title, note: request.note ?? "", head: request.head, about: about)
@@ -82,14 +106,19 @@ actor SuggestionSummaries {
         // Made already, or answered with no account for what it is now: asked again only once it changes.
         if before?.summaries[key]?.made == made || before?.unexplained[key] == made { return false }
         // Nothing is fetched for an account nothing could make.
-        guard Self.canSpend(), await AppAI.toolFreeAvailable(),
+        let routed = Self.answering != nil ? true : await AppAI.toolFreeAvailable()
+        guard Self.canSpend(), routed,
               let inputs = await Self.inputs(for: request, about: about, repo: repo, gh: gh), Self.canSpend() else { return false }
         let topics = SuggestedChanges.record(for: project, repo: repo)?.topics ?? []
         // Counted before it's asked, so calls for several apps at once can't all pass the limit.
         Self.counted()
         let answer: (String, Double)?
         do {
-            answer = try await AppAI.toolFree(prompt: Self.prompt(inputs, topics: topics), system: Self.system, schema: Self.schema, for: project)
+            if let answering = Self.answering {
+                answer = await answering(Self.prompt(inputs, topics: topics))
+            } else {
+                answer = try await AppAI.toolFree(prompt: Self.prompt(inputs, topics: topics), system: Self.system, schema: Self.schema, for: project)
+            }
         } catch {
             if let failure = error as? AppAI.Failure { Self.spent(failure.cost) }
             return false
@@ -99,17 +128,24 @@ actor SuggestionSummaries {
         // An answer that isn't an account isn't shown; the sender's title stands, and the request isn't asked about
         // again until it changes, so one request can't use up the day's limit.
         guard var summary = Self.checked(text, topics: topics) else {
-            SuggestedChanges.change(project, repo: repo) { if Self.isCurrent(made, key, in: $0, about: about) { $0.unexplained[key] = made } }
+            let now = Self.about(project)
+            SuggestedChanges.change(project, repo: repo) { if Self.isCurrent(made, key, in: $0, about: now) { $0.unexplained[key] = made } }
             return false
         }
         summary.made = made
         summary.partial = inputs.partial
-        let kept = summary
-        // Kept only while the request is still what it was made from: a late answer never stands over a newer one.
+        return Self.keep(summary, as: key, in: project, repo: repo)
+    }
+
+    /// Keeps an answer only while the request and the app's description are still what it was made from, both read
+    /// again now: a late answer never stands over a newer one, and an APP.md edited meanwhile makes it stale.
+    @discardableResult
+    static func keep(_ summary: Summary, as key: String, in project: LampProject, repo: String) -> Bool {
+        let now = about(project)
         var filed = false
         SuggestedChanges.change(project, repo: repo) { record in
-            guard Self.isCurrent(made, key, in: record, about: about) else { return }
-            Self.file(kept, as: key, in: &record)
+            guard isCurrent(summary.made, key, in: record, about: now) else { return }
+            file(summary, as: key, in: &record)
             filed = true
         }
         return filed
@@ -239,7 +275,7 @@ actor SuggestionSummaries {
         var headline = plain(rawHeadline)
         if headline.hasSuffix(".") { headline.removeLast() }
         let words = headline.split(separator: " ").count
-        guard (1...6).contains(words), headline.count <= 60, !claimsSafety(headline) else { return nil }
+        guard (1...headlineWords).contains(words), headline.count <= 60, !claimsSafety(headline) else { return nil }
         let points = ((object["points"] as? [Any]) ?? []).compactMap { $0 as? String }.map(plain)
             .filter { !$0.isEmpty && $0.count <= 200 && !claimsSafety($0) }
         let topic = plain(rawTopic)
