@@ -232,7 +232,10 @@ enum GitHubRelease {
                                                    license: isNew ? push.license : before?.license ?? false,
                                                    picture: picture == nil ? before?.picture : push.showsPicture,
                                                    authors: push.authors, release: version, pushed: pushed, step: step)
-        await GitHubRepo.settle(uploaded.repo, before: before, of: project, gh: push.gh)
+        // As a later release's: one that pushed while this waited for its page keeps its record.
+        if GitHubRepo.kept(for: project)?.commit == uploaded.repo.commit {
+            await GitHubRepo.settle(uploaded.repo, before: before, of: project, gh: push.gh)
+        }
         return repo
     }
 
