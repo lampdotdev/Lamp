@@ -210,18 +210,22 @@ final class ClaudeSummaryRunTests: XCTestCase {
     /// A stand-in for Claude Code, run as the real launch runs it (sandbox, reader): it says it's a tested version, lists no
     /// tools, then either tries a tool or waits with no answer.
     private func standIn(version: String, triesTool: Bool) throws -> String {
+        let initial = #"{"type":"system","subtype":"init","tools":[],"mcp_servers":[]}"#
+        let tool = #"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}"#
+        return try standIn(version: version, then: "echo '\(initial)'\n" + (triesTool ? "echo '\(tool)'; sleep 30" : "sleep 30"))
+    }
+
+    /// The same with what it does after reading its request given whole.
+    private func standIn(version: String, then body: String) throws -> String {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-claude-stand-in-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
         let script = folder.appendingPathComponent("claude")
-        let initial = #"{"type":"system","subtype":"init","tools":[],"mcp_servers":[]}"#
-        let tool = #"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}"#
         try """
         #!/bin/sh
         [ "$1" = "--version" ] && { echo "\(version) (Claude Code)"; exit 0; }
         cat >/dev/null
-        echo '\(initial)'
-        \(triesTool ? "echo '\(tool)'; sleep 30" : "sleep 30")
+        \(body)
         """.write(to: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
         return script.path
@@ -255,5 +259,35 @@ final class ClaudeSummaryRunTests: XCTestCase {
         XCTAssertLessThan(ContinuousClock.now - started, .seconds(20), "the other run was left going")
         XCTAssertFalse(SideAnswer.mayShow(SideAnswer.Outcome(reply: "words", version: version, usage: SideAnswer.Reader(.claude)), engine: .claude),
                        "an answer of a stopped version isn't shown")
+    }
+
+    /// The run that tried a tool stops the version as soon as it sees the tool, not once the engine has gone: an engine that
+    /// won't go when asked (two seconds before it's killed) leaves time for another run of the version to finish, and that
+    /// one's answer must not be shown.
+    @MainActor
+    func testARunAnsweringWhileTheOtherIsEndingIsntShown() async throws {
+        let version = "2.1.\(Int.random(in: 400...999))"
+        addTeardownBlock {
+            var stopped = UserDefaults.standard.dictionary(forKey: "sideAnswerStopped") ?? [:]
+            stopped["claude"] = (stopped["claude"] as? [String] ?? []).filter { $0 != version }
+            UserDefaults.standard.set(stopped, forKey: "sideAnswerStopped")
+        }
+        let initial = #"{"type":"system","subtype":"init","tools":[],"mcp_servers":[]}"#
+        let tool = #"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}"#
+        let words = #"{"type":"assistant","message":{"content":[{"type":"text","text":"Blue flames"}]}}"#
+        let result = #"{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","result":"Blue flames","usage":{"input_tokens":1,"output_tokens":2}}"#
+        // Tries a tool at once, then won't end when asked.
+        let trying = try standIn(version: version, then: "trap '' TERM\necho '\(initial)'\necho '\(tool)'\nwhile true; do sleep 1; done")
+        // Answers a second later: after the tool, inside the two seconds the other takes to be killed.
+        let answering = try standIn(version: version, then: "echo '\(initial)'\nsleep 1\necho '\(words)'\necho '\(result)'")
+        let project = LampProject(id: "app", name: "App", exe: "App", dir: FileManager.default.temporaryDirectory)
+        async let tried = SideAnswer.Run(message: UUID(), engine: .claude)
+            .answer("p", route: Self.route(executable: trying, configFolder: "/nonexistent"), transcript: nil, in: project)
+        async let answered = SideAnswer.Run(message: UUID(), engine: .claude)
+            .answer("p", route: Self.route(executable: answering, configFolder: "/nonexistent"), transcript: nil, in: project)
+        let (one, other) = await (tried, answered)
+        XCTAssertTrue(one.triedTool)
+        XCTAssertEqual(one.failure, "tried tool_use", "the run that tried it ends as that, not as cancelled")
+        XCTAssertNil(other.reply, "an answer of the stopped version was shown")
     }
 }

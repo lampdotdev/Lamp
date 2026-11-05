@@ -453,7 +453,14 @@ final class SideAnswerTests: XCTestCase {
             XCTAssertTrue(launch.profile.contains("(deny file-write*)"))
             XCTAssertFalse(launch.profile.contains("(allow file-read* )"), "no empty rule")
         }
-        XCTAssertNil(SideAnswer.launch(route(.claude), prompt: "p", transcript: nil, folder: folder), "nothing to fork")
+        // With no conversation Claude Code starts afresh (a suggested change's summary), with nothing to resume or fork
+        // and none opened to its sandbox, and the same no-tools flags.
+        let fresh = try XCTUnwrap(SideAnswer.launch(route(.claude), prompt: "p", transcript: nil, folder: folder))
+        XCTAssertFalse(fresh.arguments.contains("--resume"))
+        XCTAssertFalse(fresh.arguments.contains("--fork-session"))
+        XCTAssertEqual(fresh.arguments[fresh.arguments.firstIndex(of: "--tools")! + 1], "")
+        XCTAssertTrue(fresh.arguments.contains("--strict-mcp-config"))
+        XCTAssertFalse(fresh.profile.contains(transcript.path))
     }
 
     func testChatForCodexIsTheNewestWithinItsLimit() {

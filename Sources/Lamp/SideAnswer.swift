@@ -483,9 +483,10 @@ enum SideAnswer {
 
     /// A tool was tried: this version of the engine is stopped for good (`stop`), and every run of the engine still going,
     /// whatever it's for, is cancelled, so none of them shows what it says.
-    @MainActor static func stopAll(_ engine: Engine, version: String) {
+    /// `except` is the run that tried it, which goes on ending as one that tried a tool rather than as one cancelled.
+    @MainActor static func stopAll(_ engine: Engine, version: String, except: Run? = nil) {
         stop(engine, version: version)
-        for run in going.values where run.engine == engine { run.cancel() }
+        for run in going.values where run.engine == engine && run !== except { run.cancel() }
     }
 
     /// Whether a run's answer may be shown: no tool was tried, and its version isn't stopped, whichever run stopped it.
@@ -684,6 +685,9 @@ enum SideAnswer {
                 case .tool(let name):
                     outcome.triedTool = true
                     outcome.failure = "tried \(name)"
+                    // At once, not once the engine has gone (up to two seconds, `terminateTree`): until the version is
+                    // stopped, another run of it could finish and be shown.
+                    SideAnswer.stopAll(engine, version: outcome.version, except: self)
                     break reading
                 }
             }
@@ -700,7 +704,6 @@ enum SideAnswer {
             } else if outcome.reply == nil, outcome.failure == nil {
                 outcome.failure = "ended without an answer"
             }
-            if outcome.triedTool { SideAnswer.stopAll(engine, version: outcome.version) }
             // Stopped meanwhile by another run's tool: nothing of this one is shown.
             if !SideAnswer.mayShow(outcome, engine: engine) { outcome.reply = nil }
             if outcome.reply != nil { outcome.failed = false }
