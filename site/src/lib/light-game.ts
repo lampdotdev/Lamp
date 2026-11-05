@@ -149,6 +149,8 @@ export async function createGame(host: HTMLElement, status: HTMLElement) {
 
     /** The first stretch of roofs, with the runner standing on the first. */
     build() {
+      // Each roof's wall lives beside its rim, so it goes with it.
+      for (const rim of this.roofs.getChildren()) (rim.getData("wall") as PhaserTypes.GameObjects.TileSprite | undefined)?.destroy();
       this.roofs.clear(true, true);
       this.chimneys.clear(true, true);
       this.posts.forEach((post) => post.destroy());
@@ -248,7 +250,11 @@ export async function createGame(host: HTMLElement, status: HTMLElement) {
       this.sheen.setAlpha(rain ? 0.12 : 0);
       if (changes.has("lit")) {
         let delay = 0;
-        for (const post of this.posts) if (!post.lit) { this.time.delayedCall(delay, () => this.light(post, false)); delay += 40; }
+        for (const post of this.posts) if (!post.lit) {
+          // Each lamp checks the street is still meant to be lit when its turn comes, so an Undo straight after holds.
+          this.time.delayedCall(delay, () => { if (changes.has("lit") && post.active) this.light(post, false); });
+          delay += 40;
+        }
         sound.street();
       } else {
         // Taken back: the lamps the street lit go dark again; the ones the runner lit stay lit.

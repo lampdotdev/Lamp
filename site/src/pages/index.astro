@@ -333,8 +333,14 @@ open "build/Lamp Dev.app"</code></pre>
           section.classList.add("is-shown");
           if (part === "game") {
             // Phaser comes only now, the first time the game is asked for.
-            if (!game) import("../lib/light-game").then(({ createGame }) => createGame(section.querySelector("[data-game]")!, section.querySelector("[data-game-status]")!)).then((made) => { game = made; });
-            offerChanges(true);
+            // Its changes are offered once it's ready, so none is asked for before there's a game to take it.
+            if (game) offerChanges(true);
+            else import("../lib/light-game").then(({ createGame }) => createGame(section.querySelector("[data-game]")!, section.querySelector("[data-game-status]")!)).then((made) => {
+              game = made;
+              if (section.classList.contains("is-shown")) offerChanges(true);
+            }).catch(() => {
+              section.querySelector("[data-game-status]")!.textContent = "The game didn't load. Reload the page to try again.";
+            });
           }
           if (!calm) section.classList.add("is-arriving");
           // The page goes all the way down to what came in, once it's laid out: its end just above whatever covers the
