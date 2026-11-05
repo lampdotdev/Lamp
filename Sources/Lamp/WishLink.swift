@@ -374,8 +374,9 @@ enum WishLink {
         var gitHub: GitHubRelease.Target?
         var gitHubNote: String?
         var gitHubStage: WishLinkCard.GitHubStage?
-        /// Finding the repository, which a release waits for, so a press before it's known still goes to GitHub.
-        var gitHubFinding: Task<Void, Never>?
+        /// Finding the repository, or how the wish would go there the first time: until it's found, the card can't show
+        /// where a release goes, so none can be made. Only the latest find speaks.
+        var gitHubFinding: UUID?
         /// The GitHub half running now: an older one, still waiting for its page, no longer speaks on the card.
         var gitHubOperation: UUID?
         /// The release whose GitHub half failed, for Try GitHub Again, with the version of the wish it was of.
@@ -397,6 +398,10 @@ enum WishLink {
         /// A link that carries the wish is always worth sending again: the file is the wish as it is now. So is one with
         /// something to say about what's new.
         var changed: Bool { shared?.shown != words || values.includeFile || !values.notes.trimmed.isEmpty || values.putOnGitHub }
+        /// What's on the card can go now: nothing is sending, and every place it would go is shown and settled.
+        var canShare: Bool {
+            stage != .sending && values.isComplete && gitHubFinding == nil && (!values.putOnGitHub || firstPush?.stage == .ready)
+        }
     }
 
     struct GitHubRetry {
@@ -453,13 +458,16 @@ enum WishLink {
         }
     }
 
-    /// Finds where the wish is on GitHub, or how it would go there the first time, for the card's GitHub row. A release
-    /// pressed meanwhile waits for it.
+    /// Finds where the wish is on GitHub, or how it would go there the first time, for the card's GitHub row. The card
+    /// says it's checking meanwhile, and nothing can be released until the row shows where it goes.
     private func findGitHub(_ project: LampProject) {
         let id = project.id
-        cards[id]?.gitHubFinding = Task {
+        let finding = UUID()
+        cards[id]?.gitHubFinding = finding
+        Task {
             let found = await GitHubRelease.find(project)
-            guard cards[id] != nil else { return }
+            guard cards[id]?.gitHubFinding == finding else { return }
+            cards[id]?.gitHubFinding = nil
             cards[id]?.gitHub = nil
             cards[id]?.gitHubNote = nil
             switch found {
@@ -573,8 +581,7 @@ enum WishLink {
 
     /// Shares what's on the card, or releases what the wish is now with what's new in it, and copies the link.
     func share(_ project: LampProject) {
-        guard let card = cards[project.id], card.stage != .sending, card.values.isComplete,
-              !card.values.putOnGitHub || card.firstPush?.stage == .ready else { return }
+        guard let card = cards[project.id], card.canShare else { return }
         cards[project.id]?.stage = .sending
         cards[project.id]?.writingNotes = false
         let words = card.words
@@ -582,7 +589,8 @@ enum WishLink {
         // once what goes up is checked.
         let wantsGitHub = card.values.alsoGitHub
         let firstPush = card.values.putOnGitHub ? card.firstPush : nil
-        let finding = card.gitHubFinding
+        let work: GitHubWork? = if wantsGitHub, let target = card.gitHub { .update(target) }
+            else if let firstPush { .first(firstPush) } else { nil }
         // An earlier release still waiting for its page no longer speaks on the card, from now on.
         cards[project.id]?.gitHubOperation = nil
         cards[project.id]?.gitHubStage = nil
@@ -594,10 +602,6 @@ enum WishLink {
         let source = card.picture
         let iconSource = card.icon
         Task {
-            // Where GitHub is, once it's known.
-            await finding?.value
-            let work: GitHubWork? = if wantsGitHub, let target = cards[project.id]?.gitHub { .update(target) }
-                else if let firstPush { .first(firstPush) } else { nil }
             do {
                 let (picture, icon) = await Task.detached(priority: .userInitiated) {
                     (source.flatMap(NSImage.init(data:)).flatMap(WishLink.jpeg), WishLink.iconPNG(iconSource))

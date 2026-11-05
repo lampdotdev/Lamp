@@ -400,7 +400,9 @@ release's lines as the commit's message, then a GitHub release tagged `v<n>`, n 
 `.lamp/releases.json` (`Release.number`, one more than the latest's, so it keeps counting past the 200 releases the
 history keeps; the first share is v1), with the lines as its notes (`GitHubRelease.tag`: one already there on the same
 commit, peeled when it's annotated, is the one made by a try that failed later; one on another commit is refused, never
-moved). A press waits for the repository to be found (`gitHubFinding`) before it decides where the release goes. Finding it
+moved). While the repository is being found (`gitHubFinding`) the card shows "Checking GitHub…" in the box's place, and
+neither the share button nor `WishLinkCards.share` (`Card.canShare`) goes until it's found, so a release never goes
+somewhere the card didn't show; copying a link that's out still works meanwhile. Finding it
 also finds who the commits are made as (`GitHubRepo.authors(releasingTo:)`), and when the person's git signs them with
 an address that shows on GitHub, the card says so under the box, as it does for a first push; the upload holds the commits
 to what was said (`GitHubRepo.commit`'s `shown`). The
