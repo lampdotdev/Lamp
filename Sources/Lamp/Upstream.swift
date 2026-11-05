@@ -42,6 +42,18 @@ enum Upstream {
         /// The wish's other apps the package brings that aren't here yet, to be made as an update makes them
         /// (`Store.installParts`): the merge put nothing of theirs in place.
         var newParts: [Sharing.Package.Part]
+        /// The base as a commit in the wish's git, staged as the merge read it.
+        var baseMark: String? = nil
+    }
+
+    /// A base the caller has settled on, used as it is or not at all: nothing else stands in for it (`BringIn`).
+    enum Given: Equatable {
+        /// A commit of the repository's, already in the wish's git, staged as the import would install it.
+        case commit(String)
+        /// A tree staged before, kept at this ref (`BringIn.snapshot`).
+        case staged(String)
+        /// A version of this wish's own history.
+        case own(String)
     }
 
     enum Base: Equatable {
@@ -61,8 +73,9 @@ enum Upstream {
     /// `ref` is where the staged latest is kept: `Upstream.ref` for where the wish came from, one of its own for each
     /// other copy it follows (`Following.incomingRef`). `accepted` is where what was last brought in is read from, the
     /// same ref unless the caller promotes the staged one only once the pull-in has succeeded (`Following.accepted`).
+    /// `given` is a base settled on by the caller, in place of all of these; one that can't be read stops the merge.
     static func merge(_ package: Sharing.Package, into project: LampProject, from source: RepoImport.Source?, commit: String?,
-                      arrival: String?, ref: String = Upstream.ref, accepted: String? = nil) async throws -> Merged {
+                      arrival: String?, ref: String = Upstream.ref, accepted: String? = nil, given: Given? = nil) async throws -> Merged {
         let fm = FileManager.default
         // The merge's own indexes, in Lamp's folder in the wish, so the wish's index is never touched before the result
         // goes in; cleared with the staged folders when it's done, whichever way it went.
@@ -83,7 +96,25 @@ enum Upstream {
         // version that arrived.
         var base = Base.none
         var baseMark: String? = nil
-        if let source {
+        let unreadable = Failure(message: "Lamp couldn't read what this app last took in from there.")
+        switch given {
+        case .commit(let commit)?:
+            guard let tree = try await stagedTree(of: commit, for: project, in: work, indexes: indexes) else { throw unreadable }
+            let made = await run("\(signed) commit-tree \(tree) -p \(commit) -m 'Upstream as Lamp read it'", in: project)
+            guard made.status == 0, let mark = Credits.validCommit(made.output) else { throw unreadable }
+            base = .upstream(commit)
+            baseMark = mark
+        case .staged(let kept)?:
+            guard let mark = Credits.validCommit((await run("git rev-parse --verify -q \(kept)^{commit}", in: project)).output) else { throw unreadable }
+            base = .lastBrought
+            baseMark = mark
+        case .own(let version)?:
+            guard let own = await ownVersion(version, in: project) else { throw unreadable }
+            baseMark = try await ownMark(own, in: project, indexes: indexes)
+            base = .own(own)
+        case nil: break
+        }
+        if given == nil, let source {
             let url = Sandbox.quoted(source.url + ".git")
             _ = await run("git remote set-url \(remote) \(url) 2>/dev/null || git remote add \(remote) \(url)", in: project)
             if let commit = Credits.validCommit(commit), await fetch(commit, in: project),
@@ -97,7 +128,7 @@ enum Upstream {
         // The version the file was made from, unless the last update brought in was made from that same version (a
         // file that comes back again names the version it was first given): what it brought is the base then, so a
         // change it took back isn't kept by mistake.
-        if baseMark == nil, let own = await ownVersion(named: package.credits, in: project) {
+        if given == nil, baseMark == nil, let own = await ownVersion(named: package.credits, in: project) {
             var repeated = false
             if let lastBrought { repeated = await ownBase(of: lastBrought, in: project) == own }
             if !repeated {
@@ -105,11 +136,11 @@ enum Upstream {
                 base = .own(own)
             }
         }
-        if baseMark == nil, let lastBrought {
+        if given == nil, baseMark == nil, let lastBrought {
             base = .lastBrought
             baseMark = lastBrought
         }
-        if baseMark == nil, let own = await ownVersion(arrival, in: project) {
+        if given == nil, baseMark == nil, let own = await ownVersion(arrival, in: project) {
             baseMark = try await ownMark(own, in: project, indexes: indexes)
             base = .own(own)
         }
@@ -221,7 +252,7 @@ enum Upstream {
                 try? AppDescription.write(description, for: project)
             }
         }
-        return Merged(conflicts: conflicts, base: base, newParts: newParts)
+        return Merged(conflicts: conflicts, base: base, newParts: newParts, baseMark: baseMark)
     }
 
     /// Fetches one commit of the upstream remote, one deep, with nothing of the person's (git never asks for a

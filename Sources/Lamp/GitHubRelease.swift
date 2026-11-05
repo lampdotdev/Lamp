@@ -47,6 +47,8 @@ enum GitHubRelease {
 
     enum Found: Equatable {
         case ready(Target)
+        /// On GitHub, with changes there the wish doesn't have (`BringIn`): Bring In Changes first.
+        case behind(Target)
         /// On GitHub, but not to be updated from here: what to do about it.
         case note(String)
         /// Not on GitHub yet: a release can put it there, with the person's GitHub sign-in.
@@ -76,6 +78,7 @@ enum GitHubRelease {
         var target: Target
         if let kept {
             target = Target(repo: kept.repo, gh: gh, login: login)
+            if await isBehind(project, kept: kept, gh: gh) { return .behind(target) }
         } else {
             guard let own = await GitHubRepo.ownOrigin(of: project, login: login, gh: gh) else { return .new(gh: gh, login: login) }
             target = Target(repo: own.repo, gh: gh, login: login, openedAt: own.commit, behind: own.behind)
@@ -88,6 +91,16 @@ enum GitHubRelease {
         return .ready(target)
     }
 
+    /// Whether the repository has changes the wish doesn't: commits after the last one it has (`Repo.expected`), or
+    /// ones it brought in and has since taken back (an Undo, `BringIn.holds`). Asked of GitHub without fetching
+    /// anything; a repository GitHub doesn't answer for is left to the release, which checks again.
+    static func isBehind(_ project: LampProject, kept: GitHubRepo.Repo, gh: String) async -> Bool {
+        let head = await Subprocess.run(GitHubRepo.git, GitHubRepo.signedIn(gh: gh) + ["ls-remote", "https://github.com/\(kept.repo).git", "HEAD"],
+                                        mergeErrors: false, timeout: 60)
+        if head.ok, let now = head.output.split(whereSeparator: \.isWhitespace).first.map(String.init), now != kept.expected { return true }
+        return await !BringIn.holds(project, kept: kept)
+    }
+
     /// Releases the wish as it is now on GitHub, with `picture` for the README when the person chose to show one when
     /// they put it there. Answers whether anything there changed.
     static func release(_ project: LampProject, to target: Target, version: Version, picture: Data?,
@@ -95,6 +108,9 @@ enum GitHubRelease {
         let before = GitHubRepo.kept(for: project)
         // Never over commits there the wish hasn't taken: they'd be lost. A record of Lamp's own push goes by its commit.
         if before == nil, let behind = target.behind { throw Failure(message: behind) }
+        if let before, await !BringIn.holds(project, kept: before) { throw GitHubRepo.Moved(repo: target.repo, name: project.name) }
+        var broughtIn: Set<String> = []
+        if let before { broughtIn = await BringIn.paths(project, kept: before) }
         step("Checking what goes to GitHub…")
         guard let isPublic = await GitHubRepo.isPublic(target.repo, gh: target.gh) else {
             throw Failure(message: "GitHub didn't answer for \(target.repo). Try again in a moment.")
@@ -106,7 +122,9 @@ enum GitHubRelease {
         }.value
         defer { try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent()) }
         let uploaded = try await GitHubRepo.upload(staged, of: project, to: target.repo, gh: target.gh, login: target.login, isNew: false,
-                                                   expected: before?.commit ?? target.openedAt, isPrivate: !isPublic,
+                                                   expected: before?.expected ?? target.openedAt,
+                                                   lastPushed: before?.taken == nil ? nil : before?.commit, broughtIn: broughtIn,
+                                                   keeping: before?.ownFiles ?? [], isPrivate: !isPublic,
                                                    license: before?.license ?? false, picture: before?.picture,
                                                    authors: target.authors, release: version, pushed: pushed, step: step)
         // A newer release may have pushed while this one waited for its page (the card is free by then): its record

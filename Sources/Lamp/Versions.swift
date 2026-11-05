@@ -649,6 +649,10 @@ enum Versions {
         return "Restored to “\(version.label)”"
     }
 
+    /// What a version made by going back to `version` carries, naming it, so what came in after it is known to be
+    /// gone (`BringIn.holds`), as an Undo names the version it undid.
+    static func restoredTrailer(_ version: AppVersion) -> String { "Lamp-Restored: \(version.id)" }
+
     /// The history as the agent's `list_versions` tool shows it.
     static func describe(_ versions: [AppVersion], limit: Int = 30) -> String {
         guard !versions.isEmpty else { return "There are no versions yet." }

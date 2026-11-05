@@ -3,45 +3,56 @@
 One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the repository: it has the rules every change follows and the list of guides; a section named in quotes may be in another guide on that list.
 
 `site/` is lamp.dev (Astro; `site/FIRST_IDEA.md`, `site/BUG_REPORTS.md` and `site/SHARED_WISHES.md` cover its moving
-parts; the last is a wish shared as a link, `WishLink` in the app). Its
-homepage sells remixable software and is dressed as home video: cream paper, tape labels, and the stripes on their
-sleeves. The stripes are green to magenta, in that order, never blue or purple (the hero widens the deep magentas and
-reds under its words). They're the hero's whole field, on the slant, with plain white words kept to the bands they
-read on; elsewhere they sit beside headings (a tab above each), never on a heading's letters. "Change it live" shows
-the making, not the app in use: a plain Mac window changing as it's asked from Lamp's chat beside it
-(`ChangeStory.astro`). New York's sleeve in the hero and the stack of sleeves in "From the shelf" are one sleeve
-(`src/lib/tapes.ts`, filled from `src/lib/starters.ts`), three.js drawn from canvases in the page's fonts: its
-screenshot shown whole (an original's reel playing over it, below), where it plays and, side by side, a "Try it" ("Play it" where it plays in a browser, `page` in `starters.ts`, which goes there) and a "Remix it" that opens the remix dialog on the front (a remix's change in
-marker and a "Remix me" there instead), what it is and the changes its starter suggests on the back, and the screenshot, the name (or a
-remix's change) and the stripes on its spine. On the shelf the sleeves lie flat, spines out, each original with a
-remix of it under it, and a blank one at the bottom whose back is about Lamp, with a Download for Mac; one that's
-clicked stands up as the hero's does. They're lit with soft shadows, lean toward the
-pointer and turn over when clicked (an arrow round the right side shows which way while the pointer is on one), on a canvas that runs past its box (so nothing is cropped) and lets the pointer
-through, over a flat HTML
-version kept for screen readers and browsers without WebGL. An original's reel (a starter's `reel.mp4`, "A starter's reel" in the desk guide) comes straight from its repository on
-raw.githubusercontent.com, muted and looping, on a plane over the screenshot while the sleeve shows its front: the
-hero's from when someone first reaches for it, since New York's is by far the largest, and the shelf's while it
-stands up. Nothing is fetched before that, the screenshot stays until a frame has played and for good if there's no
-reel, and where less motion is asked for it doesn't play there. An expand button on it, and a button a keyboard
-reaches, open it large (`watchReel`). The device icons are Phosphor's duotone set, with the
-fill in the sleeve's colors. Apps and games get the same weight on it, and
-every example is a real starter (`Resources/Starters`), with the pictures and changes it ships with; the devices it
-lists are only those a kind of app or a shipped device integration really reaches. Lamp's mark is its icon with
-"Lamp" beside it (`LampLockup.astro`), in the menu bar and wherever the site names Lamp as a mark. Nothing on the site
-has a hard, offset shadow (a solid copy of a box set off behind it): that isn't part of its look; shadows are soft, as
-the 3D tapes' light casts them. Its Download buttons, and the
-menu bar's, are the paper's ink with paper-colored words (the last section's is the stripes' yellow with ink).
+parts; the last is a wish shared as a link, `WishLink` in the app). It reads as an open source project's site, not
+a company's: plain and lo-fi, on cream paper (`--color-paper`) with ink (`--color-tape`) and a lighter ink for words
+said in passing (`--color-muted-ink`, 4.5:1 on the paper), a tight grotesque for words and a mono for the menu,
+labels, lists and small print, thin rules between parts, small corners and soft shadows only (nothing has a hard,
+offset shadow). There's one kind of button, ink with paper-colored words (`.ink-button` in `global.css`); a second
+choice beside it is an ink outline. The menu bar is GitHub, Changelog and Download (the ideas page is still there, but not in the menu for now); the footer is the project's
+links (source, releases, changelog, contributing, security, issues) and the MIT license line, with no company sign-off. Lamp's mark is its icon
+with "Lamp" beside it (`LampLockup.astro`), in the menu bar and wherever the site names Lamp as a mark. The stripes
+(green to magenta, in that order, never blue or purple) are kept for Lamp's own things: its mark, and the light that
+runs along a part of the homepage as it's added.
+
+The homepage is itself a demo of changing something by asking. It opens as only a headline and the lines under it,
+beside Lamp's chat, and each request in the chat adds a part of the page while you watch: what Lamp is, the starters,
+what it runs on, how to get it (the download, the newest version, and building from source), answers to common
+questions and what's new; "Make it dark" swaps the paper and the ink (`html[data-theme=dark]`). Nothing asks a model:
+each request is written in advance with the part it adds, a request of one's own is answered with where it can be
+done (Lamp), and Undo takes back the newest change. Without the script, and for search engines, every part is on the
+page in order. The chat is drawn as Lamp draws the chat beside an app (LampSidebarKit), from the same colors
+(`Paper.swift`) and shapes: a title bar with the red light (it puts the chat away; Lamp's mark at the corner brings it
+back), Lamp's mark and Undo; what's asked in ink bubbles and what Lamp says in paper ones, both with Messages' tail;
+the requests as outlined tiles whose gray icons (Phosphor's bold set) take their own color
+under the pointer; and the round message box with the round ink Send. Where there's room it's a window of its own
+down the right edge, off the window's edges with round corners and a window's shadow; on a phone it's pinned to the foot of the
+window over the page, never more than about two fifths of it, so what it adds stays in sight above it: the requests
+as small pills that wrap, and only the latest exchange of the conversation. The red light puts it away into Lamp's mark at
+the corner; the mark brings it back. The page keeps room under its footer as tall as whatever covers the window's foot (the
+chat, or the mark), so all of it, the footer included, can be scrolled clear of it, and each part that comes in is scrolled to, all the way down: its end just above the chat (or the window's
+foot). Until one's been picked, a soft light
+passes over the requests in turn every few seconds (not where less motion is asked for). It follows the Mac's light or dark appearance, as Lamp does, and is dark
+when the page is. Every starter shown is a real one (`Resources/Starters`, listed in `src/lib/starters.ts` with the
+pictures and changes it ships with), each with one of its changes under it to ask for; the devices listed are only
+those a kind of app or a shipped device integration really reaches. The newest version and what's new come from
+`RELEASE_NOTES.md` at the top of the repository, read when the site is built (`src/lib/releases.ts`), as does the
+changelog page (`/changelog`), so release notes are written in one place; a build without them leaves those out and
+points to GitHub's releases.
+
 A link from a Remix panel or a repository's README (`?ask=`, with `starter=` or `repo=` and `commit=` when it names
-what it's a copy of, and `from=` where it was pressed) opens the homepage's remix dialog (`RemixDialog.astro`, "Remixing a published page" in the wishes guide), as does the
-sleeve's "Remix it" (`lamp:remix`), and a sleeve's "Try it" opens it to try the starter (`lamp:try`): "Try" over the name, no box, and the same buttons, with Lamp opening the starter itself, before any setup ("Starters" in the desk guide). It's a slab in 3D with real thickness that rises in from the bottom and
-leans toward the pointer (the tapes behind it hold still while it's open), with the stripes up its left edge, the
-starter's picture and description on the dark on its left (a repository's own picture, its preview or else its icon,
-from raw.githubusercontent.com, `repoPictures`; or a blank label with the name in marker), its title as
-"Remix" in marker over the name and its maker, the request in the page's sans-serif in its box, and the page's
-buttons (Open in Lamp in ink, on a Mac; Download for Mac in the stripes' yellow). A page can't ask whether Lamp is
-installed, so Open in Lamp watches whether Lamp answered: if the browser keeps its focus for two seconds, the
-dialog turns to getting Lamp, with Download first, and turns back should Lamp open late. Closed, it takes its
-parameters out of the address, so a reload doesn't bring it back. The ideas page keeps its own card
+what it's a copy of, and `from=` where it was pressed) opens the homepage's remix dialog (`RemixDialog.astro`,
+"Remixing a published page" in the wishes guide), as does a starter's "Change it" (`lamp:remix`), and a starter's "Try
+it" opens it to try the starter (`lamp:try`): no box, and the same buttons, with Lamp opening the
+starter itself, before any setup ("Starters" in the desk guide). It's a plain card on the paper with a thin ink edge,
+rising a little into place: the starter's picture and description on the dark on its left (a repository's own
+picture, its preview or else its icon, from raw.githubusercontent.com, `repoPictures`; or a blank label with the
+name), then the name and its maker, a line that it opens as it is with the change waiting in Lamp's chat, the change
+in a box marked optional, Open in Lamp in ink (on a Mac) beside Download for Mac in outline, and, where the starter
+plays in a browser (`page` in `starters.ts`), a link to play it there. It's about getting the thing, not changing it
+first, and the word "remix" isn't shown anywhere on the site (the code keeps it). A page can't ask whether Lamp is installed, so Open in Lamp watches
+whether Lamp answered: if the browser keeps its focus for two seconds, the dialog turns to getting Lamp, with Download
+first and in ink, and turns back should Lamp open late. Closed, it takes its parameters out of the address, so a
+reload doesn't bring it back. The ideas page keeps its own card
 (`WishDialog.astro`). A wish shared as a link has a page of its own (`src/pages/w/index.astro`, SHARED_WISHES.md),
 is for playing it, and Lamp and remixing stay out of the way. Unlike the rest of the site it's plain and neutral, in
 the manner of shadcn/ui: the wish on black, as games are best seen, between white bars of grays and thin borders,
@@ -53,9 +64,9 @@ turning in it as its placeholder and a send button that opens Remix with what's 
 A chevron at the window's right, centered on the band, slides it and the header out of the window together (remembered in that
 browser), the wish growing to the whole window on black, and from the same place brings both back. Remix's dialog is a plain white card: the change, one line on Lamp, and
 Get Lamp and Open in Lamp (on a Mac). As the page opens the wish fades up and the band after it; the wish's frame is
-black until the page in it draws; where less motion is asked for, it's simply there. The ideas page's Download buttons (`DownloadButton.astro`, in its first-idea section and opened wishes) are the
-lamp's bright orange with white words, about 3:1 at their lightest, a faint shadow under the words. That trade-off
-was weighed and accepted: the brightness is the point of the button, and the label is large, bold and the same
-wherever it appears. About 3:1 is the floor for those buttons, so a change that goes below it is a regression;
-everything else on the site, links and small text included, is held to 4.5:1.
-
+black until the page in it draws; where less motion is asked for, it's simply there. The ideas page is on the same paper: the categories as plain tabs, the ideas as flat cards with
+a thin edge, and its first-idea section a plain ink card. An opened idea (`WishDialog.astro`) says what it is, that it's an
+idea for Lamp to make (waiting when Lamp opens), and how to get it. What Lamp is asked stays out of sight; only words
+a link brought, the person's own, are shown in a box to change. Its Download buttons (`DownloadButton.astro`, in that section
+and in opened ideas) are the site's ink button. Everything on the site, links and small text included, is held to
+4.5:1.
