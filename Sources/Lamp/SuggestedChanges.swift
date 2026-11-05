@@ -201,12 +201,15 @@ enum SuggestedChanges {
                                            leftOut: left.map { $0.isEmpty ? nil : $0 } ?? nil, checked: left != nil))
     }
 
-    /// The files a change from `start` to `head` touches that bringing it in doesn't put in the app as the change has
-    /// them, and so a release doesn't carry: anything the import leaves out (a README, a hidden file, a file Lamp writes
-    /// itself, whatever a shared app doesn't hold) or changes on the way in. Each side is staged as a merge stages it
-    /// (`RepoImport.open`, `Upstream.stage`) and every touched path compared: a file the change has must come out the
-    /// same, and one it takes away must be one the import had. Nil when any of it can't be worked out, which a release
-    /// takes as not carried.
+    /// The files a change from `start` to `head` touches that a release wouldn't put on GitHub as the change has them, in
+    /// the repository's own paths. The app is made as it would be with the change in it: a copy of the wish with each
+    /// side of the change staged as a merge stages it (`RepoImport.open`, `Upstream.stage`), what the start had and the
+    /// head hasn't taken away, and what the head has written over it. That copy is then exported as a release exports it
+    /// (`GitHubRepo.stage`). A file the change has must come out of that byte for byte, and one it takes away must not
+    /// come out at all. So whatever the import leaves out, and whatever the export leaves out or writes itself (a README,
+    /// a hidden file, a file Lamp writes, a watch app's code in a Mac app with no iPhone app), counts as not carried,
+    /// and a site's page laid back out at the root counts as carried. Nil when any of it can't be worked out, which a
+    /// release takes as not carried.
     static func notCarried(from start: String, to head: String, in tree: URL, for project: LampProject) async -> [String]? {
         let git = GitHubRepo.git
         let changed = await Subprocess.run(git, ["diff", "--name-only", "--no-renames", "-z", start, head], cwd: tree, mergeErrors: false, timeout: 60)
@@ -226,14 +229,32 @@ enum SuggestedChanges {
             return (try? Upstream.stage(package, for: project, into: out)) == nil ? nil : out
         }
         guard let theirs = await staged(head, as: "head"), let before = await staged(start, as: "start") else { return nil }
+        // The wish with the change in it, in a folder of its own named as the wish's is: its files but for its history,
+        // its builds and the chat's attachments.
+        let copy = work.appendingPathComponent("wish").appendingPathComponent(project.dir.lastPathComponent)
+        guard (try? fm.createDirectory(at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)) != nil,
+              await Subprocess.run("/usr/bin/rsync", ["-a", "--exclude", "/.git", "--exclude", "/.build", "--exclude", "/build",
+                                                      "--exclude", "/" + Attachments.folder, project.dir.path + "/", copy.path + "/"], timeout: 300).ok
+        else { return nil }
+        for relative in Contribute.regularFiles(in: before) where !fm.fileExists(atPath: theirs.appendingPathComponent(relative).path) {
+            try? fm.removeItem(at: copy.appendingPathComponent(relative))
+        }
+        for relative in Contribute.regularFiles(in: theirs) {
+            let to = copy.appendingPathComponent(relative)
+            guard (try? fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)) != nil else { return nil }
+            try? fm.removeItem(at: to)
+            guard (try? fm.copyItem(at: theirs.appendingPathComponent(relative), to: to)) != nil else { return nil }
+        }
+        guard let changedWish = Store.readWish(at: copy),
+              let exported = try? GitHubRepo.stage(changedWish, repo: nil, link: nil, isPublic: false, withPage: false) else { return nil }
+        defer { try? fm.removeItem(at: exported.folder.deletingLastPathComponent()) }
         return paths.filter { path in
-            let inHead = tree.appendingPathComponent(path)
+            let inHead = tree.appendingPathComponent(path), out = exported.folder.appendingPathComponent(path)
             if fm.fileExists(atPath: inHead.path) {
-                guard let had = try? Data(contentsOf: inHead), let came = try? Data(contentsOf: theirs.appendingPathComponent(path)) else { return true }
-                return had != came
+                guard let had = try? Data(contentsOf: inHead), let went = try? Data(contentsOf: out) else { return true }
+                return had != went
             }
-            // Taken away: carried only when the import had it before and hasn't now.
-            return !fm.fileExists(atPath: before.appendingPathComponent(path).path) || fm.fileExists(atPath: theirs.appendingPathComponent(path).path)
+            return fm.fileExists(atPath: out.path)
         }
     }
 

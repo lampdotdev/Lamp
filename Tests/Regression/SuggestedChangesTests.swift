@@ -279,4 +279,55 @@ final class SuggestedChangesTests: XCTestCase {
         let all = await SuggestedChanges.parents(record, holds: { _ in true }, isAncestor: { $0 == "h1" && $1 == "h3" })
         XCTAssertEqual(all.map(\.number), [1, 3, 2])
     }
+
+    /// The wish's repository as a release puts it up (`GitHubRepo.stage`), then a request on it changing `files`, by
+    /// their paths in the repository: the commits it starts and ends at, with the clone at its head as a bring-in has it.
+    private func request(on wish: LampProject, in place: URL, _ files: [String: String]) throws -> (tree: URL, start: String, head: String) {
+        let staged = try GitHubRepo.stage(wish, repo: nil, link: nil, isPublic: false, withPage: false)
+        defer { try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent()) }
+        let tree = place.appendingPathComponent("request-\(UUID().uuidString)")
+        _ = try sh("/usr/bin/ditto \(Sandbox.quoted(staged.folder.path)) \(Sandbox.quoted(tree.path))", in: place)
+        let start = try sh("git init -q -b main && git add -A && git -c user.name=Lamp -c user.email=lamp@localhost commit -qm up && git rev-parse HEAD", in: tree)
+        for (path, text) in files {
+            let url = tree.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        }
+        let head = try sh("git add -A && git -c user.name=Remixer -c user.email=remixer@example.com commit -qm change && git rev-parse HEAD", in: tree)
+        return (tree, start, head)
+    }
+
+    /// A watch app's code in a Mac app with no iPhone app comes in with the import, but a release leaves it out: the
+    /// request isn't carried, so it never goes as a parent.
+    func testAWatchFileAMacOnlyReleaseLeavesOutIsNotCarried() async throws {
+        let world = try world()
+        let change = try request(on: world.wish, in: world.place, ["Sources/Counter.swift": "let step = 9\n", "Watch/Example.swift": "let watch = 1\n"])
+        let left = await SuggestedChanges.notCarried(from: change.start, to: change.head, in: change.tree, for: world.wish)
+        XCTAssertEqual(left, ["Watch/Example.swift"])
+    }
+
+    /// A plain site's page is at the repository's root and in Web/ in the app: a change to it comes back out at the root
+    /// as the request has it, so it's carried.
+    func testAPlainSitesPageAtTheRootIsCarried() async throws {
+        let world = try world()
+        // Made as a Mac app, which needs nothing of the web app kit, then turned into a plain site.
+        let made = try Template.scaffold(name: "Drive", platform: .mac, in: world.place.appendingPathComponent("Sites"))
+        let metaURL = made.dir.appendingPathComponent(".lamp/meta.json")
+        var meta = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: metaURL)) as? [String: Any])
+        meta["platform"] = "web-app"
+        try JSONSerialization.data(withJSONObject: meta).write(to: metaURL)
+        try FileManager.default.removeItem(at: made.dir.appendingPathComponent("Sources"))
+        let site = try XCTUnwrap(Store.readWish(at: made.dir))
+        XCTAssertEqual(site.platform, .webApp)
+        try ScreenKit.markSite(site)
+        for (path, text) in ["Web/index.html": "<html>hello</html>\n", "Web/style.css": "body {}\n", "APP.md": "# Drive\n"] {
+            let url = site.dir.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        }
+        _ = try sh("git init -q -b main && printf '.lamp/\\n' > .gitignore && git add -A && git -c user.name=Lamp -c user.email=lamp@localhost commit -qm first", in: site.dir)
+        let change = try request(on: site, in: world.place, ["index.html": "<html>hello, again</html>\n"])
+        let left = await SuggestedChanges.notCarried(from: change.start, to: change.head, in: change.tree, for: site)
+        XCTAssertEqual(left, [])
+    }
 }
