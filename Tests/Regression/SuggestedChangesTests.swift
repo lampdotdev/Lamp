@@ -283,7 +283,9 @@ final class SuggestedChangesTests: XCTestCase {
     /// The wish's repository as a release puts it up (`GitHubRepo.stage`), then a request on it changing `files`, by
     /// their paths in the repository: the commits it starts and ends at, with the clone at its head as a bring-in has it.
     /// `before` is what GitHub has besides the wish's export (a workflow); a file given nil is taken away.
-    private func request(on wish: LampProject, in place: URL, before: [String: String] = [:], _ files: [String: String?]) throws -> (tree: URL, start: String, head: String) {
+    /// `executable` are made so by the request.
+    private func request(on wish: LampProject, in place: URL, before: [String: String] = [:], executable: [String] = [],
+                         _ files: [String: String?]) throws -> (tree: URL, start: String, head: String) {
         let staged = try GitHubRepo.stage(wish, repo: nil, link: nil, isPublic: false, withPage: false)
         defer { try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent()) }
         let tree = place.appendingPathComponent("request-\(UUID().uuidString)")
@@ -299,6 +301,7 @@ final class SuggestedChangesTests: XCTestCase {
         try write(before)
         let start = try sh("git init -q -b main && git add -A && git -c user.name=Lamp -c user.email=lamp@localhost commit -qm up && git rev-parse HEAD", in: tree)
         try write(files)
+        for path in executable { try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tree.appendingPathComponent(path).path) }
         let head = try sh("git add -A && git -c user.name=Remixer -c user.email=remixer@example.com commit -qm change && git rev-parse HEAD", in: tree)
         return (tree, start, head)
     }
@@ -345,5 +348,17 @@ final class SuggestedChangesTests: XCTestCase {
                                  [".github/workflows/x.yml": nil, "Sources/Counter.swift": "let step = 9\n"])
         let left = await SuggestedChanges.notCarried(from: change.start, to: change.head, in: change.tree, for: world.wish)
         XCTAssertEqual(left, [".github/workflows/x.yml"])
+    }
+
+    /// A request that only makes a script GitHub has executable: the upload keeps the hidden folder as GitHub has it, so
+    /// the script stays as it was while the request showed merged. Its mode counts as much as its bytes.
+    func testMakingAScriptTheUploadKeepsExecutableIsNotCarried() async throws {
+        let world = try world()
+        let change = try request(on: world.wish, in: world.place, before: [".github/scripts/check.sh": "echo ok\n"],
+                                 executable: [".github/scripts/check.sh"], ["Sources/Counter.swift": "let step = 9\n"])
+        let modes = try sh("git diff --raw \(change.start) \(change.head) -- .github", in: change.tree)
+        XCTAssertTrue(modes.contains(":100644 100755"), "the request changes only the mode: \(modes)")
+        let left = await SuggestedChanges.notCarried(from: change.start, to: change.head, in: change.tree, for: world.wish)
+        XCTAssertEqual(left, [".github/scripts/check.sh"])
     }
 }

@@ -208,7 +208,8 @@ enum SuggestedChanges {
     /// (`GitHubRepo.stage`), and put in the place of the repository as the request found it, as an upload does
     /// (`GitHubRepo.overlay`, which keeps a hidden folder at the top and the files kept as GitHub has them). A file the
     /// change has must come out of that byte for byte, and one it takes away must not come out at all, so taking away a
-    /// workflow the upload keeps isn't carried. So whatever the import leaves out, and whatever the export leaves out or writes itself (a README,
+    /// workflow the upload keeps isn't carried. Each path is compared as git has it, mode and type with the bytes, so a
+    /// script made executable that the upload keeps as GitHub has it isn't carried either. So whatever the import leaves out, and whatever the export leaves out or writes itself (a README,
     /// a hidden file, a file Lamp writes, a watch app's code in a Mac app with no iPhone app), counts as not carried,
     /// and a site's page laid back out at the root counts as carried. Nil when any of it can't be worked out, which a
     /// release takes as not carried.
@@ -267,14 +268,29 @@ enum SuggestedChanges {
         let keeping = (GitHubRepo.kept(for: project)?.ownFiles ?? [])
             .filter { ["README.md", "LICENSE"].contains($0) || !fm.fileExists(atPath: exported.folder.appendingPathComponent($0).path) }
         guard (try? await GitHubRepo.overlay(exported.folder, onto: upload, keeping: keeping, git: git)) != nil else { return nil }
-        return paths.filter { path in
-            let inHead = tree.appendingPathComponent(path), out = upload.appendingPathComponent(path)
-            if fm.fileExists(atPath: inHead.path) {
-                guard let had = try? Data(contentsOf: inHead), let went = try? Data(contentsOf: out) else { return true }
-                return had != went
-            }
-            return fm.fileExists(atPath: out.path)
+        // Compared as git has each side, as the upload commits it (`git add -A`): a path's mode and type count as much as
+        // its bytes (a script made executable, a link), and one the request takes away must be missing.
+        let added = await Subprocess.run(git, ["add", "-A"], cwd: upload, timeout: 120)
+        let written = await Subprocess.run(git, ["write-tree"], cwd: upload, mergeErrors: false, timeout: 60)
+        guard added.ok, written.ok, let uploaded = Credits.validCommit(written.output.trimmed),
+              let went = await entries(of: uploaded, in: upload), let had = await entries(of: head, in: tree) else { return nil }
+        return paths.filter { had[$0] != went[$0] }
+    }
+
+    /// Every file of a commit or tree, by its path: its mode (which says a file, an executable, a link or another
+    /// repository) and its object.
+    private static func entries(of treeish: String, in folder: URL) async -> [String: String]? {
+        let listed = await Subprocess.run(GitHubRepo.git, ["ls-tree", "-r", "-z", treeish], cwd: folder, mergeErrors: false, timeout: 120)
+        guard listed.ok else { return nil }
+        var all: [String: String] = [:]
+        for entry in listed.output.split(separator: "\0") {
+            // "<mode> <type> <object>\t<path>"
+            guard let tab = entry.firstIndex(of: "\t") else { continue }
+            let fields = entry[..<tab].split(separator: " ")
+            guard fields.count == 3 else { continue }
+            all[String(entry[entry.index(after: tab)...])] = "\(fields[0]) \(fields[2])"
         }
+        return all
     }
 
     // MARK: Once it's in
