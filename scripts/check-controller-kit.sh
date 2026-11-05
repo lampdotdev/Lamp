@@ -2,10 +2,17 @@
 # Type-checks Lamp's controller kit (scripts/controller-kit.sh) and the page host that runs it (LampPage.swift) for
 # each place a game runs its own phones: the Mac, the iPhone and iPad simulator, and an iPhone or iPad itself. Needs
 # Xcode's iOS SDKs (DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer when the Command Line Tools are the
-# active ones); a place whose SDK isn't installed is said and skipped.
+# active ones); a place whose SDK isn't installed is said and skipped, unless --require-sdks is passed as in CI.
 #
-#   scripts/check-controller-kit.sh
+#   scripts/check-controller-kit.sh [--require-sdks]
 set -euo pipefail
+require_sdks=0
+if (( $# == 1 )) && [[ "$1" == --require-sdks ]]; then
+  require_sdks=1
+elif (( $# != 0 )); then
+  print -u2 -- "Usage: scripts/check-controller-kit.sh [--require-sdks]"
+  exit 2
+fi
 here="${0:A:h}/.."
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -25,7 +32,15 @@ failed=0
 check() {
   local name="$1" sdk="$2" target="$3"
   local root
-  if ! root="$(xcrun --sdk "$sdk" --show-sdk-path 2>/dev/null)"; then print -- "○ $name: no $sdk SDK here, skipped"; return; fi
+  if ! root="$(xcrun --sdk "$sdk" --show-sdk-path 2>/dev/null)"; then
+    if (( require_sdks )); then
+      print -- "✗ $name: required $sdk SDK is unavailable; select a full Xcode with DEVELOPER_DIR"
+      failed=1
+    else
+      print -- "○ $name: no $sdk SDK here, skipped"
+    fi
+    return
+  fi
   if xcrun swiftc -typecheck -sdk "$root" -target "$target" -swift-version 5 \
       -parse-as-library "$work/LampControllerKit.swift" "$work/LampSupport.swift" \
       "$here/Resources/GameKit/apple/LampPage.swift" "$here/Resources/GameKit/apple/Native.swift" 2> "$work/$name.log"; then

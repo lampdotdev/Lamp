@@ -710,8 +710,9 @@ LampPage.swift (its one Mac-only call, the Mac's Bonjour name, is guarded in `Co
 its session as it goes into the background, opening a new one at the page's next ask once it's back in front; no
 background mode keeps it alive. `ControllerAddresses` gives a phone only an address on the device's Wi‑Fi or wired
 network, never a loopback one: a device on no network says so (503). `scripts/check-controller-kit.sh` type-checks
-the kit and LampPage.swift for the Mac, the simulator and a device. Lamp serves the page itself in the TV preview, a
-window of Lamp's own, and on a Samsung or LG TV (staged with the rest, `TVs.stage`).
+the kit and LampPage.swift for the Mac, the simulator and a device. Locally it skips SDKs that aren't installed;
+compatibility CI passes `--require-sdks` so a missing SDK fails the check instead. Lamp serves the page itself in the
+TV preview, a window of Lamp's own, and on a Samsung or LG TV (staged with the rest, `TVs.stage`).
 
 **The phone page and the agent.** Lamp has no phone of its own: `use_app` never presses a game's phone page
 (`Store.noPhoneUse`), and only the person's phones join a game. The agent checks the page by reading it (the

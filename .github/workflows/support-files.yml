@@ -50,7 +50,7 @@ jobs:
           xcodebuild -version
 
       - name: Type-check the controller kit and page host
-        run: scripts/check-controller-kit.sh
+        run: scripts/check-controller-kit.sh --require-sdks
 
       - name: Fetch the starters
         # Each starter's tree is its repository at the commit Resources/Starters/<folder>/starter.md pins.
