@@ -82,7 +82,7 @@ const lit = (hue: number) => `linear-gradient(${hsb(hue, 0.45, 1)}, ${hsb(hue, 0
 ---
 
 <Base title="Lamp: apps exactly the way you want them" description={description} image="/og.jpg">
-  <div class="home min-h-[calc(100dvh-8rem)] px-4 pt-[calc(var(--menu-height)+3rem)] pb-16 sm:px-6 lg:pr-[calc(var(--sidebar)+3rem)] lg:pl-12">
+  <div class="home min-h-[calc(100dvh-8rem)] px-4 pt-[calc(var(--menu-height)+3rem)] pb-[var(--chat-room,6rem)] sm:px-6 lg:pr-[calc(var(--sidebar)+3rem)] lg:pl-12">
     <main data-page class="mx-auto min-w-0 max-w-[46rem]">
       <section class="pb-10">
         <h1 class="max-w-[16ch] text-[clamp(2.5rem,6vw,4rem)] leading-[1] font-black tracking-[-0.04em] text-balance">{headline}</h1>
@@ -284,7 +284,11 @@ open "build/Lamp Dev.app"</code></pre>
           page.append(section);
           section.classList.add("is-shown");
           if (!calm) section.classList.add("is-arriving");
-          section.scrollIntoView({ behavior: calm ? "auto" : "smooth", block: narrow() ? "start" : "nearest" });
+          // The page goes down to what came in, its top just under the menu bar, once it's laid out.
+          requestAnimationFrame(() => {
+            const top = section.getBoundingClientRect().top + scrollY - document.querySelector("header")!.getBoundingClientRect().height - 16;
+            scrollTo({ top, behavior: calm ? "auto" : "smooth" });
+          });
           working.textContent = button.dataset.done!;
         }
         done.push({ button, asked });
@@ -344,6 +348,19 @@ open "build/Lamp Dev.app"</code></pre>
   };
   chat.querySelector("[data-close]")!.addEventListener("click", () => show(false));
   reopen.addEventListener("click", () => show(true));
+
+  // On a phone the page keeps room at its foot for the chat over it (or for Lamp's mark, once it's put away), so the end
+  // of the page can always be scrolled clear of it.
+  const home = document.querySelector<HTMLElement>(".home")!;
+  const room = () => {
+    if (!narrow()) return home.style.removeProperty("--chat-room");
+    const covered = chat.hidden ? reopen.getBoundingClientRect().height + 12 : chat.getBoundingClientRect().height + 10;
+    home.style.setProperty("--chat-room", `${Math.ceil(covered + 40)}px`);
+  };
+  new ResizeObserver(room).observe(chat);
+  addEventListener("resize", room);
+  new MutationObserver(room).observe(reopen, { attributes: true, attributeFilter: ["hidden"] });
+  room();
 
   // On a phone the chat sits over the foot of the page, so a moment after a change it tucks itself away into Lamp's
   // mark, and the page is seen whole. Touching the chat in that moment keeps it open.

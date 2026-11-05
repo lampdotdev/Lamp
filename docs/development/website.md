@@ -27,7 +27,8 @@ the requests as outlined tiles whose gray icons (Phosphor's bold set) take their
 under the pointer; and the round message box with the round ink Send. Where there's room it's a window of its own
 down the right edge, off the window's edges with round corners and a window's shadow; on a phone it's pinned to the foot of the
 window over the page and, two seconds after each change, shrinks into Lamp's mark at the corner (touching it in that
-moment keeps it open), so the change is seen whole; the mark brings it back. Until one's been picked, a soft light
+moment keeps it open), so the change is seen whole; the mark brings it back. The page keeps room at its foot for whatever covers it (the chat, or the mark), and
+each part that comes in is scrolled to, its top just under the menu bar. Until one's been picked, a soft light
 passes over the requests in turn every few seconds (not where less motion is asked for). It follows the Mac's light or dark appearance, as Lamp does, and is dark
 when the page is. Every starter shown is a real one (`Resources/Starters`, listed in `src/lib/starters.ts` with the
 pictures and changes it ships with), each with one of its changes under it to ask for; the devices listed are only
