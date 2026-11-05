@@ -207,7 +207,7 @@ enum SuggestedChanges {
     /// head hasn't taken away, and what the head has written over it. That copy is then exported as a release exports it
     /// (`GitHubRepo.stage`), and put in the place of the repository as the request found it, as an upload does
     /// (`GitHubRepo.overlay`, which keeps a hidden folder at the top and the files kept as GitHub has them). A file the
-    /// change has must come out of that byte for byte, and one it takes away must not come out at all, so taking away a
+    /// change has must come out of that as the change has it, and one it takes away must not come out at all, so taking away a
     /// workflow the upload keeps isn't carried. Each path is compared as git has it, mode and type with the bytes, so a
     /// script made executable that the upload keeps as GitHub has it isn't carried either. So whatever the import leaves out, and whatever the export leaves out or writes itself (a README,
     /// a hidden file, a file Lamp writes, a watch app's code in a Mac app with no iPhone app), counts as not carried,

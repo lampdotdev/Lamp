@@ -84,8 +84,9 @@ A new request, or a new head on an open one, logs the card again at the end of t
   - The export is put in the place of the repository as the request found it, as an upload does
     (`GitHubRepo.overlay`, the upload's own step). The upload keeps the hidden folders at the top and the files the
     repository keeps as GitHub has them.
-  - A file the request has must come out of that byte for byte, and one it takes away must not come out at all. A
-    request that takes away a workflow the upload would keep is therefore left out.
+  - A file the request has must come out of that as git has it in the request: the same bytes, mode and type. One
+    it takes away must not come out at all. A request that takes away a workflow the upload would keep, or only makes
+    a script there executable, is therefore left out.
 
   So whatever the import or the export leaves out, or writes itself, is left out: a Mac app's README, a hidden file,
   a file Lamp writes itself, or a watch app's code in a Mac app with no iPhone app. A plain site's page, which is
