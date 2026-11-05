@@ -7,7 +7,7 @@
   --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
 
   /* The paper every page is on and the ink printed on it, with a lighter ink for what's said in passing (4.5:1 on the
-     paper). The homepage's "Make it dark" swaps them (html[data-theme=dark], below). */
+     paper). The homepage's "Make it dark" swaps them for its content alone ([data-theme=dark], below). */
   --color-paper: #f2ecda;
   --color-tape: #1b1a17;
   --color-muted-ink: #5d584b;
@@ -21,15 +21,15 @@
   --color-panel: #ebe4d0;
 }
 
-/* The ink swapped for the paper, when the homepage's chat is asked to make it dark. */
-html[data-theme="dark"] {
+/* The ink swapped for the paper, for what's inside an element marked dark: the homepage's content, when its chat is
+   asked to make it dark. Its words take the new ink too. */
+[data-theme="dark"] {
   --color-paper: #1b1a17;
   --color-tape: #f2ecda;
   --color-muted-ink: #b3ac99;
   color-scheme: dark;
+  color: var(--color-tape);
 }
-html[data-theme="dark"] body { background-image: radial-gradient(rgb(255 240 210 / 0.05) 1px, transparent 1.4px); }
-html { transition: background-color 0.4s ease; }
 
 /* The site's one kind of button: ink with paper-colored words, small corners. */
 .ink-button {

@@ -17,16 +17,16 @@ runs along a part of the homepage as it's added.
 The homepage is itself a demo of changing something by asking. It opens as only a headline and the lines under it,
 beside Lamp's chat, and each request in the chat adds a part of the page while you watch: what Lamp is, the starters,
 what it runs on, how to get it (the download, the newest version, and building from source), answers to common
-questions and what's new; "Make it dark" swaps the paper and the ink (`html[data-theme=dark]`). Nothing asks a model:
+questions and what's new; "Make it dark" swaps the paper and the ink for the page's content alone (`.home[data-theme=dark]`; the site around it and the chat stay as they are). Nothing asks a model:
 each request is written in advance with the part it adds, a request of one's own is answered with where it can be
 done (Lamp), and Undo takes back the newest change. Without the script, and for search engines, every part is on the
 page in order. The chat is drawn as Lamp draws the chat beside an app (LampSidebarKit), from the same colors
 (`Paper.swift`) and shapes: a title bar with the red light (it puts the chat away; Lamp's mark at the corner brings it
-back), Lamp's mark, "Editing lamp.dev" and Undo; what's asked in ink bubbles and what Lamp says in paper ones, both with Messages' tail;
+back), Lamp's mark, "Editing Lamp Homepage" and Undo; what's asked in ink bubbles and what Lamp says in paper ones, both with Messages' tail;
 the requests as outlined tiles whose gray icons (Phosphor's bold set) take their own color
-under the pointer; and the round message box with the round ink Send. Where there's room the page itself is an app's window (a title bar with the window's lights and "lamp.dev", the page
+under the pointer; and the round message box with the round ink Send. Where there's room the page itself is an app's window (a title bar with the window's lights and "Lamp Homepage", the page
 scrolling inside it, and scrolling anywhere outside it scrolls it; the headline stands in its middle until a part is
-added), the chat titled "Editing lamp.dev" beside it at the same height, with the project's links as one line under both
+added), the chat titled "Editing Lamp Homepage" beside it at the same height, with the project's links as one line under both
 (`Footer` compact). The chat is a window of its own
 down the right edge of the page's width (`--frame`, 80rem: on a wider window the menu bar, content, footer and chat
 keep to the middle together), off the window's edges with round corners and a window's shadow; on a phone it's pinned to the foot of the
@@ -35,8 +35,7 @@ as small pills that wrap, and only the latest exchange of the conversation. The 
 the corner; the mark brings it back. The page keeps room under its footer as tall as whatever covers the window's foot (the
 chat, or the mark), so all of it, the footer included, can be scrolled clear of it, and each part that comes in is scrolled to, all the way down: its end just above the chat (or the window's
 foot). Until one's been picked, a soft light
-passes over the requests in turn every few seconds (not where less motion is asked for). It follows the Mac's light or dark appearance, as Lamp does, and is dark
-when the page is. Every starter shown is a real one (`Resources/Starters`, listed in `src/lib/starters.ts` with the
+passes over the requests in turn every few seconds (not where less motion is asked for). It follows the Mac's light or dark appearance, as Lamp does, whatever the page beside it looks like. Every starter shown is a real one (`Resources/Starters`, listed in `src/lib/starters.ts` with the
 pictures and changes it ships with), each with one of its changes under it to ask for; the devices listed are only
 those a kind of app or a shipped device integration really reaches. The newest version and what's new come from
 `RELEASE_NOTES.md` at the top of the repository, read when the site is built (`src/lib/releases.ts`), as does the

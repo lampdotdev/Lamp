@@ -87,7 +87,7 @@ const lit = (hue: number) => `linear-gradient(${hsb(hue, 0.45, 1)}, ${hsb(hue, 0
     <!-- Where there's room, the page is an app's window, as Lamp's chat is beside one on the Mac: a title bar with the
          window's lights and the app's name, and the page scrolling inside it. On a phone it's simply the page. -->
     <div class="app-window">
-    <div class="app-window-bar" aria-hidden="true"><span class="app-window-lights"><i></i><i></i><i></i></span><span class="app-window-title">lamp.dev</span></div>
+    <div class="app-window-bar" aria-hidden="true"><span class="app-window-lights"><i></i><i></i><i></i></span><span class="app-window-title">Lamp Homepage</span></div>
     <div data-scroller class="app-window-body">
     <main data-page class="mx-auto min-w-0 max-w-[46rem]">
       <section class="pb-10">
@@ -107,7 +107,7 @@ const lit = (hue: number) => `linear-gradient(${hsb(hue, 0.45, 1)}, ${hsb(hue, 0
             <!-- The window's red light, as Lamp's chat has one: it puts the chat away. -->
             <button type="button" data-close class="close-light" aria-label="Close the chat" title="Close the chat"></button>
             <span class="lamp-mark" aria-hidden="true"><span class="lamp-glass"></span><span class="lamp-square"></span></span>
-            <span class="min-w-0 flex-1 truncate">Editing lamp.dev</span>
+            <span class="min-w-0 flex-1 truncate">Editing Lamp Homepage</span>
             <!-- Back one change, as Lamp's toolbar's Undo takes an app back to the version before. -->
             <button type="button" data-undo class="tool-button" aria-label="Undo" title="Undo the last change" disabled set:html={undoIcon} />
           </div>
@@ -255,8 +255,10 @@ open "build/Lamp Dev.app"</code></pre>
 
   const askText = (button: HTMLButtonElement) => button.querySelector("[data-ask-text]")!;
   const toggleDark = (button: HTMLButtonElement) => {
-    const on = document.documentElement.dataset.theme !== "dark";
-    document.documentElement.dataset.theme = on ? "dark" : "light";
+    // Only the page's content goes dark, as an app would: not the site around it, and not Lamp's chat beside it.
+    const content = document.querySelector<HTMLElement>(".home")!;
+    const on = content.dataset.theme !== "dark";
+    content.dataset.theme = on ? "dark" : "light";
     askText(button).textContent = on ? "Make it light again" : "Make it dark";
     return on;
   };
@@ -453,18 +455,14 @@ open "build/Lamp Dev.app"</code></pre>
      beside an app is (LampSidebarKit): Lamp's own paper and system type, with an ink line between it and the page.
      Without the room, it's a box under the headline. Its colors are Lamp's (Paper.swift), light and dark. */
   .home { --sidebar: 24rem; --window: color-mix(in srgb, var(--color-paper) 65%, white); }
-  :global(html[data-theme="dark"]) .home { --window: color-mix(in srgb, var(--color-paper) 94%, white); }
+  .home[data-theme="dark"] { --window: color-mix(in srgb, var(--color-paper) 94%, white); }
+  @media (max-width: 63.999rem) { .home { transition: background-color 0.4s ease; } .home[data-theme="dark"] { background: var(--color-paper); } }
   .app-window-bar, .window-footer { display: none; }
   .chat {
     --chat-page: #f6f1e4; --chat-bubble: #eae3d0; --chat-card: #fffdf6; --chat-ink: #1b1a17; --chat-on-ink: #f2ecda;
     --chat-muted: #5d574b; --chat-line: rgb(0 0 0 / 0.1); --chat-divider: #1b1a17;
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; font-size: 14px; color: var(--chat-ink);
     -webkit-font-smoothing: antialiased;
-  }
-  :global(html[data-theme="dark"]) .chat {
-    --chat-page: #1f1d19; --chat-bubble: #2e2b25; --chat-card: #2a2722; --chat-ink: #f2ecda; --chat-on-ink: #1b1a17;
-    --chat-muted: #b9b2a1; --chat-line: rgb(255 255 255 / 0.12); --chat-divider: rgb(242 236 218 / 0.22);
-    --idea-off: #3a3730; --idea-off-ink: #a39d8e;
   }
   .chat-panel {
     display: flex; flex-direction: column; overflow: hidden; border-radius: 12px; background: var(--chat-page);
@@ -548,7 +546,6 @@ open "build/Lamp Dev.app"</code></pre>
     animation: idea-shimmer 6s ease-in-out calc(1.2s + var(--i) * 0.14s) infinite;
   }
   .chat { --shimmer: rgb(255 255 255 / 0.7); }
-  :global(html[data-theme="dark"]) .chat { --shimmer: rgb(255 255 255 / 0.22); }
   @media (prefers-color-scheme: dark) { .chat { --shimmer: rgb(255 255 255 / 0.22); } }
   @keyframes idea-shimmer { 0%, 12% { translate: -110% 0; } 32%, 100% { translate: 110% 0; } }
   .chat[data-asked] .chat-idea::after { display: none; }
@@ -654,6 +651,5 @@ open "build/Lamp Dev.app"</code></pre>
   @media (min-width: 64rem) and (prefers-color-scheme: dark) {
     .chat-panel { box-shadow: 0 0 0 0.5px rgb(255 255 255 / 0.14), 0 22px 60px -10px rgb(0 0 0 / 0.7); }
   }
-  :global(html[data-theme="dark"]) .chat-panel { box-shadow: 0 0 0 0.5px rgb(255 255 255 / 0.14), 0 22px 60px -10px rgb(0 0 0 / 0.7); }
   @media (prefers-reduced-motion: reduce) { .chat-log :global(.chat-working) { animation: none; } }
 </style>
