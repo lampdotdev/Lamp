@@ -81,7 +81,8 @@ A new request, or a new head on an open one, logs the card again at the end of t
   - A copy of the wish gets the change as the merge would stage it (`RepoImport.open`, `Upstream.stage`): files
     the start had and the head took away are removed, and the head's files are written over the rest.
   - That copy is exported as a release exports it (`GitHubRepo.stage`).
-  - The export is put in the place of the repository as the request found it, as an upload does
+  - The export is put in the place of the repository as the request found it, checked out as the upload's own clone
+    is (so a file it already tracks stays tracked, even one a .gitignore names), as an upload does
     (`GitHubRepo.overlay`, the upload's own step). The upload keeps the hidden folders at the top and the files the
     repository keeps as GitHub has them.
   - A file the request has must come out of that as git has it in the request: the same bytes, mode and type. One
