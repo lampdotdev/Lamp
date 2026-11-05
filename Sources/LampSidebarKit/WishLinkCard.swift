@@ -193,6 +193,7 @@ public struct WishLinkCard: View {
     let gitHubSetup: GitHubSetup?
     let setUpGitHub: GitHubSetupActions
     @State private var termsOpen = false
+    @Environment(\.openURL) private var openURL
     /// Copy Link the first time, Release Update after: shares what's on the card and copies the link.
     let share: () -> Void
     let copy: () -> Void
@@ -366,9 +367,12 @@ public struct WishLinkCard: View {
         }
         Spacer(minLength: 0)
         if sending { ProgressView().controlSize(.small) }
-        if link != nil && !changed {
-            Button("Copy Link", action: copy)
-            Button("Done", action: close).keyboardShortcut(.defaultAction)
+        if let link, !changed {
+            // Nothing to release (or just released): the link's page is what's next, opened in the browser.
+            Button("Done", action: close).keyboardShortcut(.cancelAction)
+            Button("View") { if let url = URL(string: link) { openURL(url) } }
+                .keyboardShortcut(.defaultAction)
+                .help("Open the link's page")
         } else {
             Button("Cancel", role: .cancel, action: close).keyboardShortcut(.cancelAction)
             Button(link == nil ? "Copy Link" : "Release Update", action: share)
