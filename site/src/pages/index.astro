@@ -294,7 +294,6 @@ open "build/Lamp Dev.app"</code></pre>
         done.push({ button, asked });
         busy = false;
         settle();
-        tuckSoon();
       }, calm ? 0 : 900);
     });
   });
@@ -319,7 +318,6 @@ open "build/Lamp Dev.app"</code></pre>
     log.append(note);
     log.scrollTop = log.scrollHeight;
     settle();
-    tuckSoon();
   });
 
   // The red light puts the chat away and the page takes the window; Lamp's mark at the corner brings it back. On a
@@ -362,14 +360,6 @@ open "build/Lamp Dev.app"</code></pre>
   new MutationObserver(room).observe(reopen, { attributes: true, attributeFilter: ["hidden"] });
   room();
 
-  // On a phone the chat sits over the foot of the page, so a moment after a change it tucks itself away into Lamp's
-  // mark, and the page is seen whole. Touching the chat in that moment keeps it open.
-  let tuckTimer: ReturnType<typeof setTimeout> | undefined;
-  const tuckSoon = () => {
-    clearTimeout(tuckTimer);
-    if (narrow()) tuckTimer = setTimeout(() => show(false, false), 2000);
-  };
-  for (const kind of ["pointerdown", "focusin", "keydown"]) chat.addEventListener(kind, () => clearTimeout(tuckTimer));
 
   // A request of its own: this page can only do what's above, so it says where it can be done.
   const own = chat.querySelector<HTMLFormElement>("[data-own]")!;
@@ -557,16 +547,25 @@ open "build/Lamp Dev.app"</code></pre>
   }
   .chat-bar button :global(svg) { width: 14px; height: 14px; }
   .chat-bar button:disabled { opacity: 0.35; cursor: default; }
-  /* On a phone: pinned to the foot of the window over the page, as tall as it needs up to most of the window, and put
-     away into Lamp's mark at the corner (shrinking toward it) a moment after each change. The page keeps room at its
-     foot for the mark. */
+  /* On a phone: pinned to the foot of the window over the page, never more than about two fifths of it, so what's
+     added stays in sight above it. The red
+     light puts it away into Lamp's mark at the corner, shrinking toward it. */
   @media (max-width: 63.999rem) {
     .chat {
       position: fixed; left: 10px; right: 10px; bottom: 10px; z-index: 50; margin: 0;
       transform-origin: calc(100% - 40px) calc(100% - 18px); transition: scale 0.3s ease, opacity 0.3s ease;
     }
     .chat.is-tucked { scale: 0.08; opacity: 0; }
-    .chat-panel { max-height: min(72dvh, 36rem); }
+    .chat-panel { max-height: 42dvh; }
+    .chat-head { height: 40px; }
+    /* The ideas as small pills that wrap, all in sight; the conversation down to its latest exchange. */
+    .chat-ideas { flex-direction: row; flex-wrap: wrap; gap: 6px; padding-bottom: 10px; }
+    .chat-idea { padding: 4px 10px 4px 5px; border-radius: 999px; font-size: 12.5px; gap: 6px; }
+    .idea-icon { width: 18px; height: 18px; border-radius: 50%; }
+    .idea-icon :global(svg) { width: 10px; height: 10px; }
+    .chat-log { padding-top: 4px; padding-bottom: 10px; }
+    .chat-log > :global(:not(:nth-last-child(-n + 2))) { display: none; }
+    .chat-bar { padding-bottom: 12px; }
     .chat-log { flex: 1 1 auto; min-height: 0; }
     .chat-log:empty { display: none; }
     :global(html[data-asking]) footer { padding-bottom: 4.5rem; }

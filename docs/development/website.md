@@ -26,8 +26,9 @@ back), Lamp's mark and Undo; what's asked in ink bubbles and what Lamp says in p
 the requests as outlined tiles whose gray icons (Phosphor's bold set) take their own color
 under the pointer; and the round message box with the round ink Send. Where there's room it's a window of its own
 down the right edge, off the window's edges with round corners and a window's shadow; on a phone it's pinned to the foot of the
-window over the page and, two seconds after each change, shrinks into Lamp's mark at the corner (touching it in that
-moment keeps it open), so the change is seen whole; the mark brings it back. The page keeps room at its foot for whatever covers it (the chat, or the mark), and
+window over the page, never more than about two fifths of it, so what it adds stays in sight above it: the requests
+as small pills that wrap, and only the latest exchange of the conversation. The red light puts it away into Lamp's mark at
+the corner; the mark brings it back. The page keeps room at its foot for whatever covers it (the chat, or the mark), and
 each part that comes in is scrolled to, its top just under the menu bar. Until one's been picked, a soft light
 passes over the requests in turn every few seconds (not where less motion is asked for). It follows the Mac's light or dark appearance, as Lamp does, and is dark
 when the page is. Every starter shown is a real one (`Resources/Starters`, listed in `src/lib/starters.ts` with the
