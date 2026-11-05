@@ -212,9 +212,10 @@ open "build/Lamp Dev.app"</code></pre>
         </section>
       )}
     </main>
-    <div class="window-footer"><Footer /></div>
     </div>
     </div>
+    <!-- Where the page is a window, the project's links are one line under it and the chat, not part of the app. -->
+    <div class="window-footer"><Footer compact /></div>
 
   </div>
   <RemixDialog />
@@ -260,7 +261,10 @@ open "build/Lamp Dev.app"</code></pre>
     return on;
   };
   // Once every part has been added, a word that the rest is Lamp's.
+  // Whether anything has been added, so the headline can stand in the middle of an otherwise empty window.
+  const marked = () => document.documentElement.toggleAttribute("data-has-part", !!page.querySelector(".part.is-shown"));
   const settle = () => {
+    marked();
     const left = !!ideas.querySelector("[data-ask]:not([data-ask=dark])");
     if (!left && !toldAll) {
       toldAll = true;
@@ -376,6 +380,14 @@ open "build/Lamp Dev.app"</code></pre>
   new MutationObserver(room).observe(reopen, { attributes: true, attributeFilter: ["hidden"] });
   room();
 
+
+  // Where the page is a window, only the window scrolls: scrolling anywhere outside it and the chat (the background,
+  // the menu bar) scrolls the window, so it reads as one long page.
+  const scroller = document.querySelector<HTMLElement>("[data-scroller]")!;
+  addEventListener("wheel", (event) => {
+    if (narrow() || (event.target as Element).closest?.("[data-scroller], [data-chat], dialog")) return;
+    scroller.scrollBy({ top: event.deltaY });
+  }, { passive: true });
 
   // A request of its own: this page can only do what's above, so it says where it can be done.
   const own = chat.querySelector<HTMLFormElement>("[data-own]")!;
@@ -602,11 +614,11 @@ open "build/Lamp Dev.app"</code></pre>
        width the chat leaves (all of it once the chat's put away). The site's own footer goes inside the window, at the
        end of the page. */
     .home {
-      position: fixed; top: calc(var(--menu-height) + var(--gap)); bottom: var(--gap); left: var(--edge);
+      position: fixed; top: calc(var(--menu-height) + var(--gap)); bottom: var(--foot); left: var(--edge);
       right: calc(var(--edge) + var(--sidebar) + var(--gap)); max-width: none; min-height: 0; margin: 0; padding: 0;
     }
     :global(html[data-chat-closed]) .home, :global(html:not([data-asking])) .home { right: var(--edge); }
-    .chat { position: fixed; top: calc(var(--menu-height) + var(--gap)); right: var(--edge); bottom: var(--gap); z-index: 50; width: var(--sidebar); margin: 0; }
+    .chat { position: fixed; top: calc(var(--menu-height) + var(--gap)); right: var(--edge); bottom: var(--foot); z-index: 50; width: var(--sidebar); margin: 0; }
     .chat-reopen { right: var(--edge); }
     .chat-panel {
       height: 100%; border: 0; border-radius: 14px;
@@ -631,10 +643,12 @@ open "build/Lamp Dev.app"</code></pre>
       position: absolute; left: 50%; translate: -50% 0; font: 600 13px -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
       color: var(--color-muted-ink);
     }
-    .app-window-body { flex: 1; min-height: 0; overflow-y: auto; padding: 3rem 3rem 0; scrollbar-width: thin; }
-    .window-footer { display: block; margin: 4rem -3rem 0; }
-    .window-footer :global(footer) { background: transparent; }
-    .window-footer :global(footer > div) { max-width: none; padding-left: 3rem; padding-right: 3rem; }
+    .app-window-body { flex: 1; min-height: 0; overflow-y: auto; padding: 3rem 3rem 2rem; scrollbar-width: thin; }
+    /* The project's links, one line under the windows. */
+    .home { --foot: 34px; }
+    .window-footer { display: flex; align-items: center; position: fixed; left: calc(var(--edge) + 4px); right: var(--edge); bottom: 0; height: var(--foot); }
+    /* Until a part's been added, the headline stands in the middle of the window. */
+    :global(html[data-asking]:not([data-has-part])) .app-window-body main { min-height: 100%; display: flex; flex-direction: column; justify-content: center; padding-bottom: 3rem; }
     :global(body:has(.app-window) > footer) { display: none; }
   }
   @media (min-width: 64rem) and (prefers-color-scheme: dark) {
