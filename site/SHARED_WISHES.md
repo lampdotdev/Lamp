@@ -22,7 +22,7 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   version counts up for the link (`pageVersion`), so an address never plays two different pages. The page goes with
   the wish's file: taking the file away takes the page too. Without a play host, the page shows the wish's picture.
 - The page (`/w/<id>`, `src/pages/w/index.astro` filled by `lib/shared-wish-page.js`, served by `api/wish-page.js`
-  through a rewrite in `vercel.json`): a page of the wish's own, for playing it, plain and neutral (the wish on black between white bars),
+  through a rewrite in `vercel.json`): a page of the wish's own, for playing it, plain, on the site's paper and ink (the wish between thin-ruled bars, on black once they're put away),
   with Lamp only a quiet "Made with Lamp" in the header beside the wish's icon, name and who it's by. The wish fills the
   rest of the window, playing or as its picture, only as big as it is (a page that plays takes the shape sent with it:
   it can't say its shape from inside its frame, and the picture is of its Mac window). Making one's own is a slim band
