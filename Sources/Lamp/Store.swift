@@ -9333,15 +9333,42 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Goes back to the version before the current one. Like any restore, this is itself a new version.
-    func undo(_ project: LampProject) async {
+    /// What Undo does with the app's versions as they are: throw away what's unsaved, undo the latest version, or
+    /// nothing. Given the version it's `expecting` to undo (Undo under a request brought in), it undoes that one or does
+    /// nothing at all: never what's unsaved, and never another version.
+    enum UndoStep: Equatable {
+        case discardUnsaved(current: String)
+        case undo(undoing: String, target: String)
+        case refused
+        case nothing
+    }
+
+    nonisolated static func undoStep(in versions: [AppVersion], unsaved: Bool, expecting: String? = nil) -> UndoStep {
+        if let expecting {
+            guard !unsaved, let step = Versions.undoTarget(in: versions), step.undoing.id == expecting else { return .refused }
+            return .undo(undoing: step.undoing.id, target: step.target.id)
+        }
+        // A turn that was stopped, or never got the app building, leaves its changes unsaved: Undo discards those first.
+        if unsaved, let current = versions.first { return .discardUnsaved(current: current.id) }
+        guard let step = Versions.undoTarget(in: versions) else { return .nothing }
+        return .undo(undoing: step.undoing.id, target: step.target.id)
+    }
+
+    /// Goes back to the version before the current one. Like any restore, this is itself a new version. `expecting` is
+    /// the version this Undo was offered for: decided only once the app is held, so nothing done to it in between is
+    /// what gets undone or thrown away (`undoStep`).
+    func undo(_ project: LampProject, expecting: String? = nil) async {
         guard begin(project) != nil else { return }
         defer { finish(project) }
         dropPausedRequest(project)
         let versions = await Versions.list(project)
         let unsaved = await Versions.hasUnsavedChanges(project)
-        // A turn that was stopped, or never got the app building, leaves its changes unsaved: Undo discards those first.
-        if let current = versions.first, unsaved {
+        let step = Self.undoStep(in: versions, unsaved: unsaved, expecting: expecting)
+        if step == .refused {
+            log(project, .status, "Nothing was undone: the app changed since")
+            return
+        }
+        if case .discardUnsaved(let id) = step, let current = versions.first(where: { $0.id == id }) {
             _ = await Versions.restoreFiles(project, to: current)
             let restored = await followRestored(project)
             log(restored, .status, "Discarded the unfinished change")
@@ -9349,7 +9376,11 @@ final class Store: ObservableObject {
             await rebuildParts(of: restored, onlyChanged: true)
             return
         }
-        let undo = Versions.undoTarget(in: versions)
+        var undo: (undoing: AppVersion, target: AppVersion)? = nil
+        if case .undo(let undoing, let target) = step, let from = versions.first(where: { $0.id == undoing }),
+           let to = versions.first(where: { $0.id == target }) {
+            undo = (from, to)
+        }
         let renaming = undo.flatMap { self.renaming(project, to: $0.target, in: versions) }
         guard let (undoing, target) = undo,
               await Versions.restore(project, to: target, message: "Undid “\(undoing.label)”",

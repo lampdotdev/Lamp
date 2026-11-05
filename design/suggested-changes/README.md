@@ -54,7 +54,7 @@ the person picks between them by.
 | Open | what it does | Show the Code, Not for Me, Try It First, Bring Into My App |
 | Rewritten after it was brought in | Sent more changes since you brought it in | the same |
 | Being fetched | Getting it ready… | none |
-| Brought in | In your app · goes to GitHub with your next release | Undo (only while this bring-in is what Undo would take back and nothing is unsaved), Open, and "Next: …" |
+| Brought in | In your app · goes to GitHub with your next release | Undo (only while this bring-in is what Undo would take back and nothing is unsaved, checked again once it holds the app: otherwise it does nothing), Open, and "Next: …" |
 | Released as a parent | In vN · waiting for GitHub | Show the Code |
 | Released, not a parent | In vN · still open on GitHub | Close Request… (with a comment) |
 | Merged | In vN, or Merged on GitHub | none |

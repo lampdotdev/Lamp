@@ -591,6 +591,38 @@ final class SuggestedChangesTests: XCTestCase {
         XCTAssertFalse(undoable)
     }
 
+    /// Undo under a request is decided once it holds the app, against the version it was offered for: work unsaved or a
+    /// version saved after the Undo was offered makes it do nothing, where a plain Undo would throw that work away or
+    /// undo the later version.
+    @MainActor
+    func testUndoUnderARequestDoesNothingOnceTheAppChanged() async throws {
+        let world = try world()
+        let first = try await release(world, isNew: true)
+        try XCTUnwrap(first.commit).write(to: world.mergeBase, atomically: true, encoding: .utf8)
+        _ = try openRequest(world, number: 9, ["Sources/Counter.swift": "let step = 9\n"])
+        _ = await SuggestedChanges.find(world.wish, kept: first, gh: world.gh.path)
+        _ = try await bringIn(world, number: 9)
+        let takenIn = try XCTUnwrap(SuggestedChanges.record(for: world.wish)?.taken(9)?.takenIn)
+        var versions = await Versions.list(world.wish)
+        guard case .undo(let undoing, _) = Store.undoStep(in: versions, unsaved: false, expecting: takenIn) else {
+            return XCTFail("the bring-in itself is undone")
+        }
+        XCTAssertEqual(undoing, takenIn)
+
+        // Unsaved work comes in between: a plain Undo would throw it away; this one leaves it.
+        XCTAssertEqual(Store.undoStep(in: versions, unsaved: true), .discardUnsaved(current: versions[0].id))
+        XCTAssertEqual(Store.undoStep(in: versions, unsaved: true, expecting: takenIn), .refused)
+
+        // A version saved in between: a plain Undo would undo that; this one doesn't.
+        try "let other = 1\n".write(to: world.wish.dir.appendingPathComponent("Sources/Other.swift"), atomically: true, encoding: .utf8)
+        let saved = await Versions.save(world.wish, message: "Added Other")
+        XCTAssertTrue(saved)
+        versions = await Versions.list(world.wish)
+        guard case .undo(let later, _) = Store.undoStep(in: versions, unsaved: false) else { return XCTFail("a plain Undo undoes the latest") }
+        XCTAssertNotEqual(later, takenIn)
+        XCTAssertEqual(Store.undoStep(in: versions, unsaved: false, expecting: takenIn), .refused)
+    }
+
     /// A change to the same lines the person changed isn't settled in a copy: the try stops and says so, and leaves its
     /// folder for the caller to take away.
     @MainActor

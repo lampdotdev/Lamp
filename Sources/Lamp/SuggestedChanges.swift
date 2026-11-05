@@ -782,13 +782,12 @@ extension Store {
         }
     }
 
-    /// Undo under a request brought in: only while that bring-in is what Undo would take back and nothing is unsaved,
-    /// asked again as it's pressed.
+    /// Undo under a request brought in: only while that bring-in is what Undo would take back and nothing is unsaved.
+    /// The version it brought in goes with the Undo, which checks it again once it holds the app, so nothing done in
+    /// between is undone or thrown away in its place.
     func undoSuggestion(_ project: LampProject, number: Int) {
-        Task {
-            guard await SuggestedChanges.undoable(number, in: project) else { return }
-            await undo(project)
-        }
+        guard let takenIn = SuggestedChanges.record(for: project)?.taken(number)?.takenIn else { return }
+        Task { await undo(project, expecting: takenIn) }
     }
 
     /// Show the Code: the request on GitHub.
