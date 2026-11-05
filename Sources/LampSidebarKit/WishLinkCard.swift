@@ -384,10 +384,9 @@ public struct WishLinkCard: View {
         if case .needsGitHub(let need) = setup.stage {
             VStack(alignment: .leading, spacing: 6) {
                 Toggle("Also put on GitHub", isOn: .constant(false)).toggleStyle(.checkbox).disabled(true)
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(need == .install ? "It needs GitHub's command-line tool, gh." : "Sign in to GitHub with gh first.")
                         .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
                     Button(need == .install ? "Get GitHub CLI…" : "Sign In to GitHub…", action: setUpGitHub.fix).controlSize(.small)
                 }
                 .padding(.leading, 20)
