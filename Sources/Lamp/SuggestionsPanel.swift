@@ -38,12 +38,17 @@ struct SuggestionsPanel: View {
     @State private var newHere: Set<Int> = []
     /// The files the person changed since their last release, for Good to Know.
     @State private var yours: Set<String> = []
+    /// The app's own description as its accounts were made from it, read once: an account made from anything else (an
+    /// older head, title, note or description) isn't shown.
+    @State private var about: String?
 
     private var project: LampProject? { preview?.project ?? store.projects.first { $0.id == wish } }
     private var record: SuggestedChanges.Record? {
         if let preview { return preview.record }
         _ = store.suggestionsRevision
-        return project.flatMap(SuggestedChanges.record(for:))
+        guard var record = project.flatMap(SuggestedChanges.record(for:)) else { return nil }
+        record.summaries = about.map { SuggestionSummaries.fresh(record, about: $0) } ?? [:]
+        return record
     }
 
     var body: some View {
@@ -52,7 +57,9 @@ struct SuggestionsPanel: View {
                 .onAppear { newHere = Set(record.open.filter(record.isNew).map(\.number)) }
                 .onChange(of: store.suggestionsRevision) { newHere.formUnion(record.open.filter(record.isNew).map(\.number)) }
                 .task(id: wish) {
-                    if let preview { yours = preview.yours } else { yours = await SuggestedChanges.yourChanges(in: project) }
+                    if let preview { yours = preview.yours; return }
+                    about = SuggestionSummaries.about(project)
+                    yours = await SuggestedChanges.yourChanges(in: project)
                 }
         } else {
             VStack(spacing: 12) {

@@ -17,8 +17,8 @@ import Foundation
 /// Not for Me, a failure, Lamp quitting, or Lamp starting again after a crash) takes all of it away. A try is known by
 /// its generation: one that's been ended can't come back by a build that finishes late.
 ///
-/// What was tried is pinned in the record (`SuggestedChanges.Tried`): the request's head and the app's version it was
-/// built on. Bring In says so when what it brings differs.
+/// What was tried is pinned in the record (`SuggestedChanges.Tried`): the request's head and the app's files it was made
+/// from, saved or not (`snapshot(of:)`). Bring In says so when what it brings differs.
 enum SuggestionTrial {
     struct Failure: LocalizedError {
         let message: String
@@ -92,10 +92,25 @@ enum SuggestionTrial {
     }
 
     /// What's said when Bring In would bring something other than what was tried; nil when it's the same.
-    static func differs(_ tried: SuggestedChanges.Tried, head: String, version: String?) -> String? {
+    /// `snapshot` is the app's files as they are now (`snapshot(of:)`); one that couldn't be read counts as changed.
+    static func differs(_ tried: SuggestedChanges.Tried, head: String, snapshot: String?) -> String? {
         if tried.head != head { return "They've sent more changes since you tried it, so what comes in now has those too." }
-        if let was = tried.version, let version, was != version { return "Your app changed since you tried it, so this may come out a little differently." }
+        if tried.snapshot == nil || tried.snapshot != snapshot { return "Your app changed since you tried it, so this may come out a little differently." }
         return nil
+    }
+
+    /// The app's files as they are, saved or not, as one git tree: what a try copies (all but Lamp's own folder and what
+    /// a build makes), read through a scratch index so the app's own is never touched. Nil when it can't be read.
+    static func snapshot(of dir: URL) async -> String? {
+        let index = ".lamp/snapshot-index-\(UUID().uuidString)"
+        var output = ""
+        let status = await Versions.git("""
+            export GIT_INDEX_FILE="$PWD/\(index)"
+            if git rev-parse -q --verify HEAD >/dev/null; then git read-tree HEAD; fi
+            git add -A 2>/dev/null && git rm -r -q --cached --ignore-unmatch -- .lamp build .build >/dev/null 2>&1 && git write-tree; code=$?
+            rm -f "$GIT_INDEX_FILE"; exit $code
+            """, cwd: dir, onLine: { output += $0 })
+        return status == 0 ? Credits.validCommit(output.trimmed) : nil
     }
 
     // MARK: Taking it all away
@@ -124,6 +139,9 @@ enum SuggestionTrial {
     /// write its data again once it's gone.
     static func remove(_ trial: URL, manifest given: Manifest? = nil, home: URL = FileManager.default.homeDirectoryForCurrentUser) {
         let fm = FileManager.default
+        // Its build first, and whatever that started: found by working in the try's folder, since a crash leaves no other
+        // way to know them, and waited for, so nothing is still writing there as it's taken away.
+        stopProcesses(in: trial)
         let read = (try? Data(contentsOf: trial.appendingPathComponent("trial.json"))).flatMap { try? JSONDecoder().decode(Manifest.self, from: $0) }
         if let manifest = given ?? read, manifest.bundleID.hasPrefix(Edition.appBundlePrefix + "trial-") {
             let running = NSRunningApplication.runningApplications(withBundleIdentifier: manifest.bundleID)
@@ -141,6 +159,44 @@ enum SuggestionTrial {
         try? fm.removeItem(at: trial)
     }
 
+    /// This user's processes whose current folder is `folder` or one under it.
+    static func processes(in folder: URL) -> [pid_t] {
+        // Its real path, as the system gives each process's folder (`/private/var`, not `/var`).
+        guard let real = realpath(folder.path, nil) else { return [] }
+        let root = String(cString: real) + "/"
+        free(real)
+        let count = proc_listallpids(nil, 0)
+        guard count > 0 else { return [] }
+        var pids = [pid_t](repeating: 0, count: Int(count) * 2)
+        let found = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+        let mine = getuid(), me = getpid()
+        return pids.prefix(Int(max(found, 0))).filter { pid in
+            guard pid > 0, pid != me else { return false }
+            var owner = proc_bsdinfo()
+            guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &owner, Int32(MemoryLayout<proc_bsdinfo>.size)) > 0, owner.pbi_uid == mine else { return false }
+            var info = proc_vnodepathinfo()
+            let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
+            guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size else { return false }
+            let cwd = withUnsafeBytes(of: info.pvi_cdir.vip_path) { String(cString: $0.bindMemory(to: CChar.self).baseAddress!) }
+            return (cwd + "/").hasPrefix(root)
+        }
+    }
+
+    /// Asks them to end, then makes them, and waits until none is left there (a few seconds at most). Looked for afresh
+    /// each time, so one a build starts meanwhile is stopped too, and one that has ended (a zombie has no folder) isn't
+    /// waited for.
+    static func stopProcesses(in folder: URL) {
+        var left = processes(in: folder)
+        guard !left.isEmpty else { return }
+        for pid in left { kill(pid, SIGTERM) }
+        for round in 0..<80 {
+            Thread.sleep(forTimeInterval: 0.05)
+            left = processes(in: folder)
+            if left.isEmpty { return }
+            for pid in left { kill(pid, round >= 20 ? SIGKILL : SIGTERM) }
+        }
+    }
+
     /// Every try left from before, at launch: a crash or a quit that couldn't wait leaves them. No try runs yet.
     static func sweep(home: URL = FileManager.default.homeDirectoryForCurrentUser) {
         for trial in (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [] { remove(trial, home: home) }
@@ -151,7 +207,7 @@ enum SuggestionTrial {
     /// The copy of the wish with the change merged in, ready to build, in the try's own folder; its list of what it
     /// leaves is written first. Throws with what to say when it can't be made, or when the change overlaps the person's.
     static func prepare(_ project: LampProject, generation: String, number: Int, package: Sharing.Package, pull: BringIn.Pull,
-                        kept: GitHubRepo.Repo?) async throws -> LampProject {
+                        kept: GitHubRepo.Repo?) async throws -> (copy: LampProject, snapshot: String?) {
         let copy = copy(of: project, generation: generation)
         let folder = copy.dir.deletingLastPathComponent()
         let fm = FileManager.default
@@ -166,7 +222,9 @@ enum SuggestionTrial {
         } catch {
             throw Failure(message: "Lamp couldn't make a copy to try it in.")
         }
-        // The copy's files saved as they are, as the merge expects them.
+        // What was copied, saved or not, which is what's tried; then the copy's files saved as they are, as the merge
+        // expects them.
+        let snapshot = await snapshot(of: copy.dir)
         _ = await Versions.git("git add -A -- . ':!.lamp' && \(Versions.commit) -q --allow-empty -m 'Before trying'", cwd: copy.dir, onLine: { _ in })
         let merged: Upstream.Merged
         do {
@@ -179,15 +237,16 @@ enum SuggestionTrial {
         guard merged.conflicts.isEmpty, merged.newParts.isEmpty else {
             throw Failure(message: "It changes some of the same lines you did. Bring it in instead, and Lamp fits the two together.")
         }
-        return copy
+        return (copy, snapshot)
     }
 }
 
 extension SuggestedChanges {
-    /// A request as it was tried: its head, and the version of the app the copy was made from.
+    /// A request as it was tried: its head, and the app's files the copy was made from, saved or not
+    /// (`SuggestionTrial.snapshot(of:)`).
     struct Tried: Codable, Equatable, Sendable {
         var head: String
-        var version: String?
+        var snapshot: String?
     }
 }
 
@@ -241,10 +300,9 @@ extension Store {
             suggestionsRevision += 1
         }
         let fm = FileManager.default
-        let version = await Versions.head(project)
-        let copy: LampProject
+        let copy: LampProject, snapshot: String?
         do {
-            copy = try await SuggestionTrial.prepare(project, generation: generation, number: number, package: package, pull: pull,
+            (copy, snapshot) = try await SuggestionTrial.prepare(project, generation: generation, number: number, package: package, pull: pull,
                                                      kept: GitHubRepo.kept(for: project))
         } catch {
             return fail(error.localizedDescription)
@@ -294,7 +352,7 @@ extension Store {
             Task { @MainActor in if Store.shared.trials[project.id]?.generation == generation { Store.shared.endTrial(of: project) } }
         }
         trials[project.id] = running
-        SuggestedChanges.change(project) { $0.tried[String(number)] = SuggestedChanges.Tried(head: pull.head, version: version) }
+        SuggestedChanges.change(project) { $0.tried[String(number)] = SuggestedChanges.Tried(head: pull.head, snapshot: snapshot) }
         suggestionsRevision += 1
     }
 
@@ -328,6 +386,7 @@ extension Store {
 
     private static func finish(_ running: SuggestionTrial.Running) {
         if let watching = running.watching { NSWorkspace.shared.notificationCenter.removeObserver(watching) }
+        // Its build is stopped and waited for by `remove`, which finds it and what it started by their folder.
         if let build = running.build { Subprocess.terminateTree(build) }
         let folder = running.folder, manifest = running.manifest
         guard let app = running.app, !app.isTerminated else {

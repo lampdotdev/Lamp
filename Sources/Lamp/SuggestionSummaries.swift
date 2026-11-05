@@ -55,26 +55,41 @@ actor SuggestionSummaries {
         return SHA256.hash(data: Data(joined.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
+    /// The app's own description, read as Lamp reads any file in an app's folder (`AppFile`): never through a link, so
+    /// an APP.md pointing elsewhere gives nothing rather than what it points at.
     static func about(_ project: LampProject) -> String {
-        String(((try? String(contentsOf: project.dir.appendingPathComponent("APP.md"), encoding: .utf8)) ?? "").prefix(2000))
+        String((AppFile.text(project.dir.appendingPathComponent("APP.md"), in: project) ?? "").prefix(2000))
+    }
+
+    /// Whether `summary` was made from `request` as it is now, with the app described as `about`.
+    static func isFresh(_ summary: Summary, for request: SuggestedChanges.Request, about: String) -> Bool {
+        summary.made == hash(title: request.title, note: request.note ?? "", head: request.head, about: about)
+    }
+
+    /// The record's accounts that are of its open requests as they are now; an older one is never shown.
+    static func fresh(_ record: SuggestedChanges.Record, about: String) -> [String: Summary] {
+        record.summaries.filter { key, summary in
+            record.request(Int(key) ?? -1).map { isFresh(summary, for: $0, about: about) } ?? false
+        }
     }
 
     /// Makes the request's account when there's none for what it is now. Whether one was made.
     func make(for request: SuggestedChanges.Request, in project: LampProject, repo: String, gh: String) async -> Bool {
         let key = String(request.number)
-        let made = Self.hash(title: request.title, note: request.note ?? "", head: request.head, about: Self.about(project))
+        let about = Self.about(project)
+        let made = Self.hash(title: request.title, note: request.note ?? "", head: request.head, about: about)
         let before = SuggestedChanges.record(for: project, repo: repo)
         // Made already, or answered with no account for what it is now: asked again only once it changes.
         if before?.summaries[key]?.made == made || before?.unexplained[key] == made { return false }
         // Nothing is fetched for an account nothing could make.
         guard Self.canSpend(), await AppAI.toolFreeAvailable(),
-              let inputs = await Self.inputs(for: request, in: project, repo: repo, gh: gh), Self.canSpend() else { return false }
+              let inputs = await Self.inputs(for: request, about: about, repo: repo, gh: gh), Self.canSpend() else { return false }
         let topics = SuggestedChanges.record(for: project, repo: repo)?.topics ?? []
         // Counted before it's asked, so calls for several apps at once can't all pass the limit.
         Self.counted()
         let answer: (String, Double)?
         do {
-            answer = try await AppAI.toolFree(prompt: Self.prompt(inputs, topics: topics), system: Self.system, schema: Self.schema)
+            answer = try await AppAI.toolFree(prompt: Self.prompt(inputs, topics: topics), system: Self.system, schema: Self.schema, for: project)
         } catch {
             if let failure = error as? AppAI.Failure { Self.spent(failure.cost) }
             return false
@@ -84,14 +99,26 @@ actor SuggestionSummaries {
         // An answer that isn't an account isn't shown; the sender's title stands, and the request isn't asked about
         // again until it changes, so one request can't use up the day's limit.
         guard var summary = Self.checked(text, topics: topics) else {
-            SuggestedChanges.change(project, repo: repo) { $0.unexplained[key] = made }
+            SuggestedChanges.change(project, repo: repo) { if Self.isCurrent(made, key, in: $0, about: about) { $0.unexplained[key] = made } }
             return false
         }
-        summary.made = inputs.hash
+        summary.made = made
         summary.partial = inputs.partial
         let kept = summary
-        SuggestedChanges.change(project, repo: repo) { Self.file(kept, as: key, in: &$0) }
-        return true
+        // Kept only while the request is still what it was made from: a late answer never stands over a newer one.
+        var filed = false
+        SuggestedChanges.change(project, repo: repo) { record in
+            guard Self.isCurrent(made, key, in: record, about: about) else { return }
+            Self.file(kept, as: key, in: &record)
+            filed = true
+        }
+        return filed
+    }
+
+    /// Whether request `key` in `record` is still what `made` was worked out from.
+    static func isCurrent(_ made: String, _ key: String, in record: SuggestedChanges.Record, about: String) -> Bool {
+        guard let request = record.request(Int(key) ?? -1) else { return false }
+        return hash(title: request.title, note: request.note ?? "", head: request.head, about: about) == made
     }
 
     /// Keeps an account under its topic. The topic list is read in the same step it's written, so a new topic is added
@@ -110,11 +137,13 @@ actor SuggestionSummaries {
 
     // MARK: What it reads
 
-    /// The request's title and note, and its changed code as GitHub gives it file by file, cut at `codeLimit`.
-    static func inputs(for request: SuggestedChanges.Request, in project: LampProject, repo: String, gh: String) async -> Inputs? {
+    /// The request's title and note, and its changed code as GitHub gives it file by file, cut at `codeLimit`. GitHub
+    /// lists a request's files as they are when asked, not at a head, so the head is asked again after: if it moved, what
+    /// was read may be of another head, and nothing is made from it.
+    static func inputs(for request: SuggestedChanges.Request, about: String, repo: String, gh: String) async -> Inputs? {
         let listed = await Subprocess.run(gh, ["api", "--paginate", "repos/\(repo)/pulls/\(request.number)/files?per_page=100", "--jq", ".[] | @json"],
                                           mergeErrors: false, timeout: 120)
-        guard listed.ok else { return nil }
+        guard listed.ok, await SuggestedChanges.stillAt(request, repo: repo, gh: gh) else { return nil }
         var code = ""
         var partial = false
         for line in listed.output.split(whereSeparator: \.isNewline) {
@@ -131,7 +160,7 @@ actor SuggestionSummaries {
         }
         let cut = clip(code, to: codeLimit)
         return Inputs(title: request.title, note: request.note ?? "", head: request.head, code: cut.text, partial: partial || cut.cut,
-                      about: about(project))
+                      about: about)
     }
 
     static func clip(_ text: String, to limit: Int) -> (text: String, cut: Bool) {
@@ -210,7 +239,7 @@ actor SuggestionSummaries {
         var headline = plain(rawHeadline)
         if headline.hasSuffix(".") { headline.removeLast() }
         let words = headline.split(separator: " ").count
-        guard (1...8).contains(words), headline.count <= 60, !claimsSafety(headline) else { return nil }
+        guard (1...6).contains(words), headline.count <= 60, !claimsSafety(headline) else { return nil }
         let points = ((object["points"] as? [Any]) ?? []).compactMap { $0 as? String }.map(plain)
             .filter { !$0.isEmpty && $0.count <= 200 && !claimsSafety($0) }
         let topic = plain(rawTopic)

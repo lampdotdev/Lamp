@@ -165,9 +165,9 @@ final class SuggestionSummariesTests: XCTestCase {
 
     /// Bring In says when what it brings isn't what was tried.
     func testBringInSaysWhenItDiffersFromWhatWasTried() {
-        let tried = SuggestedChanges.Tried(head: "h1", version: "v1")
-        XCTAssertNil(SuggestionTrial.differs(tried, head: "h1", version: "v1"))
-        XCTAssertNotNil(SuggestionTrial.differs(tried, head: "h2", version: "v1"))
-        XCTAssertNotNil(SuggestionTrial.differs(tried, head: "h1", version: "v2"))
+        let tried = SuggestedChanges.Tried(head: "h1", snapshot: "s1")
+        XCTAssertNil(SuggestionTrial.differs(tried, head: "h1", snapshot: "s1"))
+        XCTAssertNotNil(SuggestionTrial.differs(tried, head: "h2", snapshot: "s1"))
+        XCTAssertNotNil(SuggestionTrial.differs(tried, head: "h1", snapshot: "s2"))
     }
 }

@@ -4021,6 +4021,8 @@ final class Store: ObservableObject {
         }
         importRequest = nil
         pendingImport = nil
+        // Someone's suggested change, accepted: a try of it goes now, and not before, so Cancel on the review keeps it.
+        if pending.bringingIn?.request != nil { endTrial(of: project) }
         showChat(project.id)
         // A request that came with the wish's link goes into the app it updates, as into a new one (`finishImport`):
         // in the box, ready to send, whether or not the file has anything new.

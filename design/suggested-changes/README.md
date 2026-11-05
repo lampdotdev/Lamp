@@ -79,12 +79,21 @@ what was brought in and what a release did are left as they are.
 `SuggestionSummaries` makes a headline of a few words, up to three points, and a topic. Everything it reads was written
 by someone else (the title, the note and the changed code from `pulls/N/files`, cut at 30 KB and said to be), so:
 
-- **No tools.** It goes only along a way that can't act (`AppAI.toolFree`): OpenRouter with the person's key, a model
-  on this Mac, or Claude Code or Codex sealed with no tools and no pictures. Never `AppAI.complete`, which can hand the
-  call to an engine unsealed. Without one of these, nothing is asked: the panel shows the sender's own title as theirs.
+- **The app's own words read safely.** Its APP.md goes in too, read as Lamp reads any file in an app's folder
+  (`AppFile`): never through a link, so one pointing outside the folder gives nothing.
+
+- **No tools.** It goes only along a way that can't act (`AppAI.toolFree`), never `AppAI.complete`, which can hand
+  the call to an engine unsealed:
+  - OpenRouter with the person's key, or a model on this Mac;
+  - Claude Code with no tools, by its documented `--tools ''` with `--restricted`, and no pictures;
+  - Codex only as answers beside a turn run it (`SideAnswer.Run`): a version that run was tested on, the model's
+    catalog entry edited to offer no tools, and a tool tried stopping that version for good. Codex's flags alone, as
+    `viaEngine` seals it, aren't proof enough.
+
+  Without one of these, nothing is fetched or asked: the panel shows the sender's own title as theirs.
 - **Marked as data.** The prompt says what follows is someone else's and never instructions.
 - **Checked before it's kept.**
-  - The reply must be JSON of the right shape: a headline of at most eight words and sixty characters, and at most
+  - The reply must be JSON of the right shape: a headline of at most six words and sixty characters, and at most
     three one-line points.
   - The topic must come from the app's list (`Record.topics`), or be a new name of a few words while the list has
     room. The list holds at most eight with "Other", so dozens of requests sort under the same few names.
@@ -92,7 +101,15 @@ by someone else (the title, the note and the changed code from `pulls/N/files`, 
     reading the change can't know, and the sender's words could steer it.
 - **Shown only.** What it says is never handed to an agent.
 - **Kept by what it was made from.** It's kept under the head, title, note, the app's own description and a format
-  version, so it's made again only when one of those changes. A failure isn't kept.
+  version, so it's made again only when one of those changes. A failure isn't kept. Freshness is checked three times:
+  - **Fetching.** GitHub lists a request's files as they are when asked, so the head is asked again after; if it
+    moved, nothing is made from what was read.
+  - **Saving.** An answer is kept only if the request is still what it was made from, so a late one never stands over
+    a newer one.
+  - **Showing.** The panel shows an account only while its request is still what it was made from; otherwise the
+    sender's title shows until a new one is made.
+
+  The same check after listing guards the files Good to Know reads.
 - **Bounded.** One is made at a time, which also keeps two from both adding a topic past the limit (the topic list is
   read and written in one step besides). No more than 60 are made a day, or $0.50 spent.
 
@@ -116,14 +133,21 @@ Good to Know is never the model's. It's worked out from the files (`SuggestedCha
 - **The same merge.** The request goes in through `Upstream.merge` against the same base Bring In uses
   (`BringIn.given`). If the two overlap, the try stops and says Bring In does that: no agent runs in a copy.
 - **Built and opened** from a folder beside the copy, told who it is and signed again.
-- **It owns what it makes.** Its folder's list (`trial.json`) is written first, naming what it leaves: the build and
-  its process, the running app, the bundle, and the app's data, caches, settings, web storage and saved windows. Ending
-  it takes all of that away, whatever ends it: the copy quitting, Stop Trying, another try, Bring In, Not for Me, a
-  failure, or Lamp quitting. At launch, anything a crash left is swept (`SuggestionTrial.sweep`).
+- **It owns what it makes.** Its folder's list (`trial.json`) is written first, naming what it leaves: the running app,
+  the bundle, and the app's data, caches, settings, web storage and saved windows. The try keeps the list from the
+  start too, so a folder gone early still has it.
+- **Its build is stopped and waited for.** Any process working in the try's folder (the build, and whatever it
+  started) is found by its current folder, asked to end, made to, and waited for before anything is taken away. That
+  is how a build a crash left running is found at the next launch, since nothing else names it.
+- **Ending it** takes all of that away, whatever ends it: the copy quitting, Stop Trying, another try, Update on Bring
+  In's review (not opening the review, so Cancel keeps the try), Not for Me, a failure, or Lamp quitting. At launch,
+  anything a crash left is swept (`SuggestionTrial.sweep`).
 - **It can't come back.** Each try has a generation; a build or a launch that finishes after its try ended takes what
   it made away instead of opening it.
-- **Pinned.** What was tried is kept (`Record.tried`): the request's head and the app's version it was made from. Bring
-  In says so before its review when either differs.
+- **Pinned.** What was tried is kept (`Record.tried`): the request's head, and the app's files the copy was made from,
+  saved or not, as one git tree (`SuggestionTrial.snapshot(of:)`, through a scratch index so the app's own is never
+  touched). Bring In works out the same of the app as it is and says so before its review when either differs, so a
+  change not yet saved counts even though the app's version is the same.
 
 ## How it works underneath
 

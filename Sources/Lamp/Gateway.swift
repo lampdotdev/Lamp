@@ -677,35 +677,53 @@ enum AppAI {
     }
 
     /// One answer for Lamp's own reading of text someone else wrote (`SuggestionSummaries`), only along a way that can't
-    /// act: OpenRouter with the person's key, a model on this Mac, or Claude Code or Codex sealed, with no tools and no
-    /// pictures. Never `complete`, which can hand the call to an engine unsealed. Nil when none of these can answer.
-    /// Whether `toolFree` has a way to answer now.
+    /// act. Never `complete`, which can hand the call to an engine unsealed. Nil when none of these can answer:
+    /// - OpenRouter with the person's key, or a model on this Mac: text in, text out.
+    /// - Claude Code, with no tools by its documented `--tools ''` and `--restricted` (`viaEngine`).
+    /// - Codex only through the run proven for answers beside a turn (`SideAnswer.Run`): its version must be one that run
+    ///   was tested on, the model's catalog entry is edited to offer no tools, and a tool tried stops that version for good.
+    ///   `viaEngine`'s sealed Codex has the flags without that proof, so it's never used here.
     @MainActor static func toolFreeAvailable() async -> Bool {
         if Provider.hasKey, await helperModel() != nil { return true }
         guard model.available else { return false }
         switch model.kind {
         case .openRouter, .engine(.pi, _): return false
-        case .localModel, .engine: return true
+        case .localModel, .engine(.claude, _): return true
+        case .engine(.codex, _): return codexAnswerRoute() != nil
         }
     }
 
-    @MainActor static func toolFree(prompt: String, system: String, schema: [String: Any]) async throws -> (String, Double)? {
+    @MainActor static func toolFree(prompt: String, system: String, schema: [String: Any], for project: LampProject) async throws -> (String, Double)? {
         if Provider.hasKey, let helper = await helperModel() {
             return try await viaOpenRouter(prompt: prompt, images: [], system: system, model: helper, json: true, schema: schema)
         }
         let chosen = model
         guard chosen.available else { return nil }
         switch chosen.kind {
-        case .openRouter: return nil
+        case .openRouter, .engine(.pi, _): return nil
         case .localModel(_, let name):
             let base = try await LocalModels.shared.ensureServer(for: name)
             return try await viaOpenAICompatible("\(base)/v1/chat/completions", key: LocalModels.apiKey, prompt: prompt, images: [],
                                                  system: system, model: name, schema: schema, timeout: 120)
-        case .engine(.pi, _): return nil
-        case .engine(let engine, let name):
-            return try await viaEngine(engine, prompt: prompt, images: [], system: system, model: fastModel(for: chosen) ?? name,
+        case .engine(.claude, let name):
+            return try await viaEngine(.claude, prompt: prompt, images: [], system: system, model: fastModel(for: chosen) ?? name,
                                        schema: schema, timeLimit: 120, sealed: true)
+        case .engine(.codex, _):
+            guard let route = codexAnswerRoute() else { return nil }
+            let run = SideAnswer.Run(message: UUID(), engine: .codex)
+            // Codex's proven launch takes no system prompt of its own: what it's told goes first in what it's asked.
+            let outcome = await run.answer(system + "\n\n" + prompt, route: route, transcript: nil, in: project)
+            if outcome.triedTool { SideAnswer.stop(.codex, version: outcome.version) }
+            return outcome.reply.map { ($0, 0) }
         }
+    }
+
+    /// Codex as `SideAnswer` runs it, on the model it was proven with; nil when Codex isn't here.
+    @MainActor static func codexAnswerRoute() -> SideAnswer.Route? {
+        guard let executable = EngineInstall.path(for: .codex) else { return nil }
+        return SideAnswer.Route(engine: .codex, executable: executable, configFolder: EngineInstall.configFolder(.codex).path,
+                                model: SideAnswer.testedCodexModel, system: "", path: ToolLocator.userPath,
+                                environment: EngineInstall.environment(for: .codex))
     }
 
     /// Chat completion against an OpenAI-compatible endpoint: Lamp's own model servers on this Mac.

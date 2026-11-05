@@ -259,13 +259,20 @@ enum SuggestedChanges {
         if let known = record(for: project, repo: repo)?.files(of: request) { return known }
         let listed = await Subprocess.run(gh, ["api", "--paginate", "repos/\(repo)/pulls/\(request.number)/files?per_page=100",
                                               "--jq", ".[] | [.status, .filename] | @tsv"], mergeErrors: false, timeout: 120)
-        guard listed.ok else { return nil }
+        // GitHub lists the files as they are when asked: kept under the head only if that's still the head after.
+        guard listed.ok, await stillAt(request, repo: repo, gh: gh) else { return nil }
         let files = listed.output.split(whereSeparator: \.isNewline).compactMap { line -> ChangedFile? in
             let fields = line.split(separator: "\t", maxSplits: 1).map(String.init)
             return fields.count == 2 ? ChangedFile(path: fields[1], status: fields[0]) : nil
         }
         change(project, repo: repo) { $0.files[String(request.number)] = FileList(head: request.head, files: files) }
         return files
+    }
+
+    /// Whether the request's head on GitHub is still the one Lamp has for it.
+    static func stillAt(_ request: Request, repo: String, gh: String) async -> Bool {
+        let asked = await Subprocess.run(gh, ["api", "repos/\(repo)/pulls/\(request.number)", "--jq", ".head.sha"], mergeErrors: false, timeout: 30)
+        return asked.ok && asked.output.trimmed == request.head
     }
 
     // MARK: Fetching one
@@ -723,7 +730,7 @@ extension Store {
             do {
                 let fetched = try await SuggestedChanges.fetch(project, kept: kept, request: request, gh: gh)
                 if let tried = SuggestedChanges.record(for: project)?.tried[String(number)],
-                   let warning = SuggestionTrial.differs(tried, head: fetched.pull.head, version: await Versions.head(project)) {
+                   let warning = SuggestionTrial.differs(tried, head: fetched.pull.head, snapshot: await SuggestionTrial.snapshot(of: project.dir)) {
                     let alert = NSAlert()
                     alert.messageText = "This isn't quite what you tried"
                     alert.informativeText = warning
@@ -734,7 +741,6 @@ extension Store {
                         return
                     }
                 }
-                if trials[project.id] != nil { endTrial(of: project) }
                 importApp(from: fetched.tree, updating: project.id, bringingIn: fetched.pull)
             } catch {
                 NSAlert(error: error).runModal()

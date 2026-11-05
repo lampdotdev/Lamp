@@ -493,7 +493,10 @@ final class SuggestedChangesTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: package.folder) }
 
         let generation = UUID().uuidString.lowercased()
-        let copy = try await SuggestionTrial.prepare(world.wish, generation: generation, number: 8, package: package, pull: fetched.pull, kept: first)
+        let wishSnapshot = await SuggestionTrial.snapshot(of: world.wish.dir)
+        let (copy, snapshot) = try await SuggestionTrial.prepare(world.wish, generation: generation, number: 8, package: package, pull: fetched.pull, kept: first)
+        XCTAssertNotNil(snapshot)
+        XCTAssertEqual(snapshot, wishSnapshot, "what was tried is the app's files as they were")
         XCTAssertEqual(try String(contentsOf: copy.dir.appendingPathComponent("Sources/Counter.swift"), encoding: .utf8), "let step = 8\n")
         XCTAssertEqual(try String(contentsOf: world.wish.dir.appendingPathComponent("Sources/Counter.swift"), encoding: .utf8), "let step = 1\n",
                        "the person's app is as it was")
@@ -539,6 +542,28 @@ final class SuggestedChangesTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: saved.path), "with no list left, nothing says what it saved")
         SuggestionTrial.remove(folder, manifest: manifest, home: home)
         XCTAssertFalse(FileManager.default.fileExists(atPath: saved.path), "the list kept from the start says")
+    }
+
+    /// What was tried is the app's files, saved or not: a change not yet saved leaves the app's version where it was, and
+    /// Bring In still says the app changed since the try.
+    @MainActor
+    func testATryIsPinnedToTheFilesNotOnlyTheVersion() async throws {
+        let world = try world()
+        let head = await Versions.head(world.wish)
+        let snapshot = await SuggestionTrial.snapshot(of: world.wish.dir)
+        XCTAssertNotNil(snapshot)
+        let tried = SuggestedChanges.Tried(head: "h", snapshot: snapshot)
+        let same = await SuggestionTrial.snapshot(of: world.wish.dir)
+        XCTAssertNil(SuggestionTrial.differs(tried, head: "h", snapshot: same))
+        try "let step = 7\n".write(to: world.wish.dir.appendingPathComponent("Sources/Counter.swift"), atomically: true, encoding: .utf8)
+        let after = await Versions.head(world.wish)
+        XCTAssertEqual(after, head, "unsaved, so the app's version is the same")
+        let edited = await SuggestionTrial.snapshot(of: world.wish.dir)
+        XCTAssertNotNil(SuggestionTrial.differs(tried, head: "h", snapshot: edited))
+        XCTAssertNotNil(SuggestionTrial.differs(SuggestedChanges.Tried(head: "h", snapshot: nil), head: "h", snapshot: snapshot),
+                        "not knowing what was tried counts as changed")
+        // The app's own index is left as it was.
+        XCTAssertEqual(try sh("git status --porcelain -- Sources/Counter.swift", in: world.wish.dir), "M Sources/Counter.swift")
     }
 
     /// A change to the same lines the person changed isn't settled in a copy: the try stops and says so, and leaves its

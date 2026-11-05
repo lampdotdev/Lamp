@@ -438,15 +438,18 @@ says and never what the person marked. A request is new until it's shown in the 
 new commits make it new again, and one closed and opened again at the same head is as it was; Mark All as Seen marks
 those the list shows when it's clicked. Not for Me sets one aside at its head (`hidden`), saying nothing on GitHub, until
 its sender changes it. What each does is said in plain words by `SuggestionSummaries`: made only along a way that can't
-act (`AppAI.toolFree`: OpenRouter, a model on this Mac, or Claude Code or Codex sealed), from the request's title, note
-and changed code marked as someone else's, checked before it's kept (its shape and lengths, a topic from the app's list
-of at most eight, and no word on safety), kept by what it was made from and its format, one at a time, with a daily
-limit; without one, the sender's own title shows. What Lamp knows for sure (the files it takes away, the person's own
+act (`AppAI.toolFree`: OpenRouter, a model on this Mac, Claude Code with no tools, or Codex only through
+`SideAnswer.Run`'s proven launch), from the request's title, note and changed code marked as someone else's and the
+app's APP.md read without following a link (`AppFile`), checked before it's kept (its shape and lengths, a topic from
+the app's list of at most eight, and no word on safety), kept by what it was made from and its format and shown or
+saved only while the request is still that, one at a time, with a daily limit; without one, the sender's own title
+shows. What Lamp knows for sure (the files it takes away, the person's own
 changes to the same files, other requests on them) is worked out from the files (`SuggestedChanges.facts`). Try It First
 (`SuggestionTrial`, for a wish of one Mac app) runs the shared-app review, then makes a copy of the wish under an
 identity of its own in a folder of Lamp's, merges the request into it as Bring In would (`Upstream.merge`, the same
 base), builds it and opens it with none of the person's data and no token; it stops at a conflict, and everything it
-made goes when it ends, whatever ends it, and at the next launch. The `suggested_changes` tool (the same for every
+made goes when it ends, whatever ends it (its build stopped and waited for first, found by the folder it works in),
+and at the next launch; it's pinned to the request's head and the app's files as copied, saved or not. The `suggested_changes` tool (the same for every
 engine) lays a request out in the wish's folder of fetched copies (`SharedCopies`), read-only: its words marked as the
 sender's, never Lamp's, and its change as a diff; with `bring_in` the review opens once the turn ends. Bring Into My App
 is Bring In Changes with the request's head (`refs/pull/<n>/head`) in the repository's latest's place,
