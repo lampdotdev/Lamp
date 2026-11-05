@@ -427,6 +427,25 @@ brings couldn't be made: `taken` names the commit with the version that saved it
 must still have, with no Undo or going back to before it since (`BringIn.holds`, by `Lamp-Undid` and `Lamp-Restored`,
 each followed to the version it went back to),
 else it's offered again from Lamp's push. Bringing in changes the wish, so it's released with a new Release Update.
+Someone's request on the repository is brought in from Lamp too, never with GitHub's merge button, so the agent always
+knows what came in (`SuggestedChanges`; design/suggested-changes/README.md). Lamp asks GitHub with the person's sign-in
+which requests are open on the branch it pushes (at launch, every quarter of an hour, after a release, and when the agent
+asks), and the chat gets a card for each (`LogLine.Kind.suggestion`, `SuggestionCard`), the desk a dot beside the app's
+name until the chat has shown it. Ask About It sends the agent a question it answers with `suggested_changes` (the same
+tool for every engine), which lays the request out in the wish's folder of fetched copies (`SharedCopies`), read-only:
+its words marked as the sender's, never Lamp's, and its change as a diff; with `bring_in` the review opens once the turn
+ends. Bring In… is Bring In Changes with the request's head (`refs/pull/<n>/head`) in the repository's latest's place,
+measured from where the request branched (GitHub's `merge_base_commit`), or from the head last brought in of it while the
+wish still has that; it counts once saved, pinned at the head reviewed (`SuggestedChanges.accept`). The next release
+gives its commit each pinned head as one more parent (`GitHubRepo.upload`'s `merging`, a commit even when the files are
+unchanged), which GitHub reads to mark the request merged, by ancestry alone. So a head goes only when the release
+really has its change (`SuggestedChanges.parents`): the version that brought it in still holds (`BringIn.holds(version:)`),
+the request still points at the pinned head (one rewritten since stays open, its card saying it sent more), none of its
+files is one a release leaves out (a hidden file at the top, a file Lamp writes itself: `SuggestedChanges.leftOut`), and
+no open request that wasn't brought in is under it (GitHub's compare), since a stacked request would be marked merged
+with it. What a push went with is kept before its tag (`SuggestedChanges.pushed`); a request released without being a
+parent is held by that release, and its card's Close… comments with the release and commit. Merged is only what GitHub
+says (`SuggestedChanges.find` asks for each request that went). Close… on an open request closes it with no comment.
 The release then goes on top of what was brought in, and what changed on GitHub since Lamp's push stays as GitHub has it
 unless it's the app's (`GitHubRepo.keptFromGitHub`), on that push and every one after (`Repo.ownFiles`): a README or
 license edited there, a file only GitHub has; the app's

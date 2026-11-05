@@ -383,7 +383,8 @@ struct DeskListRow: View {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         Text(item.title).font(.system(size: 14.5, weight: .bold)).lineLimit(1)
-                        if !opening, let project, store.unread.contains(project.id) { ReadyDot(size: 8) }
+                        // Something new in its chat, or changes someone suggested that haven't been seen (`SuggestedChanges`).
+                        if !opening, let project, store.unread.contains(project.id) || store.hasUnseenSuggestions(project) { ReadyDot(size: 8) }
                     }
                     if opening {
                         DeskStatusLine().frame(maxWidth: .infinity, alignment: .leading)

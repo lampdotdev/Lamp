@@ -966,6 +966,15 @@ final class SidebarServer {
                     card.prominent = !done
                     card.disabled = !done && Store.shared.busy.contains(project.id)
                     out.append(card)
+                case .suggestion:
+                    // Someone's request on the wish's repository (`SuggestedChanges`), as GitHub and the wish's history have it now.
+                    guard let number = Int(line.text), let record = SuggestedChanges.record(for: project) else { continue }
+                    let state = SuggestedChanges.state(of: number, in: record, bringingIn: Store.shared.fetchingSuggestion[project.id] == number,
+                                                       holds: Store.shared.suggestionHolds[project.id]?[number] ?? (record.taken(number) != nil))
+                    var card = SuggestionCard.line(id: line.id, gap: gap, state: state, request: record.about(number))
+                    if case .open = state { card.disabled = Store.shared.busy.contains(project.id) }
+                    if SuggestedChanges.hasUnseen(project) { Task { @MainActor in Store.shared.sawSuggestions(project) } }
+                    out.append(card)
                 case .keepOpening:
                     // What Lamp does now, whatever was pressed before: turned off in Settings, the card offers it again.
                     let on = PhoneRenewals.staysOpen
@@ -1240,6 +1249,7 @@ final class SidebarServer {
                 return
             }
             if line.kind == .newerOriginal { return store.updateFromOriginal(project, opening: false) }
+            if line.kind == .suggestion, let number = Int(line.text) { return store.bringInSuggestion(project, number: number) }
             if line.kind == .keepOpening {
                 store.keepPhoneAppsOpening(true, for: project)
                 return pushNow()
@@ -1257,9 +1267,15 @@ final class SidebarServer {
             // app can't hold them (nothing typed there may reach the app), as Share hands over the file it makes.
             SetupSheet.shared.show(project, line: line)
         case .choose(let id, let choice):
+            if let line = store.logs[project.id]?.first(where: { $0.id == id }), line.kind == .suggestion, let number = Int(line.text) {
+                return choice == SuggestionCard.ask ? store.askAboutSuggestion(project, number: number) : store.viewSuggestion(project, number: number)
+            }
             guard let engine = Engine(rawValue: choice) else { return }
             store.useSignedIn(engine, for: project, line: id)
         case .decline(let id):
+            if let line = store.logs[project.id]?.first(where: { $0.id == id }), line.kind == .suggestion, let number = Int(line.text) {
+                return store.closeSuggestion(project, number: number)
+            }
             guard store.logs[project.id]?.first(where: { $0.id == id })?.kind == .oldCopy else { return }
             Task { await store.answerOldCopy(project, line: id, remove: false) }
         case .undoNote(let id):

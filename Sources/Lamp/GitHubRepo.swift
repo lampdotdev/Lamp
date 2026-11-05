@@ -519,7 +519,7 @@ enum GitHubRepo {
     /// so nothing of it is lost. `broughtIn` lists the files of the app as the wish brought them in (`BringIn.paths`).
     /// `keeping` are the files earlier pushes kept as GitHub has them (`Repo.ownFiles`), which this one keeps too.
     static func upload(_ staged: Staged, of project: LampProject, to repo: String, gh: String, login: String, isNew: Bool, expected: String? = nil,
-                       lastPushed: String? = nil, broughtIn: Set<String> = [], keeping: [String] = [],
+                       lastPushed: String? = nil, broughtIn: Set<String> = [], keeping: [String] = [], merging: [String] = [],
                        isPrivate: Bool, license: Bool, picture: Bool? = nil, authors shown: [Author]? = nil,
                        release: GitHubRelease.Version? = nil, pushed: @escaping @Sendable () -> Void = {},
                        step: @escaping @Sendable (String) -> Void) async throws -> (repo: Repo, changed: Bool) {
@@ -549,6 +549,7 @@ enum GitHubRepo {
         let work: URL
         var changed = true
         var theirs: [String] = []
+        var parents: [String] = []
         // The repository's own branch, what its clone checked out; a new one's is main.
         var branch = "main"
         if isNew {
@@ -610,6 +611,12 @@ enum GitHubRepo {
             }
             let added = await Subprocess.run(git, ["add", "-A"], cwd: clone, timeout: 120)
             guard added.ok else { throw Failure(message: "Couldn't prepare the repository: \(added.output.trimmed.suffix(200))") }
+            // Requests brought in go as more parents (`SuggestedChanges.parents`), so GitHub marks them merged: each head as it
+            // was pinned, which GitHub keeps under the request; one it no longer gives back stays out, its request open.
+            for head in merging {
+                let fetched = await Subprocess.run(git, signedIn + ["fetch", "-q", "--depth", "1", "origin", head], cwd: clone, timeout: 300)
+                if fetched.ok { parents.append(head) }
+            }
             // Unchanged when nothing but the export's own marks differ: the manifest says when it was made. Its other
             // fields matter (which device an app opens on), so it's compared with only its time left out.
             // The chain names the commit up there (`Sharing.export`), which each push moves on: the credits compare
@@ -618,7 +625,8 @@ enum GitHubRepo {
             // taken away with this commit, never left to grow the repository.
             // A site's are in Lamp's folder (`StaticSite.layOut`).
             let at = fm.fileExists(atPath: tree.appendingPathComponent("\(StaticSite.folder)/lamp-app.json").path) ? StaticSite.folder + "/" : ""
-            if await Subprocess.run(git, ["diff", "--cached", "--quiet", "--", ".", ":(exclude)\(at)lamp-app.json", ":(exclude)\(at)\(Credits.file)"], cwd: clone, timeout: 60).ok {
+            // A request going with it is a change even when the files aren't: the commit is what marks it merged.
+            if parents.isEmpty, await Subprocess.run(git, ["diff", "--cached", "--quiet", "--", ".", ":(exclude)\(at)lamp-app.json", ":(exclude)\(at)\(Credits.file)"], cwd: clone, timeout: 60).ok {
                 let before = await Subprocess.run(git, ["show", "HEAD:\(at)lamp-app.json"], cwd: clone, mergeErrors: false, timeout: 30)
                 let credits = await Subprocess.run(git, ["show", "HEAD:\(at)\(Credits.file)"], cwd: clone, mergeErrors: false, timeout: 30)
                 if before.ok, let after = try? Data(contentsOf: clone.appendingPathComponent("\(at)lamp-app.json")),
@@ -630,7 +638,16 @@ enum GitHubRepo {
             if changed {
                 let author = try await author(login: login, git: git, in: clone)
                 let message = release?.message ?? "Update \(project.name) from Lamp"
-                _ = try await commit(["commit", "-q", "-m", message], as: author, shown: shown, git: git, in: clone)
+                if parents.isEmpty {
+                    _ = try await commit(["commit", "-q", "-m", message], as: author, shown: shown, git: git, in: clone)
+                } else {
+                    let tree = await Subprocess.run(git, ["write-tree"], cwd: clone, mergeErrors: false, timeout: 60)
+                    guard tree.ok, let written = Credits.validCommit(tree.output.trimmed) else { throw Failure(message: "Couldn't prepare the repository.") }
+                    let made = try await commit(["commit-tree", written, "-p", "HEAD"] + parents.flatMap { ["-p", $0] } + ["-m", message],
+                                                as: author, shown: shown, git: git, in: clone)
+                    let moved = await Subprocess.run(git, ["update-ref", "HEAD", made], cwd: clone, timeout: 10)
+                    guard moved.ok else { throw Failure(message: "Couldn't prepare the repository: \(moved.output.trimmed.suffix(200))") }
+                }
             }
             work = clone
         }
@@ -638,6 +655,8 @@ enum GitHubRepo {
             step("Uploading to GitHub…")
             let pushed = await Subprocess.run(git, signedIn + ["push", "-q", remote, "HEAD:\(branch)"], cwd: work, timeout: 600)
             guard pushed.ok else { throw Failure(message: "GitHub didn't take it: \(pushed.output.trimmed.suffix(200))") }
+            // Kept before the tag, which can fail: which requests it went with, and which it has without them.
+            if !isNew, let commit = await head(git, in: work) { await SuggestedChanges.pushed(project, commit: commit, tag: release?.tag, parents: parents) }
         }
         var record = Repo(repo: repo, url: url, license: license, commit: await head(git, in: work),
                           isPublic: await isPublic(repo, gh: gh), version: staged.version, page: kept(for: project)?.page, picture: picture,

@@ -226,6 +226,19 @@ enum Gallery {
             LogLine(kind: .newerOriginal, text: NewerOriginalLine.done + "e21e2de686a12bb7ca08e7c549cd5f088cc590b6"),
             LogLine(kind: .status, text: "Brought in what's new from the original, keeping your changes. Building it now…"),
         ]),
+        screen("Suggested changes, each way they go", group: "Chat screen", [
+            LogLine(kind: .user, text: "Make the snake faster"),
+            LogLine(kind: .agent, text: "The snake moves twice as fast now."),
+        ], height: 900) { made in
+            let request = SuggestedChanges.Request(number: 12, login: "sam-remixes", title: "Snake: changes from a remix",
+                                                   head: String(repeating: "a", count: 40), url: "https://github.com")
+            let states: [SuggestedChanges.CardState] = [
+                .open(changedSince: false), .open(changedSince: true), .bringingIn, .broughtIn(leftOut: []),
+                .broughtIn(leftOut: [".github/workflows/build.yml"]), .released(tag: "v4"), .held(tag: "v4"), .merged(tag: "v4"),
+                .merged(tag: nil), .closed,
+            ]
+            made.lines += states.map { SuggestionCard.line(id: UUID(), gap: 12, state: $0, request: request) }
+        },
         screen("Started over", group: "Chat screen", [
             LogLine(kind: .status, text: Conversation.startedOverFromLatest),
         ]),

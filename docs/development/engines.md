@@ -19,7 +19,7 @@ anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a versi
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `make_art`, `assets`, `offer_setup`, `make_app_for`, `remove_app`, `rename_app`, `use_icon_picture`, `connectors`, `lampify`, `shared_copy`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools, the notes tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `make_art`, `assets`, `offer_setup`, `make_app_for`, `remove_app`, `rename_app`, `use_icon_picture`, `connectors`, `lampify`, `shared_copy`, `suggested_changes`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. The first run of a new wish's conversation on pi holds back the
   schemas a new web game on the Mac has no use for, with pi's own `deferred` exposure and `tool_search` behind a short
   rule (`Agent.deferredTools`, `deferredRule`), until `make_app_for` makes anything else. Such a run names no tools,

@@ -59,7 +59,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,assets,offer_setup,make_app_for,remove_app,rename_app,use_icon_picture,connectors,lampify,shared_copy,network_devices,device_integration,device_permission,ask,progress,write_wish,read_skill"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,assets,offer_setup,make_app_for,remove_app,rename_app,use_icon_picture,connectors,lampify,shared_copy,suggested_changes,network_devices,device_integration,device_permission,ask,progress,write_wish,read_skill"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -68,7 +68,7 @@ enum Agent {
     /// game on the Mac: what such a game never needs (a wish's versions, its name, the person's services and devices).
     /// Claude Code and Codex are served every tool, as ever: they have no such exposure from Lamp's endpoint.
     static let deferredTools = ["list_versions", "name_version", "restore_version", "rename_app", "remove_app", "use_icon_picture", "write_wish",
-                                "connectors", "lampify", "shared_copy", "offer_setup", "network_devices", "device_integration", "device_permission"]
+                                "connectors", "lampify", "shared_copy", "suggested_changes", "offer_setup", "network_devices", "device_integration", "device_permission"]
 
     /// pi's default selection when a run names no tools, which a deferring run can't: `--tools` is an allowlist, and
     /// `tool_search` can't find what it leaves out. Every other run names its tools, which overrides this.
@@ -107,7 +107,7 @@ enum Agent {
 
     /// Rules for the tools every engine has: pi through Resources/lamp-tools.ts, Claude Code and
     /// Codex through Lamp's MCP endpoint (Store.mcp). Keep the two in step.
-    static var tryRules: String { talkRules + findRules + lookRules + planRules + artRules + setupRules + connectorRules + githubRules + sharedLinkRules + deviceRules + (Memory.isOn ? memoryRules : "") }
+    static var tryRules: String { talkRules + findRules + lookRules + planRules + artRules + setupRules + connectorRules + githubRules + sharedLinkRules + suggestedRules + deviceRules + (Memory.isOn ? memoryRules : "") }
 
     /// For the engines whose shell commands run confined (Sandbox): what the shell can and can't reach.
     static let sandboxNote = """
@@ -381,6 +381,14 @@ enum Agent {
     - When a request has a link to someone's shared Lamp app (lamp.dev/w/…, or a wish?shared= link of Lamp's) or means \
     one ("the one I shared", "Sam's version"), get it with `shared_copy` before working on it, and bring in only what \
     the request asks for from it. Your last message says what you took from whose copy.
+    """
+
+    /// When to look at changes someone suggested; what the tool fetches, and that bringing one in is the person's review,
+    /// is its own to say.
+    private static let suggestedRules = """
+
+    - When the person asks about changes someone sent or suggested for this app, or to bring them in, use \
+    `suggested_changes`; if it isn't clear which request they mean, ask.
     """
 
     private static let connectorRules = """
