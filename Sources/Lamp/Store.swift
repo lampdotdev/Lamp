@@ -278,8 +278,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// `needsBuilder` asks for what builds, for a request waiting in the chat (`BuilderLine`).
     /// `oldCopy` asks whether to take the copy signed for the app's old team off the phone (`OldCopyLine`).
     /// `newerOriginal` offers a changed starter's copy the newer starter this Lamp ships (`NewerOriginalLine`).
-    /// `suggestion` is a request someone opened on the wish's repository (`SuggestedChanges`); its text is the request's number.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, needsBuilder, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep, keepOpening, phoneSlot, oldCopy, newerOriginal, suggestion }
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, needsBuilder, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep, keepOpening, phoneSlot, oldCopy, newerOriginal }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -582,13 +581,17 @@ final class Store: ObservableObject {
     @Published var updateChecks: [String: AppUpdates.Check] = [:]
     /// Goes up as a wish follows another copy or stops (`Following`), which is kept outside the store.
     @Published var followingRevision = 0
-    /// Goes up when what's known of a wish's suggested changes moves (`SuggestedChanges`), for its cards and the desk's mark.
+    /// Goes up when what's known of a wish's suggested changes moves (`SuggestedChanges`), for the desk and its panel.
     @Published var suggestionsRevision = 0
-    /// Whether each wish still has what it brought in of each request, as its cards show it (`refreshSuggestionHolds`).
+    /// Whether each wish still has what it brought in of each request, as the panel shows it (`refreshSuggestionHolds`).
     var suggestionHolds: [String: [Int: Bool]] = [:]
     /// The request being fetched for Bring In…, by wish.
     var fetchingSuggestion: [String: Int] = [:]
     var suggestionTimer: Timer?
+    /// The wish whose suggested changes the desk shows in place of its list (`SuggestionsPanel`), while it does.
+    @Published var suggestionsOpen: String?
+    /// The try of a suggested change open for each wish, at most one in all (`SuggestionTrial`).
+    @Published var trials: [String: SuggestionTrial.Running] = [:]
     /// Copies an update was prepared in that are going, by the app they went into: a message sent to one meanwhile goes
     /// to that app (`AppUpdates`).
     @Published var retiringCopies: [String: String] = [:]
@@ -748,7 +751,7 @@ final class Store: ObservableObject {
     @Published var naming: VersionNaming?
     /// Bumped when a version is named, so open version lists reload.
     @Published var versionsRevision = 0 {
-        // An Undo or a going back can take away what a request brought in: its card says so (`SuggestedChanges`).
+        // An Undo or a going back can take away what a request brought in: the panel says so (`SuggestedChanges`).
         didSet { for project in projects where !project.isPart && SuggestedChanges.record(for: project) != nil { Task { await refreshSuggestionHolds(project) } } }
     }
     /// One span of Lamp owning an app: a chat turn, a rebuild, an undo, an icon redesign. Everything that
@@ -3853,6 +3856,9 @@ final class Store: ObservableObject {
         var following: Following.Followed? = nil
         /// What changed in the wish's own repository on GitHub, brought in (`BringIn`): Update always merges it.
         var bringingIn: BringIn.Pull? = nil
+        /// Someone's suggested change to try in a copy (`SuggestionTrial`): the review's one choice is Try It, and the
+        /// wish itself is left alone.
+        var trying = false
     }
 
     /// Whether the wish's files differ from the version that arrived last (a shared file opened, or updated from): any
@@ -3889,7 +3895,7 @@ final class Store: ObservableObject {
     /// that review (`ImportReview.opening`). During the welcome the file is kept and the welcome gives way to it
     /// (`OnboardingView.arrive`); its review opens as the welcome ends.
     func importApp(from file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil,
-                   bringingIn: BringIn.Pull? = nil) {
+                   bringingIn: BringIn.Pull? = nil, trying: Bool = false) {
         NSApp.activate()
         Task {
             // A file that launched Lamp arrives before Lamp has looked at setup: the look is waited for, so
@@ -3906,7 +3912,7 @@ final class Store: ObservableObject {
                 }
                 return
             }
-            review(file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn)
+            review(file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn, trying: trying)
         }
     }
 
@@ -3917,7 +3923,7 @@ final class Store: ObservableObject {
 
     /// Unpacks a shared app and shows its review.
     private func review(_ file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil,
-                        bringingIn: BringIn.Pull? = nil) {
+                        bringingIn: BringIn.Pull? = nil, trying: Bool = false) {
         // The newest request wins: a file opened while an earlier one is still unpacking, or a Cancel
         // meanwhile, makes the earlier result unwanted when it arrives.
         let request = UUID()
@@ -3940,8 +3946,9 @@ final class Store: ObservableObject {
             var pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file), existing: existingCopy(of: package, updating: target))
             pending.following = following
             pending.bringingIn = bringingIn
+            pending.trying = trying
             // Only where the two met: a wish that can't be lined up keeps Update.
-            if Mix.isOn, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
+            if Mix.isOn, !trying, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
                let into = Mix.copy(of: package, among: projects), await Mix.meeting(package, history: history, with: into) != nil {
                 pending.existing = into
                 pending.mixFile = file
@@ -13319,7 +13326,9 @@ final class Store: ObservableObject {
         workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
             Task { @MainActor in await Store.shared.renewPhoneApps() }
         }
-        // Changes someone suggested to an app on GitHub: now, and every quarter of an hour (`SuggestedChanges`).
+        // Changes someone suggested to an app on GitHub: now, and every quarter of an hour (`SuggestedChanges`). A try of
+        // one left from before (a crash, a quit that couldn't wait) goes first, with all it made.
+        SuggestionTrial.sweep()
         startCheckingSuggestions()
     }
 

@@ -136,7 +136,7 @@ final class SuggestedChangesTests: XCTestCase {
         let finding = await SuggestedChanges.find(world.wish, kept: first, gh: world.gh.path)
         let found = try XCTUnwrap(finding)
         XCTAssertEqual(found.new, [7])
-        XCTAssertEqual(found.record.unseen, [7])
+        XCTAssertEqual(found.record.newCount, 1)
 
         let pull = try await bringIn(world, number: 7)
         XCTAssertEqual(pull.base, pushed, "measured from where the request branched")
@@ -145,7 +145,7 @@ final class SuggestedChangesTests: XCTestCase {
         let taken = try XCTUnwrap(SuggestedChanges.record(for: world.wish)?.taken(7))
         XCTAssertEqual(taken.head, head, "pinned at the head reviewed")
         XCTAssertNil(GitHubRepo.kept(for: world.wish)?.taken, "the repository didn't move")
-        XCTAssertEqual(SuggestedChanges.record(for: world.wish)?.unseen, [])
+        XCTAssertEqual(SuggestedChanges.record(for: world.wish)?.newCount, 0, "brought in is seen")
 
         let going = await SuggestedChanges.parents(for: world.wish, gh: world.gh.path)
         XCTAssertEqual(going.map(\.head), [head])
@@ -232,7 +232,7 @@ final class SuggestedChangesTests: XCTestCase {
     }
 
     /// Every page of open requests is read; one GitHub still calls open is never taken for closed; one closed and opened
-    /// again is open, with its card shown again.
+    /// again is open, and new while it was never seen.
     @MainActor
     func testOpenAndClosedAreWhatGitHubSays() async throws {
         let world = try world()
@@ -257,7 +257,7 @@ final class SuggestedChangesTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: (try JSONSerialization.jsonObject(with: listed))).write(to: world.pulls)
         found = await SuggestedChanges.find(world.wish, kept: first, gh: world.gh.path)
         XCTAssertNil(found?.record.ended["1"])
-        XCTAssertEqual(found?.new, [1], "its card comes back")
+        XCTAssertEqual(found?.new, [1], "never seen, so it's new again")
     }
 
     /// A request that wasn't brought in at the same head as one that was would be marked merged with it; dropping one
@@ -401,5 +401,153 @@ final class SuggestedChangesTests: XCTestCase {
         XCTAssertEqual(uploaded, wanted, "Real upload carries the exact mode and blob")
         let left = await SuggestedChanges.notCarried(from: start, to: head, in: change.tree, for: site)
         XCTAssertEqual(left, [], "An already tracked file stays tracked even when gitignore matches it")
+    }
+
+    // MARK: New, seen and set aside
+
+    /// Seen is kept by head: a request seen at one head is new again with new commits, one closed and opened again at the
+    /// same head stays seen, and set aside (Not for Me) stays out until its sender changes it. A look at GitHub writes only
+    /// what GitHub says, so what the person marked meanwhile stands.
+    @MainActor
+    func testSeenAndSetAsideGoByHeadAndALookAtGitHubKeepsThem() async throws {
+        let world = try world()
+        let first = try await release(world, isNew: true)
+        try XCTUnwrap(first.commit).write(to: world.mergeBase, atomically: true, encoding: .utf8)
+        let one = try openRequest(world, number: 1, ["Sources/One.swift": "let one = 1\n"])
+        let two = try openRequest(world, number: 2, ["Sources/Two.swift": "let two = 2\n"])
+        var found = await SuggestedChanges.find(world.wish, kept: first, gh: world.gh.path)
+        XCTAssertEqual(found?.record.newCount, 2)
+
+        SuggestedChanges.markSeen([(1, one)], in: world.wish)
+        SuggestedChanges.hide(2, head: two, in: world.wish)
+        found = await SuggestedChanges.find(world.wish, kept: first, gh: world.gh.path)
+        XCTAssertEqual(found?.record.newCount, 0, "what the person marked outlasts the next look")
+        XCTAssertEqual(found?.record.isHidden(try XCTUnwrap(found?.record.request(2))), true)
+
+        // New commits on both: each is new again, and the one set aside comes back.
+        let oneAgain = try openRequest(world, number: 1, ["Sources/One.swift": "let one = 11\n"], on: one)
+        _ = try openRequest(world, number: 2, ["Sources/Two.swift": "let two = 22\n"], on: two)
+        found = await SuggestedChanges.find(world.wish, kept: first, gh: world.gh.path)
+        XCTAssertEqual(Set(found?.new ?? []), [1, 2])
+        XCTAssertEqual(found?.record.isHidden(try XCTUnwrap(found?.record.request(2))), false)
+        // Marking the head that was shown doesn't mark one that came after it.
+        SuggestedChanges.markSeen([(1, one)], in: world.wish)
+        XCTAssertEqual(SuggestedChanges.record(for: world.wish)?.isNew(try XCTUnwrap(found?.record.request(1))), true)
+        SuggestedChanges.markSeen([(1, oneAgain)], in: world.wish)
+
+        // Closed and opened again at the same head: seen as before.
+        let listed = try Data(contentsOf: world.pulls)
+        let all = (try JSONSerialization.jsonObject(with: listed)) as? [[String: Any]] ?? []
+        try JSONSerialization.data(withJSONObject: all.filter { $0["number"] as? Int != 1 }).write(to: world.pulls)
+        try "closed\tfalse\n".write(to: world.place.appendingPathComponent("state-1"), atomically: true, encoding: .utf8)
+        found = await SuggestedChanges.find(world.wish, kept: first, gh: world.gh.path)
+        XCTAssertEqual(found?.record.ended["1"], .closed)
+        try listed.write(to: world.pulls)
+        found = await SuggestedChanges.find(world.wish, kept: first, gh: world.gh.path)
+        XCTAssertNil(found?.record.ended["1"])
+        XCTAssertFalse(found?.new.contains(1) ?? true)
+        XCTAssertEqual(found?.record.isNew(try XCTUnwrap(found?.record.request(1))), false)
+    }
+
+    /// The record is the app's on one repository: the same app on another starts with nothing.
+    @MainActor
+    func testTheRecordIsTheAppsOnOneRepository() async throws {
+        let world = try world()
+        SuggestedChanges.change(world.wish, repo: "someone/tally") { $0.seen["1"] = "h1" }
+        XCTAssertEqual(SuggestedChanges.record(for: world.wish, repo: "someone/tally")?.seen["1"], "h1")
+        XCTAssertNil(SuggestedChanges.record(for: world.wish, repo: "someone/other"))
+    }
+
+    /// Every change to the record is one read and one write: many at once lose none of each other's.
+    func testChangesAtOnceLoseNothing() async throws {
+        let world = try world()
+        let wish = world.wish
+        await withTaskGroup(of: Void.self) { group in
+            for number in 0..<40 {
+                group.addTask { SuggestedChanges.change(wish, repo: "someone/tally") { $0.seen[String(number)] = "h\(number)" } }
+            }
+        }
+        XCTAssertEqual(SuggestedChanges.record(for: wish, repo: "someone/tally")?.seen.count, 40)
+    }
+
+    // MARK: Try It First
+
+    /// The copy a change is tried in: the person's app with the change merged in, in a folder of Lamp's outside the
+    /// apps, under an identity of its own, and the person's own app left as it was. Taken away, nothing of it is left,
+    /// what its app saved included.
+    @MainActor
+    func testATryIsACopyOfItsOwnAndLeavesNothing() async throws {
+        let world = try world()
+        let trials = world.place.appendingPathComponent("Trials")
+        let was = SuggestionTrial.folder
+        SuggestionTrial.folder = trials
+        defer { SuggestionTrial.folder = was }
+        let first = try await release(world, isNew: true)
+        try XCTUnwrap(first.commit).write(to: world.mergeBase, atomically: true, encoding: .utf8)
+        _ = try openRequest(world, number: 8, ["Sources/Counter.swift": "let step = 8\n"])
+        _ = await SuggestedChanges.find(world.wish, kept: first, gh: world.gh.path)
+        let request = try XCTUnwrap(SuggestedChanges.record(for: world.wish)?.request(8))
+        let fetched = try await SuggestedChanges.fetch(world.wish, kept: first, request: request, gh: world.gh.path)
+        defer { try? FileManager.default.removeItem(at: fetched.folder) }
+        let package = try RepoImport.open(folder: fetched.tree)
+        defer { try? FileManager.default.removeItem(at: package.folder) }
+
+        let generation = UUID().uuidString.lowercased()
+        let copy = try await SuggestionTrial.prepare(world.wish, generation: generation, number: 8, package: package, pull: fetched.pull, kept: first)
+        XCTAssertEqual(try String(contentsOf: copy.dir.appendingPathComponent("Sources/Counter.swift"), encoding: .utf8), "let step = 8\n")
+        XCTAssertEqual(try String(contentsOf: world.wish.dir.appendingPathComponent("Sources/Counter.swift"), encoding: .utf8), "let step = 1\n",
+                       "the person's app is as it was")
+        XCTAssertTrue(copy.dir.path.hasPrefix(trials.path))
+        XCTAssertNotEqual(copy.bundleID, world.wish.bundleID)
+        XCTAssertNotEqual(copy.id, world.wish.id)
+        let values = SuggestionTrial.installValues(for: copy)
+        XCTAssertEqual(values["token"], "", "it can't reach Lamp as the app")
+        XCTAssertEqual(values["dataID"], Edition.appBundlePrefix + copy.id)
+        XCTAssertNotEqual(values["dataID"], Template.installValues(for: world.wish)["dataID"])
+
+        // What its app would have saved, in a home of the test's own.
+        let home = world.place.appendingPathComponent("home")
+        let manifest = SuggestionTrial.manifest(for: copy, wish: world.wish.id, number: 8)
+        let saved = SuggestionTrial.leftovers(of: manifest, home: home)
+        XCTAssertFalse(saved.isEmpty)
+        for place in saved {
+            try FileManager.default.createDirectory(at: place.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "saved".write(to: place, atomically: true, encoding: .utf8)
+        }
+        // The person's own app's data is never among them.
+        XCTAssertTrue(SuggestionTrial.leftovers(of: SuggestionTrial.Manifest(wish: "x", number: 1, bundleID: world.wish.bundleID,
+                                                                              dataID: Edition.appBundlePrefix + world.wish.id), home: home).isEmpty)
+        SuggestionTrial.sweep(home: home)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy.dir.deletingLastPathComponent().path))
+        for place in saved { XCTAssertFalse(FileManager.default.fileExists(atPath: place.path), place.path) }
+    }
+
+    /// A change to the same lines the person changed isn't settled in a copy: the try stops and says so, and leaves its
+    /// folder for the caller to take away.
+    @MainActor
+    func testATryOfAChangeOverlappingThePersonsStops() async throws {
+        let world = try world()
+        let was = SuggestionTrial.folder
+        SuggestionTrial.folder = world.place.appendingPathComponent("Trials")
+        defer { SuggestionTrial.folder = was }
+        let first = try await release(world, isNew: true)
+        try XCTUnwrap(first.commit).write(to: world.mergeBase, atomically: true, encoding: .utf8)
+        _ = try openRequest(world, number: 9, ["Sources/Counter.swift": "let step = 9\n"])
+        try "let step = 100\n".write(to: world.wish.dir.appendingPathComponent("Sources/Counter.swift"), atomically: true, encoding: .utf8)
+        _ = try sh("git add -A && git -c user.name=Lamp -c user.email=lamp@localhost commit -qm mine", in: world.wish.dir)
+        _ = await SuggestedChanges.find(world.wish, kept: first, gh: world.gh.path)
+        let request = try XCTUnwrap(SuggestedChanges.record(for: world.wish)?.request(9))
+        let fetched = try await SuggestedChanges.fetch(world.wish, kept: first, request: request, gh: world.gh.path)
+        defer { try? FileManager.default.removeItem(at: fetched.folder) }
+        let package = try RepoImport.open(folder: fetched.tree)
+        defer { try? FileManager.default.removeItem(at: package.folder) }
+        do {
+            _ = try await SuggestionTrial.prepare(world.wish, generation: UUID().uuidString.lowercased(), number: 9, package: package,
+                                                  pull: fetched.pull, kept: first)
+            XCTFail("an overlapping change isn't tried")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("same lines"), error.localizedDescription)
+        }
+        SuggestionTrial.sweep(home: world.place.appendingPathComponent("home"))
     }
 }

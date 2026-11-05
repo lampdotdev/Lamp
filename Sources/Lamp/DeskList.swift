@@ -383,8 +383,7 @@ struct DeskListRow: View {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         Text(item.title).font(.system(size: 14.5, weight: .bold)).lineLimit(1)
-                        // Something new in its chat, or changes someone suggested that haven't been seen (`SuggestedChanges`).
-                        if !opening, let project, store.unread.contains(project.id) || store.hasUnseenSuggestions(project) { ReadyDot(size: 8) }
+                        if !opening, let project, store.unread.contains(project.id) { ReadyDot(size: 8) }
                     }
                     if opening {
                         DeskStatusLine().frame(maxWidth: .infinity, alignment: .leading)
@@ -397,6 +396,14 @@ struct DeskListRow: View {
                         .font(.system(size: 12.5))
                     } else if let about = item.entry?.about {
                         Text(about).font(.system(size: 12.5)).foregroundStyle(Paper.muted).lineLimit(1).truncationMode(.tail)
+                    }
+                    // Changes people sent that haven't been seen: plain words in the row's own gray, which open them.
+                    if !opening, let project, case let new = store.newSuggestions(project), new > 0 {
+                        Button { store.suggestionsOpen = project.id } label: {
+                            Text("\(new) new \(new == 1 ? "change" : "changes") sent").font(.system(size: 12)).foregroundStyle(Paper.muted)
+                                .underline(true, color: Paper.rule)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

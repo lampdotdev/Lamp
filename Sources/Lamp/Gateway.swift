@@ -676,6 +676,28 @@ enum AppAI {
         return (text, cost)
     }
 
+    /// One answer for Lamp's own reading of text someone else wrote (`SuggestionSummaries`), only along a way that can't
+    /// act: OpenRouter with the person's key, a model on this Mac, or Claude Code or Codex sealed, with no tools and no
+    /// pictures. Never `complete`, which can hand the call to an engine unsealed. Nil when none of these can answer.
+    @MainActor static func toolFree(prompt: String, system: String, schema: [String: Any]) async throws -> (String, Double)? {
+        if Provider.hasKey, let helper = await helperModel() {
+            return try await viaOpenRouter(prompt: prompt, images: [], system: system, model: helper, json: true, schema: schema)
+        }
+        let chosen = model
+        guard chosen.available else { return nil }
+        switch chosen.kind {
+        case .openRouter: return nil
+        case .localModel(_, let name):
+            let base = try await LocalModels.shared.ensureServer(for: name)
+            return try await viaOpenAICompatible("\(base)/v1/chat/completions", key: LocalModels.apiKey, prompt: prompt, images: [],
+                                                 system: system, model: name, schema: schema, timeout: 120)
+        case .engine(.pi, _): return nil
+        case .engine(let engine, let name):
+            return try await viaEngine(engine, prompt: prompt, images: [], system: system, model: fastModel(for: chosen) ?? name,
+                                       schema: schema, timeLimit: 120, sealed: true)
+        }
+    }
+
     /// Chat completion against an OpenAI-compatible endpoint: Lamp's own model servers on this Mac.
     /// `timeout` is for a caller with a deadline of its own; otherwise a model has time to load first.
     /// `templateArgs` go to the model's chat template (llama.cpp's `chat_template_kwargs`).

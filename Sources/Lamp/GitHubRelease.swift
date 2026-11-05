@@ -127,8 +127,8 @@ enum GitHubRelease {
         if let before, SuggestedChanges.record(for: project)?.taken.isEmpty == false {
             step("Checking suggested changes…")
             if let found = await SuggestedChanges.find(project, kept: before, gh: target.gh) {
-                // What it found new gets its card, as any look at GitHub's does.
-                await MainActor.run { Store.shared.publishSuggestions(project, new: found.new) }
+                // What it found shows on the desk, as any look at GitHub's does.
+                await MainActor.run { Store.shared.publishSuggestions(project, found: found.record, gh: target.gh) }
                 merging = await SuggestedChanges.parents(for: project, gh: target.gh).map(\.head)
             }
         }

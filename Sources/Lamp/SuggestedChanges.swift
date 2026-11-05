@@ -6,17 +6,20 @@ import LampSidebarKit
 /// Back, `Contribute`, or one made on GitHub), seen, asked about and brought in from Lamp, never merged on GitHub, so the
 /// agent always knows what came in. Design: design/suggested-changes/README.md.
 ///
-/// Lamp asks GitHub with the person's own sign-in which requests are open on the branch it pushes (`find`), and the chat
-/// gets a card for each (`LogLine.Kind.suggestion`). Bring In… is Bring In Changes (`BringIn`) with the request's head in
-/// the place of the repository's latest: fetched from `refs/pull/<n>/head`, reviewed as an update, and merged three ways
-/// against where the request branched (`fetch`). It counts once saved (`accept`), pinned at the head the review showed,
-/// so a request rewritten since is never counted as brought in. The next Release Update gives its commit each pinned head
-/// as one more parent (`parents`), which is what GitHub reads to mark a request merged, by ancestry alone. So a head goes
-/// only when the release really has its change: the version that brought it in is still in the wish's history
-/// (`BringIn.holds(version:)`), the request still points there, every file it changes would go up with the release as
-/// it has it (`notCarried`, over the whole request, in the release's own export; not knowing counts as not), and no other open request that isn't going is at its head or
-/// under it (that one would be marked merged with it). One that can't go is released all the same, and its card offers Close Request…, saying which release has it.
-/// Whether a request was merged is GitHub's to say: the card asks it (`ended`) rather than trusting a push went through.
+/// Lamp asks GitHub with the person's own sign-in which requests are open on the branch it pushes (`find`), and the desk
+/// says quietly how many are new; nothing goes in the chat. The person goes to them in the desk's panel
+/// (`SuggestionsPanel`) when they want to, which says what each does in plain words (`SuggestionSummaries`), lets them try
+/// one in a copy of their app first (`SuggestionTrial`), and brings one in. Bring In is Bring In Changes (`BringIn`) with
+/// the request's head in the place of the repository's latest: fetched from `refs/pull/<n>/head`, reviewed as an update,
+/// and merged three ways against where the request branched (`fetch`). It counts once saved (`accept`), pinned at the head
+/// the review showed, so a request rewritten since is never counted as brought in. The next Release Update gives its commit
+/// each pinned head as one more parent (`parents`), which is what GitHub reads to mark a request merged, by ancestry alone.
+/// So a head goes only when the release really has its change: the version that brought it in is still in the wish's
+/// history (`BringIn.holds(version:)`), the request still points there, every file it changes would go up with the release
+/// as it has it (`notCarried`, over the whole request, in the release's own export; not knowing counts as not), and no
+/// other open request that isn't going is at its head or under it (that one would be marked merged with it). One that
+/// can't go is released all the same, and the panel offers Close Request…, saying which release has it.
+/// Whether a request was merged is GitHub's to say: the panel asks it (`ended`) rather than trusting a push went through.
 enum SuggestedChanges {
     struct Failure: LocalizedError {
         let message: String
@@ -31,6 +34,9 @@ enum SuggestedChanges {
         var title: String
         var head: String
         var url: String
+        /// What they wrote with it, clipped, and when it last changed on GitHub (ISO 8601): both theirs, shown as such.
+        var note: String? = nil
+        var updated: String? = nil
     }
 
     /// A request brought in: the head the review showed, the commit it was measured from, and the version that saved it.
@@ -54,56 +60,145 @@ enum SuggestedChanges {
 
     enum Ended: String, Codable, Sendable { case merged, closed }
 
-    /// What Lamp keeps of one wish's requests.
+    /// A file a request changes, as GitHub lists it: its path and whether it's added, changed or taken away.
+    struct ChangedFile: Codable, Equatable, Sendable {
+        var path: String
+        var status: String
+    }
+
+    /// The files of one request at the head they were listed for.
+    struct FileList: Codable, Equatable, Sendable {
+        var head: String
+        var files: [ChangedFile]
+    }
+
+    /// What Lamp keeps of one wish's requests on one repository.
     struct Record: Codable, Equatable, Sendable {
         var repo: String
         var open: [Request] = []
         var taken: [Taken] = []
         /// Requests no longer open, by number, as GitHub said.
         var ended: [String: Ended] = [:]
-        /// Requests with something the person hasn't seen yet: a new one, or new changes on one.
-        var unseen: [Int] = []
         /// A request the agent was asked to bring in: its review opens once the turn ends (`suggested_changes`).
         var bringInAfterTurn: Int? = nil
-
-        /// Requests that were open once, as GitHub last said, so a card still names who sent one once it's closed or merged.
+        /// Requests that were open once, as GitHub last said, so they still name who sent them once closed or merged.
         var past: [Request] = []
+        /// The head of each request the person last saw in the panel: new commits make it new again.
+        var seen: [String: String] = [:]
+        /// Not for Me: the head each was set aside at. Nothing goes to GitHub; new commits bring it back.
+        var hidden: [String: String] = [:]
+        /// The head each was last tried at (Try It First), which Bring In compares with the head it brings.
+        var tried: [String: Tried] = [:]
+        /// Lamp's plain-words account of each (`SuggestionSummaries`), kept with what it was made from.
+        var summaries: [String: SuggestionSummaries.Summary] = [:]
+        /// The files each changes, as GitHub listed them at a head.
+        var files: [String: FileList] = [:]
+        /// The parts of the app Lamp files requests under, in the order they first came (`SuggestionSummaries.maxTopics`).
+        var topics: [String] = []
+
+        init(repo: String) { self.repo = repo }
+
+        /// Read leniently: a field a newer Lamp added is empty in a record an older one wrote.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            repo = try c.decode(String.self, forKey: .repo)
+            open = try c.decodeIfPresent([Request].self, forKey: .open) ?? []
+            taken = try c.decodeIfPresent([Taken].self, forKey: .taken) ?? []
+            ended = try c.decodeIfPresent([String: Ended].self, forKey: .ended) ?? [:]
+            bringInAfterTurn = try c.decodeIfPresent(Int.self, forKey: .bringInAfterTurn)
+            past = try c.decodeIfPresent([Request].self, forKey: .past) ?? []
+            seen = try c.decodeIfPresent([String: String].self, forKey: .seen) ?? [:]
+            hidden = try c.decodeIfPresent([String: String].self, forKey: .hidden) ?? [:]
+            tried = try c.decodeIfPresent([String: Tried].self, forKey: .tried) ?? [:]
+            summaries = (try? c.decodeIfPresent([String: SuggestionSummaries.Summary].self, forKey: .summaries)) ?? [:]
+            files = try c.decodeIfPresent([String: FileList].self, forKey: .files) ?? [:]
+            topics = try c.decodeIfPresent([String].self, forKey: .topics) ?? []
+        }
 
         func request(_ number: Int) -> Request? { open.first { $0.number == number } }
         func about(_ number: Int) -> Request? { request(number) ?? past.last { $0.number == number } }
         func taken(_ number: Int) -> Taken? { taken.last { $0.number == number } }
+
+        /// Set aside with Not for Me at the head it's at.
+        func isHidden(_ request: Request) -> Bool { hidden[String(request.number)] == request.head }
+        /// Open, not set aside, and not yet seen at the head it's at. A request closed and opened again at the same head
+        /// is as it was before: seen if it was seen, set aside if it was.
+        func isNew(_ request: Request) -> Bool {
+            ended[String(request.number)] == nil && !isHidden(request) && seen[String(request.number)] != request.head
+                && taken(request.number)?.head != request.head
+        }
+        var newCount: Int { open.filter(isNew).count }
+
+        /// The files a request changes, when they were listed at the head it's at.
+        func files(of request: Request) -> [ChangedFile]? {
+            files[String(request.number)].flatMap { $0.head == request.head ? $0.files : nil }
+        }
     }
 
     // MARK: What Lamp keeps
 
     /// A test points this at a folder of its own.
     nonisolated(unsafe) static var keptURL = Edition.supportFolder.appendingPathComponent("GitHub Suggestions.json")
-    private static func key(_ project: LampProject) -> String { project.instance.isEmpty ? project.id : project.instance }
+    /// One app's requests on one repository: an app put on another repository starts afresh.
+    private static func key(_ project: LampProject, repo: String) -> String {
+        (project.instance.isEmpty ? project.id : project.instance) + "|" + repo
+    }
+    /// Every change goes through one read and one write under this, so a look at GitHub, a release and the panel's marks
+    /// never write over one another.
+    private static let lock = NSLock()
 
-    static func record(for project: LampProject) -> Record? { read()[key(project)] }
-
-    static func keep(_ record: Record?, for project: LampProject) {
-        var all = read()
-        all[key(project)] = record
-        if let data = try? JSONEncoder().encode(all) { try? data.write(to: keptURL, options: .atomic) }
+    /// The record of the repository the wish is on now.
+    static func record(for project: LampProject) -> Record? {
+        guard let repo = GitHubRepo.kept(for: project)?.repo else { return nil }
+        return record(for: project, repo: repo)
     }
 
-    static func change(_ project: LampProject, _ edit: (inout Record) -> Void) {
-        guard var record = record(for: project) else { return }
+    static func record(for project: LampProject, repo: String) -> Record? {
+        lock.lock(); defer { lock.unlock() }
+        return read()[key(project, repo: repo)]
+    }
+
+    /// Changes the record in one step, made if there's none; answers it as written.
+    @discardableResult
+    static func change(_ project: LampProject, repo: String, _ edit: (inout Record) -> Void) -> Record {
+        lock.lock(); defer { lock.unlock() }
+        var all = read()
+        var record = all[key(project, repo: repo)] ?? Record(repo: repo)
         edit(&record)
-        keep(record, for: project)
+        all[key(project, repo: repo)] = record
+        if let data = try? JSONEncoder().encode(all) { try? data.write(to: keptURL, options: .atomic) }
+        return record
+    }
+
+    /// The same for the repository the wish is on now; nothing when it's on none.
+    static func change(_ project: LampProject, _ edit: (inout Record) -> Void) {
+        guard let repo = GitHubRepo.kept(for: project)?.repo else { return }
+        change(project, repo: repo, edit)
     }
 
     private static func read() -> [String: Record] {
         (try? Data(contentsOf: keptURL)).flatMap { try? JSONDecoder().decode([String: Record].self, from: $0) } ?? [:]
     }
 
-    static func hasUnseen(_ project: LampProject) -> Bool { !(record(for: project)?.unseen ?? []).isEmpty }
+    /// The person saw these requests at these heads (one shown in the panel, or every one shown when they chose Mark All
+    /// as Seen): only those heads count as seen, so one with new commits meanwhile stays new.
+    static func markSeen(_ seen: [(number: Int, head: String)], in project: LampProject) {
+        change(project) { record in for item in seen { record.seen[String(item.number)] = item.head } }
+    }
+
+    /// Not for Me: set aside at the head shown, quietly. Nothing is said on GitHub.
+    static func hide(_ number: Int, head: String, in project: LampProject) {
+        change(project) { record in
+            record.hidden[String(number)] = head
+            record.seen[String(number)] = head
+        }
+    }
 
     // MARK: Asking GitHub
 
     /// Asks GitHub which requests are open on the branch Lamp pushes, and what became of those that aren't any more, and
-    /// keeps it. Answers the record, with what's new to show: requests not seen before, or with a head not seen before.
+    /// keeps it. Only what GitHub says is written; what the person marked, what was brought in and what a release did
+    /// stay as they are. Answers the record, with the requests that are new since the last look: new, or with new commits.
     static func find(_ project: LampProject, kept: GitHubRepo.Repo, gh: String) async -> (record: Record, new: [Int])? {
         // Every page of them, one request to a line: an open request missing from the list would be taken for ended, and
         // a release's check for requests under another goes by this list.
@@ -123,37 +218,50 @@ enum SuggestedChanges {
                   let head = Credits.validCommit(head) else { continue }
             let login = ((item["user"] as? [String: Any])?["login"] as? String) ?? "someone"
             open.append(Request(number: number, login: String(login.prefix(39)), title: WishLink.clip((item["title"] as? String) ?? "", 120),
-                                head: head, url: (item["html_url"] as? String) ?? GitHubRepo.url(kept.repo) + "/pull/\(number)"))
+                                head: head, url: (item["html_url"] as? String) ?? GitHubRepo.url(kept.repo) + "/pull/\(number)",
+                                note: (item["body"] as? String).map { WishLink.clip($0, 2000) }, updated: item["updated_at"] as? String))
         }
-        var record = SuggestedChanges.record(for: project).flatMap { $0.repo == kept.repo ? $0 : nil } ?? Record(repo: kept.repo)
-        var new: [Int] = []
-        for request in open {
-            // Closed and opened again: open as any other, its card shown again.
-            if record.ended.removeValue(forKey: String(request.number)) != nil { new.append(request.number); continue }
-            guard record.request(request.number)?.head != request.head else { continue }
-            // A request brought in at the head it's at now has nothing new in it.
-            if record.taken(request.number)?.head == request.head { continue }
-            new.append(request.number)
-        }
+        let before = record(for: project, repo: kept.repo) ?? Record(repo: kept.repo)
         // What became of the ones that went, as GitHub says: merged (here or there) or closed. One it still calls open,
         // or doesn't answer for, stays open as it was last seen.
-        let gone = Set(record.open.map(\.number) + record.taken.map(\.number)).subtracting(open.map(\.number))
-        for number in gone.sorted() where record.ended[String(number)] == nil {
+        var endedNow: [String: Ended] = [:]
+        let gone = Set(before.open.map(\.number) + before.taken.map(\.number)).subtracting(open.map(\.number))
+        for number in gone.sorted() where before.ended[String(number)] == nil {
             let state = await Subprocess.run(gh, ["api", "repos/\(kept.repo)/pulls/\(number)", "--jq", "[.state, .merged] | @tsv"],
                                              mergeErrors: false, timeout: 30)
             let fields = state.output.trimmed.split(whereSeparator: \.isWhitespace).map(String.init)
             if state.ok, fields.first == "closed" {
-                record.ended[String(number)] = fields.last == "true" ? .merged : .closed
-            } else if let last = record.request(number) {
+                endedNow[String(number)] = fields.last == "true" ? .merged : .closed
+            } else if let last = before.request(number) {
                 open.append(last)
             }
         }
-        let closing = record.open.filter { request in !open.contains { $0.number == request.number } }
-        record.past = Array((record.past.filter { old in !closing.contains { $0.number == old.number } } + closing).suffix(100))
-        record.open = open
-        record.unseen = Array(Set(record.unseen + new).intersection(open.map(\.number))).sorted()
-        keep(record, for: project)
-        return (record, new)
+        var new: [Int] = []
+        let after = change(project, repo: kept.repo) { record in
+            for request in open {
+                let reopened = record.ended.removeValue(forKey: String(request.number)) != nil
+                if (reopened || before.request(request.number)?.head != request.head) && record.isNew(request) { new.append(request.number) }
+            }
+            record.ended.merge(endedNow) { $1 }
+            let closing = record.open.filter { request in !open.contains { $0.number == request.number } }
+            record.past = Array((record.past.filter { old in !closing.contains { $0.number == old.number } } + closing).suffix(200))
+            record.open = open
+        }
+        return (after, new)
+    }
+
+    /// The files a request changes, asked of GitHub (every page) at the head it's at, kept with the record.
+    static func listFiles(of request: Request, in project: LampProject, repo: String, gh: String) async -> [ChangedFile]? {
+        if let known = record(for: project, repo: repo)?.files(of: request) { return known }
+        let listed = await Subprocess.run(gh, ["api", "--paginate", "repos/\(repo)/pulls/\(request.number)/files?per_page=100",
+                                              "--jq", ".[] | [.status, .filename] | @tsv"], mergeErrors: false, timeout: 120)
+        guard listed.ok else { return nil }
+        let files = listed.output.split(whereSeparator: \.isNewline).compactMap { line -> ChangedFile? in
+            let fields = line.split(separator: "\t", maxSplits: 1).map(String.init)
+            return fields.count == 2 ? ChangedFile(path: fields[1], status: fields[0]) : nil
+        }
+        change(project, repo: repo) { $0.files[String(request.number)] = FileList(head: request.head, files: files) }
+        return files
     }
 
     // MARK: Fetching one
@@ -298,7 +406,7 @@ enum SuggestedChanges {
             record.taken.removeAll { $0.number == number }
             record.taken.append(Taken(number: number, head: pull.head, base: pull.base, takenIn: version, leftOut: pull.leftOut,
                                       checked: pull.checked == true))
-            record.unseen.removeAll { $0 == number }
+            record.seen[String(number)] = pull.head
         }
     }
 
@@ -350,22 +458,29 @@ enum SuggestedChanges {
     /// Right after a release's commit went up, before its tag: the heads it went with are released with it, and the
     /// other requests the wish still has are held by it, for Close Request… to name. Kept before anything else can fail.
     static func pushed(_ project: LampProject, commit: String, tag: String?, parents: [String]) async {
-        guard var record = record(for: project) else { return }
-        for index in record.taken.indices where record.taken[index].released == nil {
-            if parents.contains(record.taken[index].head) {
-                record.taken[index].released = commit
-                record.taken[index].tag = tag
-            } else if await BringIn.holds(version: record.taken[index].takenIn, in: project) {
-                record.taken[index].heldBy = commit
-                record.taken[index].heldTag = tag
+        guard let before = record(for: project) else { return }
+        // Which are held is asked of git first, outside the record's lock; then only those entries are written.
+        var held: Set<String> = []
+        for taken in before.taken where taken.released == nil && !parents.contains(taken.head) {
+            if await BringIn.holds(version: taken.takenIn, in: project) { held.insert(taken.head) }
+        }
+        change(project) { record in
+            for index in record.taken.indices where record.taken[index].released == nil {
+                if parents.contains(record.taken[index].head) {
+                    record.taken[index].released = commit
+                    record.taken[index].tag = tag
+                } else if held.contains(record.taken[index].head) {
+                    record.taken[index].heldBy = commit
+                    record.taken[index].heldTag = tag
+                }
             }
         }
-        keep(record, for: project)
     }
 
-    // MARK: The card
+    // MARK: What the panel says of one
 
-    enum CardState: Equatable {
+    /// Where a request is, for the panel's line under its title and the buttons it offers.
+    enum Standing: Equatable {
         case open(changedSince: Bool)
         case bringingIn
         case broughtIn(leftOut: [String], unchecked: Bool = false)
@@ -375,8 +490,8 @@ enum SuggestedChanges {
         case closed
     }
 
-    /// What the card of request `number` says now. `holds` is whether the wish still has what it brought in of it.
-    static func state(of number: Int, in record: Record, bringingIn: Bool, holds: Bool) -> CardState {
+    /// Where request `number` is now. `holds` is whether the wish still has what it brought in of it.
+    static func standing(of number: Int, in record: Record, bringingIn: Bool, holds: Bool) -> Standing {
         if bringingIn { return .bringingIn }
         let taken = record.taken(number)
         switch record.ended[String(number)] {
@@ -391,23 +506,72 @@ enum SuggestedChanges {
         return .broughtIn(leftOut: taken.leftOut ?? [], unchecked: taken.checked != true)
     }
 
-    /// The card's words: its title and its status line.
-    static func words(_ state: CardState, request: Request?, login: String) -> (title: String, status: String) {
-        let who = "@" + login
-        let title = request.map { "“\($0.title)”" } ?? ""
-        switch state {
-        case .open(let changedSince):
-            return (changedSince ? "\(who) sent more changes" : "\(who) suggested changes", title)
-        case .bringingIn: return ("Bringing in \(who)'s changes…", title)
+    /// The panel's line for where it is; nil for one simply open.
+    static func words(_ standing: Standing) -> String? {
+        switch standing {
+        case .open(let changedSince): return changedSince ? "Sent more changes since you brought it in" : nil
+        case .bringingIn: return "Getting it ready…"
         case .broughtIn(let leftOut, let unchecked):
-            let status = unchecked ? "Goes to GitHub with your next release, still open there"
-                : leftOut.isEmpty ? "Goes to GitHub with your next release" : "Brought in, but for \(leftOut.prefix(3).joined(separator: ", "))"
-            return ("Brought in \(who)'s changes", status)
-        case .released(let tag): return ("Released \(who)'s changes", tag.map { "In \($0) · waiting for GitHub" } ?? "Waiting for GitHub")
-        case .held(let tag): return ("Released \(who)'s changes", tag.map { "In \($0) · still open on GitHub" } ?? "Still open on GitHub")
-        case .merged(let tag): return ("Merged \(who)'s changes", tag.map { "In \($0)" } ?? "Merged on GitHub")
-        case .closed: return ("Closed \(who)'s request", title)
+            return unchecked ? "In your app · goes to GitHub with your next release, still open there"
+                : leftOut.isEmpty ? "In your app · goes to GitHub with your next release"
+                : "In your app, but for \(leftOut.prefix(3).joined(separator: ", "))"
+        case .released(let tag): return tag.map { "In \($0) · waiting for GitHub" } ?? "Released · waiting for GitHub"
+        case .held(let tag): return tag.map { "In \($0) · still open on GitHub" } ?? "Released · still open on GitHub"
+        case .merged(let tag): return tag.map { "In \($0)" } ?? "Merged on GitHub"
+        case .closed: return "Closed"
         }
+    }
+
+    // MARK: Good to know
+
+    /// What Lamp can say for sure of a request, worked out from the files and never by a model: what it takes away, which
+    /// of its files the person changed too, and which other open requests change the same files.
+    struct Facts: Equatable {
+        var takesAway: [String] = []
+        var bothChanged: [String] = []
+        var sharedWith: [Int] = []
+    }
+
+    static func facts(of request: Request, in record: Record, yours: Set<String>) -> Facts? {
+        guard let files = record.files(of: request) else { return nil }
+        let paths = Set(files.map(\.path))
+        var facts = Facts()
+        facts.takesAway = files.filter { $0.status == "removed" }.map(\.path).sorted()
+        facts.bothChanged = paths.intersection(yours).sorted()
+        facts.sharedWith = record.open.filter { other in
+            other.number != request.number && !record.isHidden(other)
+                && !(record.files(of: other).map { Set($0.map(\.path)).isDisjoint(with: paths) } ?? true)
+        }.map(\.number)
+        return facts
+    }
+
+    /// The facts in the panel's words. Overlap is said as what it is: where both changed the same lines, the merge has to
+    /// settle it, and may ask.
+    static func sayings(_ facts: Facts) -> [String] {
+        var lines: [String] = []
+        if facts.takesAway.isEmpty {
+            lines.append("It takes no files away.")
+        } else {
+            let named = facts.takesAway.prefix(3).joined(separator: ", ") + (facts.takesAway.count > 3 ? " and \(facts.takesAway.count - 3) more" : "")
+            lines.append("It takes away \(named).")
+        }
+        if !facts.bothChanged.isEmpty {
+            lines.append("You changed some of the same files since your last release. Where you both changed the same lines, Lamp has to settle it as it brings this in, and may ask you.")
+        }
+        if !facts.sharedWith.isEmpty {
+            let count = facts.sharedWith.count
+            lines.append("\(count) other \(count == 1 ? "change touches" : "changes touch") the same files.")
+        }
+        return lines
+    }
+
+    /// The files the person changed since the app was last put on GitHub, in the app's own paths: what a request may
+    /// overlap. Empty when the app hasn't been released from here.
+    static func yourChanges(in project: LampProject) async -> Set<String> {
+        guard let version = GitHubRepo.kept(for: project)?.version, Credits.validCommit(version) != nil else { return [] }
+        var output = ""
+        guard await Versions.git("git diff --name-only --no-renames \(version) -- . ':!.lamp'", cwd: project.dir, onLine: { output += $0 + "\n" }) == 0 else { return [] }
+        return Set(output.split(whereSeparator: \.isNewline).map(String.init))
     }
 
     /// What Close Request… says on GitHub: nothing when the person turns a request down; the release that has it when
@@ -448,47 +612,15 @@ enum SuggestedChanges {
     }
 }
 
-/// The words on a request's card, the same wherever it's drawn.
-enum SuggestionCard {
-    static let bringIn = "Bring In…"
-    static let ask = "Ask About It"
-    static let close = "Close…"
-    static let view = "View on GitHub"
-
-    /// The card as the chat draws it, from what's known of the request now.
-    static func line(id: UUID, gap: Double, state: SuggestedChanges.CardState, request: SuggestedChanges.Request?) -> SidebarLine {
-        let words = SuggestedChanges.words(state, request: request, login: request?.login ?? "someone")
-        var card = SidebarLine(id: id, kind: .offer, text: words.title, gap: gap)
-        card.symbol = "arrow.triangle.pull"
-        card.status = words.status
-        switch state {
-        case .open:
-            card.declineButton = close
-            card.choices = [SidebarChoice(id: ask, title: ask)]
-            card.button = bringIn
-        case .held:
-            card.declineButton = close
-            card.choices = [SidebarChoice(id: view, title: view)]
-        case .broughtIn, .released:
-            card.choices = [SidebarChoice(id: view, title: view)]
-        case .merged:
-            card.done = true
-        case .bringingIn, .closed:
-            break
-        }
-        return card
-    }
-}
-
 extension Store {
-    /// Asks GitHub about the wish's requests, when it's on GitHub and `gh` is signed in, and adds a card to its chat for
-    /// each new one, or one with new changes.
+    /// Asks GitHub about the wish's requests, when it's on GitHub and `gh` is signed in. What's new shows on the desk,
+    /// quietly; each request's plain-words account is made in the background (`SuggestionSummaries`).
     func checkSuggestions(_ project: LampProject) {
         guard !project.isPart, let kept = GitHubRepo.kept(for: project), GitHubRepo.isUp(project) else { return }
         Task {
             guard let gh = await Publish.gh(), await Publish.login(gh: gh) != nil,
                   let found = await SuggestedChanges.find(project, kept: kept, gh: gh) else { return }
-            publishSuggestions(project, new: found.new)
+            publishSuggestions(project, found: found.record, gh: gh)
         }
     }
 
@@ -503,34 +635,45 @@ extension Store {
         check()
     }
 
-    /// What a look at GitHub found new, wherever it was asked from (a check, the agent's tool, a release): each gets its card.
-    func publishSuggestions(_ project: LampProject, new: [Int]) {
-        for number in new { showSuggestion(project, number: number) }
+    /// What a look at GitHub found, wherever it was asked from (a check, the agent's tool, a release): the desk and the
+    /// panel redraw, and the requests' files and accounts are fetched for those that don't have them at their head.
+    func publishSuggestions(_ project: LampProject, found record: SuggestedChanges.Record, gh: String) {
         suggestionsRevision += 1
+        Task { await refreshSuggestionHolds(project) }
+        let wanted = record.open.filter { !record.isHidden($0) }
+        guard !wanted.isEmpty else { return }
+        Task {
+            for request in wanted {
+                _ = await SuggestedChanges.listFiles(of: request, in: project, repo: record.repo, gh: gh)
+            }
+            suggestionsRevision += 1
+            for request in wanted {
+                if await SuggestionSummaries.shared.make(for: request, in: project, repo: record.repo, gh: gh) { suggestionsRevision += 1 }
+            }
+        }
     }
 
-    /// The request's card, at the end of the chat: one per request, moved down when it has new changes.
-    private func showSuggestion(_ project: LampProject, number: Int) {
-        var lines = logs[project.id] ?? []
-        lines.removeAll { $0.kind == .suggestion && $0.text == String(number) }
-        logs[project.id] = lines
-        log(project, .suggestion, String(number))
-    }
-
-    /// The desk's mark: a request the person hasn't seen yet, cleared once its chat shows it.
-    func hasUnseenSuggestions(_ project: LampProject) -> Bool {
+    /// How many requests are new for the wish, for the desk's line under its row.
+    func newSuggestions(_ project: LampProject) -> Int {
         _ = suggestionsRevision
-        return SuggestedChanges.hasUnseen(project)
+        return SuggestedChanges.record(for: project)?.newCount ?? 0
     }
 
-    /// The person saw the chat with the cards in it.
-    func sawSuggestions(_ project: LampProject) {
-        guard SuggestedChanges.hasUnseen(project) else { return }
-        SuggestedChanges.change(project) { $0.unseen = [] }
+    /// The person saw these requests at these heads in the panel.
+    func sawSuggestions(_ seen: [(number: Int, head: String)], in project: LampProject) {
+        guard !seen.isEmpty else { return }
+        SuggestedChanges.markSeen(seen, in: project)
         suggestionsRevision += 1
     }
 
-    /// Whether the wish still has what it brought in of each request, as the cards show it: asked again whenever its
+    /// Not for Me: set aside quietly at the head shown. The sender hears nothing; a trial of it goes.
+    func hideSuggestion(_ project: LampProject, number: Int, head: String) {
+        SuggestedChanges.hide(number, head: head, in: project)
+        if trials[project.id]?.number == number { endTrial(of: project) }
+        suggestionsRevision += 1
+    }
+
+    /// Whether the wish still has what it brought in of each request, as the panel shows it: asked again whenever its
     /// versions or its requests change.
     func refreshSuggestionHolds(_ project: LampProject) async {
         guard let record = SuggestedChanges.record(for: project) else { return }
@@ -542,31 +685,52 @@ extension Store {
         }
     }
 
-    /// Bring In… on a request's card, or what the agent was asked to bring in once its turn ended: fetched with the
-    /// person's sign-in, reviewed as an update, and merged on Update (`mergeUpdate`'s `bringingIn`).
-    func bringInSuggestion(_ project: LampProject, number: Int) {
-        guard let kept = GitHubRepo.kept(for: project), GitHubRepo.isUp(project),
-              let request = SuggestedChanges.record(for: project)?.request(number) else { return }
+    /// Asked before anything is fetched: a wish busy with a turn takes nothing in, and Lamp reads GitHub with the person's
+    /// own sign-in.
+    private func readyForSuggestion(_ project: LampProject) async -> String? {
         guard !busy.contains(project.id), (queued[project.id] ?? []).isEmpty else {
             let alert = NSAlert()
             alert.messageText = "“\(project.name)” is busy right now"
             alert.informativeText = "Try again when it's done."
             alert.runModal()
-            return
+            return nil
         }
+        guard let gh = await Publish.gh(), await Publish.login(gh: gh) != nil else {
+            let alert = NSAlert()
+            alert.messageText = "Sign in to GitHub with gh first"
+            alert.informativeText = "Lamp reads what people sent with your own GitHub sign-in."
+            alert.runModal()
+            return nil
+        }
+        return gh
+    }
+
+    /// Bring Into My App, or what the agent was asked to bring in once its turn ended: fetched with the person's sign-in,
+    /// reviewed as an update, and merged on Update (`mergeUpdate`'s `bringingIn`). A request tried first (`SuggestionTrial`)
+    /// that changed since, or an app that did, is said before the review: what comes in isn't what was tried.
+    func bringInSuggestion(_ project: LampProject, number: Int) {
+        guard let kept = GitHubRepo.kept(for: project), GitHubRepo.isUp(project),
+              let record = SuggestedChanges.record(for: project), let request = record.request(number) else { return }
         Task {
-            guard let gh = await Publish.gh(), await Publish.login(gh: gh) != nil else {
-                let alert = NSAlert()
-                alert.messageText = "Sign in to GitHub with gh first"
-                alert.informativeText = "Lamp fetches \(kept.repo) with your own GitHub sign-in."
-                alert.runModal()
-                return
-            }
+            guard let gh = await readyForSuggestion(project) else { return }
             fetchingSuggestion[project.id] = number
             suggestionsRevision += 1
             defer { fetchingSuggestion[project.id] = nil; suggestionsRevision += 1 }
             do {
                 let fetched = try await SuggestedChanges.fetch(project, kept: kept, request: request, gh: gh)
+                if let tried = SuggestedChanges.record(for: project)?.tried[String(number)],
+                   let warning = SuggestionTrial.differs(tried, head: fetched.pull.head, version: await Versions.head(project)) {
+                    let alert = NSAlert()
+                    alert.messageText = "This isn't quite what you tried"
+                    alert.informativeText = warning
+                    alert.addButton(withTitle: "Continue")
+                    alert.addButton(withTitle: "Cancel")
+                    guard alert.runModal() == .alertFirstButtonReturn else {
+                        try? FileManager.default.removeItem(at: fetched.folder)
+                        return
+                    }
+                }
+                if trials[project.id] != nil { endTrial(of: project) }
                 importApp(from: fetched.tree, updating: project.id, bringingIn: fetched.pull)
             } catch {
                 NSAlert(error: error).runModal()
@@ -574,39 +738,33 @@ extension Store {
         }
     }
 
-    /// Ask About It: the agent is asked, and gets the change with `suggested_changes`.
-    func askAboutSuggestion(_ project: LampProject, number: Int) {
-        guard let request = SuggestedChanges.record(for: project)?.request(number) else { return }
-        send("What did @\(request.login) change in their suggested changes (#\(number))? Don't change anything yet.", to: project)
-        sawSuggestions(project)
-    }
-
-    /// Close Request…: asked first, then closed on GitHub; with a comment only when a release already has it.
+    /// Close Request…, for a request a release already has that it couldn't mark merged: asked first, then closed on
+    /// GitHub with a comment naming the release. Not for Me is the quiet way to turn one down.
     func closeSuggestion(_ project: LampProject, number: Int) {
         guard let kept = GitHubRepo.kept(for: project), let record = SuggestedChanges.record(for: project),
-              let request = record.request(number) else { return }
-        let comment = SuggestedChanges.closingComment(record.taken(number), request: request, app: project.name)
+              let request = record.request(number),
+              let comment = SuggestedChanges.closingComment(record.taken(number), request: request, app: project.name) else { return }
         let alert = NSAlert()
-        alert.messageText = "Close @\(request.login)'s suggested changes?"
-        alert.informativeText = comment.map { "GitHub will say: \($0)" } ?? "They'll see it was closed on GitHub."
+        alert.messageText = "Close @\(request.login)'s request on GitHub?"
+        alert.informativeText = "GitHub will say: \(comment)"
         alert.addButton(withTitle: "Close Request")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         Task {
             guard let gh = await Publish.gh() else { return }
-            let closed = await Subprocess.run(gh, ["pr", "close", String(number), "--repo", kept.repo] + (comment.map { ["--comment", $0] } ?? []), timeout: 60)
+            let closed = await Subprocess.run(gh, ["pr", "close", String(number), "--repo", kept.repo, "--comment", comment], timeout: 60)
             guard closed.ok else {
                 NSAlert(error: SuggestedChanges.Failure(message: "GitHub didn't close it: \(closed.output.trimmed.suffix(200))")).runModal()
                 return
             }
-            SuggestedChanges.change(project) { $0.ended[String(number)] = .closed; $0.unseen.removeAll { $0 == number } }
+            SuggestedChanges.change(project) { $0.ended[String(number)] = .closed }
             suggestionsRevision += 1
         }
     }
 
-    /// View on GitHub.
+    /// Show the Code: the request on GitHub.
     func viewSuggestion(_ project: LampProject, number: Int) {
-        guard let url = SuggestedChanges.record(for: project)?.request(number).flatMap({ URL(string: $0.url) }) else { return }
+        guard let url = SuggestedChanges.record(for: project)?.about(number).flatMap({ URL(string: $0.url) }) else { return }
         NSWorkspace.shared.open(url)
     }
 
@@ -634,7 +792,7 @@ extension Store {
         guard let found = await SuggestedChanges.find(wish, kept: kept, gh: gh) else {
             return (400, ["error": "GitHub didn't answer for \(kept.repo). Try again in a moment."])
         }
-        publishSuggestions(wish, new: found.new)
+        publishSuggestions(wish, found: found.record, gh: gh)
         let number = (arguments["number"] as? Int) ?? (arguments["number"] as? String).flatMap { Int($0.trimmingCharacters(in: CharacterSet(charactersIn: "# "))) }
         guard let number else {
             guard !found.record.open.isEmpty else { return (200, ["text": "Nobody has suggested changes to this app on GitHub right now."]) }
