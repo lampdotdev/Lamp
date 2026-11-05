@@ -9,7 +9,7 @@ said in passing (`--color-muted-ink`, 4.5:1 on the paper), a tight grotesque for
 labels, lists and small print, thin rules between parts, small corners and soft shadows only (nothing has a hard,
 offset shadow). There's one kind of button, ink with paper-colored words (`.ink-button` in `global.css`); a second
 choice beside it is an ink outline. The menu bar is GitHub, Ideas, Changelog and Download; the footer is the project's
-links (source, releases, changelog, contributing, security, issues) and the MIT license line. Lamp's mark is its icon
+links (source, releases, changelog, contributing, security, issues) and the MIT license line, with no company sign-off. Lamp's mark is its icon
 with "Lamp" beside it (`LampLockup.astro`), in the menu bar and wherever the site names Lamp as a mark. The stripes
 (green to magenta, in that order, never blue or purple) are kept for Lamp's own things: its mark, and the light that
 runs along a part of the homepage as it's added.
@@ -28,7 +28,7 @@ under the pointer; and the round message box with the round ink Send. Where ther
 down the right edge, off the window's edges with round corners and a window's shadow; on a phone it's a box under the
 headline, and what it adds arrives under it. It follows the Mac's light or dark appearance, as Lamp does, and is dark
 when the page is. Every starter shown is a real one (`Resources/Starters`, listed in `src/lib/starters.ts` with the
-pictures and changes it ships with), each with one of its changes as a remix under it; the devices listed are only
+pictures and changes it ships with), each with one of its changes under it to ask for; the devices listed are only
 those a kind of app or a shipped device integration really reaches. The newest version and what's new come from
 `RELEASE_NOTES.md` at the top of the repository, read when the site is built (`src/lib/releases.ts`), as does the
 changelog page (`/changelog`), so release notes are written in one place; a build without them leaves those out and
@@ -36,13 +36,15 @@ points to GitHub's releases.
 
 A link from a Remix panel or a repository's README (`?ask=`, with `starter=` or `repo=` and `commit=` when it names
 what it's a copy of, and `from=` where it was pressed) opens the homepage's remix dialog (`RemixDialog.astro`,
-"Remixing a published page" in the wishes guide), as does a starter's "Remix it" (`lamp:remix`), and a starter's "Try
-it" opens it to try the starter (`lamp:try`): "Try" over the name, no box, and the same buttons, with Lamp opening the
+"Remixing a published page" in the wishes guide), as does a starter's "Change it" (`lamp:remix`), and a starter's "Try
+it" opens it to try the starter (`lamp:try`): no box, and the same buttons, with Lamp opening the
 starter itself, before any setup ("Starters" in the desk guide). It's a plain card on the paper with a thin ink edge,
 rising a little into place: the starter's picture and description on the dark on its left (a repository's own
 picture, its preview or else its icon, from raw.githubusercontent.com, `repoPictures`; or a blank label with the
-name), "Remix" as a small mono label over the name and its maker, the request in its box, and Open in Lamp in ink (on
-a Mac) beside Download for Mac in outline. A page can't ask whether Lamp is installed, so Open in Lamp watches
+name), then the name and its maker, a line that it opens as it is with the change waiting in Lamp's chat, the change
+in a box marked optional, Open in Lamp in ink (on a Mac) beside Download for Mac in outline, and, where the starter
+plays in a browser (`page` in `starters.ts`), a link to play it there. It's about getting the thing, not changing it
+first, and the word "remix" isn't shown anywhere on the site (the code keeps it). A page can't ask whether Lamp is installed, so Open in Lamp watches
 whether Lamp answered: if the browser keeps its focus for two seconds, the dialog turns to getting Lamp, with Download
 first and in ink, and turns back should Lamp open late. Closed, it takes its parameters out of the address, so a
 reload doesn't bring it back. The ideas page keeps its own card

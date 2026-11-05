@@ -59,7 +59,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
          and the header away together (remembered in this browser), leaving only the wish, and from the same place
          brings both back. -->
     <div data-bar data-remix-band class="bar bar-bottom">
-    <aside class="remix-band h-16 border-t border-zinc-200 bg-white" aria-label="Remix">
+    <aside class="remix-band h-16 border-t border-zinc-200 bg-white" aria-label="Make a change">
       <form data-prompt class="mx-auto flex h-full max-w-[44rem] items-center gap-2 py-3 pr-14 pl-3 sm:pl-6 lg:px-6">
         <div class="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-zinc-200 bg-white py-1 pr-1 pl-3 shadow-xs transition focus-within:border-zinc-400 focus-within:ring-3 focus-within:ring-zinc-200">
           <svg aria-hidden="true" viewBox="0 0 16 16" class="size-4 shrink-0 fill-current text-zinc-400"><path d="M8 0.8l1.6 4.2 4.2 1.6-4.2 1.6L8 12.4 6.4 8.2 2.2 6.6 6.4 5zM13 10.5l0.7 1.8 1.8 0.7-1.8 0.7L13 15.5l-0.7-1.8-1.8-0.7 1.8-0.7z" /></svg>
@@ -69,11 +69,11 @@ import { DOWNLOAD_URL } from "../../lib/download";
             type="text"
             autocomplete="off"
             enterkeyhint="send"
-            aria-label="Remix it: what would you change?"
+            aria-label="What would you change?"
             placeholder="What would you change?"
             class="min-w-0 flex-1 bg-transparent py-1.5 text-[15px] placeholder:text-zinc-500 focus:outline-none"
           />
-          <button type="submit" data-remix aria-label="Remix with this change" class="grid size-8 shrink-0 cursor-pointer place-items-center rounded-md bg-zinc-900 text-white transition hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-400">
+          <button type="submit" data-remix aria-label="Send this change" class="grid size-8 shrink-0 cursor-pointer place-items-center rounded-md bg-zinc-900 text-white transition hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-400">
             <svg aria-hidden="true" viewBox="0 0 16 16" class="size-4 fill-none stroke-current stroke-2 [stroke-linecap:round] [stroke-linejoin:round]"><path d="M8 13V3M3.5 7.5L8 3l4.5 4.5" /></svg>
           </button>
         </div>
@@ -83,7 +83,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
 
     <!-- Puts the header and the band away and brings them back, from the same place: centered on the band's height at
          the window's right, over the band while it's there and over the wish once it isn't. -->
-    <button type="button" data-bars-toggle aria-label="Hide the title and Remix" aria-expanded="true" class="bars-toggle absolute right-3 bottom-4 z-10 grid size-8 cursor-pointer place-items-center rounded-md focus-visible:outline-2 focus-visible:outline-zinc-400">
+    <button type="button" data-bars-toggle aria-label="Hide the title and the change box" aria-expanded="true" class="bars-toggle absolute right-3 bottom-4 z-10 grid size-8 cursor-pointer place-items-center rounded-md focus-visible:outline-2 focus-visible:outline-zinc-400">
       <svg aria-hidden="true" viewBox="0 0 16 16" class="size-3.5 fill-none stroke-current stroke-2 [stroke-linecap:round] [stroke-linejoin:round]"><path d="M4 6l4 4 4-4" /></svg>
     </button>
 
@@ -341,7 +341,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
       $<HTMLElement>("[data-page]").dataset.bars = hidden ? "hidden" : "shown";
       for (const bar of document.querySelectorAll<HTMLElement>("[data-bar]")) bar.inert = hidden;
       toggle.setAttribute("aria-expanded", String(!hidden));
-      toggle.setAttribute("aria-label", hidden ? "Show the title and Remix" : "Hide the title and Remix");
+      toggle.setAttribute("aria-label", hidden ? "Show the title and the change box" : "Hide the title and the change box");
     };
     let wasHidden = false;
     try { wasHidden = localStorage.getItem(HIDDEN) === "1"; } catch {}

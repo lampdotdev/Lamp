@@ -31,7 +31,7 @@ const pitch = [
 const description = `${headline} ${pitch.join(" ")}`;
 
 const pictures = import.meta.glob<ImageMetadata>("../assets/starters/*.png", { eager: true, import: "default" });
-// A few starters, each an original with one of its changes under it as a remix of it. Every one is a real starter
+// A few starters, each with one of its changes under it to ask for. Every one is a real starter
 // (Resources/Starters) with the picture and changes it ships with.
 const SHOWN = ["newyork", "homehq", "thelittlehouse", "fireside", "localcrossings", "chores"];
 const starters = SHOWN.map((id) => STARTERS.find((starter) => starter.id === id)!);
@@ -62,7 +62,7 @@ const faq = [
 // "dark" changes the page's look instead of adding to it.
 const asks = [
   { part: "what", ask: "Explain more what Lamp is", done: "Added what Lamp is.", icon: infoIcon, hue: 0.08 },
-  { part: "starters", ask: "Show some apps people can start from", done: "Added six apps to start from, each with a remix of it.", icon: startersIcon, hue: 0.36 },
+  { part: "starters", ask: "Show some apps people can start from", done: "Added six apps to start from, each with a change to try.", icon: startersIcon, hue: 0.36 },
   { part: "devices", ask: "List what it runs on", done: "Added where what you make can run.", icon: devicesIcon, hue: 0.58 },
   { part: "get", ask: "Tell people how to get it", done: "Added the download, and how to build it yourself.", icon: getIcon, hue: 0.47 },
   { part: "faq", ask: "Add answers to common questions", done: "Added a few answers.", icon: faqIcon, hue: 0.93 },
@@ -153,10 +153,10 @@ const lit = (hue: number) => `linear-gradient(${hsb(hue, 0.45, 1)}, ${hsb(hue, 0
                   {starter.page
                     ? <a href={starter.page} target="_blank" rel="noopener" class="underline underline-offset-4">Play it ↗</a>
                     : <a href={`/?starter=${starter.id}`} data-try-link class="underline underline-offset-4">Try it</a>}
-                  <a href={`/?starter=${starter.id}`} data-remix-link class="underline underline-offset-4">Remix it</a>
+                  <a href={`/?starter=${starter.id}`} data-remix-link class="underline underline-offset-4">Change it</a>
                   <span class="text-muted-ink">runs on {starter.places.join(", ")}</span>
                 </p>
-                <p class="mt-1 font-mono text-sm text-muted-ink">└ remix: <a href={`/?starter=${starter.id}&ask=${encodeURIComponent(starter.remix)}`} data-remix-link class="text-tape underline underline-offset-4">{starter.remix}</a></p>
+                <p class="mt-1 font-mono text-sm text-muted-ink">└ or ask: <a href={`/?starter=${starter.id}&ask=${encodeURIComponent(starter.remix)}`} data-remix-link class="text-tape underline underline-offset-4">{starter.remix}</a></p>
               </div>
             </li>
           ))}
@@ -345,7 +345,7 @@ open "build/Lamp Dev.app"</code></pre>
     reply.append(link, ".");
   });
 
-  // A starter's Try it and Remix it open the remix dialog in place (RemixDialog.astro).
+  // A starter's Try it and Change it open the dialog for getting it in place (RemixDialog.astro).
   document.querySelectorAll<HTMLAnchorElement>("[data-remix-link], [data-try-link]").forEach((link) => {
     link.addEventListener("click", (event) => {
       event.preventDefault();

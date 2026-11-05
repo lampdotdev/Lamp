@@ -9,7 +9,7 @@ const pictures = import.meta.glob<ImageMetadata>("../assets/starters/*.png", { e
 const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) => {
   const picture = pictures[`../assets/starters/${starter.id}.png`];
   const shot = picture ? (await getImage({ src: picture, width: 720, format: "webp" })).src : "";
-  return [starter.id, { name: starter.name, by: starter.by, about: starter.about, shot }];
+  return [starter.id, { name: starter.name, by: starter.by, about: starter.about, page: starter.page, shot }];
 })));
 ---
 
@@ -41,12 +41,13 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
       <p data-by class="remix-by"></p>
       <h2 id="remix-title" data-title class="remix-title"></h2>
       <p id="remix-from" data-from class="remix-from"></p>
-      <label for="remix-text" data-ask class="remix-ask">YOUR CHANGE</label>
+      <label for="remix-text" data-ask class="remix-ask">YOUR CHANGE (OPTIONAL)</label>
       <textarea id="remix-text" data-text rows="3" placeholder="Say what you'd change"></textarea>
       <div class="remix-buttons">
         <button type="button" data-open hidden class="remix-button remix-button-ink">Open in Lamp</button>
         <a href={DOWNLOAD_URL} data-download-place="remix" data-download class="remix-button remix-button-lit">Download for Mac</a>
       </div>
+      <a data-play hidden target="_blank" rel="noopener" class="remix-play">Or play it in your browser ↗</a>
       <p data-status class="remix-status" role="status" aria-live="polite">{together("For Macs with Apple Silicon and macOS 14 Sonoma or later")}</p>
     </div>
   </div>
@@ -57,7 +58,7 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
   import { askFrom, copyWish, remixFrom, remixLink, repoPictures, wishLink } from "../../lib/wish.js";
   import { track } from "../lib/analytics";
 
-  type Known = Record<string, { name: string; by: string; about: string; shot: string }>;
+  type Known = Record<string, { name: string; by: string; about: string; page?: string; shot: string }>;
   const dialog = document.querySelector<HTMLDialogElement>("[data-remix]")!;
   const starters = JSON.parse(dialog.dataset.starters ?? "{}") as Known;
   const q = <T extends HTMLElement>(selector: string) => dialog.querySelector<T>(selector)!;
@@ -102,18 +103,15 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
     dialog.setAttribute("aria-describedby", "remix-from");
     const idea = starter?.name ?? origin?.name ?? "your idea";
 
-    // "Remix" or "Try" as a small label, before the original's name and who made it.
+    // The app's name and who made it: what it is comes first, whether or not a change goes with it.
     const remixOf = (name: string, maker: string) => {
-      const word = document.createElement("span");
-      word.className = "remix-word";
-      word.textContent = trial ? "Try" : "Remix";
       const credit = document.createElement("span");
       credit.className = "remix-maker";
       credit.textContent = `by ${maker}`;
       const app = document.createElement("span");
       app.className = "remix-app";
       app.textContent = name;
-      title.replaceChildren(word, " ", app, " ", credit);
+      title.replaceChildren(app, " ", credit);
     };
     if (starter) {
       remixOf(starter.name, starter.by);
@@ -155,6 +153,12 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
       from.textContent = onMac ? `It opens in Lamp, with ${others} more to try. Nothing to set up.` : "It opens in Lamp, which runs on a Mac.";
       download.hidden = !onMac;
     } else download.hidden = false;
+    // It opens as it is: a change, when there is one, waits in Lamp's chat to be sent.
+    if (!trial && origin && !from.textContent) from.textContent = "It opens in Lamp as it is. Your change waits in its chat, to send when you're ready.";
+    // Where it plays in a browser, playing it needs nothing at all.
+    const play = q<HTMLAnchorElement>("[data-play]");
+    play.hidden = !starter?.page;
+    if (starter?.page) play.href = starter.page;
     // Only a wish alone says where it's from and what Lamp will do with it; a remix's title says it already, and
     // what's left to say when trying one is above.
     by.hidden = !by.textContent;
@@ -230,7 +234,7 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
           status.textContent = copied === "marked" ? `Open Lamp when it's ready, and ${idea} will be there.` : "When Lamp's ready, come back and click Open in Lamp.";
           return;
         }
-        const ready = starter ? `${starter.name} and your change will be there.` : origin ? "Your remix will be there." : "It'll be there.";
+        const ready = starter ? `${starter.name} and your change will be there.` : origin ? "Your copy will be there." : "It'll be there.";
         status.textContent = copied === "marked" ? `Open Lamp when it's ready. ${ready}`
           : copied === "plain" ? "Your change is copied. Paste it into Lamp when it's ready."
           : text.value.trim() ? "Copy your change, and paste it into Lamp when it's ready." : "Open Lamp when it's ready.";
@@ -300,9 +304,8 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
   @media (min-width: 48rem) { .remix-words { padding: 2.25rem; } }
   .remix-by { margin: 0 3rem 0.25rem 0; font-size: 1rem; font-weight: 700; color: var(--color-muted-ink); }
   .remix-title { margin: 0 3rem 0 0; font-size: clamp(2.25rem, 5vw, 3.25rem); line-height: 0.95; font-weight: 900; letter-spacing: -0.04em; overflow-wrap: anywhere; }
-  /* Three lines: "Remix" as a small label in mono, the app's name, and who made it, lighter. */
-  .remix-title :global(:is(.remix-word, .remix-app, .remix-maker)) { display: block; }
-  .remix-title :global(.remix-word) { margin-bottom: 0.5rem; font-family: var(--font-mono); font-size: 0.8125rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-muted-ink); }
+  /* Two lines: the app's name, and who made it, lighter. */
+  .remix-title :global(:is(.remix-app, .remix-maker)) { display: block; }
   .remix-title :global(.remix-maker) { margin-top: 0.2em; font-size: 0.55em; font-weight: 500; letter-spacing: -0.02em; }
   .remix-from { margin: 0.875rem 0 0; font-size: 1.0625rem; line-height: 1.45; color: var(--color-muted-ink); }
   .remix-ask { margin: 1.5rem 0 0.5rem; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; color: var(--color-muted-ink); }
@@ -326,6 +329,8 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
   .remix-button[hidden] { display: none; }
   .remix-button-ink { background: var(--color-tape); color: var(--color-paper); }
   .remix-button-lit { background: transparent; color: var(--color-tape); }
+  .remix-play { margin-top: 0.875rem; font-family: var(--font-mono); font-size: 0.875rem; text-decoration: underline; text-underline-offset: 4px; }
+  .remix-play[hidden] { display: none; }
   .remix-status { margin: 0.875rem 0 0; font-size: 0.875rem; color: var(--color-muted-ink); }
   /* Lamp didn't open: getting it comes first, in ink, trying again second, and the line says why. */
   .remix-dialog[data-missing] [data-download] { order: -1; background: var(--color-tape); color: var(--color-paper); }
