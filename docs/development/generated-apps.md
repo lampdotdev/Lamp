@@ -254,8 +254,8 @@ that ends it. A build that waits for an app for both
 goes in only while Try On points at this Mac. Don't add a time limit after which an app is ended anyway: that
 is what lost people's work.
 
-A wish goes on GitHub as a repository on the person's own account (`GitHubRepo`, its card `GitHubRepoCards` and
-`RepoCard`, from the chat's Share popover): the shared file's contents (`Sharing.export`, so the same checks and the same
+A wish goes on GitHub as a repository on the person's own account (`GitHubRepo`), from its link's Release Update
+(`GitHubRelease`, "Releases" in the wishes guide), the one way it goes there: the shared file's contents (`Sharing.export`, so the same checks and the same
 credits chain) unpacked, Lamp's own files for each of the wish's apps beside them (`GitHubRepo.ownedPaths`: the files
 the builder can't delete, laid out as the shared file lays the apps out, `Sharing.layout`; for a page, the app around it,
 `ScreenKit.paths`), the shared file itself, a
@@ -270,13 +270,15 @@ for a wish with one, to lamp.dev's remix link
 (`GitHubRepo.remixLink`, `RemixLink.site`: the repository without a commit, so it's always the latest, and `from=readme`
 for the site's counts); then the wish's ideas (`RemixSuggestions`, a starter's tweaks), each that link with its request.
 A private repository, which Lamp can't fetch without a sign-in, offers the Share Link and the shared file instead; the
-card stages again when a new repository is made private (`setPrivate`). A public repository with no website of its own
+card stages again when a new repository is made private (`WishLinkCards.setGitHubPrivate`). A public repository with no website of its own
 gets the remix link as its website, or its page once it's up (`offerWebsite`, `from=github`); one the person set is left alone.
-Put on GitHub's card is for the first time only, since it asks what GitHub takes once (public or private, the license,
-the README's picture). Once the wish is up (`GitHubRepo.isUp`) the share popover leaves Put on GitHub… out, and the
-card, asked for anyway (from a chat of an older Lamp), opens Share Link's card instead, as it does for the person's own
-repository a wish was opened from (`ownOrigin`): a release there updates GitHub too (`GitHubRelease`, "Releases" in the wishes guide), staged and
-uploaded as before with the choices made the first time (`Repo.license`, `Repo.picture`). One commit per update, on top of
+The first time, the release card's Also put on GitHub (unticked unless the person ticks it) shows what goes up and
+asks what GitHub takes once (public or private, the license, the README's picture: `GitHubRelease.FirstPush`). There
+was a Put on GitHub… of its own under Share; a chat of an older Lamp that still offers it opens Share Link's card
+(`SidebarCommand.repo`), and Lamp tells such a chat the wish is on GitHub (`SidebarToolbar.onGitHub`) so it leaves it
+out. A repository a first push made before failing, with nothing up yet (`GitHubRepo.isUp` false), is gone on with,
+its choices settled. Once the wish is up, as for the person's own repository a wish was opened from (`ownOrigin`), a
+release updates GitHub too, staged and uploaded as the first time with the choices made then (`Repo.license`, `Repo.picture`). One commit per update, on top of
 what's there (a shallow clone, the tree replaced; unchanged when only the export's own marks differ), never the wish's
 own history, which holds every version and the chat's attachments. Its commits, the page's and Send Changes Back's
 are made as `GitHubRepo.author` says: someone whose git signs commits (`commit.gpgSign`, read where the commit is made, so
@@ -284,7 +286,7 @@ conditional settings for a folder, branch or remote count) gets them as their gi
 key, since GitHub verifies a signature only under an address its key names (signed under the private address, it reads
 `bad_email`); everyone else gets their GitHub name and private address, unsigned. A signature that fails, or a commit
 that comes out unsigned, stops it (`GitHubRepo.commit`). The author's and the committer's addresses, which git can set
-apart, are said on the card before anything goes when they aren't the private one: Put on GitHub's card asks in a
+apart, are said on the card before anything goes when they aren't the private one: the release card asks in a
 folder set up as each commit's will be (`GitHubRepo.authors`: the repository's branch and remote, the page branch). An
 address the card didn't say, beforehand or as written in the commit, stops it too. The repository is remembered by the wish's instance
 in Lamp's own folder (`GitHub Repositories.json`, with whether it carries the license, which an update keeps to, and where its page
@@ -308,7 +310,7 @@ the same way, as a web app that's a site (`ScreenKit.isSite`: `layout: site` in 
 manifest): the repository's root is its Web/, it's named after its page's title, and its APP.md says what it is. The
 wish keeps a web app's layout inside, so building, live changes (a page with no Lamp runtime is opened again, not
 swapped in place), Reload and the agent's rules are a web app's, with one rule of its own (`Rules.siteLayout`: keep the
-layout and its own ways of loading what it uses). Put on GitHub lays it out as it came (`StaticSite.layOut`): Web/ at
+layout and its own ways of loading what it uses). On GitHub it's laid out as it came (`StaticSite.layOut`): Web/ at
 the tree's root, so its own README is the repository's and GitHub Pages serves it from main as before (`Staged.site`,
 `Publish.servePage` with the repository's own branch, no page branch and no credit bar over the person's page), and everything
 else (lamp-app.json, credits.json, APP.md, Native.swift, the shared file, Lamp's README and buttons) in one hidden
@@ -322,12 +324,12 @@ there (`GitHubRepo.ownOrigin`, so its Pages address keeps working; any wish open
 with no license added, and only while GitHub has nothing the wish doesn't: otherwise the card asks for Check for
 Updates… first. The upload checks it again as it clones (`upload`'s `expected`: the commit the wish was opened at, or
 the one Lamp last pushed for any wish it keeps a record of), since a commit pushed on top of a newer tip would quietly
-undo what's there. A site keeps every folder it checked in, a `build/` or `node_modules/` its page loads included. Any Put on GitHub over a repository keeps the hidden files and folders at its top that a wish never
+undo what's there. A site keeps every folder it checked in, a `build/` or `node_modules/` its page loads included. Any push over a repository keeps the hidden files and folders at its top that a wish never
 carries (`.github/workflows`, `.gitignore`), with the tree's own over them file by file. The chain's last link takes the repository's
 address when it has none (a repository put up before Lamp wrote it, or a folder's git remote, `RepoImport.repository`).
 The person's folder is only read, never changed or removed. The chain's last link also takes the commit the tree is
 at (`Credits.Remix.commit`, from the clone's HEAD, `RepoImport.repository`): the commit of its repository the wish
-has, which an update is merged from (a contribution goes on the repository's latest instead, below). Put on GitHub keeps the commit it pushed
+has, which an update is merged from (a contribution goes on the repository's latest instead, below). Lamp keeps the commit it pushed
 in the wish's record (`GitHubRepo.Repo.commit`), and an export names the kept repository and commit on the chain when
 its caller names no place (`Sharing.export`), so a file shared from a wish that's on GitHub says where it lives too.
 A wish opened from one repository and put on another gets a second link for the new place (`Credits.remixed`,
@@ -390,11 +392,11 @@ done. lampify's work is all Lamp's, so it asks no approval, and it never runs wh
   `Sharing.export`, `Sharing.open`), and sharing is refused while one is missing (`ShareCheck`).
 - **The shape** (`GitHubProjects.shape`): the app's structure (`make_app_for`), its line (`Sharing.description`, the
   wish's or its root app's) and an APP.md naming what it's based on are looked for in the wish; then the wish is made as
-  Put on GitHub… would put it up (`GitHubRepo.stage` with no repository: lamp-app.json from the shared file's manifest,
+  a release would put it on GitHub (`GitHubRepo.stage` with no repository: lamp-app.json from the shared file's manifest,
   credits.json, the icon, the license files, Lamp's own files, README) and opened again as Open from GitHub… does
   (`RepoImport.open`). Whatever sharing refuses (a license missing, a key in the code) is reported as something still
   missing, with the rest. The tree is kept in `.lamp/repository` for a look; nothing goes anywhere until the person
-  chooses Put on GitHub….
+  ticks Also put on GitHub on its link's Release Update.
 - **A Lamp wish on GitHub** isn't rebuilt: the skill, and lampify when it's called on one, send the person to File →
   Open from GitHub….
 
@@ -504,12 +506,12 @@ request that names the app, since without either Lamp makes its own version. The
 the helper model after a change lands (`Store`, beside the version's title), kept in `.lamp/suggestions.json` with a
 stamp of the name, line and APP.md, and put into the extension's Info.plist as the app is installed (`Sidebar.install`:
 `LampSuggestions`, with `LampAbout` and `LampShareLink`); the panel has three of its own until then
-(`RemixOffer.fallback`). A wish that's been Put on GitHub also has its repository and the commit last pushed there
+(`RemixOffer.fallback`). A wish that's on GitHub also has its repository and the commit last pushed there
 (`LampRepository`, `LampCommit`), while the repository is public and holds this version (`GitHubRepo.remixOrigin`, by the app's wish for an app in
 a folder of its own; a push refreshes every app of the wish), so
 the panel's request goes with them and Lamp starts from a copy of this exact wish; a
 starter's copy doesn't name the starter, since it may have been changed. When suggestions arrive after an install, a
-Share Link is made or taken down, or Put on GitHub pushes a new commit, the installed
+Share Link is made or taken down, or a release pushes a new commit to GitHub, the installed
 copy is made again from the build on disk and signed as before (`Store.refreshInstalled`: now if the app isn't open,
 else at its next quit), so a copy taken off this Mac carries them. On a Mac with Lamp, a request that came with a wish's
 link goes with the exact wish through a link of Lamp's own (`lamp://wish?file=…&text=…`, `exactWishLink` in

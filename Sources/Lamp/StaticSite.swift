@@ -9,7 +9,7 @@ import Foundation
 /// changes, Reload and the agent's rules are a web app's, and a page with no Lamp runtime of its own is opened again
 /// for a change rather than swapped in place (`LampPageLive`). The repository's layout is worked out where the wish
 /// meets GitHub:
-/// - Put on GitHub (`GitHubRepo.stage`, `layOut`) puts Web/ at the tree's root and everything else in one folder of
+/// - Putting it on GitHub (`GitHubRepo.stage`, `layOut`) puts Web/ at the tree's root and everything else in one folder of
 ///   Lamp's, `.lamp-wish/`, hidden so it neither clutters the site's root nor is served by GitHub Pages' own build. Of
 ///   Lamp's own files only lamp.js goes up, and only when the page loads it.
 /// - Open from GitHub (`RepoImport.open`, `unpack`) reads such a tree back as a shared file's contents, and a plain
@@ -18,7 +18,7 @@ enum StaticSite {
     /// Lamp's folder in a site's repository: the shared file's contents but the page, with Lamp's README.
     static let folder = ".lamp-wish"
 
-    /// A tree laid out by Put on GitHub for a site.
+    /// A tree laid out for a site on GitHub.
     static func holdsWish(_ tree: URL) -> Bool {
         FileManager.default.fileExists(atPath: tree.appendingPathComponent("\(folder)/lamp-app.json").path)
     }
@@ -63,7 +63,7 @@ enum StaticSite {
             # \(name)
 
             A site opened\(from) as it is: Web/ is the repository's root, laid out as the repository has it (index.html with \
-            its scripts, styles and pictures beside it, and no build step). Put on GitHub puts it back the same way, so \
+            its scripts, styles and pictures beside it, and no build step). Lamp puts it back on GitHub the same way, so \
             its GitHub Pages address keeps working. Its own README.md, in Web/, says what it is.
 
             """.utf8).write(to: copy.appendingPathComponent("APP.md"))

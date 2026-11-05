@@ -2052,7 +2052,7 @@ final class Store: ObservableObject {
     }
 
     func handle(url: URL) {
-        // A shared file, or a folder holding a wish as Put on GitHub lays one out.
+        // A shared file, or a folder holding a wish as Lamp lays one out on GitHub.
         var folder: ObjCBool = false
         if url.isFileURL, url.pathExtension == "lampapp" || (FileManager.default.fileExists(atPath: url.path, isDirectory: &folder) && folder.boolValue) {
             importApp(from: url)

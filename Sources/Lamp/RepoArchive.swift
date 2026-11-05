@@ -5,7 +5,7 @@ import Compression
 /// installer): GitHub's archive of one commit, read and written by Lamp itself. Nothing the repository holds runs here.
 /// The branch or tag is settled to a commit first, so what's reviewed, credited and updated from later is that commit and
 /// no other. The whole archive is checked before a byte of it is written, and refused as a whole: a repository that holds
-/// anything but plain folders and files at plain paths isn't one Put on GitHub made. The answers come from GitHub
+/// anything but plain folders and files at plain paths isn't one Lamp put on GitHub. The answers come from GitHub
 /// anonymously, nothing of the person's going with them.
 enum RepoArchive {
     /// What came, for the credits: said by Lamp, which asked, never read from anything in the repository.

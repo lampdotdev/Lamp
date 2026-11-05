@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + shareEntries + wishLinkEntries + repoEntries + contributeEntries + remixEntries + transitionEntries + deviceEntries
+    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + shareEntries + wishLinkEntries + contributeEntries + remixEntries + transitionEntries + deviceEntries
 
     private static let useRowStatuses: [EngineUseRow.Status] = [
         .use, .gettingReady, .downloading(0.4), .failed(ErrorMessages.noConnection),
@@ -894,12 +894,11 @@ enum Gallery {
         share("With a link", link: true),
         share("No link yet"),
         share("From a repository", link: true, canContribute: true),
-        share("On GitHub", link: true, onGitHub: true),
     ]
 
-    private static func share(_ name: String, link: Bool = false, canContribute: Bool = false, onGitHub: Bool = false) -> Entry {
+    private static func share(_ name: String, link: Bool = false, canContribute: Bool = false) -> Entry {
         Entry(group: "Share", name: name) {
-            AnyView(SharePopover(link: link ? URL(string: "https://lamp.dev/w/AyTkit4xCc") : nil, canContribute: canContribute, onGitHub: onGitHub) { _ in }
+            AnyView(SharePopover(link: link ? URL(string: "https://lamp.dev/w/AyTkit4xCc") : nil, canContribute: canContribute) { _ in }
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
@@ -944,11 +943,51 @@ enum Gallery {
                  stage: .failed("Lamp couldn't reach lamp.dev. Try again in a moment. GitHub wasn't updated either."), link: true, changed: true, gitHub: true),
         wishLink("On GitHub, not signed in", values: releaseValues(), link: true, changed: true,
                  gitHubNote: "To update someone/disk-map on GitHub too, sign in to GitHub with gh."),
+        // An app that isn't on GitHub yet: Also put on GitHub, unticked, and while it's ticked what goes up and the
+        // choices GitHub takes once.
+        wishLink("Release, put on GitHub unticked", values: releaseValues(putOnGitHub: false), link: true, changed: true, setup: .init(stage: .ready)),
+        wishLink("Release, put on GitHub, checking", values: releaseValues(putOnGitHub: true), link: true, changed: true, setup: .init(stage: .preparing)),
+        wishLink("Release, put on GitHub, ready", values: releaseValues(putOnGitHub: true), link: true, changed: true, setup: firstPush()),
+        wishLink("Release, put on GitHub, private", values: releaseValues(putOnGitHub: true), link: true, changed: true,
+                 setup: firstPush(remix: "lamp.dev/w/AyTkit4xCc", isPrivate: true)),
+        wishLink("Release, put on GitHub, web game", values: releaseValues(putOnGitHub: true), link: true, changed: true,
+                 setup: firstPush(page: "someone.github.io/disk-map/")),
+        wishLink("Release, put on GitHub, private web game", values: releaseValues(putOnGitHub: true), link: true, changed: true,
+                 setup: firstPush(remix: "lamp.dev/w/AyTkit4xCc", isPrivate: true, privatePage: true)),
+        wishLink("Release, put on GitHub, share-alike", values: releaseValues(putOnGitHub: true), link: true, changed: true,
+                 setup: firstPush(notes: ["Engine is GPL-3.0-or-later, so this remix is too: anyone may share it on under the same license."],
+                                  canChooseLicense: false)),
+        wishLink("Release, put on GitHub, many sources", values: releaseValues(putOnGitHub: true), link: true, changed: true,
+                 setup: firstPush(notes: [unlicensedData, "Your git signs your commits, so they go as you sign them, showing you@example.com on GitHub."],
+                                  terms: manySources)),
+        wishLink("Release, put on GitHub, can't go", values: releaseValues(putOnGitHub: true), link: true, changed: true,
+                 setup: .init(stage: .refused("Disk Map can't go on GitHub: it holds a key or a password. It's in Sources/App.swift. Ask Lamp to take it out and keep it out of the code."))),
+        wishLink("Release, put on GitHub, made before", values: releaseValues(putOnGitHub: true), link: true, changed: true,
+                 setup: firstPush(settled: true)),
+        wishLink("First link, put on GitHub", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, putOnGitHub: true),
+                 setup: firstPush(remix: "This app's link", isPrivate: true)),
+        wishLink("Release, needs GitHub's tool", values: releaseValues(), link: true, changed: true, setup: .init(stage: .needsGitHub(.install))),
+        wishLink("Release, needs a sign-in to GitHub", values: releaseValues(), link: true, changed: true, setup: .init(stage: .needsGitHub(.signIn))),
+        wishLink("Release, putting it on GitHub", values: releaseValues(putOnGitHub: true), stage: .sending, link: true, changed: true,
+                 gitHubStage: .working("Making someone/disk-map…"), setup: firstPush()),
+        wishLink("Released, put on GitHub", link: true, copied: true, gitHub: true, gitHubStage: .put("someone/disk-map", "v4")),
+        wishLink("Released, putting on GitHub failed", values: releaseValues(putOnGitHub: true), link: true, changed: true,
+                 gitHubStage: .failed("The link is updated, but Disk Map isn't on GitHub yet: GitHub didn't take it: the connection was lost."),
+                 setup: firstPush(settled: true)),
     ]
 
-    private static func releaseValues(alsoGitHub: Bool = true) -> WishLinkCard.Values {
+    private static func firstPush(settled: Bool = false, remix: String? = nil, isPrivate: Bool = false, page: String? = nil,
+                                  privatePage: Bool = false, notes: [String] = [], terms: [String] = [],
+                                  canChooseLicense: Bool = true) -> WishLinkCard.GitHubSetup {
+        .init(stage: .ready, repo: "someone/disk-map", settled: settled, page: isPrivate ? nil : page, privatePage: privatePage,
+              remix: remix ?? (isPrivate ? "lamp.dev/w/AyTkit4xCc" : "lamp.dev, from github.com/someone/disk-map"),
+              size: "41 files · 1.4 MB", notes: notes, terms: terms, isPrivate: isPrivate, license: canChooseLicense, canChooseLicense: canChooseLicense)
+    }
+
+    private static func releaseValues(alsoGitHub: Bool = true, putOnGitHub: Bool = false) -> WishLinkCard.Values {
         .init(name: "Disk Map", line: diskMapLine, words: diskMapWish,
-              notes: "Rings show how much each folder grew this week\nClick a ring's middle to go back up", alsoGitHub: alsoGitHub)
+              notes: "Rings show how much each folder grew this week\nClick a ring's middle to go back up", alsoGitHub: alsoGitHub,
+              putOnGitHub: putOnGitHub)
     }
 
     private static let diskMapLine = "Shows where your disk space goes, as rings that fill in while it measures."
@@ -958,7 +997,7 @@ enum Gallery {
                                  stage: WishLinkCard.Stage = .editing, link: Bool = false, copied: Bool = false,
                                  changed: Bool = false, canIncludeFile: Bool = false, noLicense: String? = nil, writingNotes: Bool = false,
                                  gitHub: Bool = false, gitHubNote: String? = nil, gitHubStage: WishLinkCard.GitHubStage? = nil,
-                                 width: CGFloat? = 440) -> Entry {
+                                 setup: WishLinkCard.GitHubSetup? = nil, width: CGFloat? = 440) -> Entry {
         Entry(group: "Share Link", name: name) {
             let folder = Starters.folder?.appendingPathComponent("diskmap")
             let card = WishLinkCard(
@@ -968,7 +1007,7 @@ enum Gallery {
                 limits: WishLink.cardLimits, link: link ? "https://lamp.dev/w/AyTkit4xCc" : nil, changed: !link || changed,
                 stage: stage, copied: copied, retake: retake ? {} : nil, retaking: false, canIncludeFile: canIncludeFile, noLicense: noLicense,
                 writingNotes: writingNotes, gitHub: gitHub ? "someone/disk-map" : nil, gitHubNote: gitHubNote, gitHubStage: gitHubStage,
-                retryGitHub: { if case .failed = gitHubStage { return {} } else { return nil } }(),
+                retryGitHub: { if case .failed = gitHubStage { return {} } else { return nil } }(), gitHubSetup: setup,
                 share: {}, copy: {}, stop: {}, close: {}, width: width)
             return AnyView(card
                 .background(Paper.page, in: RoundedRectangle(cornerRadius: 16))
@@ -977,47 +1016,6 @@ enum Gallery {
                 .fixedSize(horizontal: false, vertical: true))
         }
     }
-
-    /// The card that says what goes on GitHub and where, from checking it to its being up, in the chat's place at its
-    /// narrowest and widest.
-    private static let repoEntries: [Entry] = [
-        repo("Checking", stage: .preparing),
-        repo("Needs GitHub's tool", stage: .needsGitHub(.install)),
-        repo("Needs a sign-in", stage: .needsGitHub(.signIn)),
-        repo("No license, public", stage: .ready, notes: ["Found Code by Someone came with no license. Make sure you're comfortable sharing it."], remix: true),
-        repo("No license, private", stage: .ready, isPrivate: true),
-        repo("Ready, first time", stage: .ready),
-        repo("Ready, public", stage: .ready, remix: true),
-        repo("Ready, signed by you", stage: .ready, notes: ["Your git signs your commits, so they go as you sign them, showing you@example.com on GitHub."]),
-        repo("Ready, with a share link", stage: .ready, link: true),
-        repo("Ready, share-alike", stage: .ready, notes: ["Engine is GPL-3.0-or-later, so this remix is too: anyone may share it on under the same license."], canChooseLicense: false),
-        repo("Working", stage: .working("Uploading to GitHub…")),
-        repo("Couldn't put it up", stage: .failed("GitHub didn't take it: the connection was lost.")),
-        repo("Up", stage: .done(unchanged: false), up: true),
-        repo("Up and copied", stage: .done(unchanged: false), up: true, copied: true),
-        repo("Up, unchanged", stage: .done(unchanged: true), up: true),
-        repo("Up, wide", stage: .done(unchanged: false), up: true, width: 480),
-        // A web game, whose page goes up beside its code.
-        repo("Game, ready", stage: .ready, remix: true, game: true),
-        // The wish's picture, which the README shows while the box is ticked.
-        repo("Game, ready, with its picture", stage: .ready, remix: true, game: true, picture: true),
-        repo("Ready, picture left out", stage: .ready, remix: true, picture: false),
-        repo("Game, ready, no license", stage: .ready, notes: ["Found Code by Someone came with no license. Make sure you're comfortable sharing it."],
-             remix: true, game: true),
-        repo("Game, private", stage: .ready, isPrivate: true, game: true),
-        repo("Game, putting up its page", stage: .working("Waiting for GitHub to put the page up…"), remix: true, game: true),
-        repo("Game, page didn't go up", stage: .failed("GitHub is still putting the page up. It should be at https://someone.github.io/new-york/ in a few minutes; try again if it isn't."),
-             remix: true, game: true),
-        repo("Game, up", stage: .done(unchanged: false), up: true, remix: true, game: true),
-        repo("Game, up and copied", stage: .done(unchanged: false), up: true, copied: true, remix: true, game: true),
-        repo("Game, up, wide", stage: .done(unchanged: false), up: true, width: 480, remix: true, game: true),
-        // A web app, whose page goes up beside its code to be used in a browser.
-        repo("Web app, ready", stage: .ready, remix: true, webApp: true),
-        repo("Web app, private", stage: .ready, isPrivate: true, webApp: true),
-        repo("Web app, up", stage: .done(unchanged: false), up: true, remix: true, webApp: true),
-        repo("Ready, many sources", stage: .ready, notes: [unlicensedData], terms: manySources, remix: true),
-        repoScreen("Ready, many sources, in the chat"),
-    ]
 
     /// The card that sends a remix's changes back to the repository it came from, from checking them to the pull
     /// request being open, in the chat's place at its narrowest and widest.
@@ -1077,44 +1075,6 @@ enum Gallery {
                                                  credit: "Based on Slop New York by Mr.doob",
                                                  notes: [unlicensedData, "Your git signs your commits, so they go as you sign them, showing you@example.com on GitHub."],
                                                  terms: manySources, size: "3 files changed", copied: false, canSend: true)
-        }
-    }
-
-    private static func repoScreen(_ name: String) -> Entry {
-        screen(name, group: "GitHub", [], height: 520) { state in
-            state.repo = SidebarRepo(name: "New York", icon: nil, stage: .ready, repo: "someone/new-york", url: nil, credit: "Based on Slop New York by Mr.doob",
-                                     openInLamp: "lamp.dev, from github.com/someone/new-york", notes: [unlicensedData], size: "38 files · 1.2 MB",
-                                     copied: false, update: false, canPut: true, isPrivate: false, license: true, canChooseLicense: true, terms: manySources)
-        }
-    }
-
-    private static func repo(_ name: String, stage: RepoCard.Stage, notes: [String] = [], terms: [String] = [], link: Bool = false, up: Bool = false, copied: Bool = false,
-                             canChooseLicense: Bool = true, width: CGFloat? = nil, remix: Bool = false, isPrivate: Bool = false,
-                             game: Bool = false, webApp: Bool = false, picture: Bool? = nil) -> Entry {
-        Entry(group: "GitHub", name: name) {
-            let folder = Starters.folder?.appendingPathComponent("newyork")
-            let ready = stage != .preparing
-            let card = RepoCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) }, name: "New York",
-                                stage: stage, repo: ready ? "someone/new-york" : nil, url: up ? "https://github.com/someone/new-york" : nil,
-                                credit: "Based on Slop New York by Mr.doob",
-                                openInLamp: remix ? "lamp.dev, from github.com/someone/new-york" : link ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes, terms: terms,
-                                size: ready ? "38 files · 1.2 MB" : nil, copied: copied, update: up,
-                                canPut: stage == .ready || { if case .failed = stage { true } else { false } }(), isPrivate: isPrivate, license: canChooseLicense,
-                                canChooseLicense: canChooseLicense, page: (game || webApp) && !isPrivate && ready ? "someone.github.io/new-york/" : nil,
-                                pageUp: (game || webApp) && up && { if case .done = stage { true } else { false } }(), privateGame: (game || webApp) && isPrivate,
-                                plays: !webApp,
-                                picture: picture == nil ? nil : folder.flatMap { folder in
-                                    ["\(Starters.listingFolder)/preview.png", "\(Starters.treeFolder)/\(Starters.picturesFolder)/preview.png"]
-                                        .lazy.compactMap { NSImage(contentsOf: folder.appendingPathComponent($0)) }.first },
-                                showsPicture: picture ?? false,
-                                put: {}, fix: {}, makeLink: {}, setPrivate: { _ in }, setLicense: { _ in },
-                                openRepo: {}, copy: {}, close: {}, width: width)
-            return AnyView(card
-                .frame(width: width == nil ? 340 : nil)
-                .background(AnyShapeStyle(ChatLook.paper), in: RoundedRectangle(cornerRadius: 16))
-                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
-                .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
-                .fixedSize(horizontal: false, vertical: true))
         }
     }
 

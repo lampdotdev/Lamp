@@ -1,13 +1,13 @@
 import Foundation
+import LampSidebarKit
 
-/// A release's GitHub half (Release Update on the Share Link card, `WishLinkCards.share`): for a wish that's on GitHub,
-/// the wish as it is now goes up as Put on GitHub's update does (`GitHubRepo.stage` and `upload`, with their checks), its
-/// what's-new lines as the commit's message, then a release of the repository's, tagged with the release's version and
-/// those lines as its notes, and the page as before. The link on lamp.dev always goes first: this follows it, and a
-/// failure here is said apart from it, so the link works whatever GitHub does.
-///
-/// Putting a wish on GitHub the first time stays Put on GitHub's own card (`GitHubRepoCards`), which asks the choices
-/// GitHub takes once; after that, a release is how the repository is updated.
+/// A release's GitHub half (Release Update on the Share Link card, `WishLinkCards.share`), the one way a wish goes to
+/// GitHub. For a wish that's on GitHub, the wish as it is now goes up (`GitHubRepo.stage` and `upload`, with their
+/// checks), its what's-new lines as the commit's message, then a release of the repository's, tagged with the release's
+/// version and those lines as its notes, and the page as before. For one that isn't, ticking Also put on GitHub shows
+/// what will go up and the choices GitHub takes once (`FirstPush`: public or private, the license, the README's
+/// picture), and the release makes the repository and pushes the first commit the same way. The link on lamp.dev
+/// always goes first: this follows it, and a failure here is said apart from it, so the link works whatever GitHub does.
 enum GitHubRelease {
     /// The release as GitHub gets it. Its tag is the release's number ("v1" for its first, which is its link's first
     /// share; `WishReleases.Release.number`): simple, and never reused, since each release is numbered after the last.
@@ -49,6 +49,10 @@ enum GitHubRelease {
         case ready(Target)
         /// On GitHub, but not to be updated from here: what to do about it.
         case note(String)
+        /// Not on GitHub yet: a release can put it there, with the person's GitHub sign-in.
+        case new(gh: String, login: String)
+        /// Not on GitHub yet, and GitHub's command-line tool or a sign-in to it is missing.
+        case needs(GitHubNeed)
     }
 
     struct Failure: LocalizedError {
@@ -63,17 +67,17 @@ enum GitHubRelease {
     }
 
     /// Whether the wish is on GitHub and can be released there: one Lamp put up (`GitHubRepo.kept`), or the person's own
-    /// repository it was opened from. Nil for a wish that isn't on GitHub, which Put on GitHub… puts there first.
-    static func find(_ project: LampProject) async -> Found? {
+    /// repository it was opened from. A wish that isn't is `new`, for a release to put there the first time.
+    static func find(_ project: LampProject) async -> Found {
         let kept = GitHubRepo.isUp(project) ? GitHubRepo.kept(for: project) : nil
         let signIn = kept.map { Found.note("To update \($0.repo) on GitHub too, sign in to GitHub with gh.") }
-        guard let gh = await Publish.gh() else { return signIn }
-        guard let login = await Publish.login(gh: gh) else { return signIn }
+        guard let gh = await Publish.gh() else { return signIn ?? .needs(.install) }
+        guard let login = await Publish.login(gh: gh) else { return signIn ?? .needs(.signIn) }
         var target: Target
         if let kept {
             target = Target(repo: kept.repo, gh: gh, login: login)
         } else {
-            guard let own = await GitHubRepo.ownOrigin(of: project, login: login, gh: gh) else { return nil }
+            guard let own = await GitHubRepo.ownOrigin(of: project, login: login, gh: gh) else { return .new(gh: gh, login: login) }
             target = Target(repo: own.repo, gh: gh, login: login, openedAt: own.commit, behind: own.behind)
         }
         do {
@@ -109,6 +113,130 @@ enum GitHubRelease {
         // stands, and this older one's is left out.
         guard GitHubRepo.kept(for: project)?.commit == uploaded.repo.commit else { return }
         await GitHubRepo.settle(uploaded.repo, before: before, of: project, gh: target.gh)
+    }
+
+    // MARK: The first time
+
+    /// Putting a wish on GitHub the first time, as Release Update's card has it while Also put on GitHub is ticked: the
+    /// choices GitHub takes once, and what would go up with them, staged and checked so the card shows it before
+    /// anything goes. A repository made by a first try that failed before anything went up (`kept`, with no commit) is
+    /// gone on with: its choices are settled, and the release finishes it.
+    struct FirstPush {
+        var stage: WishLinkCard.GitHubSetup.Stage = .preparing
+        var gh: String
+        var login: String
+        var kept: GitHubRepo.Repo?
+        var repo: String?
+        var isPrivate = false
+        var license = true
+        /// The README shows the wish's picture: as chosen at a first try, else shown, as the card shows it.
+        var showsPicture = true
+        /// What would go up, as checked: whether anyone can read it there, who its commits are made as.
+        var staged: GitHubRepo.Staged?
+        var isPublic: Bool?
+        var authors: [GitHubRepo.Author]?
+        /// The latest check: one that a newer choice started over doesn't land.
+        var checking: UUID?
+
+        init(gh: String, login: String, kept: GitHubRepo.Repo?) {
+            self.gh = gh
+            self.login = login
+            self.kept = kept
+            license = kept.map { $0.license ?? false } ?? true
+            showsPicture = kept?.picture ?? true
+        }
+
+        var settled: Bool { kept != nil }
+
+        /// Removes what was staged to check.
+        mutating func discard() {
+            if let staged { try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent()) }
+            staged = nil
+        }
+    }
+
+    /// What `check` found: what goes up and where.
+    struct Checked {
+        var repo: String
+        var staged: GitHubRepo.Staged
+        var isPublic: Bool
+        var authors: [GitHubRepo.Author]
+    }
+
+    /// Stages what the first push would put up with the card's choices, checked (a license, a key in the code), with
+    /// who its commits are made as, so the card shows it before anything goes. A repository made already keeps its name
+    /// and is as GitHub says; a new one gets a free name on the person's account.
+    static func check(_ project: LampProject, _ push: FirstPush, picture: Data?) async throws -> Checked {
+        let repo: String
+        let isPublic: Bool
+        if let kept = push.kept {
+            repo = kept.repo
+            isPublic = await GitHubRepo.isPublic(kept.repo, gh: push.gh) ?? false
+        } else {
+            repo = await Publish.freeName(for: project, login: push.login, gh: push.gh)
+            isPublic = !push.isPrivate
+        }
+        let shown = push.showsPicture ? picture : nil
+        let staged = try await Task.detached(priority: .userInitiated) {
+            try GitHubRepo.stage(project, repo: repo, link: WishLink.kept(for: project)?.url, isPublic: isPublic, picture: shown)
+        }.value
+        do {
+            let authors = try await GitHubRepo.authors(for: staged, repo: repo, isNew: push.kept == nil, gh: push.gh, login: push.login)
+            return Checked(repo: repo, staged: staged, isPublic: isPublic, authors: authors)
+        } catch {
+            try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent())
+            throw error
+        }
+    }
+
+    /// The card's view of the first push.
+    static func setup(_ push: FirstPush, of project: LampProject) -> WishLinkCard.GitHubSetup {
+        let credits = push.staged?.credits ?? Credits.load(project)
+        var (notes, terms) = ShareCheck.cardNotes(for: credits)
+        if !credits.generated.isEmpty { notes.append(Credits.generatedLine(credits.generated.count) + ", marked as such.") }
+        if push.stage == .ready, let note = push.authors.flatMap(GitHubRepo.note(for:)) { notes.append(note) }
+        let isPublic = push.isPublic ?? !push.isPrivate
+        // What the README offers: in a public repository the repository itself on lamp.dev; in a private one the link.
+        let remix = push.staged?.remix.flatMap(URL.init(string:)).flatMap { url in
+            URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "repo" }?.value
+                .map { "lamp.dev, from " + $0.replacingOccurrences(of: "https://", with: "") }
+        }
+        let link = WishLink.kept(for: project).map { kept in kept.url.host.map { $0 + kept.url.path } ?? kept.url.absoluteString }
+        let page = (push.staged?.page?.url ?? push.staged?.site).map { $0.replacingOccurrences(of: "https://", with: "") }
+        return WishLinkCard.GitHubSetup(
+            stage: push.stage, repo: push.repo, settled: push.settled, page: page, plays: Publish.pageUse(project) != .use,
+            privatePage: !isPublic && Publish.hasPage(project), credit: credits.basedOn,
+            remix: push.staged == nil ? nil : remix ?? link ?? "This app's link",
+            size: push.staged.map { "\($0.files) files · " + ByteCountFormatter.string(fromByteCount: Int64($0.bytes), countStyle: .file) },
+            notes: notes, terms: terms, isPrivate: push.isPrivate, license: push.license,
+            canChooseLicense: push.staged.map { GitHubRepo.canOfferLicense($0.credits) } ?? true, showsPicture: push.showsPicture)
+    }
+
+    /// Puts the wish on GitHub the first time, after its link went up, with the choices on the card: staged afresh, so the
+    /// README offers the link just made, and pushed as `version`'s commit, tagged as its release, with its page. Answers
+    /// the repository. A try after one that made the repository and failed goes on with it, over only what Lamp pushed.
+    static func putUp(_ project: LampProject, _ push: FirstPush, version: Version, picture: Data?,
+                      pushed: @escaping @Sendable () -> Void, step: @escaping @Sendable (String) -> Void) async throws -> String {
+        guard let repo = push.repo, let isPublic = push.isPublic else { throw Failure(message: "Lamp hadn't checked what goes to GitHub yet.") }
+        let before = GitHubRepo.kept(for: project)
+        step("Checking what goes to GitHub…")
+        let shown = push.showsPicture ? picture : nil
+        let link = WishLink.kept(for: project)?.url
+        let staged = try await Task.detached(priority: .userInitiated) {
+            try GitHubRepo.stage(project, repo: repo, link: link, isPublic: isPublic, picture: shown)
+        }.value
+        defer { try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent()) }
+        let isNew = before?.repo != repo
+        let uploaded = try await GitHubRepo.upload(staged, of: project, to: repo, gh: push.gh, login: push.login, isNew: isNew,
+                                                   expected: isNew ? nil : before?.commit, isPrivate: !isPublic,
+                                                   license: isNew ? push.license : before?.license ?? false,
+                                                   picture: picture == nil ? before?.picture : push.showsPicture,
+                                                   authors: push.authors, release: version, pushed: pushed, step: step)
+        // As a later release's: one that pushed while this waited for its page keeps its record.
+        if GitHubRepo.kept(for: project)?.commit == uploaded.repo.commit {
+            await GitHubRepo.settle(uploaded.repo, before: before, of: project, gh: push.gh)
+        }
+        return repo
     }
 
     /// Makes the release on GitHub at `commit`, tagged with its version, unless it's there already from a try that

@@ -190,7 +190,7 @@ is) that need no key or account, use the AI the person builds with when they use
 example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
 
 Each starter is made in a public repository in the Lamp team's account (github.com/lampdotdev/<folder>, the
-account `Starters.account` names), laid out as Put on GitHub lays a wish out: the app's code and files with Lamp's own
+account `Starters.account` names), laid out as Lamp lays a wish out on GitHub: the app's code and files with Lamp's own
 around them (so `zsh build.sh` builds it there too), an MIT license, a README and, among its pictures (`.github/`), the
 drawn icon and the desk's preview. Lamp's repository holds only what names each one: `Resources/Starters/<folder>/
 starter.md`, with the starter's line and three changes, where it lives (`repository:`) and the commit this Lamp ships
@@ -208,7 +208,7 @@ What a starter's repository shows is the starter's own: the GitHub description i
 (`GitHubRepo.readme` with a `Showcase`) opens with the icon from `.github/`, the description, the buttons (Play in your browser for a game, Open
 in Lamp, "Generated apps"), its reel's loop where it has one and its preview otherwise, and "Ideas to try" titled with starter.md's `offer` and listing its tweaks, each a link
 that opens Lamp on a copy with that request. A game whose page is the whole game also gets a page
-anyone plays in a browser (`StarterRepos.stagePage`: the page Put on GitHub puts up for a game, `Publish.copyPage`, with the credit bar and the tweaks in its Remix
+anyone plays in a browser (`StarterRepos.stagePage`: the page a release puts up on GitHub for a game, `Publish.copyPage`, with the credit bar and the tweaks in its Remix
 panel, which names the starter so a remix starts from a fresh copy of it, "Remixing a published page" in the
 wishes guide, on the repository's `gh-pages` branch for GitHub Pages, at lampdotdev.github.io/<folder>), which the README
 links and the repository's website points to; any other starter's website is its remix link on lamp.dev. `scripts/publish-starters.sh` refreshes all of that: it clones each
@@ -301,7 +301,7 @@ leaves the storyboards and reels out (build.sh).
 **Changing a starter.** Its repository is the starter; Lamp pins a commit of it. A change is best made in Lamp Dev,
 where it's played as it's made: open the starter with File → Open from GitHub… (github.com/lampdotdev/<folder>), ask
 for the change, then File → Send Changes Back…, which opens a pull request on the repository (a member of the account's
-starters team, which has push access to every starter's repository, can Put on GitHub to it directly). A change made in a clone and pushed is as good. Once the repository has moved on,
+starters team, which has push access to every starter's repository, can release to it directly with Also update GitHub). A change made in a clone and pushed is as good. Once the repository has moved on,
 `scripts/pull-starters.sh [<folder>]` moves the pin to its latest commit and fetches the tree: look at what changed
 (`git -C Resources/Starters/<folder>/tree log`, or the repository), run `scripts/check-starters.sh <folder>` and
 `swift test --filter StartersTests`, and commit the starter.md. When the icon's design (icon.json) changed, draw the
@@ -331,7 +331,7 @@ Support/Lamp Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp); its rep
    them.
 4. Put it on GitHub: `./build.sh`, then `scripts/publish-starters.sh --new <folder> <the wish's folder>`, signed in
    with `gh` to an account that can make repositories in lampdotdev. It makes the public repository (and a game's
-   page) from the wish as Put on GitHub would (GitHub's API can't mark a new file executable, so in a new
+   page) from the wish as a release to GitHub would (GitHub's API can't mark a new file executable, so in a new
    repository `build.sh` isn't, which is why the README says `zsh build.sh`; Lamp writes it afresh, executable, before
    building a copy), gives the account's starters team push access to it (the team whose
    members make and change starters), and fills in the starter's `repository:` and `commit:`, fetching the tree. Then its pictures: take `preview.png` as above, and paint and draw the icon into the tree with

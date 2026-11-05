@@ -112,7 +112,7 @@ final class CommitAuthorTests: XCTestCase {
         XCTAssertEqual(show("%ae %ce", commit, in: folder), "signer@example.com someone@users.noreply.github.com")
     }
 
-    /// Put on GitHub's card asks where the commit will be made, on the branch it will be made on: settings that apply
+    /// A first push asks where the commit will be made, on the branch it will be made on: settings that apply
     /// only there (here, signing as another address on main) are what the card shows, and the commit then goes.
     func testTheCardAsksOnTheBranchTheCommitIsMadeOn() async throws {
         let signing = try signing()

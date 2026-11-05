@@ -63,17 +63,34 @@ private struct WishLinkWindowContent: View {
     @ObservedObject private var cards = WishLinkCards.shared
     let project: LampProject
     let noLicense: String?
+    /// The card's height as drawn: the window is as tall as it, up to the screen's room, and scrolls past that (the
+    /// choices for putting it on GitHub the first time make it long).
+    @State private var height: CGFloat = 400
+
+    private var room: CGFloat { (NSScreen.main?.visibleFrame.height ?? 800) - 80 }
 
     var body: some View {
+        ScrollView {
+            content.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(width: 440, height: min(height, room))
+    }
+
+    @ViewBuilder private var content: some View {
         if let card = cards.card(for: project) {
             WishLinkCard(icon: card.iconImage, picture: card.image,
                          values: Binding(get: { card.values }, set: { cards.update(project, values: $0) }),
                          limits: WishLink.cardLimits, link: card.shared?.url.absoluteString, changed: card.changed,
                          stage: card.stage, copied: card.copied,
                          retake: cards.canRetake(project) ? { cards.retake(project) } : nil, retaking: card.retaking,
-                         canIncludeFile: card.values.includeFile || (card.gitHub != nil && card.values.alsoGitHub), noLicense: noLicense,
+                         canIncludeFile: card.values.includeFile || (card.gitHub != nil && card.values.alsoGitHub)
+                            || (card.values.putOnGitHub && card.firstPush?.isPublic == true), noLicense: noLicense,
                          writingNotes: card.writingNotes, gitHub: card.gitHub?.repo, gitHubNote: card.gitHubNote, gitHubStage: card.gitHubStage,
                          retryGitHub: card.gitHubRetry == nil ? nil : { cards.retryGitHub(project) },
+                         gitHubSetup: card.firstPush.map { GitHubRelease.setup($0, of: project) },
+                         setUpGitHub: .init(fix: { cards.fixGitHub(project) }, setPrivate: { cards.setGitHubPrivate(project, $0) },
+                                            setLicense: { cards.setGitHubLicense(project, $0) }, setPicture: { cards.setGitHubPicture(project, $0) }),
                          share: { cards.share(project) }, copy: { cards.copy(project) }, stop: { cards.stop(project) },
                          close: { cards.close(project) }, width: 440)
                 // Under the window's clear title bar, so the close button sits on the card.

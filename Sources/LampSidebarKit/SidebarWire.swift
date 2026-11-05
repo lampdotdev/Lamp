@@ -5,9 +5,9 @@ import Foundation
 /// the extension sends what the person did. Lamp draws nothing here and the extension decides nothing: it shows
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
-    /// What this side reads and writes; see `SidebarCommand.hello`. 12: Put on GitHub's card shows the wish's picture
-    /// and its box (`SidebarRepo.picture`), so the picture goes up only from a chat that showed it. 13: the GitHub cards
-    /// fold the lines of sources only credited under their own terms (`SidebarRepo.terms`, `SidebarContribute.terms`).
+    /// What this side reads and writes; see `SidebarCommand.hello`. 12: Put on GitHub's card (gone since: Release Update
+    /// puts a wish on GitHub) showed the wish's picture and its box. 13: the GitHub cards fold the lines of sources only
+    /// credited under their own terms (`SidebarContribute.terms`).
     public static let version = 13
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
@@ -92,8 +92,6 @@ public struct SidebarState: Codable, Equatable {
     /// How many times making the wish's file for Share… failed (the chat says why): each one ends a wait for it, as the
     /// file arriving does. Missing from a Lamp before it.
     public var shareFailures: Int?
-    /// The Put on GitHub card, while it's open in this chat (`SidebarCommand.repo`): shown in the chat's place.
-    public var repo: SidebarRepo?
     /// The Send Changes Back card, while it's open in this chat (`SidebarCommand.contribute`): shown in the chat's place.
     public var contribute: SidebarContribute?
     /// Try On's choices, for a wish that opens anywhere but this Mac alone (an iPhone app, a TV app, a game, a screen):
@@ -232,7 +230,8 @@ public struct SidebarToolbar: Codable, Equatable {
     public var canShare: Bool
     /// Its changes can go back to the repository it came from: the share menu offers Send Changes Back.
     public var canContribute: Bool?
-    /// It's on GitHub already (`GitHubRepo.isUp`): the share menu leaves out Put on GitHub, since a release updates it.
+    /// Always true now: a chat of an earlier Lamp then leaves Put on GitHub… out of its share menu, since putting a wish
+    /// on GitHub is Release Update's (`WishLinkCard`). This chat doesn't read it.
     public var onGitHub: Bool?
     /// The wish's Share Link, once it has one: the share button shows it first, to copy.
     public var shareLink: String?
@@ -608,7 +607,8 @@ public enum SidebarCommand: Codable, Equatable {
     case nameVersion(String, String)
     /// The Share Link card: open it.
     case wishLink(SidebarWishLinkCommand)
-    /// The Put on GitHub card: open it, or what was done on it.
+    /// What a chat of an earlier Lamp sends from its Put on GitHub card, which is gone: its open opens Share Link's card,
+    /// where Release Update puts the wish on GitHub, and the rest are left alone.
     case repo(SidebarRepoCommand)
     /// The Send Changes Back card: open it, or what was done on it.
     case contribute(SidebarContributeCommand)
@@ -733,72 +733,6 @@ public enum SidebarWishLinkCommand: Codable, Equatable {
     case open
 }
 
-/// The Put on GitHub card as Lamp has it (`RepoCard`): everything on it is Lamp's, worked out before the person confirms.
-public struct SidebarRepo: Codable, Equatable {
-    public var name: String
-    public var icon: Data?
-    public var stage: RepoCard.Stage
-    public var repo: String?
-    /// The repository's address, once it's up.
-    public var url: String?
-    public var credit: String?
-    /// Where the README's Remix it with Lamp goes: the wish's Share Link, or nil when it has none yet (the card offers to make one).
-    public var openInLamp: String?
-    public var notes: [String]
-    /// The lines of sources only credited under their own terms, folded on the card (`ShareCheck.cardNotes`); nil
-    /// from a Lamp before they were, which has them in `notes`.
-    public var terms: [String]?
-    public var size: String?
-    public var copied: Bool
-    /// The repository is made already: its one-time choices aren't asked again.
-    public var update: Bool
-    /// Put on GitHub can be pressed: it's ready, or a try failed and can be made again.
-    public var canPut: Bool
-    /// The choices made before the repository is made.
-    public var isPrivate: Bool
-    public var license: Bool
-    public var canChooseLicense: Bool
-    /// A web game's or a web app's page: where it plays ("someone.github.io/new-york"), going up with the code or up
-    /// already, and whether it's up now. Nil for a wish that isn't one, or a private repository, which gets none
-    /// (`privateGame`, kept by that name for a page of any kind). `plays` is whether it's played (a game) or used; nil
-    /// from a Lamp before web apps had pages, played.
-    public var page: String?
-    public var pageUp: Bool?
-    public var privateGame: Bool?
-    public var plays: Bool?
-    /// The picture of the wish the README can show (a small copy, as PNG), and whether it will.
-    public var picture: Data?
-    public var showsPicture: Bool?
-
-    public init(name: String, icon: Data?, stage: RepoCard.Stage, repo: String?, url: String?, credit: String?, openInLamp: String?,
-                notes: [String], size: String?, copied: Bool, update: Bool, canPut: Bool, isPrivate: Bool, license: Bool, canChooseLicense: Bool,
-                page: String? = nil, pageUp: Bool? = nil, privateGame: Bool? = nil, plays: Bool? = nil, picture: Data? = nil, showsPicture: Bool? = nil,
-                terms: [String]? = nil) {
-        self.name = name
-        self.icon = icon
-        self.stage = stage
-        self.repo = repo
-        self.url = url
-        self.credit = credit
-        self.openInLamp = openInLamp
-        self.notes = notes
-        self.size = size
-        self.copied = copied
-        self.update = update
-        self.canPut = canPut
-        self.isPrivate = isPrivate
-        self.license = license
-        self.canChooseLicense = canChooseLicense
-        self.page = page
-        self.pageUp = pageUp
-        self.privateGame = privateGame
-        self.plays = plays
-        self.picture = picture
-        self.showsPicture = showsPicture
-        self.terms = terms
-    }
-}
-
 /// The Send Changes Back card as Lamp has it (`ContributeCard`): everything on it is Lamp's, worked out before the
 /// person confirms.
 public struct SidebarContribute: Codable, Equatable {
@@ -838,6 +772,7 @@ public enum SidebarContributeCommand: Codable, Equatable {
     case open, send, fix, openRequest, copy, close
 }
 
+/// Put on GitHub's card's commands, as a chat of an earlier Lamp sends them (`SidebarCommand.repo`).
 public enum SidebarRepoCommand: Codable, Equatable {
     case open, put, fix, openRepo, copy, close
     /// Open the game's page in the browser.

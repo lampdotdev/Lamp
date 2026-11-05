@@ -167,17 +167,7 @@ private struct Chat: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let card = state.repo {
-                RepoCard(icon: card.icon.flatMap(NSImage.init(data:)), name: card.name, stage: card.stage, repo: card.repo, url: card.url,
-                         credit: card.credit, openInLamp: card.openInLamp, notes: card.notes, terms: card.terms ?? [], size: card.size, copied: card.copied, update: card.update,
-                         canPut: card.canPut, isPrivate: card.isPrivate, license: card.license, canChooseLicense: card.canChooseLicense,
-                         page: card.page, pageUp: card.pageUp ?? false, privateGame: card.privateGame ?? false, plays: card.plays ?? true,
-                         picture: card.picture.flatMap(NSImage.init(data:)), showsPicture: card.showsPicture ?? false,
-                         put: { link.send(.repo(.put)) }, fix: { link.send(.repo(.fix)) }, makeLink: { link.send(.repo(.makeLink)) },
-                         setPrivate: { link.send(.repo(.setPrivate($0))) }, setLicense: { link.send(.repo(.setLicense($0))) },
-                         setPicture: { link.send(.repo(.setPicture($0))) }, openRepo: { link.send(.repo(.openRepo)) }, play: { link.send(.repo(.play)) }, copy: { link.send(.repo(.copy)) }, close: { link.send(.repo(.close)) }, width: nil,
-                         scrolls: true)
-            } else if let card = state.contribute {
+            if let card = state.contribute {
                 ContributeCard(icon: card.icon.flatMap(NSImage.init(data:)), name: card.name, stage: card.stage, upstream: card.upstream, fork: card.fork,
                                credit: card.credit, notes: card.notes, terms: card.terms ?? [], size: card.size, copied: card.copied, canSend: card.canSend,
                                send: { link.send(.contribute(.send)) }, fix: { link.send(.contribute(.fix)) },
@@ -888,7 +878,7 @@ struct ChatBar: View {
             .disabled(!toolbar.canShare)
             .help("Share this app")
             .popover(isPresented: $sharingOpen, arrowEdge: .bottom) {
-                SharePopover(link: shareLink, canContribute: toolbar.canContribute == true, onGitHub: toolbar.onGitHub == true) { shareAction($0, link: shareLink) }
+                SharePopover(link: shareLink, canContribute: toolbar.canContribute == true) { shareAction($0, link: shareLink) }
             }
     }
 
@@ -902,7 +892,6 @@ struct ChatBar: View {
             NSPasteboard.general.setString(url.absoluteString, forType: .string)
             return
         case .makeLink, .editLink: link.send(.wishLink(.open))
-        case .github: link.send(.repo(.open))
         case .contribute: link.send(.contribute(.open))
         case .copyFile: link.send(.copyWishFile)
         case .export: link.send(.export)

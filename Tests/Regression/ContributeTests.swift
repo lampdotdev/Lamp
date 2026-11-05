@@ -16,7 +16,7 @@ final class ContributeTests: XCTestCase {
 
     // MARK: A repository put up by Lamp, and a remix of it
 
-    /// What Put on GitHub puts beside the code and leaves out of the shared file.
+    /// What a release to GitHub puts beside the code and leaves out of the shared file.
     private static let notShared: Set<String> = ["README.md", "Package.swift", "build.sh", "Sources/LampSupport.swift", ".gitignore"]
 
     private func write(_ files: [String: String?], in folder: URL) throws {
@@ -34,7 +34,7 @@ final class ContributeTests: XCTestCase {
         return ran.output.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// The repository with a first commit of `files`, laid out as Put on GitHub lays one out.
+    /// The repository with a first commit of `files`, laid out as Lamp lays one out on GitHub.
     private func repository(_ files: [String: String]) throws -> URL {
         let repo = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("lamp-contribute-upstream-\(UUID().uuidString)")
         folders.append(repo)

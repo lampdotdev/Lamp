@@ -293,7 +293,7 @@ enum Following {
     /// when the chains share nothing, and the merge goes by this wish's own history (`Upstream.merge`).
     /// A link's copy has no repository: what was last pulled from it is kept at its ref (`ref`), which the merge reads
     /// as its base, and before the first pull-in, the version this wish arrived as.
-    /// This wish's own repository is on their chain only: Put on GitHub keeps it apart from the wish's credits.
+    /// This wish's own repository is on their chain only: Lamp keeps it apart from the wish's credits when it puts the wish there.
     static func base(for followed: Followed, ours: Credits, theirs: Credits?, own: String?) -> (url: String, commit: String)? {
         if let brought = followed.brought { return followed.place.repository != nil ? (followed.place.url, brought) : nil }
         guard let theirs else { return nil }

@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 /// Send Changes Back: a wish's changes offered to the repository it came from, as a pull request from the person's
-/// own fork. Laid out as Put on GitHub's card is (`RepoCard`), to be read before anything leaves the Mac: where it
+/// own fork. Laid out to be read before anything leaves the Mac: where it
 /// goes, through which fork, the credit it carries, what its licenses ask and how many files it changes; then the pull request and
 /// what can be done with it. Drawn from plain values, so the chat (in its place) and the gallery show the same card.
 public struct ContributeCard: View {
@@ -10,7 +10,7 @@ public struct ContributeCard: View {
         /// Finding GitHub's tool and the sign-in, and checking what would go.
         case preparing
         /// What's needed before anything can go, with the one thing that fixes it.
-        case needsGitHub(RepoCard.Need)
+        case needsGitHub(GitHubNeed)
         /// It can't go, and why (a license, a key in the code, the person's own repository).
         case refused(String)
         case ready

@@ -1,6 +1,12 @@
 import SwiftUI
 
-/// What the GitHub cards (`RepoCard`, `ContributeCard`) share: their layout, and the fold of their sources' own terms.
+/// What the GitHub cards (`ContributeCard`, and Release Update's first push, `WishLinkCard.GitHubSetup`) share: their
+/// layout, the fold of their sources' own terms, and what's missing before anything goes to GitHub.
+
+/// What's missing before anything goes to GitHub: its command-line tool, or a sign-in to it.
+public enum GitHubNeed: String, Codable, Equatable {
+    case install, signIn
+}
 
 /// A GitHub card's words with its buttons under them. In the chat's place (`scrolls`), a card too tall for the panel
 /// scrolls its words and keeps its buttons at the bottom, so they're never out of sight; one that fits is drawn as on

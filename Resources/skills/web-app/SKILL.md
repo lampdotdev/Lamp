@@ -32,7 +32,7 @@ opening comment for the whole list. What it gives:
 
 ## On the web, without Lamp
 
-Put on GitHub gives a web app a page anyone opens in a browser, with no Lamp anywhere: the page as it is, with
+Putting it on GitHub (Also put on GitHub, on its link's card) gives a web app a page anyone opens in a browser, with no Lamp anywhere: the page as it is, with
 lamp.js. There, `LampAI.isAvailable` answers false and its calls fail with a sentence saying the page is away from
 Lamp, `LampNative.available` is false, and `Lamp.wish` can't reach the project's other apps; `LampStore` and `LampAssets`
 work as they do everywhere. So every feature that leans on Lamp keeps the app usable without it: the app's own buttons

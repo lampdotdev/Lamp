@@ -143,7 +143,7 @@ const query = (pairs) => Object.entries(pairs).map(([key, value]) => `${key}=${e
 
 /**
  * The pictures a repository may show of itself, in the order to try them: the preview and drawn icon a starter's
- * repository keeps in .github/, then the icon a wish's shared file puts at its root (Put on GitHub). Only for an origin
+ * repository keeps in .github/, then the icon a wish's shared file puts at its root (a wish Lamp put on GitHub). Only for an origin
  * `remixFrom` checked; raw.githubusercontent.com serves a public repository's files.
  */
 export function repoPictures(origin) {

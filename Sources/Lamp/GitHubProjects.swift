@@ -31,7 +31,7 @@ enum GitHubProjects {
     nonisolated(unsafe) static var fetcher: Fetch = fetchAnyway
 
     /// Lamp's own confined git first, as Open from GitHub… fetches; a project it can't read (private, or not there)
-    /// again with the person's GitHub sign-in (`gh`), as Put on GitHub… pushes, when they have one. The agent's shell
+    /// again with the person's GitHub sign-in (`gh`), as a release pushes to GitHub, when they have one. The agent's shell
     /// can't see that sign-in, so this is how a private project reaches a wish.
     static func fetchAnyway(_ source: RepoImport.Source, into folder: URL) async throws -> URL {
         do {
@@ -188,7 +188,7 @@ enum GitHubProjects {
     }
 
     /// The wish as a Lamp repository would hold it, and what it still lacks. The structure, its line and APP.md are looked
-    /// for in the wish; then it's made as Put on GitHub… makes one (`GitHubRepo.stage`: lamp-app.json from the shared
+    /// for in the wish; then it's made as a release puts one on GitHub (`GitHubRepo.stage`: lamp-app.json from the shared
     /// file's own manifest, credits.json, the icon, the license files, Lamp's own files) and opened again as Open from
     /// GitHub… opens one (`RepoImport.open`), with nothing put anywhere. Whatever sharing refuses is something missing,
     /// said as it says it. The tree is kept in .lamp/repository for a look.
