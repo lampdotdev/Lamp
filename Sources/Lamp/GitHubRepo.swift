@@ -44,6 +44,9 @@ enum GitHubRepo {
         var taken: String? = nil
         /// The wish's own version `taken` was saved in, which its history must still have (`BringIn.holds`).
         var takenIn: String? = nil
+        /// Files the repository keeps as GitHub has them (`keptFromGitHub`): each push keeps them so, not only the first
+        /// after they changed there.
+        var ownFiles: [String]? = nil
 
         /// The commit the repository must be at for the wish to go over it: the last one whose changes the wish has.
         var expected: String? { taken ?? commit }
@@ -516,8 +519,9 @@ enum GitHubRepo {
     /// `lastPushed` is the commit Lamp last pushed, when the wish has brought in commits made on GitHub after it
     /// (`expected` then names the latest of them): what changed there since is weighed file by file (`keptFromGitHub`),
     /// so nothing of it is lost. `broughtIn` lists the files of the app as the wish brought them in (`BringIn.paths`).
+    /// `keeping` are the files earlier pushes kept as GitHub has them (`Repo.ownFiles`), which this one keeps too.
     static func upload(_ staged: Staged, of project: LampProject, to repo: String, gh: String, login: String, isNew: Bool, expected: String? = nil,
-                       lastPushed: String? = nil, broughtIn: Set<String> = [],
+                       lastPushed: String? = nil, broughtIn: Set<String> = [], keeping: [String] = [],
                        isPrivate: Bool, license: Bool, picture: Bool? = nil, authors shown: [Author]? = nil,
                        release: GitHubRelease.Version? = nil, pushed: @escaping @Sendable () -> Void = {},
                        step: @escaping @Sendable (String) -> Void) async throws -> (repo: Repo, changed: Bool) {
@@ -546,6 +550,7 @@ enum GitHubRepo {
 
         let work: URL
         var changed = true
+        var theirs: [String] = []
         // The repository's own branch, what its clone checked out; a new one's is main.
         var branch = "main"
         if isNew {
@@ -579,9 +584,11 @@ enum GitHubRepo {
             if let expected, there != expected { throw Moved(repo: repo, name: project.name) }
             // What changed on GitHub since Lamp's last push, which the wish brought in: each file stays as GitHub has
             // it unless it's the app's (`keptFromGitHub`).
-            var theirs: [String] = []
+            // Those an earlier push kept stay kept, but for a file the app has come to have since.
+            theirs = keeping.filter { ["README.md", "LICENSE"].contains($0) || !fm.fileExists(atPath: tree.appendingPathComponent($0).path) }
             if let lastPushed, let there, lastPushed != there {
-                theirs = try await keptFromGitHub(in: clone, since: lastPushed, tree: tree, broughtIn: broughtIn, project: project, gh: gh)
+                for path in try await keptFromGitHub(in: clone, since: lastPushed, tree: tree, broughtIn: broughtIn, project: project, gh: gh)
+                where !theirs.contains(path) { theirs.append(path) }
             }
             // The wish takes the place of what's there, but for what a wish never carries: a hidden file or folder at the
             // top (the person's .github/workflows, .gitignore, an editor's settings) stays as it is, with the tree's own
@@ -633,7 +640,8 @@ enum GitHubRepo {
             guard pushed.ok else { throw Failure(message: "GitHub didn't take it: \(pushed.output.trimmed.suffix(200))") }
         }
         var record = Repo(repo: repo, url: url, license: license, commit: await head(git, in: work),
-                          isPublic: await isPublic(repo, gh: gh), version: staged.version, page: kept(for: project)?.page, picture: picture)
+                          isPublic: await isPublic(repo, gh: gh), version: staged.version, page: kept(for: project)?.page, picture: picture,
+                          ownFiles: theirs.isEmpty ? nil : theirs)
         if let release, let commit = record.commit {
             // Kept first: the code is up whatever happens to the release.
             keep(record, for: project)
@@ -691,7 +699,10 @@ enum GitHubRepo {
             // A hidden file at the top is left as it is already (`upload`), or is the app's (a site's served ones).
             if path.hasPrefix(".") { continue }
             if ["lamp-app.json", Credits.file].contains(relative) || (top == relative && relative.hasSuffix(".lampapp")) { continue }
-            if isOwned(relative, in: project) {
+            // Lamp's own files for the app the path is in: a part's in its folder (`Sharing.layout`), the root's at the top.
+            let (root, parts) = Sharing.layout(of: project)
+            let part = parts.first { relative.hasPrefix($0.dir.lastPathComponent + "/") }
+            if part.map({ isOwned(String(relative.dropFirst($0.dir.lastPathComponent.count + 1)), in: $0) }) ?? isOwned(relative, in: root) {
                 throw Failure(message: "\(path) was changed on GitHub, and Lamp writes it itself, so putting \(project.name) there would undo that. Change it back on GitHub, or ask for the change in the app.")
             }
             if !["README.md", "LICENSE"].contains(path) {

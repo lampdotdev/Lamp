@@ -422,12 +422,14 @@ push, the wish's version it carried; with none, nothing is brought in. The wish'
 a copy and never joins the chain; only the credit for work the change uses joins the credits (`Mix.creditsTaken`). It
 counts once saved, clean or settled by the agent's turn (`BringIn.Pending`, `Store.settleBringIn`), and not when an app it
 brings couldn't be made: `taken` names the commit with the version that saved it (`takenIn`), which the wish's history
-must still have, with no Undo or going back to before it since (`BringIn.holds`, by `Lamp-Undid` and `Lamp-Restored`),
+must still have, with no Undo or going back to before it since (`BringIn.holds`, by `Lamp-Undid` and `Lamp-Restored`,
+each followed to the version it went back to),
 else it's offered again from Lamp's push. Bringing in changes the wish, so it's released with a new Release Update.
 The release then goes on top of what was brought in, and what changed on GitHub since Lamp's push stays as GitHub has it
-unless it's the app's (`GitHubRepo.keptFromGitHub`): a README or license edited there, a file only GitHub has; the app's
+unless it's the app's (`GitHubRepo.keptFromGitHub`), on that push and every one after (`Repo.ownFiles`): a README or
+license edited there, a file only GitHub has; the app's
 files, and what Lamp makes from them, follow the app, a file it brought in and took away again staying away; a file
-Lamp writes itself to build the app, edited there, is refused, saying which. The push records the new commit without
+Lamp writes itself to build the app (the root's or a part's in its folder), edited there, is refused, saying which. The push records the new commit without
 `taken`. A link that
 fails sends nothing to GitHub, and says so. The first link of a wish that's on GitHub makes the link and releases there too, as v1
 (or the next number), with no lines, the commit's message then the old "Update <name> from Lamp". A wish that isn't on GitHub (`GitHubRelease.Found.new`) gets "Also put on GitHub" in the box's place, unticked each

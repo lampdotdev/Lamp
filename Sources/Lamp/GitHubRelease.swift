@@ -123,7 +123,8 @@ enum GitHubRelease {
         defer { try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent()) }
         let uploaded = try await GitHubRepo.upload(staged, of: project, to: target.repo, gh: target.gh, login: target.login, isNew: false,
                                                    expected: before?.expected ?? target.openedAt,
-                                                   lastPushed: before?.taken == nil ? nil : before?.commit, broughtIn: broughtIn, isPrivate: !isPublic,
+                                                   lastPushed: before?.taken == nil ? nil : before?.commit, broughtIn: broughtIn,
+                                                   keeping: before?.ownFiles ?? [], isPrivate: !isPublic,
                                                    license: before?.license ?? false, picture: before?.picture,
                                                    authors: target.authors, release: version, pushed: pushed, step: step)
         // A newer release may have pushed while this one waited for its page (the card is free by then): its record

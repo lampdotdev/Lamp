@@ -121,8 +121,15 @@ enum BringIn {
     /// the wish's own, and holds.
     static func holds(_ project: LampProject, kept: GitHubRepo.Repo) async -> Bool {
         guard kept.taken != nil else { return true }
-        guard let version = Credits.validCommit(kept.takenIn), await descends(version, to: "HEAD", in: project) else { return false }
-        let log = await Upstream.run("git log --first-parent --format='%x1e%H%x1f%(trailers:key=Lamp-Undid,valueonly,separator=%x2C)%x1f%(trailers:key=Lamp-Restored,valueonly,separator=%x2C)' \(version)..HEAD", in: project)
+        guard let version = Credits.validCommit(kept.takenIn) else { return false }
+        return await has(version, at: "HEAD", in: project)
+    }
+
+    /// Whether the files of `commit` have what `version` brought: it descends from `version`, and the latest going back
+    /// since, followed to the version it went back to (and so on, as that one may itself be a going back), has it too.
+    private static func has(_ version: String, at commit: String, in project: LampProject, depth: Int = 0) async -> Bool {
+        guard depth < 50, await descends(version, to: commit, in: project) else { return false }
+        let log = await Upstream.run("git log --first-parent --format='%x1e%H%x1f%(trailers:key=Lamp-Undid,valueonly,separator=%x2C)%x1f%(trailers:key=Lamp-Restored,valueonly,separator=%x2C)' \(version)..\(commit)", in: project)
         guard log.status == 0 else { return false }
         for entry in log.output.split(separator: "\u{1e}") {
             let fields = entry.split(separator: "\u{1f}", omittingEmptySubsequences: false).map { String($0).trimmed }
@@ -133,7 +140,7 @@ enum BringIn {
                 if target == nil { return false }
             }
             guard let target else { continue }
-            return await descends(version, to: target, in: project)
+            return await has(version, at: target, in: project, depth: depth + 1)
         }
         return true
     }

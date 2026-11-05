@@ -75,7 +75,7 @@ final class BringInTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent()) }
         let up = try await GitHubRepo.upload(staged, of: world.wish, to: "someone/tally", gh: world.gh.path, login: "someone", isNew: false,
                                              expected: before.expected, lastPushed: before.taken == nil ? nil : before.commit,
-                                             broughtIn: broughtIn, isPrivate: true, license: false) { _ in }
+                                             broughtIn: broughtIn, keeping: before.ownFiles ?? [], isPrivate: true, license: false) { _ in }
         GitHubRepo.keep(up.repo, for: world.wish)
         return up.repo
     }
@@ -213,6 +213,75 @@ final class BringInTests: XCTestCase {
         XCTAssertEqual(try onGitHub(world, "README.md"), readme)
         XCTAssertEqual(try onGitHub(world, "docs/notes.md"), "Notes kept on GitHub\n")
         XCTAssertNil(try onGitHub(world, "Sources/Twos.swift"), "taken away in the app after it came in")
+
+        // The next release, with nothing brought in since (or a try again after its tag failed): they stay so.
+        try await change(world, "APP.md", "Counts by twos.\n", "Say what it does")
+        _ = try await releaseOverBroughtIn(world)
+        XCTAssertEqual(try onGitHub(world, "APP.md"), "Counts by twos.\n")
+        XCTAssertEqual(try onGitHub(world, "README.md"), readme)
+        XCTAssertEqual(try onGitHub(world, "docs/notes.md"), "Notes kept on GitHub\n")
+    }
+
+    /// Back to before a bring-in, then a change, then Undo of that change: the wish is at the going back again, which
+    /// doesn't have what came in, so a release is refused rather than undoing it on GitHub.
+    @MainActor
+    func testUndoAfterGoingBackToBeforeABringInStillRefusesTheRelease() async throws {
+        let world = try world()
+        _ = try await release(world, isNew: true)
+        let merged = try mergeOnGitHub(world, ["Sources/Twos.swift": "let twos = true\n"])
+        _ = try await bringIn(world)
+        XCTAssertEqual(GitHubRepo.kept(for: world.wish)?.taken, merged)
+
+        let listed = await Versions.list(world.wish)
+        let before = try XCTUnwrap(listed.dropFirst().first)
+        let wentBack = await Versions.restore(world.wish, to: before, message: Versions.restoredMessage(to: before), trailer: Versions.restoredTrailer(before))
+        XCTAssertTrue(wentBack)
+        try await change(world, "APP.md", "An edit after going back.\n", "Edit")
+        let afterEdit = await Versions.list(world.wish)
+        let edit = try XCTUnwrap(afterEdit.first)
+        let goingBack = try XCTUnwrap(afterEdit.dropFirst().first)
+        let undone = await Versions.restore(world.wish, to: goingBack, message: "Undid “Edit”", trailer: "Lamp-Undid: \(edit.id)")
+        XCTAssertTrue(undone)
+        XCTAssertNil(code(world, "Sources/Twos.swift"), "the wish doesn't have what came in")
+
+        let kept = try XCTUnwrap(GitHubRepo.kept(for: world.wish))
+        let holds = await BringIn.holds(world.wish, kept: kept)
+        XCTAssertFalse(holds)
+        do {
+            _ = try await releaseOverBroughtIn(world)
+            XCTFail("a release without what came in was to be refused")
+        } catch is GitHubRepo.Moved {}
+        XCTAssertEqual(try onGitHub(world, "Sources/Twos.swift"), "let twos = true\n")
+    }
+
+    /// Lamp's own build files of an app in a folder of the wish's (a game in Game/) are Lamp's as the root app's are:
+    /// edited on GitHub, the release is refused by name rather than writing over the edit.
+    func testAPartsBuildFileEditedOnGitHubIsRefused() async throws {
+        let world = try world()
+        let game = world.wish.dir.appendingPathComponent(Parts.folder(for: .game))
+        try FileManager.default.createDirectory(at: game, withIntermediateDirectories: true)
+        try "A game made with Lamp.\n".write(to: game.appendingPathComponent(GameKit.marker), atomically: true, encoding: .utf8)
+        let wish = try XCTUnwrap(Store.readWish(at: world.wish.dir))
+        XCTAssertEqual(Sharing.layout(of: wish).parts.map(\.dir.lastPathComponent), ["Game"])
+
+        // GitHub as Lamp left it, then the game's build.sh edited there.
+        let clone = world.place.appendingPathComponent("clone")
+        try FileManager.default.createDirectory(at: clone.appendingPathComponent("Game"), withIntermediateDirectories: true)
+        try "# built by Lamp\n".write(to: clone.appendingPathComponent("Game/build.sh"), atomically: true, encoding: .utf8)
+        let pushed = try sh("git init -q -b main && git remote add origin . && git add -A && git -c user.name=L -c user.email=l@l commit -qm pushed && git rev-parse HEAD", in: clone)
+        try "# edited on GitHub\n".write(to: clone.appendingPathComponent("Game/build.sh"), atomically: true, encoding: .utf8)
+        _ = try sh("git -c user.name=L -c user.email=l@l commit -qam edited", in: clone)
+        // What this release would put there: the game's build.sh as Lamp writes it.
+        let tree = world.place.appendingPathComponent("tree")
+        try FileManager.default.createDirectory(at: tree.appendingPathComponent("Game"), withIntermediateDirectories: true)
+        try "# built by Lamp\n".write(to: tree.appendingPathComponent("Game/build.sh"), atomically: true, encoding: .utf8)
+
+        do {
+            _ = try await GitHubRepo.keptFromGitHub(in: clone, since: pushed, tree: tree, broughtIn: [], project: wish, gh: world.gh.path)
+            XCTFail("the edit to the game's build.sh was to be refused")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Game/build.sh"), error.localizedDescription)
+        }
     }
 
     /// GitHub force-pushed after a bring-in that wasn't released yet: the next bring-in measures against what the last
