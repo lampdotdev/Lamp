@@ -87,7 +87,7 @@ const lit = (hue: number) => `linear-gradient(${hsb(hue, 0.45, 1)}, ${hsb(hue, 0
     <!-- Where there's room, the page is an app's window, as Lamp's chat is beside one on the Mac: a title bar with the
          window's lights and the app's name, and the page scrolling inside it. On a phone it's simply the page. -->
     <div class="app-window">
-    <div class="app-window-bar" aria-hidden="true"><span class="app-window-lights"><i></i><i></i><i></i></span><span class="app-window-title">Lamp</span></div>
+    <div class="app-window-bar" aria-hidden="true"><span class="app-window-lights"><i></i><i></i><i></i></span><span class="app-window-title">lamp.dev</span></div>
     <div data-scroller class="app-window-body">
     <main data-page class="mx-auto min-w-0 max-w-[46rem]">
       <section class="pb-10">
@@ -107,7 +107,7 @@ const lit = (hue: number) => `linear-gradient(${hsb(hue, 0.45, 1)}, ${hsb(hue, 0
             <!-- The window's red light, as Lamp's chat has one: it puts the chat away. -->
             <button type="button" data-close class="close-light" aria-label="Close the chat" title="Close the chat"></button>
             <span class="lamp-mark" aria-hidden="true"><span class="lamp-glass"></span><span class="lamp-square"></span></span>
-            <span class="min-w-0 flex-1 truncate">Editing Lamp</span>
+            <span class="min-w-0 flex-1 truncate">Editing lamp.dev</span>
             <!-- Back one change, as Lamp's toolbar's Undo takes an app back to the version before. -->
             <button type="button" data-undo class="tool-button" aria-label="Undo" title="Undo the last change" disabled set:html={undoIcon} />
           </div>
