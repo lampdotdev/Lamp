@@ -30,6 +30,13 @@ enum BringIn {
         var base: String
         /// The commit fetched now, which the review shows.
         var head: String
+        /// Someone's request on the repository (`SuggestedChanges`), by number, with who sent it and the files it changes
+        /// that a release can't carry: its head is brought in, not the repository's latest.
+        var request: Int? = nil
+        var from: String? = nil
+        var leftOut: [String]? = nil
+        /// `leftOut` was worked out; when it couldn't be, the request is never marked merged by a release.
+        var checked: Bool? = nil
     }
 
     /// A bring-in left to the agent to settle (conflicts), which counts once its turn finished well.
@@ -70,13 +77,19 @@ enum BringIn {
         guard cloned.ok, let head = await GitHubRepo.head(git, in: tree) else {
             throw Failure(message: "GitHub didn't give back \(kept.repo): \(cloned.output.trimmed.suffix(200))")
         }
-        // The base, when GitHub still has it, at a ref the wish's git can fetch from this folder.
-        if await Subprocess.run(git, signedIn + ["fetch", "-q", "--depth", "1", "origin", base], cwd: tree, timeout: 300).ok,
+        await fetchBase(base, into: tree, for: project, gh: gh)
+        done = true
+        return (folder, tree, Pull(repo: kept.repo, base: base, head: head))
+    }
+
+    /// The base, when GitHub still has it, fetched into the clone at `tree` and from there into the wish's git, for the
+    /// merge (`given`).
+    static func fetchBase(_ base: String, into tree: URL, for project: LampProject, gh: String) async {
+        let git = GitHubRepo.git
+        if await Subprocess.run(git, GitHubRepo.signedIn(gh: gh) + ["fetch", "-q", "--depth", "1", "origin", base], cwd: tree, timeout: 300).ok,
            await Subprocess.run(git, ["update-ref", "refs/lamp/base", base], cwd: tree, timeout: 10).ok {
             _ = await Versions.git("git fetch -q --depth 1 \(Sandbox.quoted("file://" + tree.path)) refs/lamp/base", cwd: project.dir) { _ in }
         }
-        done = true
-        return (folder, tree, Pull(repo: kept.repo, base: base, head: head))
     }
 
     /// The base the merge measures against: `pull.base` and nothing else, from what the wish's git has of it. Its
@@ -100,6 +113,8 @@ enum BringIn {
     /// repository's record names it, unless Lamp pushed since (a release over it measures from there).
     @MainActor static func accept(_ pull: Pull, in project: LampProject) async {
         _ = await Upstream.run("git update-ref \(snapshot(pull.head)) \(incomingRef)", in: project)
+        // Someone's request is kept with the others (`SuggestedChanges`): the repository itself hasn't moved.
+        if pull.request != nil { return await SuggestedChanges.accept(pull, in: project) }
         guard var kept = GitHubRepo.kept(for: project), kept.repo == pull.repo, kept.commit != nil,
               kept.commit == pull.base || kept.taken == pull.base else { return }
         kept.taken = pull.head == kept.commit ? nil : pull.head
@@ -121,7 +136,12 @@ enum BringIn {
     /// the wish's own, and holds.
     static func holds(_ project: LampProject, kept: GitHubRepo.Repo) async -> Bool {
         guard kept.taken != nil else { return true }
-        guard let version = Credits.validCommit(kept.takenIn) else { return false }
+        return await holds(version: kept.takenIn, in: project)
+    }
+
+    /// The same for any version that brought something in (a request's, `SuggestedChanges`).
+    static func holds(version: String?, in project: LampProject) async -> Bool {
+        guard let version = Credits.validCommit(version) else { return false }
         return await has(version, at: "HEAD", in: project)
     }
 

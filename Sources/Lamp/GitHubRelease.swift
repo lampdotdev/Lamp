@@ -121,16 +121,29 @@ enum GitHubRelease {
             try GitHubRepo.stage(project, repo: target.repo, link: WishLink.kept(for: project)?.url, isPublic: isPublic, picture: shown)
         }.value
         defer { try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent()) }
+        // Requests brought in that this release really has go with it, so GitHub marks them merged (`SuggestedChanges`).
+        // Asked of GitHub afresh, so a request rewritten since it was brought in, or one opened under it, keeps it out.
+        var merging: [String] = []
+        if let before, SuggestedChanges.record(for: project)?.taken.isEmpty == false {
+            step("Checking suggested changes…")
+            if let found = await SuggestedChanges.find(project, kept: before, gh: target.gh) {
+                // What it found new gets its card, as any look at GitHub's does.
+                await MainActor.run { Store.shared.publishSuggestions(project, new: found.new) }
+                merging = await SuggestedChanges.parents(for: project, gh: target.gh).map(\.head)
+            }
+        }
         let uploaded = try await GitHubRepo.upload(staged, of: project, to: target.repo, gh: target.gh, login: target.login, isNew: false,
                                                    expected: before?.expected ?? target.openedAt,
                                                    lastPushed: before?.taken == nil ? nil : before?.commit, broughtIn: broughtIn,
-                                                   keeping: before?.ownFiles ?? [], isPrivate: !isPublic,
+                                                   keeping: before?.ownFiles ?? [], merging: merging, isPrivate: !isPublic,
                                                    license: before?.license ?? false, picture: before?.picture,
                                                    authors: target.authors, release: version, pushed: pushed, step: step)
         // A newer release may have pushed while this one waited for its page (the card is free by then): its record
         // stands, and this older one's is left out.
         guard GitHubRepo.kept(for: project)?.commit == uploaded.repo.commit else { return }
         await GitHubRepo.settle(uploaded.repo, before: before, of: project, gh: target.gh)
+        // What GitHub made of the requests it went with is GitHub's to say.
+        if !merging.isEmpty { await MainActor.run { Store.shared.checkSuggestions(project) } }
     }
 
     // MARK: The first time

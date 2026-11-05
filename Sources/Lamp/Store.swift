@@ -278,7 +278,8 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// `needsBuilder` asks for what builds, for a request waiting in the chat (`BuilderLine`).
     /// `oldCopy` asks whether to take the copy signed for the app's old team off the phone (`OldCopyLine`).
     /// `newerOriginal` offers a changed starter's copy the newer starter this Lamp ships (`NewerOriginalLine`).
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, needsBuilder, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep, keepOpening, phoneSlot, oldCopy, newerOriginal }
+    /// `suggestion` is a request someone opened on the wish's repository (`SuggestedChanges`); its text is the request's number.
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, needsBuilder, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep, keepOpening, phoneSlot, oldCopy, newerOriginal, suggestion }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -581,6 +582,13 @@ final class Store: ObservableObject {
     @Published var updateChecks: [String: AppUpdates.Check] = [:]
     /// Goes up as a wish follows another copy or stops (`Following`), which is kept outside the store.
     @Published var followingRevision = 0
+    /// Goes up when what's known of a wish's suggested changes moves (`SuggestedChanges`), for its cards and the desk's mark.
+    @Published var suggestionsRevision = 0
+    /// Whether each wish still has what it brought in of each request, as its cards show it (`refreshSuggestionHolds`).
+    var suggestionHolds: [String: [Int: Bool]] = [:]
+    /// The request being fetched for Bring In…, by wish.
+    var fetchingSuggestion: [String: Int] = [:]
+    var suggestionTimer: Timer?
     /// Copies an update was prepared in that are going, by the app they went into: a message sent to one meanwhile goes
     /// to that app (`AppUpdates`).
     @Published var retiringCopies: [String: String] = [:]
@@ -739,7 +747,10 @@ final class Store: ObservableObject {
     /// The version whose Name… alert is showing.
     @Published var naming: VersionNaming?
     /// Bumped when a version is named, so open version lists reload.
-    @Published var versionsRevision = 0
+    @Published var versionsRevision = 0 {
+        // An Undo or a going back can take away what a request brought in: its card says so (`SuggestedChanges`).
+        didSet { for project in projects where !project.isPart && SuggestedChanges.record(for: project) != nil { Task { await refreshSuggestionHolds(project) } } }
+    }
     /// One span of Lamp owning an app: a chat turn, a rebuild, an undo, an icon redesign. Everything that
     /// belongs to that span lives here and goes with it, so Stop, Delete and quit have one thing to cancel,
     /// and nothing has to be kept in step across a dozen dictionaries. `busy` is the set of apps that have
@@ -4216,7 +4227,7 @@ final class Store: ObservableObject {
             }
         }
         let arrival = await Versions.list(project).first { Self.arrivalMessages.contains($0.message) }?.id
-        let place = following.map { Following.title(of: $0) } ?? bringingIn.map { "\($0.repo) on GitHub" }
+        let place = following.map { Following.title(of: $0) } ?? bringingIn.map { $0.request != nil ? "@\($0.from ?? "someone")'s suggested changes" : "\($0.repo) on GitHub" }
             ?? (original != nil ? "the original" : source.map { "\($0.owner)/\($0.name) on GitHub" } ?? "the shared app")
         let merged: Upstream.Merged
         do {
@@ -5004,6 +5015,9 @@ final class Store: ObservableObject {
             await settleUpdate(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
             await settlePull(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
             await settleBringIn(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
+            // A request the agent was asked to bring in: its review, once the wish is free (`suggested_changes`).
+            bringInSuggestionAfterTurn(wish(of: current(project) ?? project))
+            await refreshSuggestionHolds(wish(of: current(project) ?? project))
             // The scaffold's early build is the turn's until it's settled, whichever way the turn ended (a question, a
             // failure, a Stop): released before it, the next turn's build could run beside it on the same files.
             await owner.early?.value
@@ -7404,6 +7418,7 @@ final class Store: ObservableObject {
             case "network_devices": (status, answer) = await NetworkDevices.answer()
             case "lampify": (status, answer) = await lampify(arguments, for: project)
             case "shared_copy": (status, answer) = await sharedCopyCall(arguments, for: project)
+            case "suggested_changes": (status, answer) = await suggestedChangesCall(arguments, for: project)
             case "device_integration": (status, answer) = await agentIntegration(arguments, for: project)
             case "ask", "progress", "write_wish", "device_permission":
                 (status, answer) = talk(name, arguments, for: project)
@@ -13304,6 +13319,8 @@ final class Store: ObservableObject {
         workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
             Task { @MainActor in await Store.shared.renewPhoneApps() }
         }
+        // Changes someone suggested to an app on GitHub: now, and every quarter of an hour (`SuggestedChanges`).
+        startCheckingSuggestions()
     }
 
     /// The person's apps Lamp knows on the phone `udid`: those it keeps for renewal there, and those put there before
@@ -14115,6 +14132,9 @@ final class Store: ObservableObject {
         }
         if route == "/agent/shared" {
             return await sharedCopyCall((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
+        }
+        if route == "/agent/suggested" {
+            return await suggestedChangesCall((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
         }
         if route == "/agent/approve" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
