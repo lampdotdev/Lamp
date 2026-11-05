@@ -441,9 +441,11 @@ gives its commit each pinned head as one more parent (`GitHubRepo.upload`'s `mer
 unchanged), which GitHub reads to mark the request merged, by ancestry alone. So a head goes only when the release
 really has its change (`SuggestedChanges.parents`): the version that brought it in still holds (`BringIn.holds(version:)`),
 the request still points at the pinned head (one rewritten since stays open, its card saying it sent more), none of its
-files is one a release leaves out (a hidden file at the top, a file Lamp writes itself: `SuggestedChanges.leftOut`), and
-no open request that wasn't brought in is under it (GitHub's compare), since a stacked request would be marked merged
-with it. What a push went with is kept before its tag (`SuggestedChanges.pushed`); a request released without being a
+files, over the whole request from where it branched, is one bringing it in doesn't stage as the request has it (each
+side staged as the merge stages it: `SuggestedChanges.notCarried`; a check that can't be made counts as not carried),
+and no other open request that isn't going is at its head or under it (GitHub's compare, by request number), since that
+request would be marked merged with it. Every page of open requests is read, and only GitHub's answer of closed ends one;
+a reopened one is open again. What a push went with is kept before its tag (`SuggestedChanges.pushed`); a request released without being a
 parent is held by that release, and its card's Close… comments with the release and commit. Merged is only what GitHub
 says (`SuggestedChanges.find` asks for each request that went). Close… on an open request closes it with no comment.
 The release then goes on top of what was brought in, and what changed on GitHub since Lamp's push stays as GitHub has it

@@ -51,14 +51,15 @@ All of this is in `Sources/Lamp/SuggestedChanges.swift` unless another file is n
 
 ### Finding requests
 
-`SuggestedChanges.find` calls `gh api repos/R/pulls?state=open` with the owner's sign-in and keeps the requests on
-the repository's default branch. It runs:
+`SuggestedChanges.find` reads every page of `gh api repos/R/pulls?state=open` with the owner's sign-in and keeps the
+requests on the repository's default branch. It runs:
 - at launch and every quarter of an hour (`startCheckingSuggestions`);
 - after a release that went with a request;
 - whenever the agent calls the tool.
 
-A request that has gone from the open list is looked up once (`pulls/N`), and GitHub's answer, merged or closed,
-is kept. The record lives in Lamp's own folder (`GitHub Suggestions.json`, keyed by the app's instance). It holds:
+A request that has gone from the open list is looked up (`pulls/N`). Only an answer of closed ends it, as merged
+or closed; one GitHub still calls open, or doesn't answer for, stays open as last seen. A closed request that comes
+back open is open again, and its card is logged again. The record lives in Lamp's own folder (`GitHub Suggestions.json`, keyed by the app's instance). It holds:
 - the open requests;
 - those once open, so a card still names their sender;
 - the requests brought in;
@@ -75,7 +76,12 @@ A new request, or a new head on an open one, logs the card again at the end of t
 - The base is GitHub's `merge_base_commit`. When the app still has an earlier bring-in of the same request, the
   base is the head brought in then, so only the new commits come in.
 - `BringIn.Pull` gains the request's number, its sender and the files it changes that a release can't carry
-  (`leftOut`: a hidden file at the top, or a file Lamp writes itself).
+  (`leftOut`, from `notCarried`). That check covers the whole request, from where it branched to its head, however
+  many times it's brought in. Each side is staged exactly as the merge stages it (`RepoImport.open`,
+  `Upstream.stage`). A file the request has must come out byte for byte the same, and one it takes away must be
+  one the import had. A Mac app's README, a hidden file, a file Lamp writes itself, or anything else a shared app
+  doesn't hold is therefore left out. If the check can't run, the pull isn't `checked`, and it never goes as a
+  parent.
 - `Store.mergeUpdate`, `BringIn.given` and `Pending` take the pull unchanged, so the merge is measured against
   that one base and never a guess.
 - `BringIn.accept` hands a request's pull to `SuggestedChanges.accept`. It pins the head that was reviewed, with
@@ -91,11 +97,13 @@ has. Each one must pass all of these:
   it (`BringIn.holds(version:)`).
 - **Not rewritten.** The request still points at the pinned head. A force-push after acceptance leaves it out,
   and the card says "sent more changes".
-- **Nothing left out.** None of its files is one a release can't carry.
-- **Nothing under it.** No open request that wasn't brought in sits under it, checked with GitHub's compare
-  (`ahead`/`identical`). Otherwise a stacked request would be marked merged with it.
+- **Nothing left out.** Its files were checked, and none is one a release can't carry.
+- **Nothing at or under it.** No other open request that isn't going sits at the same head or under it (GitHub's
+  compare, `ahead`/`identical`), judged by request number, not by head. Otherwise that request would be marked
+  merged with it. Dropping one can uncover another, so it's asked again until nothing more drops.
 
-`GitHubRelease.release` asks GitHub afresh (`find`) before working these out. The release itself:
+`GitHubRelease.release` asks GitHub afresh (`find`) before working these out, and puts up the cards of any requests it
+finds new. The release itself:
 - `GitHubRepo.upload` (`merging`) fetches each head at depth 1, by the pinned commit and never the ref.
 - It makes the commit with `commit-tree -p HEAD -p <head>…`, signed as every Lamp commit is.
 - It makes that commit even when the files are unchanged, because the parent is the point.

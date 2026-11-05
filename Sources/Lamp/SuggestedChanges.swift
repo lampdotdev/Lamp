@@ -13,9 +13,9 @@ import LampSidebarKit
 /// so a request rewritten since is never counted as brought in. The next Release Update gives its commit each pinned head
 /// as one more parent (`parents`), which is what GitHub reads to mark a request merged, by ancestry alone. So a head goes
 /// only when the release really has its change: the version that brought it in is still in the wish's history
-/// (`BringIn.holds(version:)`), the request still points there, every file it changes is one a release carries
-/// (`leftOut`), and no other open request that wasn't brought in sits under it (a stacked request would be marked merged
-/// with it). One that can't go is released all the same, and its card offers Close Request…, saying which release has it.
+/// (`BringIn.holds(version:)`), the request still points there, every file it changes came in as it has it (`notCarried`,
+/// over the whole request; not knowing counts as not), and no other open request that isn't going is at its head or
+/// under it (that one would be marked merged with it). One that can't go is released all the same, and its card offers Close Request…, saying which release has it.
 /// Whether a request was merged is GitHub's to say: the card asks it (`ended`) rather than trusting a push went through.
 enum SuggestedChanges {
     struct Failure: LocalizedError {
@@ -39,8 +39,8 @@ enum SuggestedChanges {
         var head: String
         var base: String
         var takenIn: String
-        /// Files it changes that a release can't carry (a hidden file at the top, a file Lamp writes itself): it's never
-        /// marked merged by a release, which wouldn't have them.
+        /// Files it changes, over the whole request, that bringing it in didn't stage as it has them (`notCarried`): it's
+        /// never marked merged by a release, which wouldn't have them.
         var leftOut: [String]? = nil
         /// Whether what it changes was checked against what a release carries; unchecked never goes as a parent.
         var checked: Bool? = nil
@@ -253,7 +253,8 @@ enum SuggestedChanges {
     // MARK: Releasing
 
     /// The heads a release goes with as parents: each request brought in that the wish still has, at the head it still
-    /// points to, with nothing in it a release leaves out, and with no open request that wasn't brought in under it
+    /// points to, checked and with nothing in it a release leaves out, and with no other open request that isn't going at
+    /// its head or under it
     /// (`isAncestor`: whether the first commit is in the second's history, which GitHub's compare says).
     static func parents(_ record: Record, holds: (Taken) async -> Bool, isAncestor: (String, String) async -> Bool) async -> [Taken] {
         var going: [Taken] = []
