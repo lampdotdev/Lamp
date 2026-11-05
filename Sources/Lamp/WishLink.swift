@@ -367,6 +367,9 @@ enum WishLink {
         var stage: WishLinkCard.Stage = .editing
         var copied = false
         var retaking = false
+        /// Released from this card since it opened, with nothing on it edited since: the card's main button views the
+        /// link rather than asking to release again, until it's opened again.
+        var released = false
         /// Lamp is writing what's new for the release (`WishReleases.write`).
         var writingNotes = false
         /// The app's repository on GitHub, which a release goes to too while its box is ticked (`GitHubRelease`), or why
@@ -400,7 +403,10 @@ enum WishLink {
         }
         /// A link that carries the wish is always worth sending again: the file is the wish as it is now. So is one with
         /// something to say about what's new.
-        var changed: Bool { shared?.shown != words || values.includeFile || !values.notes.trimmed.isEmpty || values.putOnGitHub }
+        var changed: Bool {
+            // Just released, only what the link shows differing (a picture taken again, say) asks for another.
+            shared?.shown != words || !released && (values.includeFile || !values.notes.trimmed.isEmpty || values.putOnGitHub)
+        }
         /// What's on the card can go now: nothing is sending, and every place it would go is shown and settled.
         var canShare: Bool {
             stage != .sending && values.isComplete && gitHubFinding == nil && (!values.putOnGitHub || firstPush?.stage == .ready)
@@ -509,6 +515,8 @@ enum WishLink {
     /// release there, as a new Release Update, so the link, the version and GitHub agree.
     func findAgain(_ project: LampProject) {
         guard cards[project.id] != nil else { return }
+        // What came in hasn't gone out yet: Release Update is the card's main button again.
+        cards[project.id]?.released = false
         if cards[project.id]?.gitHubBehind != nil, case .failed = cards[project.id]?.gitHubStage { cards[project.id]?.gitHubStage = nil }
         findGitHub(project)
     }
@@ -590,6 +598,7 @@ enum WishLink {
     func update(_ project: LampProject, values: WishLinkCard.Values) {
         guard let before = cards[project.id]?.values, before != values else { return }
         cards[project.id]?.values = values
+        cards[project.id]?.released = false
         // Ticking Also put on GitHub checks what would go up, so the card shows it.
         if values.putOnGitHub, !before.putOnGitHub, cards[project.id]?.firstPush?.staged == nil { checkFirstPush(project) }
         cards[project.id]?.copied = false
@@ -691,6 +700,7 @@ enum WishLink {
                 for app in [project] + Store.shared.apps(of: project).filter({ $0.id != project.id }) { Store.shared.refreshInstalled(app) }
                 guard cards[project.id] != nil else { return }
                 cards[project.id]?.shared = shared
+                cards[project.id]?.released = true
                 copy(project)
                 if let work {
                     await releaseOnGitHub(project, work, version: GitHubRelease.Version(number: number, lines: notes),
