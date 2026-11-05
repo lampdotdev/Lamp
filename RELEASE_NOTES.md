@@ -5,6 +5,19 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.35.0
+
+- Share's main button is New Release now, with Copy as a small button beside the link. Once you've released, the
+  window's main button is View, which opens the link's page.
+- Release Update puts an app on GitHub the first time too, and after that updates GitHub in the same press as the link.
+- Merged someone's changes into your app on GitHub? Bring In Changes brings them into your app before you release
+  again, keeping your own.
+- The GitHub repositories Lamp makes are much smaller: they no longer carry a copy of the app file.
+- Commits Lamp makes to GitHub are signed the way your own git signs them.
+- When a change brings an error into the app, Lamp sees it and fixes it in the same turn.
+- A game no longer stays hidden behind the smoke when a change didn't touch its page.
+- Sharing an app with a file you locked in Finder works again.
+
 ## 0.34.0
 
 - Release Update replaces Update Link: Lamp writes a short "what's new" from your changes, which you can edit before it
