@@ -17,7 +17,10 @@ runs along a part of the homepage as it's added.
 The homepage is itself a demo of changing something by asking. It opens as only a headline and the lines under it,
 beside Lamp's chat, and each request in the chat adds a part of the page while you watch: what Lamp is, the starters,
 what it runs on, how to get it (the download, the newest version, and building from source), answers to common
-questions and what's new; "Make it dark" swaps the paper and the ink for the page's content alone (`.home[data-theme=dark]`; the site around it and the chat stay as they are). Nothing asks a model:
+questions and what's new; "I'm bored" adds Lamplighter (`src/lib/light-game.ts`), a one-button rooftop runner made as Lamp's
+2D game skills make one (Phaser 3.90, loaded only when it's asked for, art and sound made in code, keys only while its
+board has focus), and then offers changes that go into it while it's played (a double jump, rain, faster, every lamp
+lit), each taken back by Undo; "Make it dark" swaps the paper and the ink for the page's content alone (`.home[data-theme=dark]`; the site around it and the chat stay as they are). Nothing asks a model:
 each request is written in advance with the part it adds, a request of one's own is answered with where it can be
 done (Lamp), and Undo takes back the newest change. Without the script, and for search engines, every part is on the
 page in order. The chat is drawn as Lamp draws the chat beside an app (LampSidebarKit), from the same colors

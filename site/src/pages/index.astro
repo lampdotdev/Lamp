@@ -15,6 +15,10 @@ import faqIcon from "@phosphor-icons/core/assets/bold/question-bold.svg?raw";
 import newIcon from "@phosphor-icons/core/assets/bold/sparkle-bold.svg?raw";
 import darkIcon from "@phosphor-icons/core/assets/bold/moon-bold.svg?raw";
 import sendIcon from "@phosphor-icons/core/assets/bold/arrow-up-bold.svg?raw";
+import gameIcon from "@phosphor-icons/core/assets/bold/game-controller-bold.svg?raw";
+import harderIcon from "@phosphor-icons/core/assets/bold/lightning-bold.svg?raw";
+import nightIcon from "@phosphor-icons/core/assets/bold/cloud-rain-bold.svg?raw";
+import biggerIcon from "@phosphor-icons/core/assets/bold/arrow-fat-lines-up-bold.svg?raw";
 import undoIcon from "@phosphor-icons/core/assets/bold/arrow-u-up-left-bold.svg?raw";
 
 // The homepage is a plain page that starts as a headline and a line under it, with a chat beside it, as Lamp's is
@@ -69,6 +73,12 @@ const asks = [
   { part: "faq", ask: "Add answers to common questions", done: "Added a few answers.", icon: faqIcon, hue: 0.93 },
   ...(latest ? [{ part: "new", ask: "Show what's new", done: `Added what's new in ${latest.version}.`, icon: newIcon, hue: 0.13 }] : []),
   { part: "dark", ask: "Make it dark", done: "Done: it's dark now.", icon: darkIcon, hue: 0.7 },
+  { part: "game", ask: "I'm bored", done: "Added a little game. Click it to play, then ask me to change it while you run.", icon: gameIcon, hue: 0.83 },
+  // Changes to the game while it plays, offered once it's there.
+  { part: "change:double", ask: "Give me a double jump", done: "Done: jump again in the air. Your run goes on.", icon: biggerIcon, hue: 0.47, later: true },
+  { part: "change:rain", ask: "Make it rain", done: "Done: it's raining on the rooftops.", icon: nightIcon, hue: 0.6, later: true },
+  { part: "change:faster", ask: "Make it faster", done: "Done: faster. Hold on.", icon: harderIcon, hue: 0.02, later: true },
+  { part: "change:lit", ask: "Light the whole street", done: "Done: every lamp on the street is on.", icon: newIcon, hue: 0.13, later: true },
 ];
 
 /** A color given as Lamp's SwiftUI code gives one (hue, saturation, brightness), as CSS. */
@@ -114,7 +124,7 @@ const lit = (hue: number) => `linear-gradient(${hsb(hue, 0.45, 1)}, ${hsb(hue, 0
           <div data-log class="chat-log" aria-live="polite"></div>
           <div data-asks class="chat-ideas">
               {asks.map((item, i) => (
-              <button type="button" data-ask={item.part} data-done={item.done} class="chat-idea" style={`--lit: ${lit(item.hue)}; --i: ${i}`}>
+              <button type="button" data-ask={item.part} data-done={item.done} hidden={"later" in item} class="chat-idea" style={`--lit: ${lit(item.hue)}; --i: ${i}`}>
                 <span class="idea-icon" aria-hidden="true" set:html={item.icon} />
                 <span data-ask-text>{item.ask}</span>
               </button>
@@ -202,6 +212,13 @@ open "build/Lamp Dev.app"</code></pre>
         </div>
       </section>
 
+      <section data-part="game" class="part game-part">
+        <h2 class="part-heading">Lamplighter</h2>
+        <p class="mt-3 text-lg leading-relaxed">{together("Run the rooftops and jump to light every lamp. Then ask for a change while you run.")}</p>
+        <div data-game tabindex="0" class="game-board mt-5" role="application" aria-label="Lamplighter, a game: press Space or tap to jump, and hold to jump higher"></div>
+        <p data-game-status class="mt-2 font-mono text-sm text-muted-ink" aria-live="polite">Space or tap to jump · hold for higher</p>
+      </section>
+
       {latest && (
         <section data-part="new" class="part">
           <h2 class="part-heading">New in {latest.version}</h2>
@@ -224,6 +241,7 @@ open "build/Lamp Dev.app"</code></pre>
 <script>
   import { DOWNLOAD_URL } from "../lib/download";
   import { track } from "../lib/analytics";
+  import type { Change } from "../lib/light-game";
 
   const chat = document.querySelector<HTMLElement>("[data-chat]")!;
   const page = document.querySelector<HTMLElement>("[data-page]")!;
@@ -254,6 +272,10 @@ open "build/Lamp Dev.app"</code></pre>
   let busy = false;
 
   const askText = (button: HTMLButtonElement) => button.querySelector("[data-ask-text]")!;
+  // The game, made the first time its part comes in; the changes to it are offered only while it's on the page.
+  let game: Awaited<ReturnType<typeof import("../lib/light-game").createGame>> | undefined;
+  const later = order.filter((button) => button.dataset.ask!.startsWith("change:"));
+  const offerChanges = (on: boolean) => later.forEach((button) => { button.hidden = !on; });
   const toggleDark = (button: HTMLButtonElement) => {
     // Only the page's content goes dark, as an app would: not the site around it, and not Lamp's chat beside it.
     const content = document.querySelector<HTMLElement>(".home")!;
@@ -282,6 +304,7 @@ open "build/Lamp Dev.app"</code></pre>
       undo.disabled = true;
       const part = button.dataset.ask!;
       const dark = part === "dark";
+      const change = part.startsWith("change:") ? (part.slice(7) as Change) : undefined;
       const asked = askText(button).textContent!.trim();
       track("home_change_asked", { part });
       chat.dataset.asked = "";
@@ -289,6 +312,16 @@ open "build/Lamp Dev.app"</code></pre>
       const working = say("lamp", "Working on it…");
       working.classList.add("chat-working");
       if (!dark) button.remove();
+      // A change to the game goes in at once, while it plays: no rebuild, no restart, the score kept.
+      if (change) {
+        game?.set(change, true);
+        working.classList.remove("chat-working");
+        working.textContent = button.dataset.done!;
+        done.push({ button, asked });
+        busy = false;
+        settle();
+        return;
+      }
       setTimeout(() => {
         working.classList.remove("chat-working");
         if (dark) {
@@ -298,6 +331,17 @@ open "build/Lamp Dev.app"</code></pre>
           // Each part goes in at the end of what's been asked for so far, in the order it was asked.
           page.append(section);
           section.classList.add("is-shown");
+          if (part === "game") {
+            // Phaser comes only now, the first time the game is asked for.
+            // Its changes are offered once it's ready, so none is asked for before there's a game to take it.
+            if (game) offerChanges(true);
+            else import("../lib/light-game").then(({ createGame }) => createGame(section.querySelector("[data-game]")!, section.querySelector("[data-game-status]")!)).then((made) => {
+              game = made;
+              if (section.classList.contains("is-shown")) offerChanges(true);
+            }).catch(() => {
+              section.querySelector("[data-game-status]")!.textContent = "The game didn't load. Reload the page to try again.";
+            });
+          }
           if (!calm) section.classList.add("is-arriving");
           // The page goes all the way down to what came in, once it's laid out: its end just above whatever covers the
           // window's foot (the chat, on a phone).
@@ -332,7 +376,12 @@ open "build/Lamp Dev.app"</code></pre>
     track("home_change_undone", { part: last.button.dataset.ask! });
     const part = last.button.dataset.ask!;
     if (part === "dark") toggleDark(last.button);
-    else {
+    else if (part.startsWith("change:")) {
+      game?.set(part.slice(7) as Change, false);
+      const after = order.slice(order.indexOf(last.button) + 1).find((other) => other.isConnected);
+      ideas.insertBefore(last.button, after ?? null);
+    } else {
+      if (part === "game") offerChanges(false);
       page.querySelector<HTMLElement>(`[data-part="${part}"]`)!.classList.remove("is-shown", "is-arriving");
       const after = order.slice(order.indexOf(last.button) + 1).find((other) => other.isConnected);
       ideas.insertBefore(last.button, after ?? null);
@@ -436,6 +485,11 @@ open "build/Lamp Dev.app"</code></pre>
   @keyframes part-in { from { opacity: 0; translate: 0 12px; } }
   @keyframes part-light { 0% { scale: 0 1; opacity: 1; } 60% { scale: 1 1; opacity: 1; } 100% { scale: 1 1; opacity: 0; } }
 
+  /* The game's board: the page's width, framed by a thin rule. It needs the script, so without it it isn't there. */
+  .game-board { display: block; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 8px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-tape) 20%, transparent); touch-action: none; cursor: pointer; }
+  .game-board:focus-visible { outline: 2px solid var(--color-tape); outline-offset: 3px; }
+  .game-board :global(canvas) { display: block; width: 100% !important; height: 100% !important; }
+  :global(html:not([data-asking])) .game-part { display: none; }
   .part-heading { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em; }
   .star-list { display: flex; flex-direction: column; gap: 0.75rem; font-size: 1.0625rem; }
   .star-list li { position: relative; padding-left: 2.25rem; }
@@ -550,6 +604,7 @@ open "build/Lamp Dev.app"</code></pre>
   @keyframes idea-shimmer { 0%, 12% { translate: -110% 0; } 32%, 100% { translate: 110% 0; } }
   .chat[data-asked] .chat-idea::after { display: none; }
   @media (prefers-reduced-motion: reduce) { .chat-idea::after { display: none; } }
+  .chat-idea[hidden] { display: none; }
   .chat-idea:hover { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chat-ink) 22%, transparent); }
   .chat-idea:focus-visible { outline: 2px solid var(--chat-ink); outline-offset: 2px; }
   .idea-icon {
