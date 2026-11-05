@@ -2,6 +2,7 @@
 import { Image } from "astro:assets";
 import Base from "../layouts/Base.astro";
 import RemixDialog from "../components/RemixDialog.astro";
+import Footer from "../components/Footer.astro";
 import { together } from "../lib/text";
 import { DOWNLOAD_URL } from "../lib/download";
 import { STARTERS } from "../lib/starters";
@@ -63,7 +64,7 @@ const faq = [
 const asks = [
   { part: "what", ask: "Explain more what Lamp is", done: "Added what Lamp is.", icon: infoIcon, hue: 0.08 },
   { part: "starters", ask: "Show some apps people can start from", done: "Added six apps to start from, each with a change to try.", icon: startersIcon, hue: 0.36 },
-  { part: "devices", ask: "List what it runs on", done: "Added where what you make can run.", icon: devicesIcon, hue: 0.58 },
+  { part: "devices", ask: "Tell people which devices are supported", done: "Added the devices your apps can run on.", icon: devicesIcon, hue: 0.58 },
   { part: "get", ask: "Tell people how to get it", done: "Added the download, and how to build it yourself.", icon: getIcon, hue: 0.47 },
   { part: "faq", ask: "Add answers to common questions", done: "Added a few answers.", icon: faqIcon, hue: 0.93 },
   ...(latest ? [{ part: "new", ask: "Show what's new", done: `Added what's new in ${latest.version}.`, icon: newIcon, hue: 0.13 }] : []),
@@ -82,7 +83,12 @@ const lit = (hue: number) => `linear-gradient(${hsb(hue, 0.45, 1)}, ${hsb(hue, 0
 ---
 
 <Base title="Lamp: apps exactly the way you want them" description={description} image="/og.jpg">
-  <div class="home min-h-[calc(100dvh-8rem)] px-4 pt-[calc(var(--menu-height)+3rem)] pb-16 sm:px-6 lg:pr-[calc(var(--sidebar)+3rem)] lg:pl-12">
+  <div class="home mx-auto max-w-[var(--frame)] min-h-[calc(100dvh-8rem)] px-4 pt-[calc(var(--menu-height)+3rem)] pb-16 sm:px-6 lg:pr-[calc(var(--sidebar)+3rem)] lg:pl-12">
+    <!-- Where there's room, the page is an app's window, as Lamp's chat is beside one on the Mac: a title bar with the
+         window's lights and the app's name, and the page scrolling inside it. On a phone it's simply the page. -->
+    <div class="app-window">
+    <div class="app-window-bar" aria-hidden="true"><span class="app-window-lights"><i></i><i></i><i></i></span><span class="app-window-title">Lamp Overview</span></div>
+    <div data-scroller class="app-window-body">
     <main data-page class="mx-auto min-w-0 max-w-[46rem]">
       <section class="pb-10">
         <h1 class="max-w-[16ch] text-[clamp(2.5rem,6vw,4rem)] leading-[1] font-black tracking-[-0.04em] text-balance">{headline}</h1>
@@ -101,7 +107,7 @@ const lit = (hue: number) => `linear-gradient(${hsb(hue, 0.45, 1)}, ${hsb(hue, 0
             <!-- The window's red light, as Lamp's chat has one: it puts the chat away. -->
             <button type="button" data-close class="close-light" aria-label="Close the chat" title="Close the chat"></button>
             <span class="lamp-mark" aria-hidden="true"><span class="lamp-glass"></span><span class="lamp-square"></span></span>
-            <span class="min-w-0 flex-1 truncate">Lamp: Editing lamp.dev</span>
+            <span class="min-w-0 flex-1 truncate">Editing Lamp Overview</span>
             <!-- Back one change, as Lamp's toolbar's Undo takes an app back to the version before. -->
             <button type="button" data-undo class="tool-button" aria-label="Undo" title="Undo the last change" disabled set:html={undoIcon} />
           </div>
@@ -164,7 +170,7 @@ const lit = (hue: number) => `linear-gradient(${hsb(hue, 0.45, 1)}, ${hsb(hue, 0
       </section>
 
       <section data-part="devices" class="part">
-        <h2 class="part-heading">Runs on what's already yours</h2>
+        <h2 class="part-heading">Put your apps on your TV, phone and more</h2>
         <ul class="star-list mt-5">
           {devices.map((device) => <li><strong>{device.name}</strong>{device.brands && <span class="text-muted-ink">{device.brands}</span>}</li>)}
         </ul>
@@ -206,6 +212,10 @@ open "build/Lamp Dev.app"</code></pre>
         </section>
       )}
     </main>
+    </div>
+    </div>
+    <!-- Where the page is a window, the project's links are one line under it and the chat, not part of the app. -->
+    <div class="window-footer"><Footer compact /></div>
 
   </div>
   <RemixDialog />
@@ -245,13 +255,18 @@ open "build/Lamp Dev.app"</code></pre>
 
   const askText = (button: HTMLButtonElement) => button.querySelector("[data-ask-text]")!;
   const toggleDark = (button: HTMLButtonElement) => {
-    const on = document.documentElement.dataset.theme !== "dark";
-    document.documentElement.dataset.theme = on ? "dark" : "light";
+    // Only the page's content goes dark, as an app would: not the site around it, and not Lamp's chat beside it.
+    const content = document.querySelector<HTMLElement>(".home")!;
+    const on = content.dataset.theme !== "dark";
+    content.dataset.theme = on ? "dark" : "light";
     askText(button).textContent = on ? "Make it light again" : "Make it dark";
     return on;
   };
   // Once every part has been added, a word that the rest is Lamp's.
+  // Whether anything has been added, so the headline can stand in the middle of an otherwise empty window.
+  const marked = () => document.documentElement.toggleAttribute("data-has-part", !!page.querySelector(".part.is-shown"));
   const settle = () => {
+    marked();
     const left = !!ideas.querySelector("[data-ask]:not([data-ask=dark])");
     if (!left && !toldAll) {
       toldAll = true;
@@ -289,8 +304,16 @@ open "build/Lamp Dev.app"</code></pre>
           requestAnimationFrame(() => {
             // The room under the content first, for the chat as it now is, so the page can go that far.
             room();
-            const under = innerHeight - covered() - 16;
-            scrollTo({ top: scrollY + section.getBoundingClientRect().bottom - under, behavior: calm ? "auto" : "smooth" });
+            const box = section.getBoundingClientRect();
+            if (!narrow()) {
+              // Inside the window, which scrolls on its own: to the new part's end, just above the window's foot.
+              const body = document.querySelector<HTMLElement>("[data-scroller]")!;
+              const foot = body.getBoundingClientRect().bottom - 24;
+              body.scrollTo({ top: body.scrollTop + box.bottom - foot, behavior: calm ? "auto" : "smooth" });
+            } else {
+              const under = innerHeight - covered() - 16;
+              scrollTo({ top: scrollY + box.bottom - under, behavior: calm ? "auto" : "smooth" });
+            }
           });
           working.textContent = button.dataset.done!;
         }
@@ -360,6 +383,14 @@ open "build/Lamp Dev.app"</code></pre>
   room();
 
 
+  // Where the page is a window, only the window scrolls: scrolling anywhere outside it and the chat (the background,
+  // the menu bar) scrolls the window, so it reads as one long page.
+  const scroller = document.querySelector<HTMLElement>("[data-scroller]")!;
+  addEventListener("wheel", (event) => {
+    if (narrow() || (event.target as Element).closest?.("[data-scroller], [data-chat], dialog")) return;
+    scroller.scrollBy({ top: event.deltaY });
+  }, { passive: true });
+
   // A request of its own: this page can only do what's above, so it says where it can be done.
   const own = chat.querySelector<HTMLFormElement>("[data-own]")!;
   const ownText = own.querySelector<HTMLInputElement>("[data-own-text]")!;
@@ -423,17 +454,15 @@ open "build/Lamp Dev.app"</code></pre>
   /* The chat is a sidebar down the whole of the window's right edge, the menu bar stopping at it, drawn as Lamp's chat
      beside an app is (LampSidebarKit): Lamp's own paper and system type, with an ink line between it and the page.
      Without the room, it's a box under the headline. Its colors are Lamp's (Paper.swift), light and dark. */
-  .home { --sidebar: 24rem; }
+  .home { --sidebar: 24rem; --window: color-mix(in srgb, var(--color-paper) 65%, white); }
+  .home[data-theme="dark"] { --window: color-mix(in srgb, var(--color-paper) 94%, white); }
+  @media (max-width: 63.999rem) { .home { transition: background-color 0.4s ease; } .home[data-theme="dark"] { background: var(--color-paper); } }
+  .app-window-bar, .window-footer { display: none; }
   .chat {
     --chat-page: #f6f1e4; --chat-bubble: #eae3d0; --chat-card: #fffdf6; --chat-ink: #1b1a17; --chat-on-ink: #f2ecda;
     --chat-muted: #5d574b; --chat-line: rgb(0 0 0 / 0.1); --chat-divider: #1b1a17;
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; font-size: 14px; color: var(--chat-ink);
     -webkit-font-smoothing: antialiased;
-  }
-  :global(html[data-theme="dark"]) .chat {
-    --chat-page: #1f1d19; --chat-bubble: #2e2b25; --chat-card: #2a2722; --chat-ink: #f2ecda; --chat-on-ink: #1b1a17;
-    --chat-muted: #b9b2a1; --chat-line: rgb(255 255 255 / 0.12); --chat-divider: rgb(242 236 218 / 0.22);
-    --idea-off: #3a3730; --idea-off-ink: #a39d8e;
   }
   .chat-panel {
     display: flex; flex-direction: column; overflow: hidden; border-radius: 12px; background: var(--chat-page);
@@ -517,7 +546,6 @@ open "build/Lamp Dev.app"</code></pre>
     animation: idea-shimmer 6s ease-in-out calc(1.2s + var(--i) * 0.14s) infinite;
   }
   .chat { --shimmer: rgb(255 255 255 / 0.7); }
-  :global(html[data-theme="dark"]) .chat { --shimmer: rgb(255 255 255 / 0.22); }
   @media (prefers-color-scheme: dark) { .chat { --shimmer: rgb(255 255 255 / 0.22); } }
   @keyframes idea-shimmer { 0%, 12% { translate: -110% 0; } 32%, 100% { translate: 110% 0; } }
   .chat[data-asked] .chat-idea::after { display: none; }
@@ -577,21 +605,53 @@ open "build/Lamp Dev.app"</code></pre>
     /* A window of its own beside the page, as Lamp's chat stands beside an app on the Mac: off the window's edges,
        with round corners, a hairline edge and a window's shadow. */
     .home { --gap: 12px; }
-    .chat { position: fixed; top: var(--gap); right: var(--gap); bottom: var(--gap); z-index: 50; width: var(--sidebar); margin: 0; }
+    /* At the right edge of the page's width, not of a wider window's. */
+    .home { --edge: max(var(--gap), calc((100vw - var(--frame)) / 2 + var(--gap))); }
+    /* The page's window and the chat stand side by side under the menu bar, the same height, the window taking the
+       width the chat leaves (all of it once the chat's put away). The site's own footer goes inside the window, at the
+       end of the page. */
+    .home {
+      position: fixed; top: calc(var(--menu-height) + var(--gap)); bottom: var(--foot); left: var(--edge);
+      right: calc(var(--edge) + var(--sidebar) + var(--gap)); max-width: none; min-height: 0; margin: 0; padding: 0;
+    }
+    :global(html[data-chat-closed]) .home, :global(html:not([data-asking])) .home { right: var(--edge); }
+    .chat { position: fixed; top: calc(var(--menu-height) + var(--gap)); right: var(--edge); bottom: var(--foot); z-index: 50; width: var(--sidebar); margin: 0; }
+    .chat-reopen { right: var(--edge); }
     .chat-panel {
       height: 100%; border: 0; border-radius: 14px;
       box-shadow: 0 0 0 0.5px rgb(0 0 0 / 0.22), 0 1px 3px rgb(0 0 0 / 0.08), 0 22px 60px -10px rgb(0 0 0 / 0.32);
     }
     /* The conversation takes the room, and the ideas and message box stay at the foot, as in Lamp. */
     .chat-log { flex: 1; }
-    /* The page keeps clear of it, menu bar and foot included, unless it's been put away. */
-    :global(html[data-asking]:not([data-chat-closed]) header nav) { padding-right: calc(24rem + 2.5rem); }
-    :global(html[data-asking]:not([data-chat-closed]) footer > div) { padding-right: calc(24rem + 3.5rem); padding-left: 3rem; max-width: none; }
-    :global(html[data-chat-closed]) .home { padding-right: 3rem; }
+    .app-window {
+      display: flex; flex-direction: column; height: 100%; overflow: hidden; border-radius: 12px; background: var(--window);
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-tape) 18%, transparent), 0 1px 3px rgb(0 0 0 / 0.06), 0 22px 60px -14px rgb(0 0 0 / 0.25);
+    }
+    .app-window-bar {
+      position: relative; display: flex; align-items: center; flex: none; height: 38px; padding: 0 14px;
+      border-bottom: 1px solid color-mix(in srgb, var(--color-tape) 12%, transparent);
+    }
+    .app-window-lights { display: flex; gap: 8px; }
+    .app-window-lights i { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 0.5px rgb(0 0 0 / 0.12); }
+    .app-window-lights i:nth-child(1) { background: #ff5f57; }
+    .app-window-lights i:nth-child(2) { background: #febc2e; }
+    .app-window-lights i:nth-child(3) { background: #28c840; }
+    .app-window-title {
+      position: absolute; left: 50%; translate: -50% 0; font: 600 13px -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      color: var(--color-muted-ink);
+    }
+    .app-window-body { flex: 1; min-height: 0; overflow-y: auto; padding: 3rem 3rem 2rem; scrollbar-width: thin; }
+    /* The project's links, one line under the windows. */
+    .home { --foot: 34px; }
+    .window-footer { display: flex; align-items: center; position: fixed; left: calc(var(--edge) + 4px); right: var(--edge); bottom: 0; height: var(--foot); }
+    /* It sits on the site's paper, outside the window, so it keeps the light page's ink whatever the content's theme. */
+    .window-footer { --color-paper: #f2ecda; --color-tape: #1b1a17; --color-muted-ink: #5d584b; color: var(--color-tape); }
+    /* Until a part's been added, the headline stands in the middle of the window. */
+    :global(html[data-asking]:not([data-has-part])) .app-window-body main { min-height: 100%; display: flex; flex-direction: column; justify-content: center; padding-bottom: 3rem; }
+    :global(body:has(.app-window) > footer) { display: none; }
   }
   @media (min-width: 64rem) and (prefers-color-scheme: dark) {
     .chat-panel { box-shadow: 0 0 0 0.5px rgb(255 255 255 / 0.14), 0 22px 60px -10px rgb(0 0 0 / 0.7); }
   }
-  :global(html[data-theme="dark"]) .chat-panel { box-shadow: 0 0 0 0.5px rgb(255 255 255 / 0.14), 0 22px 60px -10px rgb(0 0 0 / 0.7); }
   @media (prefers-reduced-motion: reduce) { .chat-log :global(.chat-working) { animation: none; } }
 </style>

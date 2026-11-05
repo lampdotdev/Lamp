@@ -314,7 +314,6 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
     background: color-mix(in srgb, var(--color-paper) 70%, white); color: var(--color-tape);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-tape) 35%, transparent); font-family: var(--font-sans); font-size: 1.125rem; line-height: 1.45;
   }
-  :global(html[data-theme="dark"]) .remix-words textarea { background: color-mix(in srgb, var(--color-paper) 85%, white); }
   /* Nothing to write when trying it. */
   .remix-dialog[data-try] :is(.remix-ask, textarea) { display: none; }
   .remix-words textarea::placeholder { color: var(--color-muted-ink); }
