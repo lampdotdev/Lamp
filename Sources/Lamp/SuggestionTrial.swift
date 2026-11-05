@@ -289,7 +289,8 @@ extension Store {
         // Quitting the copy ends the try.
         running.watching = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification,
                                                                               object: nil, queue: .main) { note in
-            guard (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.processIdentifier == app.processIdentifier else { return }
+            // By its own bundle id, which only the copy has: a quit app's process id reads as -1 by then.
+            guard (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier == manifest.bundleID else { return }
             Task { @MainActor in if Store.shared.trials[project.id]?.generation == generation { Store.shared.endTrial(of: project) } }
         }
         trials[project.id] = running

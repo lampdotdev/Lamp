@@ -73,7 +73,7 @@ struct SuggestionsPanel: View {
             header(project, record)
             Divider().overlay(Paper.rule)
             HStack(spacing: 0) {
-                list(record, shown: shown, chosen: chosen?.number).frame(width: 330)
+                list(record, shown: shown, chosen: chosen?.number).frame(width: 300)
                 Divider().overlay(Paper.rule)
                 Group {
                     if let chosen {
@@ -335,39 +335,56 @@ struct SuggestionDetail: View {
 
     }
 
+    /// The buttons on one line where they fit, on two where they don't; none ever wraps its words. Show the Code and
+    /// what Try It First leaves alone go on the line under them.
     private var actions: some View {
         VStack(alignment: .trailing, spacing: 8) {
             // A try of it, while it lasts, where its buttons are.
             if let trial { trying(trial) }
-            HStack(spacing: 10) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { Spacer(minLength: 0); firstButtons; mainButton }
+                VStack(alignment: .trailing, spacing: 8) {
+                    HStack(spacing: 10) { Spacer(minLength: 0); firstButtons }
+                    mainButton
+                }
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Button("Show the Code") { store.viewSuggestion(project, number: request.number) }
-                    .buttonStyle(.link).font(.system(size: 12.5)).foregroundStyle(Paper.muted)
-                Spacer()
-                if case .held = standing, SuggestedChanges.closingComment(record.taken(request.number), request: request, app: project.name) != nil {
-                    Button("Close Request…") { store.closeSuggestion(project, number: request.number) }
-                        .buttonStyle(PaperButtonStyle(.outline, height: 34))
-                }
-                if record.isHidden(request) {
-                    Button("Put Back") { store.unhideSuggestion(project, number: request.number) }
-                        .buttonStyle(PaperButtonStyle(.outline, height: 34))
-                } else if case .open = standing {
-                    Button("Not for Me") { store.hideSuggestion(project, number: request.number, head: request.head) }
-                        .buttonStyle(PaperButtonStyle(.outline, height: 34))
-                        .help("Set it aside here. Nothing is said to \(request.login).")
-                    if SuggestionTrial.canTry(project), trial == nil {
-                        Button("Try It First") { store.trySuggestion(project, number: request.number) }
-                            .buttonStyle(PaperButtonStyle(.outline, height: 34))
-                            .disabled(busy)
-                            .help(SuggestionTrial.note)
-                    }
-                    Button("Bring Into My App") { store.bringInSuggestion(project, number: request.number) }
-                        .buttonStyle(PaperButtonStyle(.ink, height: 34))
-                        .disabled(busy)
+                    .buttonStyle(.link).font(.system(size: 12.5)).foregroundStyle(Paper.muted).fixedSize()
+                Spacer(minLength: 8)
+                if case .open = standing, !record.isHidden(request), SuggestionTrial.canTry(project), trial == nil {
+                    note(SuggestionTrial.note).multilineTextAlignment(.trailing)
                 }
             }
-            if case .open = standing, !record.isHidden(request), SuggestionTrial.canTry(project), trial == nil {
-                HStack { Spacer(); note(SuggestionTrial.note) }
+        }
+    }
+
+    @ViewBuilder private var firstButtons: some View {
+        if case .held = standing, SuggestedChanges.closingComment(record.taken(request.number), request: request, app: project.name) != nil {
+            Button("Close Request…") { store.closeSuggestion(project, number: request.number) }
+                .buttonStyle(PaperButtonStyle(.outline, height: 34)).fixedSize()
+        }
+        if record.isHidden(request) {
+            Button("Put Back") { store.unhideSuggestion(project, number: request.number) }
+                .buttonStyle(PaperButtonStyle(.outline, height: 34)).fixedSize()
+        } else if case .open = standing {
+            Button("Not for Me") { store.hideSuggestion(project, number: request.number, head: request.head) }
+                .buttonStyle(PaperButtonStyle(.outline, height: 34)).fixedSize()
+                .help("Set it aside here. Nothing is said to \(request.login).")
+            if SuggestionTrial.canTry(project), trial == nil {
+                Button("Try It First") { store.trySuggestion(project, number: request.number) }
+                    .buttonStyle(PaperButtonStyle(.outline, height: 34)).fixedSize()
+                    .disabled(busy)
+                    .help(SuggestionTrial.note)
             }
+        }
+    }
+
+    @ViewBuilder private var mainButton: some View {
+        if case .open = standing, !record.isHidden(request) {
+            Button("Bring Into My App") { store.bringInSuggestion(project, number: request.number) }
+                .buttonStyle(PaperButtonStyle(.ink, height: 34)).fixedSize()
+                .disabled(busy)
         }
     }
 
