@@ -14,7 +14,7 @@ const links = [
 
 <!-- The bottom of every page: a thin rule, then plain lines in mono. -->
 <footer class="border-t border-tape/20 bg-paper text-tape">
-  <div class="mx-auto flex max-w-[80rem] flex-col gap-3 px-4 pt-8 pb-14 font-mono text-sm sm:px-6">
+  <div class="mx-auto flex max-w-[var(--frame)] flex-col gap-3 px-4 pt-8 pb-14 font-mono text-sm sm:px-6">
     <ul class="flex flex-wrap gap-x-5 gap-y-1">
       {links.map((link) => <li><a href={link.href} class="underline underline-offset-4 hover:no-underline">{link.label}</a></li>)}
     </ul>

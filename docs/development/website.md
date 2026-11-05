@@ -25,7 +25,8 @@ page in order. The chat is drawn as Lamp draws the chat beside an app (LampSideb
 back), Lamp's mark, "Lamp: Editing lamp.dev" (as Lamp's own chat names the app it's beside) and Undo; what's asked in ink bubbles and what Lamp says in paper ones, both with Messages' tail;
 the requests as outlined tiles whose gray icons (Phosphor's bold set) take their own color
 under the pointer; and the round message box with the round ink Send. Where there's room it's a window of its own
-down the right edge, off the window's edges with round corners and a window's shadow; on a phone it's pinned to the foot of the
+down the right edge of the page's width (`--frame`, 80rem: on a wider window the menu bar, content, footer and chat
+keep to the middle together), off the window's edges with round corners and a window's shadow; on a phone it's pinned to the foot of the
 window over the page, never more than about two fifths of it, so what it adds stays in sight above it: the requests
 as small pills that wrap, and only the latest exchange of the conversation. The red light puts it away into Lamp's mark at
 the corner; the mark brings it back. The page keeps room under its footer as tall as whatever covers the window's foot (the

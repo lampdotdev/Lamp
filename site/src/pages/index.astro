@@ -82,7 +82,7 @@ const lit = (hue: number) => `linear-gradient(${hsb(hue, 0.45, 1)}, ${hsb(hue, 0
 ---
 
 <Base title="Lamp: apps exactly the way you want them" description={description} image="/og.jpg">
-  <div class="home min-h-[calc(100dvh-8rem)] px-4 pt-[calc(var(--menu-height)+3rem)] pb-16 sm:px-6 lg:pr-[calc(var(--sidebar)+3rem)] lg:pl-12">
+  <div class="home mx-auto max-w-[var(--frame)] min-h-[calc(100dvh-8rem)] px-4 pt-[calc(var(--menu-height)+3rem)] pb-16 sm:px-6 lg:pr-[calc(var(--sidebar)+3rem)] lg:pl-12">
     <main data-page class="mx-auto min-w-0 max-w-[46rem]">
       <section class="pb-10">
         <h1 class="max-w-[16ch] text-[clamp(2.5rem,6vw,4rem)] leading-[1] font-black tracking-[-0.04em] text-balance">{headline}</h1>
@@ -577,7 +577,10 @@ open "build/Lamp Dev.app"</code></pre>
     /* A window of its own beside the page, as Lamp's chat stands beside an app on the Mac: off the window's edges,
        with round corners, a hairline edge and a window's shadow. */
     .home { --gap: 12px; }
-    .chat { position: fixed; top: var(--gap); right: var(--gap); bottom: var(--gap); z-index: 50; width: var(--sidebar); margin: 0; }
+    /* At the right edge of the page's width, not of a wider window's. */
+    .home { --edge: max(var(--gap), calc((100vw - var(--frame)) / 2 + var(--gap))); }
+    .chat { position: fixed; top: var(--gap); right: var(--edge); bottom: var(--gap); z-index: 50; width: var(--sidebar); margin: 0; }
+    .chat-reopen { right: var(--edge); }
     .chat-panel {
       height: 100%; border: 0; border-radius: 14px;
       box-shadow: 0 0 0 0.5px rgb(0 0 0 / 0.22), 0 1px 3px rgb(0 0 0 / 0.08), 0 22px 60px -10px rgb(0 0 0 / 0.32);
@@ -586,7 +589,7 @@ open "build/Lamp Dev.app"</code></pre>
     .chat-log { flex: 1; }
     /* The page keeps clear of it, menu bar and foot included, unless it's been put away. */
     :global(html[data-asking]:not([data-chat-closed]) header nav) { padding-right: calc(24rem + 2.5rem); }
-    :global(html[data-asking]:not([data-chat-closed]) footer > div) { padding-right: calc(24rem + 3.5rem); padding-left: 3rem; max-width: none; }
+    :global(html[data-asking]:not([data-chat-closed]) footer > div) { padding-right: calc(24rem + 3.5rem); padding-left: 3rem; }
     :global(html[data-chat-closed]) .home { padding-right: 3rem; }
   }
   @media (min-width: 64rem) and (prefers-color-scheme: dark) {
