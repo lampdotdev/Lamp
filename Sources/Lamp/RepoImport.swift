@@ -1,6 +1,6 @@
 import Foundation
 
-/// A wish opened from where it lives on GitHub: the repository Put on GitHub made (`GitHubRepo`), by its address or
+/// A wish opened from where it lives on GitHub: the repository Lamp put it in (`GitHubRepo`), by its address or
 /// from a folder it was cloned into. The repository is fetched shallowly with Lamp's own git, confined as every git
 /// command of Lamp's is (`Versions.git`: the sandbox, with the network open), into a folder of Lamp's; then the tree is
 /// read as a shared file's contents are (`Sharing.open(unpacked:)`: the same review, the same checks, Lamp's own files
@@ -116,7 +116,7 @@ enum RepoImport {
 
     // MARK: Reading a tree
 
-    /// The wish in a folder laid out as Put on GitHub lays a repository out: the shared file's contents at the top
+    /// The wish in a folder laid out as Lamp lays a repository out on GitHub: the shared file's contents at the top
     /// (`lamp-app.json` and the code), read as a shared file is once copied into a folder of Lamp's own, with Lamp's
     /// own files, the repository's README and license and the shared file beside them left where they are; a site's
     /// page at the top and the rest in Lamp's folder (`StaticSite`); or a plain site, as a new web app. A folder
@@ -148,7 +148,7 @@ enum RepoImport {
         return package
     }
 
-    /// Whether a fetched tree is a wish (laid out as Put on GitHub lays one out, or holding a shared file) rather than
+    /// Whether a fetched tree is a wish (laid out as Lamp lays one out on GitHub, or holding a shared file) rather than
     /// someone's own project, which `open` can't read.
     /// A plain site (`StaticSite.isPlain`) opens too, as a web app laid out as it is, unless `sites` is false: making an
     /// app from someone's project (`GitHubProjects`) asks only whether it's a wish already.

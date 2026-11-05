@@ -254,9 +254,9 @@ author, an https address, the commit, the license as an SPDX id or `LicenseRef-`
 which the agent writes when it brings such work in (`Agent.Rules.about`, in every kind's prompt and so every engine's),
 and `remixOf`, the wishes it was made from, oldest first, which only Lamp adds to: a starter's copy begins it with the
 starter, and a shared file carries the wish being shared as its last link (`Sharing.export`; the same wish shared again
-stays one link), with where that wish lives when Lamp knows it (`url`: its repository on GitHub, written by Put on GitHub
+stays one link), with where that wish lives when Lamp knows it (`url`: its repository on GitHub, written by a release there
 and by opening a repository, "Generated apps") and the commit of it the wish has (`commit`: the one it was opened at,
-the last one merged in by Update from GitHub…, or the last one Put on GitHub pushed; for a wish that lives nowhere, the
+the last one merged in by Update from GitHub…, or the last one a release pushed there; for a wish that lives nowhere, the
 version of its own history the file was made from; shown nowhere, it's what an update is merged from, "Generated apps"). The same wish put somewhere else is a link of its own
 (`Remix.sameLink`), so the chain keeps where a wish came from beside where it was put; `Credits.origin(own:)` is the
 former. The About window and a repository's README link the chain. Credit is only added to: what a wish arrived with (a starter's copy, a file opened) is kept in
@@ -285,9 +285,9 @@ goes, credited and named; with no license it goes too, once the person has been 
 Share…, Copy App File, Export… and a drag from the desk ask once with Share Anyway (`Sharing.askToShare`), and the answer
 is kept for the wish until it takes in more such work (`ShareCheck.accepted`, in Lamp's settings rather than the wish's
 folder, where the agent writes); an app's File ▸ Share… gets the same question from `/app/share` and asks again with
-`anyway` and the work it was shown (an answer covers only that, by the wish's `instance`); Share Link (with the wish itself ticked), Send Changes Back… and Put on GitHub… to a public repository (a game's page with it) say it
+`anyway` and the work it was shown (an answer covers only that, by the wish's `instance`); Share Link (with the wish itself ticked), Send Changes Back… and Also put on GitHub to a public repository (a game's page with it) say it
 as a line among their facts, and a private repository says nothing, since nothing is passed on. Send Changes Back and
-Put on GitHub fold the lines of sources only credited under their own terms (`ShareCheck.cardNotes`: own terms that
+Also put on GitHub fold the lines of sources only credited under their own terms (`ShareCheck.cardNotes`: own terms that
 aren't non-commercial or no-derivatives, and share-alike data) under one line, keeping the rest in sight, and in the
 chat's place scroll their words while their buttons stay at the bottom (`GitHubCardLayout`), so a wish built on many
 data sets never pushes the buttons out of sight. A license file the
@@ -300,8 +300,8 @@ never ship.
 ### Publishing a page
 
 A wish whose one app is a page that runs in any browser (`Publish.hasPage`, asked of its kind: `Target.publishedPage`, a
-web game's played, a web app's or a screen's used) gets a page anyone plays or uses in a browser when it's Put on GitHub
-to a public repository ("Generated apps"): the same repository, on its `gh-pages` branch (`Publish.pageBranch`), served by
+web game's played, a web app's or a screen's used) gets a page anyone plays or uses in a browser when it's put on GitHub
+in a public repository ("Generated apps"): the same repository, on its `gh-pages` branch (`Publish.pageBranch`), served by
 GitHub Pages at `https://<owner>.github.io/<repository>/`, which the README's Play in your browser (Open in your browser for an app) links and the
 repository's website points to (`GitHubRepo.offerWebsite`, over the remix link Lamp set there before, never over one the
 person set). It's the person's under GitHub's terms, through `gh` and their sign-in there, never Lamp's servers, so it
@@ -328,13 +328,11 @@ so they start from the game that's played. The bar is written as the page is pus
 the same (`Publish.pushPage`); Pages is turned on for that branch, or asked to build, and the card waits until GitHub says
 it built that very commit (an earlier build's "built" is the page as it was), saying so if it's still building after ten
 minutes (`Publish.servePage`). Pages the person set to serve another branch are left alone, and the card says so. The code
-is kept as soon as it's up, so a page that fails is tried again on top of it (Put on GitHub's card the first time,
-Try GitHub Again on a release's after). Where the page plays is
-kept with the repository (`GitHubRepo.Repo.page`), and the card's done state offers Play (Open Page for an app) and
-Copy Page Link.
+is kept as soon as it's up, so a page that fails is tried again on top of it (Try GitHub Again on the release card). Where the page plays is
+kept with the repository (`GitHubRepo.Repo.page`).
 
 Publish as Web Page…, which made a repository of its own holding only the page, was an experiment in Lamp Dev while
-Lamp's runtime had no license that let anyone pass it on; Lamp is MIT now, and Put on GitHub with its page does what it
+Lamp's runtime had no license that let anyone pass it on; Lamp is MIT now, and putting a wish on GitHub with its page does what it
 did and keeps the game's code and its page in one place, so it's gone.
 
 #### Remixing a published page
@@ -343,7 +341,7 @@ The credit bar's Remix… opens a panel over the page (the one beside an app on 
 the page's own HTML by `Publish.withCreditBar`): three things to change and a box. Continue with Lamp names what the
 page is a copy of when Lamp can copy it again (`OpenInLamp.origin`): a starter's own page names the starter's id
 (`StarterRepos.stagePage`), a game's page put up with its code names that repository at the commit pushed with it
-(`GitHubRepo.upload`), and an app whose wish has been Put on GitHub names its repository and the commit last pushed
+(`GitHubRepo.upload`), and an app whose wish is on GitHub names its repository and the commit last pushed
 while that repository is public (as GitHub said at the push) and holds the wish as it is now (the wish's own version
 the push carried, with nothing unsaved then or now, `Versions.savedVersion`, `GitHubRepo.remixOrigin`): a private repository can't be fetched without a sign-in, and an older
 push would remix an older game than the one played. The request goes to `https://lamp.dev/?starter=newyork&ask=…` (or `?repo=…&commit=…&ask=…`),
@@ -374,7 +372,7 @@ Nobody's copy of a wish is the main one: everyone has their own, and nothing is 
 copy is shared as its Share Link with the wish itself included (`WishLink`, SHARED_WISHES.md in site/: `lamp.dev/w/<id>`,
 the file kept in lamp.dev's Blob store; the file always goes when the wish can go as one), and
 each Release Update sends the file again, which counts the link's version up (see "Releases" below). A wish with a page (a web app, a web
-game, a screen: `Publish.hasPage`) sends that too (`WishLink.playablePage`, the page Put on GitHub builds, which
+game, a screen: `Publish.hasPage`) sends that too (`WishLink.playablePage`, the page a release puts on GitHub, which
 stays as it is), and its link's page opens on it, playing, with the ways to make one's own under it: whoever has the
 link tries the wish first and remixes it after (SHARED_WISHES.md). The version is what followers ask for (`latest` in
 lib/shared-wishes.js, `GET /api/wishes?id=`, `WishLink.latest`). The page's Open in Lamp is `lamp://wish?shared=<id>`
@@ -397,14 +395,14 @@ A wish that's on GitHub (`GitHubRelease.find`: a repository Lamp put it in, `Git
 it was opened from, `GitHubRepo.ownOrigin`) is released there too, from the same card: a box, "Also update GitHub
 (owner/name)", ticked each time the card opens, and shown only once `gh` is signed in (else one gray line saying so). The
 link always goes first; GitHub follows only once the link went through, with the same release: the wish staged and
-uploaded as Put on GitHub does (`GitHubRepo.stage`, `upload`: the same checks, the README and page as before), the
+uploaded (`GitHubRepo.stage`, `upload`: the same checks, the README and page as before), the
 release's lines as the commit's message, then a GitHub release tagged `v<n>`, n the release's number, kept on it in
 `.lamp/releases.json` (`Release.number`, one more than the latest's, so it keeps counting past the 200 releases the
 history keeps; the first share is v1), with the lines as its notes (`GitHubRelease.tag`: one already there on the same
 commit, peeled when it's annotated, is the one made by a try that failed later; one on another commit is refused, never
 moved). A press waits for the repository to be found (`gitHubFinding`) before it decides where the release goes. Finding it
 also finds who the commits are made as (`GitHubRepo.authors(releasingTo:)`), and when the person's git signs them with
-an address that shows on GitHub, the card says so under the box, as Put on GitHub's does; the upload holds the commits
+an address that shows on GitHub, the card says so under the box, as it does for a first push; the upload holds the commits
 to what was said (`GitHubRepo.commit`'s `shown`). The
 card stays busy until everything is pushed, then only GitHub Pages' build is waited for with the card free; a release
 that's still waiting then neither speaks on the card once a newer one started (`gitHubOperation`) nor writes its record
@@ -412,7 +410,16 @@ over a newer push's. GitHub says how it went in a line of its own (`WishLinkCard
 hides the link's, which works whatever GitHub does; Try GitHub Again runs that half alone with the same version and
 lines, and only while the wish is still at the version released (else the card says to release again). A link that
 fails sends nothing to GitHub, and says so. The first link of a wish that's on GitHub makes the link and releases there too, as v1
-(or the next number), with no lines, the commit's message then the old "Update <name> from Lamp". The wish's shared file carries what its app
+(or the next number), with no lines, the commit's message then the old "Update <name> from Lamp". A wish that isn't on GitHub (`GitHubRelease.Found.new`) gets "Also put on GitHub" in the box's place, unticked each
+time the card opens, since a first push makes its code public by default. Ticking it stages and checks what would go up
+(`GitHubRelease.check`: the free name on the person's account, the same refusals, who the commits are made as) and
+shows it under the box with the choices GitHub takes once (`WishLinkCard.GitHubSetup`), which stage it again where the
+README changes; Release Update waits for the check. Then, after the link, the wish is staged afresh (so a private
+repository's README offers the link just made) and pushed as the repository's first commit, with the release's lines
+as its message (`GitHubRelease.putUp`, `upload`'s `isNew`), tagged and with its page as any release; the card then
+offers Also update GitHub, as for any wish that's there. Without `gh` or a sign-in the box is shown off with what fixes
+it (`Publish.obtain`). A failure says the link is updated and the wish isn't on GitHub yet; a repository made on the way is
+kept, so Try GitHub Again or the next release goes on with it. The wish's shared file carries what its app
 shows (`releases.json` at its root, dates and lines only), and a copy opened or updated from it keeps that apart
 (`.lamp/releases-received.json`), so the copy's What's New… shows the original's releases beside its own, while its own
 link shows only its own. The releases that say something go with every share (`releases`, at most

@@ -274,7 +274,7 @@ final class SidebarServer {
         // The chat, and how far an open card has been answered in Lamp's window, which isn't the Store's.
         watching = Store.shared.objectWillChange.merge(with: AskProgresses.shared.objectWillChange)
             .merge(with: WishLinkCards.shared.objectWillChange)
-            .merge(with: GitHubRepoCards.shared.objectWillChange).merge(with: ContributeCards.shared.objectWillChange).sink { [weak self] _ in
+            .merge(with: ContributeCards.shared.objectWillChange).sink { [weak self] _ in
             DispatchQueue.main.async { self?.scheduleUpdate() }
         }
         // A key, a model chosen in Settings or for the app, or Not Now changes what an offer's card says.
@@ -454,7 +454,8 @@ final class SidebarServer {
             var toolbar = SidebarToolbar(canUndo: !busy && (history?.undoable ?? false), canShare: store.canShare(project) && made,
                                          hasVersions: history?.saved ?? false, details: details)
             toolbar.canContribute = Contribute.canContribute(project) && made ? true : nil
-            toolbar.onGitHub = GitHubRepo.isUp(project) ? true : nil
+            // A chat of an earlier Lamp then leaves its Put on GitHub… out: Release Update puts the wish there now.
+            toolbar.onGitHub = true
             toolbar.shareLink = WishLink.kept(for: project)?.url.absoluteString
             // Play and Stop where the wish isn't a Mac window beside this chat (that one is open, and quits as a window does).
             // Only once there's something to play: a first build opens the app itself.
@@ -491,7 +492,6 @@ final class SidebarServer {
         }
         state.sharing = sharing.removeValue(forKey: project.id)
         state.shareFailures = shareFailures[project.id]
-        if let card = GitHubRepoCards.shared.card(for: project) { state.repo = GitHubRepoCards.shared.wire(card, of: project) }
         if let card = ContributeCards.shared.card(for: project) { state.contribute = ContributeCards.shared.wire(card, of: project) }
         return state
     }
@@ -1333,21 +1333,8 @@ final class SidebarServer {
         case .wishLink(.open):
             WishLinkCards.shared.open(project)
         case .repo(let command):
-            let cards = GitHubRepoCards.shared
-            switch command {
-            // A chat that can't show the picture never sends it up: the person would publish what they never saw.
-            case .open: cards.open(project, canShowPicture: wire >= 12)
-            case .put: cards.put(project)
-            case .fix: cards.fix(project)
-            case .openRepo: cards.openRepo(project)
-            case .play: cards.play(project)
-            case .copy: cards.copy(project)
-            case .close: cards.close(project)
-            case .makeLink: cards.makeLink(project)
-            case .setPrivate(let value): cards.setPrivate(project, value)
-            case .setLicense(let value): cards.setLicense(project, value)
-            case .setPicture(let value): cards.setPicture(project, value)
-            }
+            // From a chat of an earlier Lamp, whose Put on GitHub… is Release Update's now.
+            if command == .open { WishLinkCards.shared.open(project) }
         case .contribute(let command):
             let cards = ContributeCards.shared
             switch command {
@@ -1540,10 +1527,9 @@ final class SidebarServer {
                     return steps
                 }
             }
-            // A sidebar from before the GitHub cards folded their sources' own terms would leave those lines out: it
+            // A sidebar from before Send Changes Back folded its sources' own terms would leave those lines out: it
             // gets them among the notes, where it showed them.
             if version < 13 {
-                if var card = state.repo, let terms = card.terms { card.notes = terms + card.notes; card.terms = nil; state.repo = card }
                 if var card = state.contribute, let terms = card.terms { card.notes = terms + card.notes; card.terms = nil; state.contribute = card }
             }
             // A sidebar from before the summary line can't read one, and would drop the whole chat.

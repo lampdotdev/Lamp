@@ -29,7 +29,7 @@ final class FollowingTests: XCTestCase {
 
     func testPullInBase() {
         let origin = Credits.Remix(name: "Tally", wish: "w", url: "https://github.com/ann/tally", commit: a)
-        // As Lamp keeps them: the wish's own repository isn't on its own chain (Put on GitHub keeps it apart).
+        // As Lamp keeps them: the wish's own repository isn't on its own chain (Lamp keeps it apart).
         let ours = Credits(remixOf: [origin])
         var spider = Following.Followed(place: Following.Place(kind: "github", url: "https://github.com/sam/tally-spider"))
         // A sibling made from the same copy: measured against where this wish has that copy.

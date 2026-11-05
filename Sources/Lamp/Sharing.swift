@@ -88,8 +88,7 @@ enum Sharing {
         let link = WishLink.kept(for: project)?.url
         let popover = NSPopover()
         popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView: SharePopover(link: link, canContribute: Contribute.canContribute(project),
-                                                                                          onGitHub: GitHubRepo.isUp(project)) { action in
+        popover.contentViewController = NSHostingController(rootView: SharePopover(link: link, canContribute: Contribute.canContribute(project)) { action in
             chose(action, for: project, link: link, origin: origin, window: window, clicked: clicked)
         })
         self.popover?.close()
@@ -102,8 +101,7 @@ enum Sharing {
     }
 
     /// What was chosen in the popover. Copying the link keeps it open, saying Copied; anything else closes it. The
-    /// Share Link card has a window of its own; Put on GitHub opens in the wish's chat, where it lives, the first time
-    /// (after that a release on the link updates it, `GitHubRelease`).
+    /// Share Link card has a window of its own, where Release Update also puts the wish on GitHub (`GitHubRelease`).
     @MainActor private static func chose(_ action: SharePopover.Action, for project: LampProject, link: URL?, origin: Origin,
                                          window: NSWindow, clicked: NSRect) {
         if action == .copyLink {
@@ -118,9 +116,6 @@ enum Sharing {
         switch action {
         case .copyLink: break
         case .makeLink, .editLink: WishLinkCards.shared.open(project)
-        case .github:
-            GitHubRepoCards.shared.open(project)
-            store.showChat(project.id)
         case .contribute: store.sendChangesBack(project)
         case .copyFile: store.copyAppFile(project)
         case .export: store.chooseExport(project)
@@ -260,7 +255,7 @@ enum Sharing {
     /// (`sharedIcon`); without one, Lamp's own drawing of the same design goes in. A wish of several apps travels whole:
     /// the app at its root as any app does, and each other app in its folder (`Parts`), as an app of its kind.
     /// How a wish's apps go in a shared file: one at the root and the others in their folders (see `export`, which
-    /// says why it's the one it is). What Put on GitHub lays its repository out by too, so the two never differ.
+    /// says why it's the one it is). What a wish's repository on GitHub is laid out by too, so the two never differ.
     /// What the wish says it is: its own line, else the line of the app it travels with at its root, else any of its
     /// apps'. A wish whose apps are all in folders of their own keeps the line in that app's folder, where the agent
     /// writes it, and a manifest or README without it would leave the wish undescribed wherever it goes.
@@ -278,7 +273,7 @@ enum Sharing {
         return (root, found.filter { $0.id != root.id })
     }
 
-    /// `repository` is where the wish is going as it's exported (Put on GitHub), named on the chain's last link so
+    /// `repository` is where the wish is going as it's exported (to GitHub), named on the chain's last link so
     /// whoever opens the file sees where the wish lives, with `commit`, the one up there now. A share that names no
     /// place names where the wish was last put (`GitHubRepo.kept`), so a file shared from a wish on GitHub still says
     /// where it lives and what commit it's at. A wish that lives nowhere names the version of its own history the
@@ -640,7 +635,7 @@ enum Sharing {
     static let maxUnpackedBytes = 256 * 1024 * 1024
     static let maxFiles = 2000
 
-    /// A shared file, or a folder holding a wish as Put on GitHub lays it out (a clone of its repository, `RepoImport`).
+    /// A shared file, or a folder holding a wish as Lamp lays it out on GitHub (a clone of its repository, `RepoImport`).
     static func open(_ file: URL, fetched: RepoArchive.Fetched? = nil) throws -> Package {
         let fm = FileManager.default
         var isFolder: ObjCBool = false

@@ -71,9 +71,13 @@ private struct WishLinkWindowContent: View {
                          limits: WishLink.cardLimits, link: card.shared?.url.absoluteString, changed: card.changed,
                          stage: card.stage, copied: card.copied,
                          retake: cards.canRetake(project) ? { cards.retake(project) } : nil, retaking: card.retaking,
-                         canIncludeFile: card.values.includeFile || (card.gitHub != nil && card.values.alsoGitHub), noLicense: noLicense,
+                         canIncludeFile: card.values.includeFile || (card.gitHub != nil && card.values.alsoGitHub)
+                            || (card.values.putOnGitHub && card.firstPush?.isPublic == true), noLicense: noLicense,
                          writingNotes: card.writingNotes, gitHub: card.gitHub?.repo, gitHubNote: card.gitHubNote, gitHubStage: card.gitHubStage,
                          retryGitHub: card.gitHubRetry == nil ? nil : { cards.retryGitHub(project) },
+                         gitHubSetup: card.firstPush.map { GitHubRelease.setup($0, of: project) },
+                         setUpGitHub: .init(fix: { cards.fixGitHub(project) }, setPrivate: { cards.setGitHubPrivate(project, $0) },
+                                            setLicense: { cards.setGitHubLicense(project, $0) }, setPicture: { cards.setGitHubPicture(project, $0) }),
                          share: { cards.share(project) }, copy: { cards.copy(project) }, stop: { cards.stop(project) },
                          close: { cards.close(project) }, width: 440)
                 // Under the window's clear title bar, so the close button sits on the card.

@@ -7,7 +7,7 @@ import LampSidebarKit
 /// own command-line tool (`gh`) and their sign-in there. Nothing goes through Lamp's servers: the person's account holds
 /// the page, under GitHub's terms, and Lamp pays nothing for its plays.
 ///
-/// Put on GitHub puts it up beside the wish's code, on the same repository's `gh-pages` branch (`GitHubRepo.stage`,
+/// Putting the wish on GitHub puts it up beside the wish's code, on the same repository's `gh-pages` branch (`GitHubRepo.stage`,
 /// `GitHubRepo.upload`), and a starter's repository gets its page the same way (`StarterRepos.stagePage`). The page
 /// carries Lamp's runtime (lamp.js, and a game's lamp-game.js), which is MIT-licensed, so its license goes beside it.
 /// What in the page needs Lamp (its AI, the wish's other apps, `LampNative`) isn't there, and lamp.js says so to the
@@ -56,7 +56,7 @@ enum Publish {
     // MARK: GitHub
 
     /// Where `gh` is: Homebrew's, or wherever the person's shell finds it. Lamp Dev takes `LAMP_GH` from its environment
-    /// in its place, a stand-in to try Put on GitHub with against a local repository (git's own `insteadOf` sends the
+    /// in its place, a stand-in to try putting a wish on GitHub with against a local repository (git's own `insteadOf` sends the
     /// pushes there), so nothing reaches GitHub itself.
     static func gh() async -> String? {
         if Edition.isDev, let path = ProcessInfo.processInfo.environment["LAMP_GH"], path.hasPrefix("/"),
@@ -302,7 +302,7 @@ enum Publish {
     /// Gets what a card needs from GitHub: gh's site to install it from, or a sign-in. gh signs in on github.com in the
     /// browser, from a terminal it asks a question in, so Terminal comes to the front with it; once the sign-in is seen
     /// (checked every few seconds for up to five minutes, while `stillNeeded`), `signedIn` is called.
-    @MainActor static func obtain(_ need: RepoCard.Need, stillNeeded: @escaping @MainActor () -> Bool, signedIn: @escaping @MainActor () -> Void) {
+    @MainActor static func obtain(_ need: GitHubNeed, stillNeeded: @escaping @MainActor () -> Bool, signedIn: @escaping @MainActor () -> Void) {
         switch need {
         case .install: NSWorkspace.shared.open(URL(string: "https://cli.github.com")!)
         case .signIn:

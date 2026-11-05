@@ -56,4 +56,4 @@ its credit and licenses in place, and the rest of what a Lamp app has.
    nothing is.
 8. Tell the person what it's based on, its license, and when it came with none, that whether to share or publish it
    is their call, and Lamp will remind them when they do. When the address named a tag or a branch, say its updates will come from the project's
-   default branch. Putting it on GitHub is theirs to choose, with Put on GitHub…; never do it for them.
+   default branch. Putting it on GitHub is theirs to choose, with Also put on GitHub on its link's Release Update; never do it for them.

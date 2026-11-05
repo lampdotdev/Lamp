@@ -233,7 +233,7 @@ enum WishLink {
     }
 
     /// The wish's page, to play or use right on its link's page (a web app's, a web game's, a screen's: `Publish.hasPage`),
-    /// zipped: the page Put on GitHub puts on GitHub Pages (`Publish.copyPage`), what it saves kept under the link
+    /// zipped: the page a release puts on GitHub Pages (`Publish.copyPage`), what it saves kept under the link
     /// (`LAMP_PAGE_SCOPE`), searched for keys and secrets as that one is. Nil for a wish with no such page.
     static func playablePage(of project: LampProject, id: String) throws -> Data? {
         guard Publish.hasPage(project) else { return nil }
@@ -380,6 +380,9 @@ enum WishLink {
         var gitHubOperation: UUID?
         /// The release whose GitHub half failed, for Try GitHub Again, with the version of the wish it was of.
         var gitHubRetry: GitHubRetry?
+        /// Putting the wish on GitHub the first time, with this release, while Also put on GitHub is ticked: nil for a
+        /// wish that's on GitHub (`gitHub`) or can't be updated from here (`gitHubNote`).
+        var firstPush: GitHubRelease.FirstPush?
 
         /// What the link would show with what's on the card.
         var words: WishLink.Words {
@@ -393,12 +396,19 @@ enum WishLink {
         }
         /// A link that carries the wish is always worth sending again: the file is the wish as it is now. So is one with
         /// something to say about what's new.
-        var changed: Bool { shared?.shown != words || values.includeFile || !values.notes.trimmed.isEmpty }
+        var changed: Bool { shared?.shown != words || values.includeFile || !values.notes.trimmed.isEmpty || values.putOnGitHub }
     }
 
     struct GitHubRetry {
         var version: GitHubRelease.Version
         var source: String?
+        var work: GitHubWork
+    }
+
+    /// What a release's GitHub half does: update the repository the wish is on, or put it there the first time.
+    enum GitHubWork {
+        case update(GitHubRelease.Target)
+        case first(GitHubRelease.FirstPush)
     }
 
     @Published private(set) var cards: [String: Card] = [:]
@@ -431,15 +441,7 @@ enum WishLink {
             let icon = await Sharing.sharedIcon(of: project)
             cards[project.id]?.icon = icon
         }
-        cards[project.id]?.gitHubFinding = Task {
-            switch await GitHubRelease.find(project) {
-            case .ready(let target):
-                cards[project.id]?.gitHub = target
-                cards[project.id]?.gitHubNote = GitHubRepo.note(for: target.authors)
-            case .note(let note): cards[project.id]?.gitHubNote = note
-            case nil: break
-            }
-        }
+        findGitHub(project)
         if shared != nil {
             Task {
                 let lines = await WishReleases.write(for: project)
@@ -449,6 +451,100 @@ enum WishLink {
                 if cards[project.id]?.values.notes.trimmed.isEmpty == true { cards[project.id]?.values.notes = lines.joined(separator: "\n") }
             }
         }
+    }
+
+    /// Finds where the wish is on GitHub, or how it would go there the first time, for the card's GitHub row. A release
+    /// pressed meanwhile waits for it.
+    private func findGitHub(_ project: LampProject) {
+        let id = project.id
+        cards[id]?.gitHubFinding = Task {
+            let found = await GitHubRelease.find(project)
+            guard cards[id] != nil else { return }
+            cards[id]?.gitHub = nil
+            cards[id]?.gitHubNote = nil
+            switch found {
+            case .ready(let target):
+                cards[id]?.gitHub = target
+                cards[id]?.gitHubNote = GitHubRepo.note(for: target.authors)
+                cards[id]?.firstPush?.discard()
+                cards[id]?.firstPush = nil
+                cards[id]?.values.putOnGitHub = false
+            case .note(let note):
+                cards[id]?.gitHubNote = note
+            case .new(let gh, let login):
+                // A repository a first try made, with nothing up yet, is gone on with.
+                let kept = GitHubRepo.kept(for: project)
+                if cards[id]?.firstPush?.gh != gh || cards[id]?.firstPush?.login != login || cards[id]?.firstPush?.kept != kept {
+                    cards[id]?.firstPush?.discard()
+                    cards[id]?.firstPush = GitHubRelease.FirstPush(gh: gh, login: login, kept: kept)
+                }
+                if cards[id]?.values.putOnGitHub == true { checkFirstPush(project) }
+            case .needs(let need):
+                cards[id]?.firstPush?.discard()
+                cards[id]?.firstPush = GitHubRelease.FirstPush(gh: "", login: "", kept: nil)
+                cards[id]?.firstPush?.stage = .needsGitHub(need)
+                cards[id]?.values.putOnGitHub = false
+            }
+        }
+    }
+
+    /// Checks what the first push would put up with the card's choices, so the card shows it before anything goes.
+    private func checkFirstPush(_ project: LampProject) {
+        let id = project.id
+        guard var push = cards[id]?.firstPush else { return }
+        if case .needsGitHub = push.stage { return }
+        let check = UUID()
+        push.discard()
+        push.stage = .preparing
+        push.checking = check
+        push.isPublic = nil
+        push.authors = nil
+        cards[id]?.firstPush = push
+        let picture = cards[id]?.picture
+        Task {
+            do {
+                let checked = try await GitHubRelease.check(project, push, picture: picture)
+                guard cards[id]?.firstPush?.checking == check else {
+                    try? FileManager.default.removeItem(at: checked.staged.folder.deletingLastPathComponent())
+                    return
+                }
+                cards[id]?.firstPush?.repo = checked.repo
+                cards[id]?.firstPush?.staged = checked.staged
+                cards[id]?.firstPush?.isPublic = checked.isPublic
+                cards[id]?.firstPush?.authors = checked.authors
+                // Nothing share-alike may be offered an MIT license.
+                if push.kept == nil, !GitHubRepo.canOfferLicense(checked.staged.credits) { cards[id]?.firstPush?.license = false }
+                cards[id]?.firstPush?.stage = .ready
+            } catch {
+                guard cards[id]?.firstPush?.checking == check else { return }
+                cards[id]?.firstPush?.stage = .refused(Self.problem(error))
+            }
+        }
+    }
+
+    /// Gets GitHub's command-line tool or the sign-in Also put on GitHub needs, and looks again once it's there.
+    func fixGitHub(_ project: LampProject) {
+        guard case .needsGitHub(let need) = cards[project.id]?.firstPush?.stage else { return }
+        Publish.obtain(need, stillNeeded: { [weak self] in
+            if case .needsGitHub = self?.cards[project.id]?.firstPush?.stage { return true } else { return false }
+        }, signedIn: { [weak self] in self?.findGitHub(project) })
+        // gh installed from its site is found when the card is opened again, or here once a sign-in is seen.
+    }
+
+    /// The first push's choices. A new repository's README offers a remix by link only if it's public, and shows the
+    /// picture only if chosen: either is checked again.
+    func setGitHubPrivate(_ project: LampProject, _ isPrivate: Bool) {
+        guard cards[project.id]?.firstPush?.isPrivate != isPrivate else { return }
+        cards[project.id]?.firstPush?.isPrivate = isPrivate
+        if cards[project.id]?.firstPush?.kept == nil { checkFirstPush(project) }
+    }
+
+    func setGitHubLicense(_ project: LampProject, _ license: Bool) { cards[project.id]?.firstPush?.license = license }
+
+    func setGitHubPicture(_ project: LampProject, _ shows: Bool) {
+        guard cards[project.id]?.firstPush?.showsPicture != shows else { return }
+        cards[project.id]?.firstPush?.showsPicture = shows
+        checkFirstPush(project)
     }
 
     /// Whether the wish can go with its link as a file: each of its apps' kinds can be shared as one (a Roku app can't yet).
@@ -461,25 +557,31 @@ enum WishLink {
     }
 
     func update(_ project: LampProject, values: WishLinkCard.Values) {
-        guard cards[project.id]?.values != values else { return }
+        guard let before = cards[project.id]?.values, before != values else { return }
         cards[project.id]?.values = values
+        // Ticking Also put on GitHub checks what would go up, so the card shows it.
+        if values.putOnGitHub, !before.putOnGitHub, cards[project.id]?.firstPush?.staged == nil { checkFirstPush(project) }
         cards[project.id]?.copied = false
         if case .failed = cards[project.id]?.stage { cards[project.id]?.stage = .editing }
     }
 
     func close(_ project: LampProject) {
+        cards[project.id]?.firstPush?.discard()
         cards[project.id] = nil
         WishLinkWindows.shared.close(project)
     }
 
     /// Shares what's on the card, or releases what the wish is now with what's new in it, and copies the link.
     func share(_ project: LampProject) {
-        guard let card = cards[project.id], card.stage != .sending, card.values.isComplete else { return }
+        guard let card = cards[project.id], card.stage != .sending, card.values.isComplete,
+              !card.values.putOnGitHub || card.firstPush?.stage == .ready else { return }
         cards[project.id]?.stage = .sending
         cards[project.id]?.writingNotes = false
         let words = card.words
-        // GitHub follows the link, with the same version and what's new, while its box is ticked.
+        // GitHub follows the link, with the same version and what's new, while its box is ticked; the first time, only
+        // once what goes up is checked.
         let wantsGitHub = card.values.alsoGitHub
+        let firstPush = card.values.putOnGitHub ? card.firstPush : nil
         let finding = card.gitHubFinding
         // An earlier release still waiting for its page no longer speaks on the card, from now on.
         cards[project.id]?.gitHubOperation = nil
@@ -494,7 +596,8 @@ enum WishLink {
         Task {
             // Where GitHub is, once it's known.
             await finding?.value
-            let toGitHub = wantsGitHub ? cards[project.id]?.gitHub : nil
+            let work: GitHubWork? = if wantsGitHub, let target = cards[project.id]?.gitHub { .update(target) }
+                else if let firstPush { .first(firstPush) } else { nil }
             do {
                 let (picture, icon) = await Task.detached(priority: .userInitiated) {
                     (source.flatMap(NSImage.init(data:)).flatMap(WishLink.jpeg), WishLink.iconPNG(iconSource))
@@ -562,15 +665,21 @@ enum WishLink {
                 guard cards[project.id] != nil else { return }
                 cards[project.id]?.shared = shared
                 copy(project)
-                if let toGitHub {
-                    await releaseOnGitHub(project, to: toGitHub, version: GitHubRelease.Version(number: number, lines: notes),
+                if let work {
+                    await releaseOnGitHub(project, work, version: GitHubRelease.Version(number: number, lines: notes),
                                           source: Versions.savedVersion(of: project.dir), picture: source, then: pageProblem)
                 } else {
                     cards[project.id]?.stage = pageProblem.map { .failed($0) } ?? .editing
                 }
             } catch {
                 // Nothing went to GitHub: it follows the link, so the card says so with the link's own problem.
-                cards[project.id]?.stage = .failed(Self.problem(error) + (toGitHub == nil ? "" : " GitHub wasn't updated either."))
+                cards[project.id]?.stage = .failed(Self.problem(error) + {
+                    switch work {
+                    case .update: " GitHub wasn't updated either."
+                    case .first: " Nothing went to GitHub either."
+                    case nil: ""
+                    }
+                }())
             }
         }
     }
@@ -579,7 +688,7 @@ enum WishLink {
     /// GitHub's building of the page is waited for, with the card free again. `linkProblem` is what the card said of the
     /// link, kept beside whatever GitHub says.
     /// `source` is the wish's version the release is of, which a try again must still be at.
-    private func releaseOnGitHub(_ project: LampProject, to target: GitHubRelease.Target, version: GitHubRelease.Version, source: String?,
+    private func releaseOnGitHub(_ project: LampProject, _ work: GitHubWork, version: GitHubRelease.Version, source: String?,
                                  picture: Data?, then linkProblem: String?) async {
         let id = project.id
         let operation = UUID()
@@ -593,27 +702,46 @@ enum WishLink {
             guard self?.cards[id]?.gitHubOperation == operation else { return }
             self?.cards[id]?.gitHubStage = stage
         }
-        say(.working("Updating GitHub…"))
+        let pushed: @Sendable () -> Void = { Task { @MainActor in settled() } }
+        let step: @Sendable (String) -> Void = { step in Task { @MainActor in say(.working(step)) } }
         do {
-            try await GitHubRelease.release(project, to: target, version: version, picture: picture,
-                                            pushed: { Task { @MainActor in settled() } },
-                                            step: { step in Task { @MainActor in say(.working(step)) } })
-            settled()
-            say(.done(version.tag))
+            switch work {
+            case .update(let target):
+                say(.working("Updating GitHub…"))
+                try await GitHubRelease.release(project, to: target, version: version, picture: picture, pushed: pushed, step: step)
+                settled()
+                say(.done(version.tag))
+            case .first(let push):
+                say(.working("Putting it on GitHub…"))
+                let repo = try await GitHubRelease.putUp(project, push, version: version, picture: picture, pushed: pushed, step: step)
+                settled()
+                say(.put(repo, version.tag))
+                // It's on GitHub now: the card offers to update it, as for any wish that's there.
+                if cards[id]?.gitHubOperation == operation { findGitHub(project) }
+            }
         } catch {
             settled()
             guard cards[id]?.gitHubOperation == operation else { return }
-            cards[id]?.gitHubRetry = GitHubRetry(version: version, source: source)
+            cards[id]?.gitHubRetry = GitHubRetry(version: version, source: source, work: work)
             // Said plainly, apart from the link, which works whatever happened here.
-            say(.failed(error is GitHubRelease.TagFailure
-                ? "The link and \(target.repo) are updated, but \(Self.problem(error))"
-                : "The link is updated, but \(target.repo) on GitHub isn't: \(Self.problem(error))"))
+            switch work {
+            case .update(let target):
+                say(.failed(error is GitHubRelease.TagFailure
+                    ? "The link and \(target.repo) are updated, but \(Self.problem(error))"
+                    : "The link is updated, but \(target.repo) on GitHub isn't: \(Self.problem(error))"))
+            case .first(let push):
+                say(.failed(error is GitHubRelease.TagFailure
+                    ? "The link is updated and \(push.repo ?? project.name) is on GitHub, but \(Self.problem(error))"
+                    : "The link is updated, but \(project.name) isn't on GitHub yet: \(Self.problem(error))"))
+                // A repository made on the way is kept (`upload`): the card goes on with it, or updates it if the code is up.
+                findGitHub(project)
+            }
         }
     }
 
     /// Tries the GitHub half of the last release again, with the same version and what's new.
     func retryGitHub(_ project: LampProject) {
-        guard let card = cards[project.id], card.stage != .sending, let target = card.gitHub, let retry = card.gitHubRetry else { return }
+        guard let card = cards[project.id], card.stage != .sending, let retry = card.gitHubRetry else { return }
         cards[project.id]?.gitHubRetry = nil
         // Only the version that was released: a change since would go up under this release's number and words.
         guard Versions.savedVersion(of: project.dir) == retry.source, retry.source != nil else {
@@ -623,7 +751,10 @@ enum WishLink {
         cards[project.id]?.stage = .sending
         cards[project.id]?.gitHubOperation = nil
         let linkProblem: String? = if case .failed(let problem) = card.stage { problem } else { nil }
-        Task { await releaseOnGitHub(project, to: target, version: retry.version, source: retry.source, picture: card.picture, then: linkProblem) }
+        // A first push that got the code up before failing is finished as an update of what's there.
+        var work = retry.work
+        if case .first = work, let target = card.gitHub { work = .update(target) }
+        Task { await releaseOnGitHub(project, work, version: retry.version, source: retry.source, picture: card.picture, then: linkProblem) }
     }
 
     /// What the card says went wrong: the headline, and the why and what to do when there is one (a wish Lamp won't let

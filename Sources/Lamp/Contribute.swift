@@ -5,7 +5,7 @@ import LampSidebarKit
 
 /// Sending a wish's changes back to the repository it came from (`AppUpdates.origin`: the chain's last link naming a
 /// repository that isn't the wish's own): a pull request on that repository from the person's own fork, made with
-/// GitHub's command-line tool (`gh`) and their sign-in, as Put on GitHub puts a repository up (`GitHubRepo`).
+/// GitHub's command-line tool (`gh`) and their sign-in, as a release puts a wish's repository up (`GitHubRepo`, `GitHubRelease`).
 ///
 /// What goes is only what the wish changed, on top of where the repository is now. The change is measured in the wish's
 /// own history (`change`): from what it last took in from there (`base`: the snapshot of its last update, else the

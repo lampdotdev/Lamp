@@ -2,7 +2,7 @@
 # Refreshes what's Lamp's in each starter's repository on GitHub (<account>/<folder>, the account `Starters.account`
 # names), where the starters are made: Lamp's own files so `./build.sh` builds it, the README, license and pictures,
 # the description, and a game's page on the gh-pages branch, served by GitHub Pages at <account>.github.io/<folder>.
-# Each repository's latest is cloned and staged as Put on GitHub stages a wish (the app in it stays exactly what the
+# Each repository's latest is cloned and staged as Lamp stages a wish for GitHub (the app in it stays exactly what the
 # repository has: this never puts the app itself up; a repository that can't be fetched stops it, so nothing older
 # ever goes up in place of the latest), one commit of the difference goes up (none when there's none),
 # and the starter's pin moves to it (Resources/Starters/<folder>/starter.md: `repository:` and `commit:`, with the tree

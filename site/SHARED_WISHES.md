@@ -12,7 +12,7 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   the link's page, as large as the window allows in the shape Lamp sends with it (`shape` in the page's JSON: its width
   over its height, or `"fill"` for a page that takes any shape; Lamp sends a web game's stage, and `"fill"` for a web app
   or a screen, `Publish.pageShape`; without one, the 16:9 a web game is drawn in), with a button for full screen, so whoever opens the link tries it
-  first. Lamp sends the page with the wish's file (`WishLink.playablePage`: the page Put on GitHub puts on
+  first. Lamp sends the page with the wish's file (`WishLink.playablePage`: the page Lamp puts on
   GitHub Pages, what it saves kept under the link), zipped, in parts to `api/wish-file.js` with `what=page`; the site
   unpacks it (`readPage`: index.html at its root, never a link or a path that steps up, at most 3,000 files) into Blob,
   each version in a folder of its own, and drops the last one. Blob hands HTML out as a download and refuses frames, so
