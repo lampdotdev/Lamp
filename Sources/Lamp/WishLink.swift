@@ -401,7 +401,8 @@ enum WishLink {
         /// A link that carries the wish is always worth sending again: the file is the wish as it is now. So is one with
         /// something to say about what's new.
         var changed: Bool {
-            !released && (shared?.shown != words || values.includeFile || !values.notes.trimmed.isEmpty || values.putOnGitHub)
+            // Just released, only what the link shows differing (a picture taken again, say) asks for another.
+            shared?.shown != words || !released && (values.includeFile || !values.notes.trimmed.isEmpty || values.putOnGitHub)
         }
         /// What's on the card can go now: nothing is sending, and every place it would go is shown and settled.
         var canShare: Bool {
