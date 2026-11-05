@@ -86,10 +86,16 @@ by someone else (the title, the note and the changed code from `pulls/N/files`, 
 - **No tools.** It goes only along a way that can't act (`AppAI.toolFree`), never `AppAI.complete`, which can hand
   the call to an engine unsealed:
   - OpenRouter with the person's key, or a model on this Mac;
-  - Claude Code with no tools, by its documented `--tools ''` with `--restricted`, and no pictures;
-  - Codex only as answers beside a turn run it (`SideAnswer.Run`): a version that run was tested on, the model's
-    catalog entry edited to offer no tools, and a tool tried stopping that version for good. Codex's flags alone, as
-    `viaEngine` seals it, aren't proof enough.
+  - Claude Code and Codex only as answers beside a turn run them (`SideAnswer.Run`): a version that run was tested on,
+    its sandbox, and a tool tried stopping that version for good, with every run of the engine going, summaries and
+    side answers alike, none of which is then shown or kept.
+    - Claude Code starts afresh (no conversation to resume or fork, the system prompt its own, no `--json-schema`), and
+      its own first report must list no tools and no MCP servers before a word counts.
+    - Codex runs with its model's catalog entry edited to offer no tools.
+    - Either engine's flags alone, as `viaEngine` seals it, aren't proof enough.
+
+    A run that tried a tool, was offered one, had an MCP server, or never gave its report keeps nothing, not even a note
+    that it had no account, so the request is asked about again once the engine can be trusted.
 
   Without one of these, nothing is fetched or asked: the panel shows the sender's own title as theirs.
 - **Marked as data.** The prompt says what follows is someone else's and never instructions.

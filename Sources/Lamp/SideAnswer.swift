@@ -305,10 +305,13 @@ enum SideAnswer {
                 checked = true
                 return .going
             case "assistant":
+                // A tool is a tool whenever it comes, before the list of what the run has too: that still stops the
+                // version. Only then does anything without the list come to nothing.
+                let blocks = (event["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
+                if let tool = blocks.map({ $0["type"] as? String ?? "" }).first(where: { $0.contains("tool") }) { return .tool(tool) }
                 guard checked else { return .failed("no tool list") }
-                for block in (event["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? [] {
+                for block in blocks {
                     let type = block["type"] as? String ?? ""
-                    if type.contains("tool") { return .tool(type) }
                     if !["text", "thinking", "redacted_thinking"].contains(type) { return .failed("unexpected output") }
                 }
                 return .going
@@ -401,14 +404,16 @@ enum SideAnswer {
                           environment: env, input: String(decoding: command ?? Data(), as: UTF8.self) + "\n", keepsInput: true,
                           profile: Sandbox.sideProfile(scratch: folder.path, reading: [Bundle.main.bundlePath], readingFiles: []))
         case .claude:
-            guard let transcript, let program = programFolder(route.executable) else { return nil }
+            // With no conversation it starts afresh (`claudeFreshArguments`), and the sandbox opens none.
+            guard let program = programFolder(route.executable) else { return nil }
             let config = URL(fileURLWithPath: route.configFolder)
-            return Launch(arguments: claudeArguments(transcript: transcript, route: route), environment: env.merging(["DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_TMPDIR": tmp]) { $1 },
+            let arguments = transcript.map { claudeArguments(transcript: $0, route: route) } ?? claudeFreshArguments(route: route)
+            return Launch(arguments: arguments, environment: env.merging(["DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_TMPDIR": tmp]) { $1 },
                           input: prompt,
                           // Its sign-in is in the Keychain, which it reads through the system.
                           profile: Sandbox.sideProfile(scratch: folder.path,
                                                        reading: [program, home.appendingPathComponent("Library/Keychains").path],
-                                                       readingFiles: [transcript.path, home.appendingPathComponent(".claude.json").path,
+                                                       readingFiles: (transcript.map { [$0.path] } ?? []) + [home.appendingPathComponent(".claude.json").path,
                                                                       config.appendingPathComponent(".claude.json").path]))
         case .codex:
             let config = URL(fileURLWithPath: route.configFolder)
@@ -460,6 +465,32 @@ enum SideAnswer {
         ["-p", "--output-format", "stream-json", "--verbose", "--resume", transcript.path, "--fork-session", "--no-session-persistence",
          "--tools", "", "--restricted", "--strict-mcp-config", "--disable-slash-commands", "--max-turns", "1",
          "--append-system-prompt", route.system] + (route.model.isEmpty ? [] : ["--model", route.model])
+    }
+
+    /// Claude Code for one answer with no conversation behind it (`SuggestionSummaries`): nothing resumed or forked, its
+    /// whole system prompt given (`--system-prompt`), and the same no-tools launch as the resumed one. No `--json-schema`,
+    /// which Claude Code answers through a tool of its own: the answer is plain text its caller checks.
+    static func claudeFreshArguments(route: Route) -> [String] {
+        ["-p", "--output-format", "stream-json", "--verbose", "--no-session-persistence",
+         "--tools", "", "--restricted", "--strict-mcp-config", "--disable-slash-commands", "--max-turns", "1",
+         "--system-prompt", route.system] + (route.model.isEmpty ? [] : ["--model", route.model])
+    }
+
+    // MARK: Runs in flight
+
+    /// Every run going, beside a turn or for a summary, so a tool tried in one stops the others of its engine too.
+    @MainActor private static var going: [ObjectIdentifier: Run] = [:]
+
+    /// A tool was tried: this version of the engine is stopped for good (`stop`), and every run of the engine still going,
+    /// whatever it's for, is cancelled, so none of them shows what it says.
+    @MainActor static func stopAll(_ engine: Engine, version: String) {
+        stop(engine, version: version)
+        for run in going.values where run.engine == engine { run.cancel() }
+    }
+
+    /// Whether a run's answer may be shown: no tool was tried, and its version isn't stopped, whichever run stopped it.
+    static func mayShow(_ outcome: Outcome, engine: Engine) -> Bool {
+        outcome.reply != nil && !outcome.triedTool && !isStopped(engine, version: outcome.version)
     }
 
     /// Codex has no switch that takes every tool away. These together empty the list on `testedCodex`, and nothing
@@ -545,6 +576,8 @@ enum SideAnswer {
         /// allowed: no token, none of Lamp's agent routes, and a key ticket that's this run's.
         func answer(_ prompt: String, route: Route, transcript: URL?, in project: LampProject) async -> Outcome {
             var outcome = Outcome(usage: Reader(route.engine))
+            SideAnswer.going[ObjectIdentifier(self)] = self
+            defer { SideAnswer.going[ObjectIdentifier(self)] = nil }
             let folder = SideAnswer.folder.appendingPathComponent(UUID().uuidString)
             let fm = FileManager.default
             for name in ["sessions", "home", "tmp", "state", "log", "config"] {
@@ -667,6 +700,9 @@ enum SideAnswer {
             } else if outcome.reply == nil, outcome.failure == nil {
                 outcome.failure = "ended without an answer"
             }
+            if outcome.triedTool { SideAnswer.stopAll(engine, version: outcome.version) }
+            // Stopped meanwhile by another run's tool: nothing of this one is shown.
+            if !SideAnswer.mayShow(outcome, engine: engine) { outcome.reply = nil }
             if outcome.reply != nil { outcome.failed = false }
             return outcome
         }

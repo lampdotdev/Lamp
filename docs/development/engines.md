@@ -185,8 +185,13 @@ A capability given to one engine must be given to all of them that can take it, 
     what it reads by making a folder beside it, which the sandbox refuses in Lamp's). pi answers beside a call still running.
   - **Claude Code** forks by the transcript's whole path, which lets it run outside the app's folder (`--resume <path>
     --fork-session --no-session-persistence --tools ""`, with the isolating flags the builder has). Its `system/init` line
-    must list no tools and no MCP servers before anything it says counts. It reads its sign-in from the Keychain, and
-    answers on releases in `SideAnswer.testedClaude`.
+    must list no tools and no MCP servers before anything it says counts; a tool it asks for is a tool tried even before
+    that line. It reads its sign-in from the Keychain, and answers on releases in `SideAnswer.testedClaude`. The same
+    run answers for a suggested change's summary (`SuggestionSummaries`) started afresh instead of forked
+    (`claudeFreshArguments`: no `--resume` or `--fork-session`, its whole system prompt by `--system-prompt`, no
+    `--json-schema`, which Claude Code answers through a tool, and no conversation opened to its sandbox). One whole run of
+    that launch is recorded in `Tests/Regression/Fixtures/claude-fresh-summary-run.jsonl`; `ClaudeSummaryRunTests` reads it
+    and records another when `LAMP_RECORD_CLAUDE` names where to put it.
   - **Codex**'s fork can't be used: it inherits its parent's tools, and no flag removes them. So it's a fresh ephemeral call
     over the chat Lamp holds (`SideAnswer.chat`), in `testedCodexModel`. **This route is a workaround**: Codex has no way to
     start with no tools, so the list is emptied with feature switches, two settings nothing documents, and an edited copy of
@@ -199,7 +204,9 @@ A capability given to one engine must be given to all of them that can take it, 
   and for answers to cards, files, what was pointed at, requests sent again, a turn that has asked, paused or waits on an
   approval, and a second message while one is being answered. Five starts per builder's turn at most, however they end,
   and nothing is retried. An answer that fails rests that engine for two minutes. A tool that ran, which no launch allows,
-  stops the engine's other runs and stops that version for good on this Mac (`SideAnswer.stop`). The answer is one whole
+  stops that version for good on this Mac and cancels every run of the engine still going, beside a turn or for a summary
+  (`SideAnswer.stopAll`); none of their answers is shown (`SideAnswer.mayShow`), and a summary already back is checked
+  again before it's kept. The answer is one whole
   message with no tool attempted, even a refused one, since a tool can act and then fail; Codex's is its last message. Sent
   again in the same words, a request keeps its answer and receipt (`SideAnswer.kept`). The answer goes up only if its message
   still waits beside the turn it was made for, stays with it (`QueuedMessage.side`, then `LogLine.sideReply`, never a line

@@ -438,8 +438,8 @@ says and never what the person marked. A request is new until it's shown in the 
 new commits make it new again, and one closed and opened again at the same head is as it was; Mark All as Seen marks
 those the list shows when it's clicked. Not for Me sets one aside at its head (`hidden`), saying nothing on GitHub, until
 its sender changes it. What each does is said in plain words by `SuggestionSummaries`: made only along a way that can't
-act (`AppAI.toolFree`: OpenRouter, a model on this Mac, Claude Code with no tools, or Codex only through
-`SideAnswer.Run`'s proven launch), from the request's title, note and changed code marked as someone else's and the
+act (`AppAI.toolFree`: OpenRouter, a model on this Mac, or Claude Code and Codex only through
+`SideAnswer.Run`'s checked launch), from the request's title, note and changed code marked as someone else's and the
 app's APP.md read without following a link (`AppFile`), checked before it's kept (its shape and lengths, a topic from
 the app's list of at most eight, and no word on safety), kept by what it was made from and its format and shown or
 saved only while the request and APP.md are still that, one job after another (each waits for the one before, as an

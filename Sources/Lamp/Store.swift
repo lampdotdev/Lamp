@@ -6189,8 +6189,8 @@ final class Store: ObservableObject {
             saveUsage(project)
         }
         if outcome.triedTool {
-            // No launch allows this, so whatever else this engine is doing beside a turn stops with it.
-            SideAnswer.stop(run.engine, version: outcome.version)
+            // No launch allows this, so whatever else this engine is doing stops with it: beside a turn or for a summary.
+            SideAnswer.stopAll(run.engine, version: outcome.version)
             for other in sideRuns.values where other.engine == run.engine { other.cancel() }
         } else if outcome.failed {
             sideRests[run.engine] = .now + SideAnswer.restAfterFailure
@@ -6202,7 +6202,7 @@ final class Store: ObservableObject {
         let turn = turns[project.id]
         let stillTrue = index != nil && queued[project.id]?[index!].sendNow == false && turn === started && turn?.asked == false
             && turn?.paused == false && !queueWaitsForReload(in: project)
-        let shown = outcome.reply != nil && stillTrue
+        let shown = SideAnswer.mayShow(outcome, engine: run.engine) && stillTrue
         Conversation.note(project, engine: run.engine, "side answer \(shown ? "shown" : "not shown")"
             + " after \(took.formatted(.units(allowed: [.seconds], fractionalPart: .show(length: 1))))"
             + (outcome.failure.map { " (\($0))" } ?? "") + ", input \(usage.input), cache read \(usage.cacheRead),"

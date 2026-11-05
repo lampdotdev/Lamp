@@ -16,8 +16,8 @@ actor SuggestionSummaries {
     static let shared = SuggestionSummaries()
 
     /// Goes up when what an account is made from, or how, changes: every kept account is then made again.
-    /// 2: headlines of six words at most.
-    static let format = 2
+    /// 2: headlines of six words at most. 3: Claude Code only through the checked run.
+    static let format = 3
     static let headlineWords = 6
     /// How many parts of the app requests are sorted under, "Other" included.
     static let maxTopics = 8
@@ -84,7 +84,7 @@ actor SuggestionSummaries {
     private var last: Task<Bool, Never>?
 
     /// The model's answer, in place of `AppAI.toolFree`, for a test. Nil asks the real routes.
-    nonisolated(unsafe) static var answering: ((String) async -> (String, Double)?)?
+    nonisolated(unsafe) static var answering: ((String) async -> AppAI.ToolFreeAnswer?)?
 
     /// Makes the request's account when there's none for what it is now, after every job asked for before it has
     /// finished, and with what's kept and spent checked as it starts. Whether one was made.
@@ -112,7 +112,7 @@ actor SuggestionSummaries {
         let topics = SuggestedChanges.record(for: project, repo: repo)?.topics ?? []
         // Counted before it's asked, so calls for several apps at once can't all pass the limit.
         Self.counted()
-        let answer: (String, Double)?
+        let answer: AppAI.ToolFreeAnswer?
         do {
             if let answering = Self.answering {
                 answer = await answering(Self.prompt(inputs, topics: topics))
@@ -123,8 +123,12 @@ actor SuggestionSummaries {
             if let failure = error as? AppAI.Failure { Self.spent(failure.cost) }
             return false
         }
-        guard let (text, cost) = answer else { return false }
-        Self.spent(cost)
+        guard let answer else { return false }
+        Self.spent(answer.cost)
+        // The engine's version stopped since it answered, by a tool tried in any run of it: nothing of this is kept, not
+        // even as no account.
+        guard answer.stillGood else { return false }
+        let text = answer.text
         // An answer that isn't an account isn't shown; the sender's title stands, and the request isn't asked about
         // again until it changes, so one request can't use up the day's limit.
         guard var summary = Self.checked(text, topics: topics) else {

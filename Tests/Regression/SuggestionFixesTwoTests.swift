@@ -111,7 +111,7 @@ final class SuggestionFixesTwoTests: XCTestCase {
             count.lock.withLock { count.asked += 1; count.out += 1; count.most = max(count.most, count.out) }
             try? await Task.sleep(for: .milliseconds(200))
             count.lock.withLock { count.out -= 1 }
-            return (#"{"headline": "Blue flames", "points": ["The flames are blue."], "topic": "The fire"}"#, 0.01)
+            return AppAI.ToolFreeAnswer(text: #"{"headline": "Blue flames", "points": ["The flames are blue."], "topic": "The fire"}"#, cost: 0.01)
         }
         defer {
             SuggestionSummaries.answering = nil
@@ -128,5 +128,56 @@ final class SuggestionFixesTwoTests: XCTestCase {
         XCTAssertEqual(count.most, 1, "two questions were out at once")
         XCTAssertEqual(count.asked, 4, "the same request was paid for more than once")
         XCTAssertEqual(SuggestedChanges.record(for: project, repo: "someone/app")?.summaries.count, 4)
+    }
+
+    /// What a run that tried a tool, or whose version was stopped by another run's tool before it was kept, said is never
+    /// kept: no account, and no note that it had none, so it's asked again once the engine can be trusted.
+    func testAnAnswerFromAStoppedVersionIsNeverKept() async throws {
+        let (project, request) = try app("# App\n")
+        let gh = project.dir.deletingLastPathComponent().appendingPathComponent("gh")
+        try """
+        #!/bin/zsh
+        [[ "$*" == *files* ]] && { echo '{"filename":"a.swift","status":"modified","patch":"@@ -1 +1 @@"}'; exit 0 }
+        [[ "$*" == *.head.sha* ]] && { echo h; exit 0 }
+        exit 0
+        """.write(to: gh, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: gh.path)
+        let suite = "lamp-summary-stopped-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let wasDefaults = SuggestionSummaries.defaults
+        SuggestionSummaries.defaults = defaults
+        let version = "test-\(UUID().uuidString)"
+        defer {
+            SuggestionSummaries.answering = nil
+            SuggestionSummaries.defaults = wasDefaults
+            defaults.removePersistentDomain(forName: suite)
+            var stopped = UserDefaults.standard.dictionary(forKey: "sideAnswerStopped") ?? [:]
+            stopped["claude"] = (stopped["claude"] as? [String] ?? []).filter { $0 != version }
+            UserDefaults.standard.set(stopped, forKey: "sideAnswerStopped")
+        }
+        let good = #"{"headline": "Blue flames", "points": ["The flames are blue."], "topic": "The fire"}"#
+        // The run's answer comes back, but its version was stopped by another run's tool meanwhile.
+        SuggestionSummaries.answering = { _ in
+            SideAnswer.stop(.claude, version: version)
+            return AppAI.ToolFreeAnswer(text: good, cost: 0, engine: .claude, version: version)
+        }
+        var made = await SuggestionSummaries.shared.make(for: request, in: project, repo: "someone/app", gh: gh.path)
+        XCTAssertFalse(made)
+        var record = try XCTUnwrap(SuggestedChanges.record(for: project, repo: "someone/app"))
+        XCTAssertTrue(record.summaries.isEmpty)
+        XCTAssertTrue(record.unexplained.isEmpty)
+
+        // A run with no answer (tools offered, a tool tried, its list missing): nothing kept either.
+        SuggestionSummaries.answering = { _ in nil }
+        made = await SuggestionSummaries.shared.make(for: request, in: project, repo: "someone/app", gh: gh.path)
+        XCTAssertFalse(made)
+        record = try XCTUnwrap(SuggestedChanges.record(for: project, repo: "someone/app"))
+        XCTAssertTrue(record.summaries.isEmpty)
+        XCTAssertTrue(record.unexplained.isEmpty)
+
+        // An engine's answer whose version still stands is kept.
+        SuggestionSummaries.answering = { _ in AppAI.ToolFreeAnswer(text: good, cost: 0, engine: .claude, version: "test-good") }
+        made = await SuggestionSummaries.shared.make(for: request, in: project, repo: "someone/app", gh: gh.path)
+        XCTAssertTrue(made)
     }
 }
