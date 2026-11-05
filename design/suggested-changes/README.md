@@ -81,8 +81,11 @@ A new request, or a new head on an open one, logs the card again at the end of t
   - A copy of the wish gets the change as the merge would stage it (`RepoImport.open`, `Upstream.stage`): files
     the start had and the head took away are removed, and the head's files are written over the rest.
   - That copy is exported as a release exports it (`GitHubRepo.stage`).
-  - A file the request has must come out of that export byte for byte, and one it takes away must not come out at
-    all.
+  - The export is put in the place of the repository as the request found it, as an upload does
+    (`GitHubRepo.overlay`, the upload's own step). The upload keeps the hidden folders at the top and the files the
+    repository keeps as GitHub has them.
+  - A file the request has must come out of that byte for byte, and one it takes away must not come out at all. A
+    request that takes away a workflow the upload would keep is therefore left out.
 
   So whatever the import or the export leaves out, or writes itself, is left out: a Mac app's README, a hidden file,
   a file Lamp writes itself, or a watch app's code in a Mac app with no iPhone app. A plain site's page, which is

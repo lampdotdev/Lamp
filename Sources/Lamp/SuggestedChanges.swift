@@ -201,12 +201,14 @@ enum SuggestedChanges {
                                            leftOut: left.map { $0.isEmpty ? nil : $0 } ?? nil, checked: left != nil))
     }
 
-    /// The files a change from `start` to `head` touches that a release wouldn't put on GitHub as the change has them, in
-    /// the repository's own paths. The app is made as it would be with the change in it: a copy of the wish with each
+    /// The files a change from `start` to `head` touches that a release wouldn't leave on GitHub as the change has them,
+    /// in the repository's own paths. The app is made as it would be with the change in it: a copy of the wish with each
     /// side of the change staged as a merge stages it (`RepoImport.open`, `Upstream.stage`), what the start had and the
     /// head hasn't taken away, and what the head has written over it. That copy is then exported as a release exports it
-    /// (`GitHubRepo.stage`). A file the change has must come out of that byte for byte, and one it takes away must not
-    /// come out at all. So whatever the import leaves out, and whatever the export leaves out or writes itself (a README,
+    /// (`GitHubRepo.stage`), and put in the place of the repository as the request found it, as an upload does
+    /// (`GitHubRepo.overlay`, which keeps a hidden folder at the top and the files kept as GitHub has them). A file the
+    /// change has must come out of that byte for byte, and one it takes away must not come out at all, so taking away a
+    /// workflow the upload keeps isn't carried. So whatever the import leaves out, and whatever the export leaves out or writes itself (a README,
     /// a hidden file, a file Lamp writes, a watch app's code in a Mac app with no iPhone app), counts as not carried,
     /// and a site's page laid back out at the root counts as carried. Nil when any of it can't be worked out, which a
     /// release takes as not carried.
