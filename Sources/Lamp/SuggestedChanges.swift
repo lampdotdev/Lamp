@@ -42,6 +42,8 @@ enum SuggestedChanges {
         /// Files it changes that a release can't carry (a hidden file at the top, a file Lamp writes itself): it's never
         /// marked merged by a release, which wouldn't have them.
         var leftOut: [String]? = nil
+        /// Whether what it changes was checked against what a release carries; unchecked never goes as a parent.
+        var checked: Bool? = nil
         /// The release that went with it as a parent, and its tag.
         var released: String? = nil
         var tag: String? = nil
@@ -103,8 +105,16 @@ enum SuggestedChanges {
     /// Asks GitHub which requests are open on the branch Lamp pushes, and what became of those that aren't any more, and
     /// keeps it. Answers the record, with what's new to show: requests not seen before, or with a head not seen before.
     static func find(_ project: LampProject, kept: GitHubRepo.Repo, gh: String) async -> (record: Record, new: [Int])? {
-        let listed = await Subprocess.run(gh, ["api", "repos/\(kept.repo)/pulls?state=open&per_page=100"], mergeErrors: false, timeout: 60)
-        guard listed.ok, let items = (try? JSONSerialization.jsonObject(with: Data(listed.output.utf8))) as? [[String: Any]] else { return nil }
+        // Every page of them, one request to a line: an open request missing from the list would be taken for ended, and
+        // a release's check for requests under another goes by this list.
+        let listed = await Subprocess.run(gh, ["api", "--paginate", "repos/\(kept.repo)/pulls?state=open&per_page=100", "--jq", ".[] | @json"],
+                                          mergeErrors: false, timeout: 120)
+        guard listed.ok else { return nil }
+        var items: [[String: Any]] = []
+        for line in listed.output.split(whereSeparator: \.isNewline) where !line.trimmingCharacters(in: .whitespaces).isEmpty {
+            guard let item = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { return nil }
+            items.append(item)
+        }
         var open: [Request] = []
         for item in items {
             guard let number = item["number"] as? Int, let head = (item["head"] as? [String: Any])?["sha"] as? String,
@@ -117,18 +127,26 @@ enum SuggestedChanges {
         }
         var record = SuggestedChanges.record(for: project).flatMap { $0.repo == kept.repo ? $0 : nil } ?? Record(repo: kept.repo)
         var new: [Int] = []
-        for request in open where record.request(request.number)?.head != request.head {
+        for request in open {
+            // Closed and opened again: open as any other, its card shown again.
+            if record.ended.removeValue(forKey: String(request.number)) != nil { new.append(request.number); continue }
+            guard record.request(request.number)?.head != request.head else { continue }
             // A request brought in at the head it's at now has nothing new in it.
             if record.taken(request.number)?.head == request.head { continue }
             new.append(request.number)
         }
-        // What became of the ones that went: merged (here or on GitHub) or closed.
+        // What became of the ones that went, as GitHub says: merged (here or there) or closed. One it still calls open,
+        // or doesn't answer for, stays open as it was last seen.
         let gone = Set(record.open.map(\.number) + record.taken.map(\.number)).subtracting(open.map(\.number))
-        for number in gone where record.ended[String(number)] == nil {
+        for number in gone.sorted() where record.ended[String(number)] == nil {
             let state = await Subprocess.run(gh, ["api", "repos/\(kept.repo)/pulls/\(number)", "--jq", "[.state, .merged] | @tsv"],
                                              mergeErrors: false, timeout: 30)
-            guard state.ok else { continue }
-            record.ended[String(number)] = state.output.contains("true") ? .merged : .closed
+            let fields = state.output.trimmed.split(whereSeparator: \.isWhitespace).map(String.init)
+            if state.ok, fields.first == "closed" {
+                record.ended[String(number)] = fields.last == "true" ? .merged : .closed
+            } else if let last = record.request(number) {
+                open.append(last)
+            }
         }
         let closing = record.open.filter { request in !open.contains { $0.number == request.number } }
         record.past = Array((record.past.filter { old in !closing.contains { $0.number == old.number } } + closing).suffix(100))
@@ -161,34 +179,61 @@ enum SuggestedChanges {
               await Subprocess.run(git, ["checkout", "-q", "--detach", head], cwd: tree, timeout: 120).ok else {
             throw Failure(message: "GitHub didn't give back request #\(request.number): \(fetched.output.trimmed.suffix(200))")
         }
-        var base: String? = nil
+        // Where the request branched from the repository, which what it changes is measured from for the release's
+        // check however many times it's brought in; the merge measures only what's new since the head last brought in.
+        let compared = await Subprocess.run(gh, ["api", "repos/\(kept.repo)/compare/\(branch.isEmpty ? "HEAD" : branch)...\(head)",
+                                                 "--jq", ".merge_base_commit.sha"], mergeErrors: false, timeout: 60)
+        let start = compared.ok ? Credits.validCommit(compared.output.trimmed) : nil
+        var base = start
         if let earlier = record(for: project)?.taken(request.number), await BringIn.holds(version: earlier.takenIn, in: project) {
             base = earlier.head
-        } else {
-            let compared = await Subprocess.run(gh, ["api", "repos/\(kept.repo)/compare/\(branch.isEmpty ? "HEAD" : branch)...\(head)",
-                                                     "--jq", ".merge_base_commit.sha"], mergeErrors: false, timeout: 60)
-            base = compared.ok ? Credits.validCommit(compared.output.trimmed) : nil
         }
         guard let base else { throw Failure(message: "Lamp couldn't tell where request #\(request.number) started from, so it brought nothing in.") }
         await BringIn.fetchBase(base, into: tree, for: project, gh: gh)
-        // Every file it changes, to tell those a release can't carry.
-        let changed = await Subprocess.run(git, ["diff", "--name-only", "--no-renames", "-z", base, head], cwd: tree, mergeErrors: false, timeout: 60)
-        let paths = changed.ok ? changed.output.split(separator: "\0").map(String.init).filter { !$0.isEmpty } : []
-        let left = leftOut(paths, in: project)
+        // What of it a release can't carry, over the whole request. Not knowing counts as not carried.
+        var left: [String]? = nil
+        if let start {
+            if start != base { _ = await Subprocess.run(git, signedIn + ["fetch", "-q", "--depth", "1", "origin", start], cwd: tree, timeout: 300) }
+            left = await notCarried(from: start, to: head, in: tree, for: project)
+        }
         done = true
         return (folder, tree, BringIn.Pull(repo: kept.repo, base: base, head: head, request: request.number, from: request.login,
-                                           leftOut: left.isEmpty ? nil : left))
+                                           leftOut: left.map { $0.isEmpty ? nil : $0 } ?? nil, checked: left != nil))
     }
 
-    /// The paths of a change a release can't carry, so a request changing them is never marked merged by one: a hidden
-    /// file or folder at the top (a release leaves those as GitHub has them), and a file Lamp writes itself to build the
-    /// app (`GitHubRepo.isOwned`), the root's or a part's in its folder.
-    static func leftOut(_ paths: [String], in project: LampProject) -> [String] {
-        let (root, parts) = Sharing.layout(of: project)
+    /// The files a change from `start` to `head` touches that bringing it in doesn't put in the app as the change has
+    /// them, and so a release doesn't carry: anything the import leaves out (a README, a hidden file, a file Lamp writes
+    /// itself, whatever a shared app doesn't hold) or changes on the way in. Each side is staged as a merge stages it
+    /// (`RepoImport.open`, `Upstream.stage`) and every touched path compared: a file the change has must come out the
+    /// same, and one it takes away must be one the import had. Nil when any of it can't be worked out, which a release
+    /// takes as not carried.
+    static func notCarried(from start: String, to head: String, in tree: URL, for project: LampProject) async -> [String]? {
+        let git = GitHubRepo.git
+        let changed = await Subprocess.run(git, ["diff", "--name-only", "--no-renames", "-z", start, head], cwd: tree, mergeErrors: false, timeout: 60)
+        guard changed.ok else { return nil }
+        let paths = changed.output.split(separator: "\0").map(String.init).filter { !$0.isEmpty }
+        guard !paths.isEmpty else { return [] }
+        let fm = FileManager.default
+        let work = Sharing.workFolder.appendingPathComponent("forge-carried-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: work) }
+        func staged(_ commit: String, as name: String) async -> URL? {
+            let checkout = work.appendingPathComponent(name + "-tree"), out = work.appendingPathComponent(name)
+            guard (try? fm.createDirectory(at: checkout, withIntermediateDirectories: true)) != nil,
+                  await Subprocess.run("/bin/zsh", ["-c", "\(Sandbox.quoted(git)) archive \(commit) | tar -x -C \(Sandbox.quoted(checkout.path))"],
+                                       cwd: tree, timeout: 120).ok,
+                  let package = try? RepoImport.open(folder: checkout) else { return nil }
+            defer { try? fm.removeItem(at: package.folder) }
+            return (try? Upstream.stage(package, for: project, into: out)) == nil ? nil : out
+        }
+        guard let theirs = await staged(head, as: "head"), let before = await staged(start, as: "start") else { return nil }
         return paths.filter { path in
-            if path.hasPrefix(".") { return true }
-            let part = parts.first { path.hasPrefix($0.dir.lastPathComponent + "/") }
-            return part.map { GitHubRepo.isOwned(String(path.dropFirst($0.dir.lastPathComponent.count + 1)), in: $0) } ?? GitHubRepo.isOwned(path, in: root)
+            let inHead = tree.appendingPathComponent(path)
+            if fm.fileExists(atPath: inHead.path) {
+                guard let had = try? Data(contentsOf: inHead), let came = try? Data(contentsOf: theirs.appendingPathComponent(path)) else { return true }
+                return had != came
+            }
+            // Taken away: carried only when the import had it before and hasn't now.
+            return !fm.fileExists(atPath: before.appendingPathComponent(path).path) || fm.fileExists(atPath: theirs.appendingPathComponent(path).path)
         }
     }
 
@@ -199,7 +244,8 @@ enum SuggestedChanges {
         guard let number = pull.request, let version = await Versions.head(project) else { return }
         change(project) { record in
             record.taken.removeAll { $0.number == number }
-            record.taken.append(Taken(number: number, head: pull.head, base: pull.base, takenIn: version, leftOut: pull.leftOut))
+            record.taken.append(Taken(number: number, head: pull.head, base: pull.base, takenIn: version, leftOut: pull.leftOut,
+                                      checked: pull.checked == true))
             record.unseen.removeAll { $0 == number }
         }
     }
@@ -212,19 +258,30 @@ enum SuggestedChanges {
     static func parents(_ record: Record, holds: (Taken) async -> Bool, isAncestor: (String, String) async -> Bool) async -> [Taken] {
         var going: [Taken] = []
         for taken in record.taken where taken.released == nil && record.ended[String(taken.number)] == nil {
-            guard record.request(taken.number)?.head == taken.head, (taken.leftOut ?? []).isEmpty, await holds(taken) else { continue }
+            guard record.request(taken.number)?.head == taken.head, taken.checked == true, (taken.leftOut ?? []).isEmpty,
+                  await holds(taken) else { continue }
             going.append(taken)
         }
-        let heads = Set(going.map(\.head))
-        var cleared: [Taken] = []
-        for taken in going {
-            var under = false
-            for other in record.open where !heads.contains(other.head) && other.number != taken.number {
-                if await isAncestor(other.head, taken.head) { under = true; break }
+        // Every other open request that isn't going, by its number: one at the same head, or under it, would be marked
+        // merged with it. Dropping one can uncover another's, so it's asked again until nothing more drops.
+        var dropped = true
+        while dropped {
+            dropped = false
+            let numbers = Set(going.map(\.number))
+            for taken in going {
+                var under = false
+                for other in record.open where !numbers.contains(other.number) {
+                    if other.head == taken.head { under = true; break }
+                    if await isAncestor(other.head, taken.head) { under = true; break }
+                }
+                if under {
+                    going.removeAll { $0.number == taken.number }
+                    dropped = true
+                    break
+                }
             }
-            if !under { cleared.append(taken) }
         }
-        return cleared
+        return going
     }
 
     /// `parents` as a release asks it, with the wish's history and GitHub's compare.
@@ -258,7 +315,7 @@ enum SuggestedChanges {
     enum CardState: Equatable {
         case open(changedSince: Bool)
         case bringingIn
-        case broughtIn(leftOut: [String])
+        case broughtIn(leftOut: [String], unchecked: Bool = false)
         case released(tag: String?)
         case held(tag: String?)
         case merged(tag: String?)
@@ -278,7 +335,7 @@ enum SuggestedChanges {
         if let current = record.request(number)?.head, current != taken.head { return .open(changedSince: true) }
         if taken.released != nil { return .released(tag: taken.tag) }
         if taken.heldBy != nil { return .held(tag: taken.heldTag) }
-        return .broughtIn(leftOut: taken.leftOut ?? [])
+        return .broughtIn(leftOut: taken.leftOut ?? [], unchecked: taken.checked != true)
     }
 
     /// The card's words: its title and its status line.
@@ -289,8 +346,9 @@ enum SuggestedChanges {
         case .open(let changedSince):
             return (changedSince ? "\(who) sent more changes" : "\(who) suggested changes", title)
         case .bringingIn: return ("Bringing in \(who)'s changes…", title)
-        case .broughtIn(let leftOut):
-            let status = leftOut.isEmpty ? "Goes to GitHub with your next release" : "Brought in, but for \(leftOut.prefix(3).joined(separator: ", "))"
+        case .broughtIn(let leftOut, let unchecked):
+            let status = unchecked ? "Goes to GitHub with your next release, still open there"
+                : leftOut.isEmpty ? "Goes to GitHub with your next release" : "Brought in, but for \(leftOut.prefix(3).joined(separator: ", "))"
             return ("Brought in \(who)'s changes", status)
         case .released(let tag): return ("Released \(who)'s changes", tag.map { "In \($0) · waiting for GitHub" } ?? "Waiting for GitHub")
         case .held(let tag): return ("Released \(who)'s changes", tag.map { "In \($0) · still open on GitHub" } ?? "Still open on GitHub")
@@ -377,8 +435,7 @@ extension Store {
         Task {
             guard let gh = await Publish.gh(), await Publish.login(gh: gh) != nil,
                   let found = await SuggestedChanges.find(project, kept: kept, gh: gh) else { return }
-            for number in found.new { showSuggestion(project, number: number) }
-            suggestionsRevision += 1
+            publishSuggestions(project, new: found.new)
         }
     }
 
@@ -391,6 +448,12 @@ extension Store {
         }
         suggestionTimer = Timer.scheduledTimer(withTimeInterval: 15 * 60, repeats: true) { _ in Task { @MainActor in check() } }
         check()
+    }
+
+    /// What a look at GitHub found new, wherever it was asked from (a check, the agent's tool, a release): each gets its card.
+    func publishSuggestions(_ project: LampProject, new: [Int]) {
+        for number in new { showSuggestion(project, number: number) }
+        suggestionsRevision += 1
     }
 
     /// The request's card, at the end of the chat: one per request, moved down when it has new changes.
@@ -518,8 +581,7 @@ extension Store {
         guard let found = await SuggestedChanges.find(wish, kept: kept, gh: gh) else {
             return (400, ["error": "GitHub didn't answer for \(kept.repo). Try again in a moment."])
         }
-        for number in found.new { showSuggestion(wish, number: number) }
-        suggestionsRevision += 1
+        publishSuggestions(wish, new: found.new)
         let number = (arguments["number"] as? Int) ?? (arguments["number"] as? String).flatMap { Int($0.trimmingCharacters(in: CharacterSet(charactersIn: "# "))) }
         guard let number else {
             guard !found.record.open.isEmpty else { return (200, ["text": "Nobody has suggested changes to this app on GitHub right now."]) }

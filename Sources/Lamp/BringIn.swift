@@ -35,6 +35,8 @@ enum BringIn {
         var request: Int? = nil
         var from: String? = nil
         var leftOut: [String]? = nil
+        /// `leftOut` was worked out; when it couldn't be, the request is never marked merged by a release.
+        var checked: Bool? = nil
     }
 
     /// A bring-in left to the agent to settle (conflicts), which counts once its turn finished well.

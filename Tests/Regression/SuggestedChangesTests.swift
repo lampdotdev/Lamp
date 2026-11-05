@@ -37,7 +37,8 @@ final class SuggestedChangesTests: XCTestCase {
         try """
         #!/bin/zsh
         [[ "$1 $2" == "repo view" ]] && { echo PRIVATE; exit 0 }
-        [[ "$1" == api && "$2" == repos/someone/tally/pulls\\?* ]] && { cat \(Sandbox.quoted(pulls.path)); exit 0 }
+        [[ "$1" == api && "$2" == --paginate && "$3" == repos/someone/tally/pulls\\?* ]] && { /usr/bin/python3 -c 'import json,sys; [print(json.dumps(i)) for i in json.load(open(sys.argv[1]))]' \(Sandbox.quoted(pulls.path)); exit 0 }
+        [[ "$1" == api && "$2" == repos/someone/tally/pulls/* ]] && { f=\(Sandbox.quoted(place.path))/state-${2##*/}; [[ -f $f ]] && cat $f || printf 'open\\tfalse\\n'; exit 0 }
         [[ "$1" == api && "$2" == repos/someone/tally/compare/* && "$4" == .merge_base_commit.sha ]] && { cat \(Sandbox.quoted(mergeBase.path)); exit 0 }
         exit 0
         """.write(to: gh, atomically: true, encoding: .utf8)
@@ -178,7 +179,7 @@ final class SuggestedChangesTests: XCTestCase {
     /// release leaves out, one the wish no longer has, and one with an open request it doesn't have under it, stay out.
     func testOnlyRequestsTheReleaseReallyHasGoAsParents() async {
         func taken(_ number: Int, _ head: String, leftOut: [String]? = nil) -> SuggestedChanges.Taken {
-            SuggestedChanges.Taken(number: number, head: head, base: "base", takenIn: "v\(number)", leftOut: leftOut)
+            SuggestedChanges.Taken(number: number, head: head, base: "base", takenIn: "v\(number)", leftOut: leftOut, checked: true)
         }
         func open(_ number: Int, _ head: String) -> SuggestedChanges.Request {
             SuggestedChanges.Request(number: number, login: "remixer", title: "t", head: head, url: "u")
@@ -192,10 +193,90 @@ final class SuggestedChangesTests: XCTestCase {
         XCTAssertEqual(going.map(\.number), [1, 7])
     }
 
-    /// What a release can't carry: a hidden file at the top and a file Lamp writes itself.
-    func testFilesAReleaseLeavesOutAreFound() throws {
+
+    /// A file the import doesn't take (a Mac app's README, which a release writes afresh) keeps the request from going as
+    /// a parent: GitHub would mark it merged without that change.
+    @MainActor
+    func testARequestChangingAFileTheImportDropsDoesNotGoAsAParent() async throws {
         let world = try world()
-        XCTAssertEqual(SuggestedChanges.leftOut([".github/workflows/x.yml", "Sources/Counter.swift", "build.sh", "Package.swift", "README.md"], in: world.wish),
-                       [".github/workflows/x.yml", "build.sh", "Package.swift"])
+        let first = try await release(world, isNew: true)
+        try XCTUnwrap(first.commit).write(to: world.mergeBase, atomically: true, encoding: .utf8)
+        _ = try openRequest(world, number: 4, ["Sources/Counter.swift": "let step = 3\n", "README.md": "Better words.\n"])
+        _ = await SuggestedChanges.find(world.wish, kept: first, gh: world.gh.path)
+        let pull = try await bringIn(world, number: 4)
+        XCTAssertEqual(pull.checked, true)
+        XCTAssertEqual(pull.leftOut, ["README.md"])
+        let going = await SuggestedChanges.parents(for: world.wish, gh: world.gh.path)
+        XCTAssertEqual(going, [])
+    }
+
+    /// Brought in again after its sender added to it, a request still remembers what of it a release can't carry: the
+    /// check covers the whole request, not only what came in the second time.
+    @MainActor
+    func testWhatARequestLeftOutStaysLeftOutAfterItsBroughtInAgain() async throws {
+        let world = try world()
+        let first = try await release(world, isNew: true)
+        let pushed = try XCTUnwrap(first.commit)
+        try pushed.write(to: world.mergeBase, atomically: true, encoding: .utf8)
+        let one = try openRequest(world, number: 5, ["Sources/Counter.swift": "let step = 3\n", ".github/workflows/x.yml": "on: push\n"])
+        _ = await SuggestedChanges.find(world.wish, kept: first, gh: world.gh.path)
+        _ = try await bringIn(world, number: 5)
+        let two = try openRequest(world, number: 5, ["Sources/Counter.swift": "let step = 4\n"], on: one)
+        _ = await SuggestedChanges.find(world.wish, kept: first, gh: world.gh.path)
+        let again = try await bringIn(world, number: 5)
+        XCTAssertEqual(again.base, one, "only what's new is merged")
+        XCTAssertEqual(again.head, two)
+        XCTAssertEqual(SuggestedChanges.record(for: world.wish)?.taken(5)?.leftOut, [".github/workflows/x.yml"])
+        let going = await SuggestedChanges.parents(for: world.wish, gh: world.gh.path)
+        XCTAssertEqual(going, [])
+    }
+
+    /// Every page of open requests is read; one GitHub still calls open is never taken for closed; one closed and opened
+    /// again is open, with its card shown again.
+    @MainActor
+    func testOpenAndClosedAreWhatGitHubSays() async throws {
+        let world = try world()
+        let first = try await release(world, isNew: true)
+        try XCTUnwrap(first.commit).write(to: world.mergeBase, atomically: true, encoding: .utf8)
+        _ = try openRequest(world, number: 1, ["Sources/One.swift": "let one = 1\n"])
+        _ = try openRequest(world, number: 2, ["Sources/Two.swift": "let two = 2\n"])
+        var found = await SuggestedChanges.find(world.wish, kept: first, gh: world.gh.path)
+        XCTAssertEqual(found?.record.open.map(\.number), [1, 2])
+
+        // Missing from the list but open by its own answer: still open.
+        let listed = try Data(contentsOf: world.pulls)
+        try JSONSerialization.data(withJSONObject: [((try JSONSerialization.jsonObject(with: listed)) as? [[String: Any]] ?? [])[1]]).write(to: world.pulls)
+        found = await SuggestedChanges.find(world.wish, kept: first, gh: world.gh.path)
+        XCTAssertEqual(found?.record.open.map(\.number).sorted(), [1, 2])
+        XCTAssertNil(found?.record.ended["1"])
+
+        // Closed by GitHub's own answer, then opened again.
+        try "closed\tfalse\n".write(to: world.place.appendingPathComponent("state-1"), atomically: true, encoding: .utf8)
+        found = await SuggestedChanges.find(world.wish, kept: first, gh: world.gh.path)
+        XCTAssertEqual(found?.record.ended["1"], .closed)
+        try JSONSerialization.data(withJSONObject: (try JSONSerialization.jsonObject(with: listed))).write(to: world.pulls)
+        found = await SuggestedChanges.find(world.wish, kept: first, gh: world.gh.path)
+        XCTAssertNil(found?.record.ended["1"])
+        XCTAssertEqual(found?.new, [1], "its card comes back")
+    }
+
+    /// A request that wasn't brought in at the same head as one that was would be marked merged with it; dropping one
+    /// for that uncovers the next.
+    func testARequestAtTheSameHeadThatWasntBroughtInHoldsItBack() async {
+        func taken(_ number: Int, _ head: String, checked: Bool = true) -> SuggestedChanges.Taken {
+            SuggestedChanges.Taken(number: number, head: head, base: "base", takenIn: "v\(number)", checked: checked)
+        }
+        func open(_ number: Int, _ head: String) -> SuggestedChanges.Request {
+            SuggestedChanges.Request(number: number, login: "remixer", title: "t", head: head, url: "u")
+        }
+        var record = SuggestedChanges.Record(repo: "someone/tally")
+        record.open = [open(1, "h1"), open(2, "h1"), open(3, "h3"), open(4, "h4")]
+        record.taken = [taken(1, "h1"), taken(3, "h3"), taken(4, "h4", checked: false)]
+        // 1 sits under 3.
+        let going = await SuggestedChanges.parents(record, holds: { _ in true }, isAncestor: { $0 == "h1" && $1 == "h3" })
+        XCTAssertEqual(going.map(\.number), [], "2 holds 1 back, 1 then holds 3 back, and 4 was never checked")
+        record.taken.append(taken(2, "h1"))
+        let all = await SuggestedChanges.parents(record, holds: { _ in true }, isAncestor: { $0 == "h1" && $1 == "h3" })
+        XCTAssertEqual(all.map(\.number), [1, 3, 2])
     }
 }
