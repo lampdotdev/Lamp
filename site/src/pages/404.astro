@@ -1,14 +1,11 @@
 ---
-import { Image } from "astro:assets";
 import Base from "../layouts/Base.astro";
-import icon from "../assets/AppIcon.png";
 ---
 
 <Base title="Not found · Lamp" description="This page isn't here.">
-  <main class="flex min-h-dvh flex-col items-center justify-center px-4 text-center">
-    <Image src={icon} alt="" width={96} height={96} densities={[1, 2]} class="size-24 opacity-90" />
-    <h1 class="mt-6 font-display text-4xl font-bold tracking-tight">Poof! It's a 404.</h1>
-    <p class="mt-3 text-lg text-muted">This page isn't here.</p>
-    <a href="/" class="mt-8 font-medium text-ink underline decoration-black/20 underline-offset-4 hover:decoration-black/60">Go to Lamp</a>
+  <main class="mx-auto flex min-h-[70dvh] max-w-[46rem] flex-col justify-center px-4 pt-[var(--menu-height)] sm:px-6">
+    <p class="font-mono text-sm text-muted-ink">404</p>
+    <h1 class="mt-2 text-[clamp(2.25rem,5vw,3.25rem)] leading-[1] font-black tracking-[-0.04em]">This page isn't here.</h1>
+    <p class="mt-6 font-mono text-sm"><a href="/" class="underline underline-offset-4">Go to Lamp's homepage →</a></p>
   </main>
 </Base>

@@ -3,8 +3,7 @@ import { cacheTags, findWish, isID } from "./shared-wishes.js";
 import { summary } from "./shared-wish-page.js";
 
 // The 1200×630 picture X, iMessage and Slack show for a shared wish's link: its name, its line, its icon and the
-// picture of it, on the night sky of the first-idea section (global.css's .wish-night) with the lamp's warm light
-// rising from the bottom. Drawn by @vercel/og; Geist stands in for the Mac's own type, which can't be sent with it.
+// picture of it, on a night sky with the lamp's warm light rising from the bottom. Drawn by @vercel/og; Geist stands in for the Mac's own type, which can't be sent with it.
 
 // Each file named where it's read, so Vercel's tracing bundles it with the function (vercel.json lists them too).
 const fonts = () => [

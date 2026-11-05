@@ -18,7 +18,7 @@ const { place } = Astro.props;
   data-wish
   data-place={place}
   aria-labelledby="wish-name"
-  class="m-auto max-h-[calc(100dvh-2rem)] w-[min(36rem,calc(100vw-2rem))] overflow-y-auto rounded-[28px] bg-page p-0 text-ink shadow-[0_30px_80px_-20px_rgba(0,0,0,0.45)] backdrop:bg-black/40 backdrop:backdrop-blur-sm lg:w-[min(70rem,calc(100vw-4rem))] lg:grid-cols-[1.3fr_1fr] lg:overflow-hidden lg:open:grid"
+  class="m-auto max-h-[calc(100dvh-2rem)] w-[min(36rem,calc(100vw-2rem))] overflow-y-auto rounded-[10px] bg-page p-0 text-ink shadow-[0_30px_80px_-20px_rgba(0,0,0,0.45)] backdrop:bg-black/40 backdrop:backdrop-blur-sm lg:w-[min(70rem,calc(100vw-4rem))] lg:grid-cols-[1.3fr_1fr] lg:overflow-hidden lg:open:grid"
 >
   <!-- The picture: across the top on narrower screens; from lg, the left of two columns, shown whole on a soft,
        blurred copy of itself however tall the wish beside it is. -->
@@ -42,25 +42,30 @@ const { place } = Astro.props;
         <p data-about class="mt-1.5 text-[15px] leading-snug text-muted"></p>
       </div>
     </div>
-    <label for="wish-text" class="mt-6 mb-2.5 block text-[15px] font-semibold">Make it yours, then give it to Lamp:</label>
-    <textarea
-      id="wish-text"
-      data-text
-      rows="5"
-      class="w-full resize-none rounded-xl bg-page p-3.5 text-[17px] leading-relaxed ring-1 ring-[#d2d2d7] transition focus:ring-2 focus:ring-[#cf620c]/40 focus:outline-none"
-    ></textarea>
+    <!-- It's an idea, not an app that exists yet: Lamp makes it. What Lamp is asked isn't shown, unless the link brought
+         the person's own words, which they may want to change. -->
+    <p data-line class="mt-5 text-[15px] leading-snug text-muted">An idea for Lamp to make on your Mac. Get Lamp, and it'll be waiting when Lamp opens.</p>
+    <div data-edit hidden class="mt-5">
+      <label for="wish-text" class="mb-2 block font-mono text-xs font-bold tracking-[0.06em] text-muted">YOUR IDEA</label>
+      <textarea
+        id="wish-text"
+        data-text
+        rows="5"
+        class="w-full resize-none rounded-xl bg-page p-3.5 text-[17px] leading-relaxed ring-1 ring-rule transition focus:ring-2 focus:ring-ink/40 focus:outline-none"
+      ></textarea>
+    </div>
     <!-- A wish carries only its words to Lamp, which starts a Mac app unless told otherwise, so an iPhone or
          iPad idea says which to choose. -->
-    <p data-device hidden class="mt-3 text-[14px] text-muted"></p>
-    <div data-finish class="mt-6 flex flex-col items-center lg:items-start lg:[&>div]:items-start">
+    <p data-device hidden class="mt-2 text-[14px] text-muted"></p>
+    <div data-finish class="mt-5 flex flex-col items-center lg:items-start lg:[&>div]:items-start">
       <DownloadButton place={place} />
       <button
         type="button"
         data-open
         hidden
-        class="mt-3.5 cursor-pointer text-[15px] font-medium text-[#b04e0a] underline decoration-[#b04e0a]/40 underline-offset-4 transition hover:decoration-[#b04e0a]"
+        class="mt-3.5 cursor-pointer text-[15px] font-medium text-ink underline decoration-ink/40 underline-offset-4 transition hover:decoration-ink"
       >
-        Already have Lamp? Open Lamp with it
+        Already have Lamp? Open it there
       </button>
     </div>
   </div>
@@ -85,6 +90,8 @@ const { place } = Astro.props;
   openLink.hidden = !(/Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2);
 
   const fit = () => { text.style.height = "auto"; text.style.height = `${text.scrollHeight + 2}px`; };
+  const edit = dialog.querySelector<HTMLElement>("[data-edit]")!;
+  const line = dialog.querySelector<HTMLElement>("[data-line]")!;
   text.addEventListener("input", fit);
 
   // A wish whose words name its device (the TV, a watch) needs no platform: Lamp goes by the words.
@@ -124,11 +131,14 @@ const { place } = Astro.props;
     text.value = current.wish;
     go.textContent = "Download Lamp";
     if (requirement) requirement.hidden = true;
+    // Only words the link brought are shown, to change; an idea's own request is Lamp's business.
+    edit.hidden = from !== "remix";
+    line.hidden = from === "remix";
     dialog.showModal();
     fit();
-    // Ready to change straight away, with the cursor at the end, where there's a pointer and a keyboard; on a
-    // touch screen the keyboard would cover the wish before it's been read.
-    if (matchMedia("(hover: hover) and (pointer: fine)").matches) {
+    // When they're open, ready to change straight away, with the cursor at the end, where there's a pointer and a
+    // keyboard; on a touch screen the keyboard would cover the wish before it's been read.
+    if (!edit.hidden && matchMedia("(hover: hover) and (pointer: fine)").matches) {
       text.focus({ preventScroll: true });
       text.setSelectionRange(text.value.length, text.value.length);
     }
