@@ -166,7 +166,7 @@ final class GitHubProjectsTests: XCTestCase {
         XCTAssertTrue(about.contains("Uses <a href=\"https://github.com/ofrohn/d3-celestial\">d3-celestial</a>"), about)
         XCTAssertTrue(Publish.creditsSection(credits).contains("- Uses [d3-celestial](https://github.com/ofrohn/d3-celestial)"))
         XCTAssertFalse(Publish.creditsSection(credits).contains("Based on"))
-        let bar = Publish.withCreditBar("<html><body></body></html>", credits: credits, open: Publish.OpenInLamp(link: nil, file: nil))
+        let bar = Publish.withCreditBar("<html><body></body></html>", credits: credits, open: Publish.OpenInLamp())
         XCTAssertFalse(bar.contains("Based on"))
         XCTAssertTrue(bar.contains("Uses <a href=\"https://github.com/ofrohn/d3-celestial\""))
 

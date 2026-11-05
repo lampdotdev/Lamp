@@ -86,15 +86,13 @@ enum Publish {
 
     /// Where the page's Open in Lamp goes. Its Share Link first (`WishLink`), once the person has made one (the card offers
     /// to, through Share Link's own card, where they see and change what it shows): that page works for someone without
-    /// Lamp (Download Lamp carries the wish into its welcome) and with it ("Open Lamp with it"). Else `file`, the wish
-    /// as a shared file beside the page, when there is one. `origin` is what the page is a copy of, when that's somewhere
+    /// Lamp (Download Lamp carries the wish into its welcome) and with it ("Open Lamp with it"). `origin` is what the page is a copy of, when that's somewhere
     /// Lamp can copy it from again: the starter a starter's own page is (`StarterRepos.stagePage`), or the repository the
     /// page was put up with, at the commit pushed with it (`GitHubRepo.upload`). The Remix panel's request goes with it
     /// (`RemixLink.Origin`), so Lamp starts from a copy rather than its own version, and with no Share Link, Open in Lamp
     /// goes there too.
     struct OpenInLamp: Equatable {
         var link: URL?
-        var file: String?
         var origin: RemixLink.Origin? = nil
     }
 
@@ -181,10 +179,6 @@ enum Publish {
         if !credits.generated.isEmpty { parts.append(escaped(Credits.generatedLine(credits.generated.count))) }
         if let link = open.link {
             parts.append("<a href=\"\(escaped(link.absoluteString))\" target=\"_blank\" rel=\"noopener\">Open in Lamp</a>")
-        } else if let file = open.file {
-            // The file means nothing without Lamp, so Lamp's site is beside it.
-            parts.append("<a href=\"\(escaped(file))\" download>Open in Lamp</a>")
-            parts.append("<a href=\"https://lamp.dev\" target=\"_blank\" rel=\"noopener\">Get Lamp</a>")
         } else if let origin = open.origin {
             // Lamp's site opens Lamp on a fresh copy of what the page is.
             parts.append("<a href=\"\(escaped(RemixLink.site(for: origin, from: "page").absoluteString))\" target=\"_blank\" rel=\"noopener\">Open in Lamp</a>")
