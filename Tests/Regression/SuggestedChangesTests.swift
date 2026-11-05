@@ -282,17 +282,23 @@ final class SuggestedChangesTests: XCTestCase {
 
     /// The wish's repository as a release puts it up (`GitHubRepo.stage`), then a request on it changing `files`, by
     /// their paths in the repository: the commits it starts and ends at, with the clone at its head as a bring-in has it.
-    private func request(on wish: LampProject, in place: URL, _ files: [String: String]) throws -> (tree: URL, start: String, head: String) {
+    /// `before` is what GitHub has besides the wish's export (a workflow); a file given nil is taken away.
+    private func request(on wish: LampProject, in place: URL, before: [String: String] = [:], _ files: [String: String?]) throws -> (tree: URL, start: String, head: String) {
         let staged = try GitHubRepo.stage(wish, repo: nil, link: nil, isPublic: false, withPage: false)
         defer { try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent()) }
         let tree = place.appendingPathComponent("request-\(UUID().uuidString)")
         _ = try sh("/usr/bin/ditto \(Sandbox.quoted(staged.folder.path)) \(Sandbox.quoted(tree.path))", in: place)
-        let start = try sh("git init -q -b main && git add -A && git -c user.name=Lamp -c user.email=lamp@localhost commit -qm up && git rev-parse HEAD", in: tree)
-        for (path, text) in files {
-            let url = tree.appendingPathComponent(path)
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try text.write(to: url, atomically: true, encoding: .utf8)
+        func write(_ files: [String: String?]) throws {
+            for (path, text) in files {
+                let url = tree.appendingPathComponent(path)
+                guard let text else { try FileManager.default.removeItem(at: url); continue }
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try text.write(to: url, atomically: true, encoding: .utf8)
+            }
         }
+        try write(before)
+        let start = try sh("git init -q -b main && git add -A && git -c user.name=Lamp -c user.email=lamp@localhost commit -qm up && git rev-parse HEAD", in: tree)
+        try write(files)
         let head = try sh("git add -A && git -c user.name=Remixer -c user.email=remixer@example.com commit -qm change && git rev-parse HEAD", in: tree)
         return (tree, start, head)
     }
@@ -329,5 +335,15 @@ final class SuggestedChangesTests: XCTestCase {
         let change = try request(on: site, in: world.place, ["index.html": "<html>hello, again</html>\n"])
         let left = await SuggestedChanges.notCarried(from: change.start, to: change.head, in: change.tree, for: site)
         XCTAssertEqual(left, [])
+    }
+
+    /// A request taking away a workflow GitHub has: the release's export never has it, but the upload keeps the hidden
+    /// folders at the repository's top as GitHub has them, so the workflow would stay while the request showed merged.
+    func testTakingAwayAHiddenFileTheUploadKeepsIsNotCarried() async throws {
+        let world = try world()
+        let change = try request(on: world.wish, in: world.place, before: [".github/workflows/x.yml": "on: push\n"],
+                                 [".github/workflows/x.yml": nil, "Sources/Counter.swift": "let step = 9\n"])
+        let left = await SuggestedChanges.notCarried(from: change.start, to: change.head, in: change.tree, for: world.wish)
+        XCTAssertEqual(left, [".github/workflows/x.yml"])
     }
 }

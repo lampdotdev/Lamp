@@ -233,8 +233,10 @@ enum SuggestedChanges {
         // its builds and the chat's attachments.
         let copy = work.appendingPathComponent("wish").appendingPathComponent(project.dir.lastPathComponent)
         guard (try? fm.createDirectory(at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)) != nil,
-              await Subprocess.run("/usr/bin/rsync", ["-a", "--exclude", "/.git", "--exclude", "/.build", "--exclude", "/build",
-                                                      "--exclude", "/" + Attachments.folder, project.dir.path + "/", copy.path + "/"], timeout: 300).ok
+              await Subprocess.run("/usr/bin/rsync", ["-a", "--exclude", "/.git", "--exclude", ".build", "--exclude", "/build", "--exclude", "/*/build",
+                                                      "--exclude", "/" + Attachments.folder, "--exclude", "/.lamp/runtime",
+                                                      "--exclude", "/.lamp/pi-sessions", "--exclude", "/.lamp/page-live",
+                                                      project.dir.path + "/", copy.path + "/"], timeout: 300).ok
         else { return nil }
         for relative in Contribute.regularFiles(in: before) where !fm.fileExists(atPath: theirs.appendingPathComponent(relative).path) {
             try? fm.removeItem(at: copy.appendingPathComponent(relative))
@@ -248,8 +250,23 @@ enum SuggestedChanges {
         guard let changedWish = Store.readWish(at: copy),
               let exported = try? GitHubRepo.stage(changedWish, repo: nil, link: nil, isPublic: false, withPage: false) else { return nil }
         defer { try? fm.removeItem(at: exported.folder.deletingLastPathComponent()) }
+        // What the upload makes of the repository as the request found it with that export in its place
+        // (`GitHubRepo.overlay`): what it keeps of GitHub's (a hidden folder at the top, the files kept as GitHub has
+        // them) is there whatever the request did to it.
+        let upload = work.appendingPathComponent("upload")
+        guard (try? fm.createDirectory(at: upload, withIntermediateDirectories: true)) != nil,
+              await Subprocess.run("/bin/zsh", ["-c", "\(Sandbox.quoted(git)) archive \(start) | tar -x -C \(Sandbox.quoted(upload.path))"],
+                                   cwd: tree, timeout: 120).ok,
+              // Its commit is only for putting back what the upload keeps: made with plumbing, which signs only when asked.
+              await Subprocess.run("/bin/zsh", ["-c", "\(Sandbox.quoted(git)) init -q && \(Sandbox.quoted(git)) add -A && "
+                                                + "\(Sandbox.quoted(git)) update-ref HEAD $(GIT_AUTHOR_NAME=Lamp GIT_AUTHOR_EMAIL=lamp@localhost "
+                                                + "GIT_COMMITTER_NAME=Lamp GIT_COMMITTER_EMAIL=lamp@localhost \(Sandbox.quoted(git)) commit-tree "
+                                                + "$(\(Sandbox.quoted(git)) write-tree) -m start)"], cwd: upload, timeout: 120).ok else { return nil }
+        let keeping = (GitHubRepo.kept(for: project)?.ownFiles ?? [])
+            .filter { ["README.md", "LICENSE"].contains($0) || !fm.fileExists(atPath: exported.folder.appendingPathComponent($0).path) }
+        guard (try? await GitHubRepo.overlay(exported.folder, onto: upload, keeping: keeping, git: git)) != nil else { return nil }
         return paths.filter { path in
-            let inHead = tree.appendingPathComponent(path), out = exported.folder.appendingPathComponent(path)
+            let inHead = tree.appendingPathComponent(path), out = upload.appendingPathComponent(path)
             if fm.fileExists(atPath: inHead.path) {
                 guard let had = try? Data(contentsOf: inHead), let went = try? Data(contentsOf: out) else { return true }
                 return had != went

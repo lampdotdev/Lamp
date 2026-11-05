@@ -589,26 +589,7 @@ enum GitHubRepo {
                 for path in try await keptFromGitHub(in: clone, since: lastPushed, tree: tree, broughtIn: broughtIn, project: project, gh: gh)
                 where !theirs.contains(path) { theirs.append(path) }
             }
-            // The wish takes the place of what's there, but for what a wish never carries: a hidden file or folder at the
-            // top (the person's .github/workflows, .gitignore, an editor's settings) stays as it is, with the tree's own
-            // over it file by file. Lamp's folder in a site's repository is Lamp's, and goes whole. So does the shared
-            // file an older Lamp put at the top beside the code, which the tree no longer carries.
-            // A site's hidden files that travel with its page (`ScreenFiles.servedHidden`) are the wish's too: replaced, or
-            // taken away when the wish has none.
-            let site = fm.fileExists(atPath: tree.appendingPathComponent("\(StaticSite.folder)/lamp-app.json").path)
-            let wishes = Set([StaticSite.folder]).union(site ? ScreenFiles.servedHidden : [])
-            for item in try fm.contentsOfDirectory(at: clone, includingPropertiesForKeys: nil)
-            where item.lastPathComponent != ".git" && (!item.lastPathComponent.hasPrefix(".") || wishes.contains(item.lastPathComponent)) {
-                try fm.removeItem(at: item)
-            }
-            for item in try fm.contentsOfDirectory(at: tree, includingPropertiesForKeys: nil) where item.lastPathComponent != ".git" {
-                try merge(item, into: clone.appendingPathComponent(item.lastPathComponent))
-            }
-            for path in theirs {
-                let restored = await Subprocess.run(git, ["checkout", "-q", "HEAD", "--", path], cwd: clone, timeout: 30)
-                // Taken away on GitHub: it stays away.
-                if !restored.ok { try? fm.removeItem(at: clone.appendingPathComponent(path)) }
-            }
+            try await overlay(tree, onto: clone, keeping: theirs, git: git)
             let added = await Subprocess.run(git, ["add", "-A"], cwd: clone, timeout: 120)
             guard added.ok else { throw Failure(message: "Couldn't prepare the repository: \(added.output.trimmed.suffix(200))") }
             // Requests brought in go as more parents (`SuggestedChanges.parents`), so GitHub marks them merged: each head as it
@@ -692,6 +673,33 @@ enum GitHubRepo {
         try await Publish.servePage(repo, commit: pagePushed.commit, changed: pagePushed.changed, gh: gh, step: step)
         record.page = page.url
         return (record, changed || pagePushed.changed || kept(for: project)?.page != page.url)
+    }
+
+    /// What an upload makes of `clone` (the repository as it is, checked out) with the wish's export (`tree`) in its
+    /// place, which a request's check works out too (`SuggestedChanges.notCarried`), so the two never differ.
+    /// The wish takes the place of what's there, but for what a wish never carries: a hidden file or folder at the
+    /// top (the person's .github/workflows, .gitignore, an editor's settings) stays as it is, with the tree's own
+    /// over it file by file. Lamp's folder in a site's repository is Lamp's, and goes whole. So does the shared
+    /// file an older Lamp put at the top beside the code, which the tree no longer carries.
+    /// A site's hidden files that travel with its page (`ScreenFiles.servedHidden`) are the wish's too: replaced, or
+    /// taken away when the wish has none. What the repository keeps as GitHub has it (`theirs`) is put back from the
+    /// clone's commit, or stays away when that hasn't it.
+    static func overlay(_ tree: URL, onto clone: URL, keeping theirs: [String], git: String) async throws {
+        let fm = FileManager.default
+        let site = fm.fileExists(atPath: tree.appendingPathComponent("\(StaticSite.folder)/lamp-app.json").path)
+        let wishes = Set([StaticSite.folder]).union(site ? ScreenFiles.servedHidden : [])
+        for item in try fm.contentsOfDirectory(at: clone, includingPropertiesForKeys: nil)
+        where item.lastPathComponent != ".git" && (!item.lastPathComponent.hasPrefix(".") || wishes.contains(item.lastPathComponent)) {
+            try fm.removeItem(at: item)
+        }
+        for item in try fm.contentsOfDirectory(at: tree, includingPropertiesForKeys: nil) where item.lastPathComponent != ".git" {
+            try merge(item, into: clone.appendingPathComponent(item.lastPathComponent))
+        }
+        for path in theirs {
+            let restored = await Subprocess.run(git, ["checkout", "-q", "HEAD", "--", path], cwd: clone, timeout: 30)
+            // Taken away on GitHub: it stays away.
+            if !restored.ok { try? fm.removeItem(at: clone.appendingPathComponent(path)) }
+        }
     }
 
     /// The files changed on GitHub since Lamp's last push (`lastPushed`) that stay as GitHub has them when the wish goes
