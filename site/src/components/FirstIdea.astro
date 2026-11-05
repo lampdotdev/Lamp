@@ -16,17 +16,17 @@ const { heading, lead, explore = true, class: space = "px-2 pt-4 pb-20 sm:px-3 s
 
 <!--
   Finding a first wish before the download: people rarely know what they'd ask a computer to do, but they
-  recognize themselves in an everyday moment. Under a night sky, a heading and one button; pressing it starts a
+  recognize themselves in an everyday moment. On a plain ink card, a heading and one button; pressing it starts a
   short conversation: four situations at a time (each round as different from the last as it can be), one or
-  two questions from a model about the one they pick, then the request in their own words, rising out of the
-  lamp's light as a card to change and take to Lamp: Download copies it for Lamp to find when it first opens,
-  and on a Mac that has Lamp a link sends it straight there, the card sinking back into the light. Made to be enjoyed rather than rushed through; all
+  two questions from a model about the one they pick, then the request in their own words, rising into place
+  as a card to change and take to Lamp: Download copies it for Lamp to find when it first opens,
+  and on a Mac that has Lamp a link sends it straight there, the card sinking away. Made to be enjoyed rather than rushed through; all
   of its motion stops for people who've asked for less (global.css).
 -->
 <!-- ph-no-capture: the model's questions and answers can repeat what the visitor wrote, so PostHog's autocapture
      skips this section; its steps are counted by `count`, with fixed words only. -->
 <section id="first-idea" class:list={["ph-no-capture", space]}>
-  <div data-sky class="wish-night relative isolate overflow-hidden rounded-[28px] px-5 pt-16 pb-14 text-white sm:px-10 sm:pt-20 sm:pb-20">
+  <div data-sky class="wish-night relative isolate overflow-hidden rounded-[10px] px-5 pt-16 pb-14 text-white sm:px-10 sm:pt-20 sm:pb-20">
     <!-- Dawn: the sky warms when the wish appears. -->
     <div data-dawn aria-hidden="true" class="wish-dawn"></div>
     <div class="relative z-10">
@@ -37,36 +37,17 @@ const { heading, lead, explore = true, class: space = "px-2 pt-4 pb-20 sm:px-3 s
 
       <!-- Two ways in: a few questions, or the ideas page to browse. -->
       <div data-begin class="mt-9 flex flex-wrap items-center justify-center gap-x-4 gap-y-3">
-        <!-- Sparkles glint around and over the button, each popping up in turn, flashing and turning, then gone;
-             now and then a sweep of light crosses the button itself. -->
         <div class="relative">
-        {[
-          { x: "-4%", y: "8%", size: "18px", time: "3.2s", delay: "0s" },
-          { x: "96%", y: "-6%", size: "14px", time: "3.6s", delay: "0.9s" },
-          { x: "104%", y: "78%", size: "11px", time: "3.4s", delay: "1.7s" },
-          { x: "30%", y: "-14%", size: "10px", time: "4s", delay: "2.4s" },
-          { x: "8%", y: "96%", size: "12px", time: "3.8s", delay: "1.2s" },
-          { x: "68%", y: "104%", size: "15px", time: "3.3s", delay: "2.9s" },
-          { x: "78%", y: "22%", size: "9px", time: "4.4s", delay: "0.5s" },
-        ].map((s) => (
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 24 24"
-            class="wish-sparkle z-20"
-            style={`--x: ${s.x}; --y: ${s.y}; --size: ${s.size}; --time: ${s.time}; --delay: ${s.delay}`}
-          ><path d="M12 0C12.9 7.2 16.8 11.1 24 12C16.8 12.9 12.9 16.8 12 24C11.1 16.8 7.2 12.9 0 12C7.2 11.1 11.1 7.2 12 0Z" /></svg>
-        ))}
         <button
           type="button"
-          class="wish-beckon relative z-10 inline-flex overflow-hidden h-[52px] items-center gap-2 rounded-full bg-linear-to-b from-[#ffe2a3] to-[#ffb45c] px-8 text-[17px] font-semibold text-[#3a2600] ring-1 ring-white/40 ring-inset transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] hover:scale-[1.04] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#ffcf7a] active:scale-[0.98]"
+          class="relative z-10 inline-flex h-[52px] items-center rounded-[6px] bg-paper px-7 text-[17px] font-bold text-tape transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white/70"
         >
-          <span aria-hidden="true" class="wish-glint"></span>
-          <span aria-hidden="true" class="relative">✦</span> <span class="relative">Find it with me</span>
+          Find it with me
         </button>
         </div>
         {explore && <a
           href="/ideas"
-          class="inline-flex h-[52px] items-center rounded-full bg-white/10 px-8 text-[17px] font-semibold text-white ring-1 ring-white/25 ring-inset backdrop-blur-sm transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] hover:scale-[1.04] hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white/70 active:scale-[0.98]"
+          class="inline-flex h-[52px] items-center rounded-[6px] bg-white/10 px-7 text-[17px] font-semibold text-white ring-1 ring-white/25 ring-inset backdrop-blur-sm transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] hover:scale-[1.04] hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white/70 active:scale-[0.98]"
         >
           Explore ideas
         </a>}
@@ -86,7 +67,7 @@ const { heading, lead, explore = true, class: space = "px-2 pt-4 pb-20 sm:px-3 s
             maxlength="500"
             autocomplete="off"
             placeholder="Or tell us in your own words…"
-            class="min-w-0 flex-1 rounded-full bg-white/10 px-4 py-2 text-[15px] text-white ring-1 ring-white/20 placeholder:text-white/45 focus:ring-2 focus:ring-[#ffcf7a]/60 focus:outline-none"
+            class="min-w-0 flex-1 rounded-full bg-white/10 px-4 py-2 text-[15px] text-white ring-1 ring-white/20 placeholder:text-white/45 focus:ring-2 focus:ring-white/60 focus:outline-none"
           />
           <button type="submit" class="rounded-full bg-white/10 px-4 py-2 text-[15px] font-medium text-white ring-1 ring-white/20 transition hover:bg-white/20">Send</button>
         </form>
@@ -175,7 +156,7 @@ const { heading, lead, explore = true, class: space = "px-2 pt-4 pb-20 sm:px-3 s
     const row = add(el("div", "flex flex-wrap gap-2"));
     row.dataset.choices = "";
     options.forEach((o, i) => {
-      const b = el("button", "wish-float rounded-full bg-white/10 px-3.5 py-1.5 text-[15px] text-white ring-1 ring-white/20 transition hover:bg-white/20 hover:ring-[#ffcf7a]/60", o);
+      const b = el("button", "wish-float rounded-full bg-white/10 px-3.5 py-1.5 text-[15px] text-white ring-1 ring-white/20 transition hover:bg-white/20 hover:ring-white/50", o);
       b.type = "button";
       b.style.animationDelay = `${i * 80}ms`;
       b.onclick = () => { row.remove(); onPick(o); };
@@ -186,7 +167,7 @@ const { heading, lead, explore = true, class: space = "px-2 pt-4 pb-20 sm:px-3 s
   function thinking(on: boolean) {
     sparkles?.remove(); sparkles = null;
     if (!on) return;
-    sparkles = add(el("div", "flex gap-2 py-1 text-[#ffcf7a]"));
+    sparkles = add(el("div", "flex gap-2 py-1 text-white/70"));
     sparkles.setAttribute("aria-label", "Thinking");
     for (let i = 0; i < 3; i++) {
       const s = el("span", "wish-think text-sm", "✦");
@@ -226,7 +207,7 @@ const { heading, lead, explore = true, class: space = "px-2 pt-4 pb-20 sm:px-3 s
     }
     const grid = picker!.grid;
     ids.forEach((id, i) => {
-      const b = el("button", "wish-float group flex gap-3 rounded-2xl bg-white/[0.07] px-4 py-3.5 text-left text-[15px] leading-snug text-white/90 ring-1 ring-white/15 backdrop-blur-sm transition duration-300 hover:-translate-y-0.5 hover:bg-white/[0.12] hover:shadow-[0_10px_30px_-10px_rgba(255,176,92,0.5)] hover:ring-[#ffcf7a]/60");
+      const b = el("button", "wish-float group flex gap-3 rounded-2xl bg-white/[0.07] px-4 py-3.5 text-left text-[15px] leading-snug text-white/90 ring-1 ring-white/15 backdrop-blur-sm transition duration-300 hover:-translate-y-0.5 hover:bg-white/[0.12] hover:shadow-[0_10px_30px_-10px_rgba(255,176,92,0.5)] hover:ring-white/50");
       b.type = "button";
       b.style.animationDelay = `${i * 90}ms`;
       b.innerHTML = shapeIcon(SITUATIONS[id].shape);
@@ -403,7 +384,7 @@ const { heading, lead, explore = true, class: space = "px-2 pt-4 pb-20 sm:px-3 s
     const line = await lamp(opening);
 
     // The card waits (wish-rise holds its first frame through the delay) while the smoke reaches it.
-    const card = add(el("div", "wish-rise relative mt-2 rounded-[22px] bg-page p-5 text-ink shadow-[0_0_60px_-6px_rgba(255,176,92,0.35)] sm:p-7"));
+    const card = add(el("div", "wish-rise relative mt-2 rounded-[8px] bg-page p-5 text-ink sm:p-7"));
     const delay = calm.matches ? 0 : 750;
     card.style.animationDelay = `${delay}ms, ${delay + 300}ms`;
     smoke(card);
@@ -416,7 +397,7 @@ const { heading, lead, explore = true, class: space = "px-2 pt-4 pb-20 sm:px-3 s
       spark.style.animationDelay = `${delay + 250 + (i % 5) * 40}ms`;
       card.append(spark);
     }
-    const area = el("textarea", "w-full resize-none overflow-hidden rounded-xl bg-panel/70 p-3.5 text-[17px] leading-relaxed ring-1 ring-rule transition focus:bg-page focus:ring-2 focus:ring-[#cf620c]/40 focus:outline-none");
+    const area = el("textarea", "w-full resize-none overflow-hidden rounded-xl bg-panel/70 p-3.5 text-[17px] leading-relaxed ring-1 ring-rule transition focus:bg-page focus:ring-2 focus:ring-ink/40 focus:outline-none");
     area.value = request;
     area.id = "first-idea-wish";
     const fit = () => { area.style.height = "auto"; area.style.height = `${area.scrollHeight + 2}px`; };
@@ -445,7 +426,7 @@ const { heading, lead, explore = true, class: space = "px-2 pt-4 pb-20 sm:px-3 s
     finish.append(row);
     // A page can't tell whether Lamp is installed, so the Mac that has it gets its own way in, beside Download.
     const mac = /Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2;
-    const send = el("button", "mt-3.5 text-[15px] font-medium text-[#b04e0a] underline decoration-[#b04e0a]/40 underline-offset-4 transition hover:decoration-[#b04e0a]", "Already have Lamp? Open Lamp with it");
+    const send = el("button", "mt-3.5 text-[15px] font-medium text-ink underline decoration-ink/40 underline-offset-4 transition hover:decoration-ink", "Already have Lamp? Open Lamp with it");
     send.type = "button";
     if (mac) finish.append(send);
     if (requirement) finish.append(requirement);

@@ -18,7 +18,7 @@ const { place } = Astro.props;
   data-wish
   data-place={place}
   aria-labelledby="wish-name"
-  class="m-auto max-h-[calc(100dvh-2rem)] w-[min(36rem,calc(100vw-2rem))] overflow-y-auto rounded-[28px] bg-page p-0 text-ink shadow-[0_30px_80px_-20px_rgba(0,0,0,0.45)] backdrop:bg-black/40 backdrop:backdrop-blur-sm lg:w-[min(70rem,calc(100vw-4rem))] lg:grid-cols-[1.3fr_1fr] lg:overflow-hidden lg:open:grid"
+  class="m-auto max-h-[calc(100dvh-2rem)] w-[min(36rem,calc(100vw-2rem))] overflow-y-auto rounded-[10px] bg-page p-0 text-ink shadow-[0_30px_80px_-20px_rgba(0,0,0,0.45)] backdrop:bg-black/40 backdrop:backdrop-blur-sm lg:w-[min(70rem,calc(100vw-4rem))] lg:grid-cols-[1.3fr_1fr] lg:overflow-hidden lg:open:grid"
 >
   <!-- The picture: across the top on narrower screens; from lg, the left of two columns, shown whole on a soft,
        blurred copy of itself however tall the wish beside it is. -->
@@ -47,7 +47,7 @@ const { place } = Astro.props;
       id="wish-text"
       data-text
       rows="5"
-      class="w-full resize-none rounded-xl bg-page p-3.5 text-[17px] leading-relaxed ring-1 ring-[#d2d2d7] transition focus:ring-2 focus:ring-[#cf620c]/40 focus:outline-none"
+      class="w-full resize-none rounded-xl bg-page p-3.5 text-[17px] leading-relaxed ring-1 ring-rule transition focus:ring-2 focus:ring-ink/40 focus:outline-none"
     ></textarea>
     <!-- A wish carries only its words to Lamp, which starts a Mac app unless told otherwise, so an iPhone or
          iPad idea says which to choose. -->
@@ -58,7 +58,7 @@ const { place } = Astro.props;
         type="button"
         data-open
         hidden
-        class="mt-3.5 cursor-pointer text-[15px] font-medium text-[#b04e0a] underline decoration-[#b04e0a]/40 underline-offset-4 transition hover:decoration-[#b04e0a]"
+        class="mt-3.5 cursor-pointer text-[15px] font-medium text-ink underline decoration-ink/40 underline-offset-4 transition hover:decoration-ink"
       >
         Already have Lamp? Open Lamp with it
       </button>

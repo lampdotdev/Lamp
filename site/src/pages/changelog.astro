@@ -1,0 +1,34 @@
+---
+import Base from "../layouts/Base.astro";
+import { RELEASES_URL, releases } from "../lib/releases";
+
+// Every release, newest first, as RELEASE_NOTES.md has them: the same words people read in Lamp's update window and
+// on GitHub. A build without the notes points to GitHub's releases.
+const all = releases();
+---
+
+<Base title="Changelog · Lamp" description="What's new in each version of Lamp.">
+  <main class="mx-auto max-w-[46rem] px-4 pt-[calc(var(--menu-height)+3rem)] pb-20 sm:px-6">
+    <h1 class="text-[clamp(2.25rem,5vw,3.25rem)] leading-[1] font-black tracking-[-0.04em]">Changelog</h1>
+    <p class="mt-4 text-lg">What's new in each version. Every release is also on <a href={RELEASES_URL} class="underline underline-offset-4">GitHub</a>.</p>
+    {all.length === 0 && <p class="mt-10 font-mono text-sm"><a href={RELEASES_URL} class="underline underline-offset-4">See the releases on GitHub →</a></p>}
+    {all.map((release) => (
+      <section id={release.version} class="release mt-10 border-t border-tape/20 pt-8">
+        <h2 class="flex flex-wrap items-baseline gap-x-4 text-2xl font-extrabold tracking-[-0.02em]">
+          Lamp {release.version}
+          <a href={`${RELEASES_URL}/tag/v${release.version}`} class="font-mono text-sm font-normal underline underline-offset-4">on GitHub</a>
+        </h2>
+        {release.notes.length > 0
+          ? <ul class="mt-4 flex flex-col gap-3 text-[1.0625rem] leading-relaxed">{release.notes.map((note) => <li set:html={note} />)}</ul>
+          : <p class="mt-4 text-muted-ink">Fixes and small improvements.</p>}
+      </section>
+    ))}
+  </main>
+</Base>
+
+<style>
+  .release li { position: relative; padding-left: 2.25rem; }
+  .release li::before { content: "[*]"; position: absolute; left: 0; font-family: var(--font-mono); font-size: 0.9em; line-height: 1.85; color: var(--color-muted-ink); }
+  .release li :global(code) { font-family: var(--font-mono); font-size: 0.9em; }
+  .release li :global(a) { text-decoration: underline; text-underline-offset: 4px; }
+</style>

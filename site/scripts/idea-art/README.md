@@ -15,8 +15,9 @@ Name|the icon's object|the icon's background|what the picture shows
   or iPad, or, for a game, the game itself (`prompts.py`). Keep what it shows short and concrete: a few labels
   and the one thing that makes the idea what it is.
 
-Each category in the page's row of categories has its own object, drawn the same way as an icon's and shown off
-its tile (`objects/<id>.png`), from a line in `categories.txt`: `id|the object`.
+Each category can also have its own object, drawn the same way as an icon's and shown off its tile
+(`objects/<id>.png`), from a line in `categories.txt`: `id|the object`. The ideas page names its categories in plain
+words and shows none of them today, so those pictures aren't kept in `src/assets/ideas`.
 
 `run.sh` draws whatever isn't drawn yet, eight at a time, and `finish.sh` puts the results in place without
 replacing pictures that are already there. To add an idea, add its line to `briefs.txt` and run `run.sh`; to
