@@ -284,14 +284,13 @@ open "build/Lamp Dev.app"</code></pre>
           page.append(section);
           section.classList.add("is-shown");
           if (!calm) section.classList.add("is-arriving");
-          // The page goes down to what came in, once it's laid out: its end just above whatever covers the window's foot
-          // (the chat, on a phone), or, when it's too tall for the room between, its top just under the menu bar.
+          // The page goes all the way down to what came in, once it's laid out: its end just above whatever covers the
+          // window's foot (the chat, on a phone).
           requestAnimationFrame(() => {
-            const box = section.getBoundingClientRect();
-            const over = document.querySelector("header")!.getBoundingClientRect().height + 16;
+            // The room under the content first, for the chat as it now is, so the page can go that far.
+            room();
             const under = innerHeight - covered() - 16;
-            const by = box.height <= under - over ? box.bottom - under : box.top - over;
-            scrollTo({ top: scrollY + by, behavior: calm ? "auto" : "smooth" });
+            scrollTo({ top: scrollY + section.getBoundingClientRect().bottom - under, behavior: calm ? "auto" : "smooth" });
           });
           working.textContent = button.dataset.done!;
         }
@@ -351,15 +350,10 @@ open "build/Lamp Dev.app"</code></pre>
   chat.querySelector("[data-close]")!.addEventListener("click", () => show(false));
   reopen.addEventListener("click", () => show(true));
 
-  // On a phone the content keeps just enough room under it that its end can be scrolled clear of what covers the
-  // window's foot (the chat, or Lamp's mark once it's put away); the footer may sit behind the chat.
-  const home = document.querySelector<HTMLElement>(".home")!;
-  const footer = document.querySelector("footer");
+  // On a phone the page keeps room under its footer as tall as what covers the window's foot (the chat, or Lamp's mark
+  // once it's put away), so everything, the footer included, can be scrolled clear of it.
   const covered = () => !narrow() ? 0 : chat.hidden ? reopen.getBoundingClientRect().height + 12 : chat.getBoundingClientRect().height + 10;
-  const room = () => {
-    const needed = covered() + 16 - (footer?.getBoundingClientRect().height ?? 0);
-    home.style.paddingBottom = narrow() && needed > 64 ? `${Math.ceil(needed)}px` : "";
-  };
+  const room = () => { document.body.style.paddingBottom = narrow() ? `${Math.ceil(covered() + 16)}px` : ""; };
   new ResizeObserver(room).observe(chat);
   addEventListener("resize", room);
   new MutationObserver(room).observe(reopen, { attributes: true, attributeFilter: ["hidden"] });
@@ -564,7 +558,9 @@ open "build/Lamp Dev.app"</code></pre>
     .chat-panel { max-height: 42dvh; }
     .chat-head { height: 40px; }
     /* The ideas as small pills that wrap, all in sight; the conversation down to its latest exchange. */
-    .chat-ideas { flex-direction: row; flex-wrap: wrap; gap: 6px; padding-bottom: 10px; }
+    /* When the cap is smaller than what's in it (a small phone), the title bar and message box keep their room and
+       the ideas scroll within what's left. */
+    .chat-ideas { flex-direction: row; flex-wrap: wrap; align-content: flex-start; gap: 6px; padding-bottom: 10px; flex: 0 1 auto; min-height: 2.5rem; overflow-y: auto; }
     .chat-idea { padding: 4px 10px 4px 5px; border-radius: 999px; font-size: 12.5px; gap: 6px; }
     .idea-icon { width: 18px; height: 18px; border-radius: 50%; }
     .idea-icon :global(svg) { width: 10px; height: 10px; }
