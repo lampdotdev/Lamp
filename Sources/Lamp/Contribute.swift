@@ -14,8 +14,8 @@ import LampSidebarKit
 /// the repository's latest commit three ways (`replay`): a file the wish didn't touch stays as its owner has it, and a
 /// file both changed in the same place stops the request, which Check for Updates… settles first. The manifest keeps
 /// the repository's identity and dates and takes only what the change says (`manifest`), credits.json keeps its chain
-/// and takes only work the change newly uses, and a shared file beside the code is made again from the tree with the
-/// change in it (`remakeSharedFile`). Everything is worked out before the card offers to send, as one commit in a
+/// and takes only work the change newly uses, and a shared file an older Lamp put beside the code is taken away
+/// (`removeSharedFile`). Everything is worked out before the card offers to send, as one commit in a
 /// clone of Lamp's, and that commit is what goes: nothing of the wish's own history, and never the chat.
 enum Contribute {
     struct Failure: LocalizedError {
@@ -148,8 +148,8 @@ enum Contribute {
         guard let finished = try finish(change, in: clone, exported: exported) else { throw stopped([change.meta + "lamp-app.json"]) }
         touched.formUnion(finished)
 
-        // Nothing to send when the repository's files are all as they were: the shared file is made again only for a
-        // change, since remaking one zipped another way changes its bytes and nothing else.
+        // Nothing to send when the repository's files are all as they were: an older Lamp's shared file is taken away only
+        // with a change, never sent on its own.
         _ = try must(await run(["add", "-A"]))
         guard !(try must(await run(["diff", "--cached", "--no-renames", "--name-only", "-z", tip]))).isEmpty else {
             throw Failure(message: "\(source.owner)/\(source.name) already has everything this app changed: there's nothing to send.")
@@ -167,7 +167,7 @@ enum Contribute {
         if let first = leaks.first {
             throw Failure(message: "\(project.name)'s changes can't go: \(first) holds a key or a password. Ask Lamp to take it out and keep it out of the code.")
         }
-        try remakeSharedFile(in: clone, touched: touched, meta: change.meta, work: folder)
+        removeSharedFile(in: clone, meta: change.meta)
         _ = try must(await run(["add", "-A"]))
         let changed = try must(await run(["diff", "--cached", "--no-renames", "--name-only", "-z", tip])).split(separator: "\0").map(String.init)
         let summary = await summary(of: project, from: source, changed: changed)
@@ -274,7 +274,7 @@ enum Contribute {
         var manifest: [String: Any]?
         /// The commit of the repository the version's credits name, for the repository's manifest to stand in.
         var namedCommit: String?
-        /// Where the repository keeps Lamp's files (the manifest, credits, icon, shared file): its root, or a site's
+        /// Where the repository keeps Lamp's files (the manifest, credits, icon, and an older Lamp's shared file): its root, or a site's
         /// folder of Lamp's (`StaticSite.folder`).
         var meta = ""
         /// Credits for work the change newly uses, as the repository will name it.
@@ -548,36 +548,20 @@ enum Contribute {
         return updated
     }
 
-    /// The shared file beside the repository's code, when it has one, made again with the change in it: each file the
-    /// change touched as the tree now has it (taken out where the tree no longer has it), everything else as it was,
-    /// zipped as Lamp zips one (`Sharing.zip`). A repository with no shared file gets none.
-    /// A site's is in Lamp's folder (`meta`), holding the page in Web/ as any shared file does.
-    static func remakeSharedFile(in clone: URL, touched: Set<String>, meta: String = "", work: URL) throws {
+    /// Takes away the shared file an older Lamp put beside the repository's code, as Lamp's own release now does
+    /// (`GitHubRepo.upload`): the code is what Lamp opens from a repository, and remaking the file would put an unreadable
+    /// binary in the request. Only Lamp's: the one named for the wish (`Publish.slug` of the repository's manifest name),
+    /// or any in Lamp's folder of a site's repository (`meta`), which is all Lamp's.
+    static func removeSharedFile(in clone: URL, meta: String = "") {
         let fm = FileManager.default
-        func inFile(_ path: String) -> String {
-            guard !meta.isEmpty else { return path }
-            return path.hasPrefix(meta) ? String(path.dropFirst(meta.count)) : path == "LICENSE" ? path : TVTemplate.webFolder + "/" + path
+        let folder = clone.appendingPathComponent(meta)
+        let manifest = (try? Data(contentsOf: folder.appendingPathComponent("lamp-app.json")))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let named = (manifest?["name"] as? String).map { Publish.slug($0) + ".lampapp" }
+        for file in (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        where file.pathExtension == "lampapp" && (!meta.isEmpty || file.lastPathComponent == named) {
+            try? fm.removeItem(at: file)
         }
-        guard let file = ((try? fm.contentsOfDirectory(at: clone.appendingPathComponent(meta), includingPropertiesForKeys: nil)) ?? [])
-            .filter({ $0.pathExtension == "lampapp" }).sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).first else { return }
-        let unpacked = work.appendingPathComponent("shared-file")
-        try? fm.removeItem(at: unpacked)
-        defer { try? fm.removeItem(at: unpacked) }
-        guard Subprocess.runBlocking("/usr/bin/ditto", ["-x", "-k", file.path, unpacked.path], timeout: 120).ok else {
-            throw Failure(message: "Couldn't read the repository's \(file.lastPathComponent).")
-        }
-        for path in touched.sorted() {
-            let from = clone.appendingPathComponent(path), to = unpacked.appendingPathComponent(inFile(path))
-            try? fm.removeItem(at: to)
-            guard fm.fileExists(atPath: from.path) else { continue }
-            try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fm.copyItem(at: from, to: to)
-        }
-        let made = work.appendingPathComponent("remade.lampapp")
-        try? fm.removeItem(at: made)
-        try Sharing.zip(unpacked, to: made)
-        try? fm.removeItem(at: file)
-        try fm.moveItem(at: made, to: file)
     }
 
     /// What the pull request says: where the wish came from and what changed, in plain words, from the wish's chain,

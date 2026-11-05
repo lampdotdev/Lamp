@@ -58,9 +58,9 @@ final class GitHubRepoTests: XCTestCase {
         for path in ["Sources/App.swift", "Sources/LampSupport.swift", "Package.swift", "build.sh", "APP.md", "lamp-app.json", Credits.file, ".gitignore"] {
             XCTAssertTrue(has(path), path)
         }
-        // The shared file beside it. A public repository's README offers it on Lamp's site, by its Open in Lamp button, and
-        // a private one's (which Lamp can't fetch without a sign-in) by the Share Link and the file.
-        XCTAssertTrue(has("tally.lampapp"))
+        // Never the shared file: the tree is what Lamp opens. A public repository's README offers it on Lamp's site, by its
+        // Open in Lamp button, and a private one's (which Lamp can't fetch without a sign-in) by the Share Link and a clone.
+        XCTAssertFalse(try fm.contentsOfDirectory(atPath: staged.folder.path).contains { $0.hasSuffix(".lampapp") })
         XCTAssertTrue(has(GitHubRepo.openButton))
         let readme = try String(contentsOf: staged.folder.appendingPathComponent("README.md"), encoding: .utf8)
         XCTAssertTrue(readme.contains("<a href=\"https://lamp.dev/?repo=https://github.com/someone/tally&amp;from=readme\"><img src=\"\(GitHubRepo.openButton)\""), readme)
@@ -71,7 +71,7 @@ final class GitHubRepoTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: closed.folder.deletingLastPathComponent()) }
         let closedReadme = try String(contentsOf: closed.folder.appendingPathComponent("README.md"), encoding: .utf8)
         XCTAssertTrue(closedReadme.contains("https://lamp.dev/w/AyTkit4xCc"))
-        XCTAssertTrue(closedReadme.contains("[tally.lampapp](tally.lampapp)"))
+        XCTAssertTrue(closedReadme.contains("File → Import Shared App…"), closedReadme)
         XCTAssertFalse(closedReadme.contains("lamp.dev/?repo="))
         XCTAssertNil(closed.remix)
         XCTAssertFalse(fm.fileExists(atPath: closed.folder.appendingPathComponent(GitHubRepo.openButton).path))
@@ -103,11 +103,7 @@ final class GitHubRepoTests: XCTestCase {
         XCTAssertFalse(package.sources.contains { $0.lastPathComponent == "LampSupport.swift" })
         XCTAssertEqual(package.credits?.remixOf.last?.url, "https://github.com/someone/tally")
         XCTAssertEqual(package.credits?.remixOf.last?.commit, made.output.trimmed)
-        XCTAssertFalse(fm.fileExists(atPath: package.folder.appendingPathComponent("tally.lampapp").path))
-        // The file inside says the same.
-        let file = try Sharing.open(staged.folder.appendingPathComponent("tally.lampapp"))
-        defer { try? fm.removeItem(at: file.folder) }
-        XCTAssertEqual(file.credits?.remixOf.last?.url, "https://github.com/someone/tally")
+        let file = package
         // Opened here as the same wish and shared on as a file, it still says where it lives; put on another repository,
         // it gets a link for that place after the one it came from, which stays the origin an update is merged from
         // and a change goes back to.

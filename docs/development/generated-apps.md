@@ -258,7 +258,7 @@ A wish goes on GitHub as a repository on the person's own account (`GitHubRepo`)
 (`GitHubRelease`, "Releases" in the wishes guide), the one way it goes there: the shared file's contents (`Sharing.export`, so the same checks and the same
 credits chain) unpacked, Lamp's own files for each of the wish's apps beside them (`GitHubRepo.ownedPaths`: the files
 the builder can't delete, laid out as the shared file lays the apps out, `Sharing.layout`; for a page, the app around it,
-`ScreenKit.paths`), the shared file itself, a
+`ScreenKit.paths`), a
 README, an MIT license by choice (never offered when something the wish is based on is share-alike), and for a web game
 or a web app in a public repository its page to play or use, on the `gh-pages` branch (`Staged.Page`, "Publishing a page"
 in the wishes guide). The README promises `zsh build.sh` only for a kind whose script builds
@@ -269,7 +269,12 @@ before changing it: in a public repository, an Open in Lamp button (`GitHubRepo.
 for a wish with one, to lamp.dev's remix link
 (`GitHubRepo.remixLink`, `RemixLink.site`: the repository without a commit, so it's always the latest, and `from=readme`
 for the site's counts); then the wish's ideas (`RemixSuggestions`, a starter's tweaks), each that link with its request.
-A private repository, which Lamp can't fetch without a sign-in, offers the Share Link and the shared file instead; the
+The shared file itself never goes up: the tree is what Lamp opens (`RepoImport`), and a zip beside it would double the
+code and grow the repository by its whole size with every release, since git keeps each one. An update takes away one
+an older Lamp put at the top (it's no hidden file, so the tree replaces it, and its going counts as a change), and Send
+Changes Back takes it away too (`Contribute.removeSharedFile`: only the one named for the wish, or any in a site's
+folder of Lamp's), so a pull request never carries a binary.
+A private repository, which Lamp can't fetch without a sign-in, offers the Share Link and a clone to open instead; the
 card stages again when a new repository is made private (`WishLinkCards.setGitHubPrivate`). A public repository with no website of its own
 gets the remix link as its website, or its page once it's up (`offerWebsite`, `from=github`); one the person set is left alone.
 The first time, the release card's Also put on GitHub (unticked unless the person ticks it) shows what goes up and
@@ -300,10 +305,10 @@ folder it was cloned into, and a wish's link may name it (`lamp://wish?file=http
 The tree is fetched one commit deep with Lamp's own git, confined as every git command of Lamp's is (`Versions.git`, in
 a folder of Lamp's with the network open, never asking for a sign-in), or with no git on the Mac from GitHub's archive
 (`RepoArchive`, below), then copied into an import folder without the
-repository's records (`.git`, builds) and the shared file beside the code, held to a shared file's limits, and read as
+repository's records (`.git`, builds) and any shared file an older Lamp put beside the code, held to a shared file's limits, and read as
 a shared file's contents are (`Sharing.open(unpacked:)`): the same review, the same checks, Lamp's own files written
 afresh and never read from the tree (`Sharing.read` leaves LampSupport.swift and LampScene.swift out of the code, as
-the install does). A folder holding only a shared file opens that file.
+the install does). A folder holding only a shared file (a repository an older Lamp made with no lamp-app.json) opens that file.
 
 A plain site (`StaticSite`: `index.html` at the root, no package.json, Jekyll config or Gemfile to build it first) opens
 the same way, as a web app that's a site (`ScreenKit.isSite`: `layout: site` in its mark, `site` in a shared file's
@@ -313,7 +318,7 @@ swapped in place), Reload and the agent's rules are a web app's, with one rule o
 layout and its own ways of loading what it uses). On GitHub it's laid out as it came (`StaticSite.layOut`): Web/ at
 the tree's root, so its own README is the repository's and GitHub Pages serves it from main as before (`Staged.site`,
 `Publish.servePage` with the repository's own branch, no page branch and no credit bar over the person's page), and everything
-else (lamp-app.json, credits.json, APP.md, Native.swift, the shared file, Lamp's README and buttons) in one hidden
+else (lamp-app.json, credits.json, APP.md, Native.swift, Lamp's README and buttons) in one hidden
 folder, `.lamp-wish/`, which neither clutters the site's root nor is served by Pages' Jekyll build. None of Lamp's own
 files go up (the Lamp that opens it writes them afresh) but lamp.js, with its license and the repository's name to keep
 its saves under (`LAMP_PAGE_SCOPE`), when the page loads it. Of a site's hidden files only those a web server reads at
@@ -484,9 +489,9 @@ arrived with (`Sharing.arrivedManifest`), else, for a wish that arrived before L
 commit its credits name; a key the repository also changed, differently, stops it like a file does; credits.json keeps its chain and takes the work the export credits that the base didn't (the base's credits.json:
 the arrival version's, or the one kept with the update's snapshot, never Lamp's running record, which takes in work
 added here too); the
-icon's pictures go when its design changed; and a shared file beside the code is made again from the tree with the
-change in it, zipped so the same files make the same bytes (`Contribute.remakeSharedFile`, `Sharing.zip`), only once
-some file of the repository's really changed, so a change it already has is nothing to send. What would be pushed is
+icon's pictures go when its design changed; and a shared file an older Lamp put beside the code is taken away
+(`Contribute.removeSharedFile`), only once some file of the repository's really changed, so a change it already has is
+nothing to send. What would be pushed is
 checked for keys once more as it is (`ShareCheck.secrets`). The fork is made with `gh` when
 the person has none (`Contribute.fork`), and the one commit is pushed to a branch of it and a pull request opened on
 the repository (`Contribute.send`). The request's text (`Contribute.summary`) is the wish's line, the names its
