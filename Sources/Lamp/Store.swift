@@ -10242,6 +10242,8 @@ final class Store: ObservableObject {
             owner?.reloadWhy = PageLive.shared.reason(project)
             awaitReload(project, owner: owner)
             owner?.outcomes.append(.held)
+            // It waits for Reload or a pause in the game: nothing is going in now, so the smoke goes.
+            if !waitingToShow.keys.contains(project.id) { AppTransition.end(project) }
         case .unchanged, .went:
             // A swap is on screen at once; a page that runs its code again, or opens again, says when it's showing the
             // change (`shown`, `pageShown`), and the smoke stays over the window until then.
@@ -10250,6 +10252,10 @@ final class Store: ObservableObject {
             let saysShown = GameKit.isGame(project) && GameKit.engine(project) == .web && !GameKit.ownsLoop(project)
             // On screen when the page says so: a wait that ran out lets the turn go on, but nothing was seen to show.
             var drew = true
+            // Nothing of the page changed (the agent saved its notes, credits or tools): the smoke begun for this
+            // build goes, or it was renewed until the turn ended over a game that never changed. One still waiting
+            // for an earlier change to show stays until that's on screen.
+            if outcome == .unchanged, !waitingToShow.keys.contains(project.id) { AppTransition.end(project) }
             if outcome == .went("swapped") || outcome == .went("phone") { AppTransition.land(project) }
             else if saysShown, outcome == .went("rerun") || outcome == .went("reloading") {
                 awaitShown(project)
