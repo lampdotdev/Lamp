@@ -8,7 +8,7 @@ a company's: plain and lo-fi, on cream paper (`--color-paper`) with ink (`--colo
 said in passing (`--color-muted-ink`, 4.5:1 on the paper), a tight grotesque for words and a mono for the menu,
 labels, lists and small print, thin rules between parts, small corners and soft shadows only (nothing has a hard,
 offset shadow). There's one kind of button, ink with paper-colored words (`.ink-button` in `global.css`); a second
-choice beside it is an ink outline. The menu bar is GitHub, Ideas, Changelog and Download; the footer is the project's
+choice beside it is an ink outline. The menu bar is GitHub, Changelog and Download (the ideas page is still there, but not in the menu for now); the footer is the project's
 links (source, releases, changelog, contributing, security, issues) and the MIT license line, with no company sign-off. Lamp's mark is its icon
 with "Lamp" beside it (`LampLockup.astro`), in the menu bar and wherever the site names Lamp as a mark. The stripes
 (green to magenta, in that order, never blue or purple) are kept for Lamp's own things: its mark, and the light that
