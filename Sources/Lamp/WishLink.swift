@@ -515,6 +515,8 @@ enum WishLink {
     /// release there, as a new Release Update, so the link, the version and GitHub agree.
     func findAgain(_ project: LampProject) {
         guard cards[project.id] != nil else { return }
+        // What came in hasn't gone out yet: Release Update is the card's main button again.
+        cards[project.id]?.released = false
         if cards[project.id]?.gitHubBehind != nil, case .failed = cards[project.id]?.gitHubStage { cards[project.id]?.gitHubStage = nil }
         findGitHub(project)
     }
