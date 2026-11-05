@@ -25,8 +25,13 @@ page in order. The chat is drawn as Lamp draws the chat beside an app (LampSideb
 back), Lamp's mark and Undo; what's asked in ink bubbles and what Lamp says in paper ones, both with Messages' tail;
 the requests as outlined tiles whose gray icons (Phosphor's bold set) take their own color
 under the pointer; and the round message box with the round ink Send. Where there's room it's a window of its own
-down the right edge, off the window's edges with round corners and a window's shadow; on a phone it's a box under the
-headline, and what it adds arrives under it. It follows the Mac's light or dark appearance, as Lamp does, and is dark
+down the right edge, off the window's edges with round corners and a window's shadow; on a phone it's pinned to the foot of the
+window over the page, never more than about two fifths of it, so what it adds stays in sight above it: the requests
+as small pills that wrap, and only the latest exchange of the conversation. The red light puts it away into Lamp's mark at
+the corner; the mark brings it back. The page keeps room under its footer as tall as whatever covers the window's foot (the
+chat, or the mark), so all of it, the footer included, can be scrolled clear of it, and each part that comes in is scrolled to, all the way down: its end just above the chat (or the window's
+foot). Until one's been picked, a soft light
+passes over the requests in turn every few seconds (not where less motion is asked for). It follows the Mac's light or dark appearance, as Lamp does, and is dark
 when the page is. Every starter shown is a real one (`Resources/Starters`, listed in `src/lib/starters.ts` with the
 pictures and changes it ships with), each with one of its changes under it to ask for; the devices listed are only
 those a kind of app or a shipped device integration really reaches. The newest version and what's new come from

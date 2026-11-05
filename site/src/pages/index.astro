@@ -95,7 +95,7 @@ const lit = (hue: number) => `linear-gradient(${hsb(hue, 0.45, 1)}, ${hsb(hue, 0
            asked in ink bubbles on the right and what Lamp says in paper ones on the left, the ideas to start from as
            tiles with gray icons that light up, and the round message box with its ink send button. Picking an idea
            sends it; a request of your own is something only Lamp can do. -->
-      <aside data-chat aria-label="Change this page" class="chat mb-10 lg:mb-0" hidden>
+      <aside data-chat aria-label="Change this page" class="chat" hidden>
         <div class="chat-panel">
           <div class="chat-head">
             <!-- The window's red light, as Lamp's chat has one: it puts the chat away. -->
@@ -107,8 +107,8 @@ const lit = (hue: number) => `linear-gradient(${hsb(hue, 0.45, 1)}, ${hsb(hue, 0
           </div>
           <div data-log class="chat-log" aria-live="polite"></div>
           <div data-asks class="chat-ideas">
-              {asks.map((item) => (
-              <button type="button" data-ask={item.part} data-done={item.done} class="chat-idea" style={`--lit: ${lit(item.hue)}`}>
+              {asks.map((item, i) => (
+              <button type="button" data-ask={item.part} data-done={item.done} class="chat-idea" style={`--lit: ${lit(item.hue)}; --i: ${i}`}>
                 <span class="idea-icon" aria-hidden="true" set:html={item.icon} />
                 <span data-ask-text>{item.ask}</span>
               </button>
@@ -219,6 +219,8 @@ open "build/Lamp Dev.app"</code></pre>
   const page = document.querySelector<HTMLElement>("[data-page]")!;
   const log = chat.querySelector<HTMLElement>("[data-log]")!;
   const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Too narrow for the chat beside the page: it's pinned to the foot of the window instead.
+  const narrow = () => !matchMedia("(min-width: 64rem)").matches;
   // With the script, the page starts as only its headline; each part waits for its request.
   document.documentElement.toggleAttribute("data-asking", true);
   chat.hidden = false;
@@ -267,6 +269,7 @@ open "build/Lamp Dev.app"</code></pre>
       const dark = part === "dark";
       const asked = askText(button).textContent!.trim();
       track("home_change_asked", { part });
+      chat.dataset.asked = "";
       say("you", asked);
       const working = say("lamp", "Working on it…");
       working.classList.add("chat-working");
@@ -281,7 +284,14 @@ open "build/Lamp Dev.app"</code></pre>
           page.append(section);
           section.classList.add("is-shown");
           if (!calm) section.classList.add("is-arriving");
-          section.scrollIntoView({ behavior: calm ? "auto" : "smooth", block: "nearest" });
+          // The page goes all the way down to what came in, once it's laid out: its end just above whatever covers the
+          // window's foot (the chat, on a phone).
+          requestAnimationFrame(() => {
+            // The room under the content first, for the chat as it now is, so the page can go that far.
+            room();
+            const under = innerHeight - covered() - 16;
+            scrollTo({ top: scrollY + section.getBoundingClientRect().bottom - under, behavior: calm ? "auto" : "smooth" });
+          });
           working.textContent = button.dataset.done!;
         }
         done.push({ button, asked });
@@ -313,16 +323,42 @@ open "build/Lamp Dev.app"</code></pre>
     settle();
   });
 
-  // The red light puts the chat away and the page takes the window; Lamp's mark at the corner brings it back.
+  // The red light puts the chat away and the page takes the window; Lamp's mark at the corner brings it back. On a
+  // phone the chat shrinks into the mark as it goes and grows out of it as it comes back.
   const reopen = document.querySelector<HTMLButtonElement>("[data-reopen]")!;
-  const show = (open: boolean) => {
-    chat.hidden = !open;
-    reopen.hidden = open;
+  let tucking: ReturnType<typeof setTimeout> | undefined;
+  const show = (open: boolean, focus = true) => {
+    clearTimeout(tucking);
+    const animate = narrow() && !calm;
     document.documentElement.toggleAttribute("data-chat-closed", !open);
-    (open ? undo : reopen).focus({ preventScroll: true });
+    if (open) {
+      reopen.hidden = true;
+      chat.hidden = false;
+      if (animate) {
+        chat.classList.add("is-tucked");
+        chat.getBoundingClientRect();
+        chat.classList.remove("is-tucked");
+      }
+      if (focus) undo.focus({ preventScroll: true });
+    } else {
+      const finish = () => { chat.hidden = true; chat.classList.remove("is-tucked"); reopen.hidden = false; if (focus) reopen.focus({ preventScroll: true }); };
+      if (!animate) return finish();
+      chat.classList.add("is-tucked");
+      tucking = setTimeout(finish, 300);
+    }
   };
   chat.querySelector("[data-close]")!.addEventListener("click", () => show(false));
   reopen.addEventListener("click", () => show(true));
+
+  // On a phone the page keeps room under its footer as tall as what covers the window's foot (the chat, or Lamp's mark
+  // once it's put away), so everything, the footer included, can be scrolled clear of it.
+  const covered = () => !narrow() ? 0 : chat.hidden ? reopen.getBoundingClientRect().height + 12 : chat.getBoundingClientRect().height + 10;
+  const room = () => { document.body.style.paddingBottom = narrow() ? `${Math.ceil(covered() + 16)}px` : ""; };
+  new ResizeObserver(room).observe(chat);
+  addEventListener("resize", room);
+  new MutationObserver(room).observe(reopen, { attributes: true, attributeFilter: ["hidden"] });
+  room();
+
 
   // A request of its own: this page can only do what's above, so it says where it can be done.
   const own = chat.querySelector<HTMLFormElement>("[data-own]")!;
@@ -472,6 +508,20 @@ open "build/Lamp Dev.app"</code></pre>
     display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; text-align: left; cursor: pointer;
     font-size: 13px; color: var(--chat-ink); box-shadow: inset 0 0 0 1px var(--chat-line); transition: box-shadow 0.15s ease;
   }
+  /* Until one's been picked, a soft light passes over the ideas one after another every few seconds, so they read as
+     things to press. Not where less motion is asked for. */
+  .chat-idea { position: relative; overflow: hidden; }
+  .chat-idea::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none; translate: -110% 0;
+    background: linear-gradient(105deg, transparent 30%, var(--shimmer) 50%, transparent 70%);
+    animation: idea-shimmer 6s ease-in-out calc(1.2s + var(--i) * 0.14s) infinite;
+  }
+  .chat { --shimmer: rgb(255 255 255 / 0.7); }
+  :global(html[data-theme="dark"]) .chat { --shimmer: rgb(255 255 255 / 0.22); }
+  @media (prefers-color-scheme: dark) { .chat { --shimmer: rgb(255 255 255 / 0.22); } }
+  @keyframes idea-shimmer { 0%, 12% { translate: -110% 0; } 32%, 100% { translate: 110% 0; } }
+  .chat[data-asked] .chat-idea::after { display: none; }
+  @media (prefers-reduced-motion: reduce) { .chat-idea::after { display: none; } }
   .chat-idea:hover { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chat-ink) 22%, transparent); }
   .chat-idea:focus-visible { outline: 2px solid var(--chat-ink); outline-offset: 2px; }
   .idea-icon {
@@ -496,6 +546,32 @@ open "build/Lamp Dev.app"</code></pre>
   }
   .chat-bar button :global(svg) { width: 14px; height: 14px; }
   .chat-bar button:disabled { opacity: 0.35; cursor: default; }
+  /* On a phone: pinned to the foot of the window over the page, never more than about two fifths of it, so what's
+     added stays in sight above it. The red
+     light puts it away into Lamp's mark at the corner, shrinking toward it. */
+  @media (max-width: 63.999rem) {
+    .chat {
+      position: fixed; left: 10px; right: 10px; bottom: 10px; z-index: 50; margin: 0;
+      transform-origin: calc(100% - 40px) calc(100% - 18px); transition: scale 0.3s ease, opacity 0.3s ease;
+    }
+    .chat.is-tucked { scale: 0.08; opacity: 0; }
+    .chat-panel { max-height: 42dvh; }
+    .chat-head { height: 40px; }
+    /* The ideas as small pills that wrap, all in sight; the conversation down to its latest exchange. */
+    /* When the cap is smaller than what's in it (a small phone), the title bar and message box keep their room and
+       the ideas scroll within what's left. */
+    .chat-ideas { flex-direction: row; flex-wrap: wrap; align-content: flex-start; gap: 6px; padding-bottom: 10px; flex: 0 1 auto; min-height: 2.5rem; overflow-y: auto; }
+    .chat-idea { padding: 4px 10px 4px 5px; border-radius: 999px; font-size: 12.5px; gap: 6px; }
+    .idea-icon { width: 18px; height: 18px; border-radius: 50%; }
+    .idea-icon :global(svg) { width: 10px; height: 10px; }
+    .chat-log { padding-top: 4px; padding-bottom: 10px; }
+    .chat-log > :global(:not(:nth-last-child(-n + 2))) { display: none; }
+    .chat-bar { padding-bottom: 12px; }
+    .chat-log { flex: 1 1 auto; min-height: 0; }
+    .chat-log:empty { display: none; }
+    .chat-reopen { right: 12px; bottom: 12px; }
+  }
+  @media (max-width: 63.999rem) and (prefers-reduced-motion: reduce) { .chat { transition: none; } }
   /* Down the window's edge where there's room; last, so it wins over the box's own sizes above. */
   @media (min-width: 64rem) {
     /* A window of its own beside the page, as Lamp's chat stands beside an app on the Mac: off the window's edges,
