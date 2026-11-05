@@ -265,17 +265,25 @@ struct SuggestionDetail: View {
         (givenTrial ?? store.trials[project.id]).flatMap { $0.number == request.number ? $0 : nil }
     }
 
+    private var isIn: Bool {
+        if case .broughtIn = standing, given != nil || record.taken(request.number)?.head == request.head { return true }
+        return false
+    }
+
+    /// What it says scrolls; what can be done stays at the foot, always in view.
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                if case .broughtIn = standing, given != nil || record.taken(request.number)?.head == request.head {
-                    broughtIn
-                } else {
-                    explained
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    if isIn { broughtIn } else { explained }
                 }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(24)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            if !isIn {
+                Divider().overlay(Paper.rule)
+                actions.padding(.horizontal, 24).padding(.vertical, 14)
+            }
         }
     }
 
@@ -289,13 +297,17 @@ struct SuggestionDetail: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Text(verbatim: "From \(request.login)" + (SuggestionsPanel.when(request.updated).map { ", \($0)" } ?? ""))
                     .font(.system(size: 13)).foregroundStyle(Paper.muted)
+                // The headline is Lamp's reading; what the sender called it stays in view, as theirs.
+                if summary != nil {
+                    Text(verbatim: "Their title: “\(request.title)”").font(.system(size: 12.5)).foregroundStyle(Paper.muted).lineLimit(2)
+                }
                 if let words = SuggestedChanges.words(standing) {
                     Text(words).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Paper.ink.opacity(0.75))
                 }
             }
         }
 
-        section("What's different") {
+        section(summary == nil ? "What's different" : "What's different, as Lamp reads it") {
             if let summary, !summary.points.isEmpty {
                 ForEach(summary.points, id: \.self) { point("circle.fill", $0, small: true) }
                 if summary.partial { note("Lamp read only part of this change.") }
@@ -321,36 +333,41 @@ struct SuggestionDetail: View {
             }
         }
 
-        if let trial { trying(trial) }
+    }
 
-        HStack(spacing: 10) {
-            Button("Show the Code") { store.viewSuggestion(project, number: request.number) }
-                .buttonStyle(.link).font(.system(size: 12.5)).foregroundStyle(Paper.muted)
-            Spacer()
-            if case .held = standing, SuggestedChanges.closingComment(record.taken(request.number), request: request, app: project.name) != nil {
-                Button("Close Request…") { store.closeSuggestion(project, number: request.number) }
-                    .buttonStyle(PaperButtonStyle(.outline, height: 34))
-            }
-            if record.isHidden(request) {
-                Button("Put Back") { store.unhideSuggestion(project, number: request.number) }
-                    .buttonStyle(PaperButtonStyle(.outline, height: 34))
-            } else if case .open = standing {
-                Button("Not for Me") { store.hideSuggestion(project, number: request.number, head: request.head) }
-                    .buttonStyle(PaperButtonStyle(.outline, height: 34))
-                    .help("Set it aside here. Nothing is said to \(request.login).")
-                if SuggestionTrial.canTry(project), trial == nil {
-                    Button("Try It First") { store.trySuggestion(project, number: request.number) }
+    private var actions: some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            // A try of it, while it lasts, where its buttons are.
+            if let trial { trying(trial) }
+            HStack(spacing: 10) {
+                Button("Show the Code") { store.viewSuggestion(project, number: request.number) }
+                    .buttonStyle(.link).font(.system(size: 12.5)).foregroundStyle(Paper.muted)
+                Spacer()
+                if case .held = standing, SuggestedChanges.closingComment(record.taken(request.number), request: request, app: project.name) != nil {
+                    Button("Close Request…") { store.closeSuggestion(project, number: request.number) }
                         .buttonStyle(PaperButtonStyle(.outline, height: 34))
-                        .disabled(busy)
-                        .help(SuggestionTrial.note)
                 }
-                Button("Bring Into My App") { store.bringInSuggestion(project, number: request.number) }
-                    .buttonStyle(PaperButtonStyle(.ink, height: 34))
-                    .disabled(busy)
+                if record.isHidden(request) {
+                    Button("Put Back") { store.unhideSuggestion(project, number: request.number) }
+                        .buttonStyle(PaperButtonStyle(.outline, height: 34))
+                } else if case .open = standing {
+                    Button("Not for Me") { store.hideSuggestion(project, number: request.number, head: request.head) }
+                        .buttonStyle(PaperButtonStyle(.outline, height: 34))
+                        .help("Set it aside here. Nothing is said to \(request.login).")
+                    if SuggestionTrial.canTry(project), trial == nil {
+                        Button("Try It First") { store.trySuggestion(project, number: request.number) }
+                            .buttonStyle(PaperButtonStyle(.outline, height: 34))
+                            .disabled(busy)
+                            .help(SuggestionTrial.note)
+                    }
+                    Button("Bring Into My App") { store.bringInSuggestion(project, number: request.number) }
+                        .buttonStyle(PaperButtonStyle(.ink, height: 34))
+                        .disabled(busy)
+                }
             }
-        }
-        if case .open = standing, !record.isHidden(request), SuggestionTrial.canTry(project), trial == nil {
-            HStack { Spacer(); note(SuggestionTrial.note) }
+            if case .open = standing, !record.isHidden(request), SuggestionTrial.canTry(project), trial == nil {
+                HStack { Spacer(); note(SuggestionTrial.note) }
+            }
         }
     }
 
@@ -531,7 +548,8 @@ extension Gallery {
                                                    yours: ["Sources/Fire.swift"], picked: picked)
             if let standing, let picked { preview.standing[picked] = standing }
             if let trial {
-                let running = SuggestionTrial.Running(wish: littleHouse.id, number: 1, generation: "gallery", folder: URL(fileURLWithPath: "/nonexistent"))
+                let running = SuggestionTrial.Running(wish: littleHouse.id, number: 1, generation: "gallery", folder: URL(fileURLWithPath: "/nonexistent"),
+                                                      manifest: SuggestionTrial.Manifest(wish: littleHouse.id, number: 1, bundleID: "", dataID: ""))
                 running.stage = trial
                 preview.trial = running
             }

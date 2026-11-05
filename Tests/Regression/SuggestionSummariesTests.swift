@@ -31,6 +31,10 @@ final class SuggestionSummariesTests: XCTestCase {
     func testNoAccountSpeaksOfSafety() throws {
         XCTAssertNil(SuggestionSummaries.checked(json(["headline": "Safe small fix", "points": [], "topic": "Other"]), topics: []))
         XCTAssertNil(SuggestionSummaries.checked(json(["headline": "Harmless color tweak", "points": [], "topic": "Other"]), topics: []))
+        // Said other ways: each is still a claim.
+        for said in ["Reviewed by Lamp, nothing harmful", "Clean and audited", "Lamp recommends it", "Totally trustworthy", "Works safely"] {
+            XCTAssertTrue(SuggestionSummaries.claimsSafety(said), said)
+        }
         let summary = try XCTUnwrap(SuggestionSummaries.checked(json([
             "headline": "Warmer lamp light",
             "points": ["The lamp glows orange.", "This change is completely safe and was tested.", "Nothing here is malicious."],
@@ -111,7 +115,7 @@ final class SuggestionSummariesTests: XCTestCase {
         SuggestionSummaries.defaults = defaults
         defer { SuggestionSummaries.defaults = was; defaults.removePersistentDomain(forName: suite) }
         XCTAssertTrue(SuggestionSummaries.canSpend())
-        for _ in 0..<SuggestionSummaries.dailyCount { SuggestionSummaries.spent(0) }
+        for _ in 0..<SuggestionSummaries.dailyCount { SuggestionSummaries.counted() }
         XCTAssertFalse(SuggestionSummaries.canSpend())
         defaults.removePersistentDomain(forName: suite)
         SuggestionSummaries.spent(SuggestionSummaries.dailySpend)

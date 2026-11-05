@@ -63,9 +63,15 @@ actor SuggestionSummaries {
     func make(for request: SuggestedChanges.Request, in project: LampProject, repo: String, gh: String) async -> Bool {
         let key = String(request.number)
         let made = Self.hash(title: request.title, note: request.note ?? "", head: request.head, about: Self.about(project))
-        if SuggestedChanges.record(for: project, repo: repo)?.summaries[key]?.made == made { return false }
-        guard Self.canSpend(), let inputs = await Self.inputs(for: request, in: project, repo: repo, gh: gh) else { return false }
+        let before = SuggestedChanges.record(for: project, repo: repo)
+        // Made already, or answered with no account for what it is now: asked again only once it changes.
+        if before?.summaries[key]?.made == made || before?.unexplained[key] == made { return false }
+        // Nothing is fetched for an account nothing could make.
+        guard Self.canSpend(), await AppAI.toolFreeAvailable(),
+              let inputs = await Self.inputs(for: request, in: project, repo: repo, gh: gh), Self.canSpend() else { return false }
         let topics = SuggestedChanges.record(for: project, repo: repo)?.topics ?? []
+        // Counted before it's asked, so calls for several apps at once can't all pass the limit.
+        Self.counted()
         let answer: (String, Double)?
         do {
             answer = try await AppAI.toolFree(prompt: Self.prompt(inputs, topics: topics), system: Self.system, schema: Self.schema)
@@ -75,7 +81,12 @@ actor SuggestionSummaries {
         }
         guard let (text, cost) = answer else { return false }
         Self.spent(cost)
-        guard var summary = Self.checked(text, topics: topics) else { return false }
+        // An answer that isn't an account isn't shown; the sender's title stands, and the request isn't asked about
+        // again until it changes, so one request can't use up the day's limit.
+        guard var summary = Self.checked(text, topics: topics) else {
+            SuggestedChanges.change(project, repo: repo) { $0.unexplained[key] = made }
+            return false
+        }
         summary.made = inputs.hash
         summary.partial = inputs.partial
         let kept = summary
@@ -170,12 +181,15 @@ actor SuggestionSummaries {
     // MARK: Checking what came back
 
     /// Words that say something about safety or trust, which no account may claim.
-    static let claims = ["safe", "harmless", "secure", "security", "trust", "malware", "virus", "malicious", "verified",
-                         "approved", "tested", "risk", "dangerous", "privacy", "private", "permission", "no harm", "benign"]
+    /// The beginnings of such words ("safe" for safely and unsafe too). A list can't catch every way of saying it,
+    /// so the panel also says the account is Lamp's and keeps the sender's own title beside it.
+    static let claims = ["safe", "harm", "secur", "trust", "malware", "virus", "malic", "verif", "approv", "test", "risk",
+                         "danger", "privacy", "private", "permission", "benign", "clean", "audit", "recommend", "review",
+                         "vetted", "legit", "scan", "guarantee", "certif", "endorse", "vouch"]
 
     static func claimsSafety(_ text: String) -> Bool {
-        let words = " " + text.lowercased().split { !$0.isLetter }.joined(separator: " ") + " "
-        return claims.contains { words.contains(" \($0) ") || words.contains(" \($0)s ") || words.contains(" un\($0) ") }
+        let words = text.lowercased().split { !$0.isLetter }.map { $0.hasPrefix("un") ? $0.dropFirst(2) : $0[...] }
+        return words.contains { word in claims.contains { word.hasPrefix($0) } }
     }
 
     /// One line of plain text: no control characters, spaces run together, quotes and a trailing period trimmed.
@@ -222,10 +236,16 @@ actor SuggestionSummaries {
         return (kept["count"] as? Int ?? 0) < dailyCount && (kept["cost"] as? Double ?? 0) < dailySpend
     }
 
-    static func spent(_ cost: Double) {
+    /// One more asked for today.
+    static func counted() { tally(count: 1, cost: 0) }
+
+    /// What one cost, once it's answered.
+    static func spent(_ cost: Double) { tally(count: 0, cost: cost) }
+
+    private static func tally(count: Int, cost: Double) {
         var kept = defaults.dictionary(forKey: spendKey) ?? [:]
         if kept["day"] as? String != today { kept = ["day": today, "count": 0, "cost": 0.0] }
-        kept["count"] = (kept["count"] as? Int ?? 0) + 1
+        kept["count"] = (kept["count"] as? Int ?? 0) + count
         kept["cost"] = (kept["cost"] as? Double ?? 0) + max(0, cost)
         defaults.set(kept, forKey: spendKey)
     }

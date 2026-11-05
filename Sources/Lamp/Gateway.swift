@@ -679,6 +679,16 @@ enum AppAI {
     /// One answer for Lamp's own reading of text someone else wrote (`SuggestionSummaries`), only along a way that can't
     /// act: OpenRouter with the person's key, a model on this Mac, or Claude Code or Codex sealed, with no tools and no
     /// pictures. Never `complete`, which can hand the call to an engine unsealed. Nil when none of these can answer.
+    /// Whether `toolFree` has a way to answer now.
+    @MainActor static func toolFreeAvailable() async -> Bool {
+        if Provider.hasKey, await helperModel() != nil { return true }
+        guard model.available else { return false }
+        switch model.kind {
+        case .openRouter, .engine(.pi, _): return false
+        case .localModel, .engine: return true
+        }
+    }
+
     @MainActor static func toolFree(prompt: String, system: String, schema: [String: Any]) async throws -> (String, Double)? {
         if Provider.hasKey, let helper = await helperModel() {
             return try await viaOpenRouter(prompt: prompt, images: [], system: system, model: helper, json: true, schema: schema)

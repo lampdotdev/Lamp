@@ -95,6 +95,9 @@ enum SuggestedChanges {
         var files: [String: FileList] = [:]
         /// The parts of the app Lamp files requests under, in the order they first came (`SuggestionSummaries.maxTopics`).
         var topics: [String] = []
+        /// Requests the model answered for with no account Lamp would show, by what they were made from: not asked
+        /// about again until that changes. Nothing of the answer is kept.
+        var unexplained: [String: String] = [:]
 
         init(repo: String) { self.repo = repo }
 
@@ -113,6 +116,7 @@ enum SuggestedChanges {
             summaries = (try? c.decodeIfPresent([String: SuggestionSummaries.Summary].self, forKey: .summaries)) ?? [:]
             files = try c.decodeIfPresent([String: FileList].self, forKey: .files) ?? [:]
             topics = try c.decodeIfPresent([String].self, forKey: .topics) ?? []
+            unexplained = try c.decodeIfPresent([String: String].self, forKey: .unexplained) ?? [:]
         }
 
         func request(_ number: Int) -> Request? { open.first { $0.number == number } }
@@ -687,7 +691,7 @@ extension Store {
 
     /// Asked before anything is fetched: a wish busy with a turn takes nothing in, and Lamp reads GitHub with the person's
     /// own sign-in.
-    private func readyForSuggestion(_ project: LampProject) async -> String? {
+    func readyForSuggestion(_ project: LampProject) async -> String? {
         guard !busy.contains(project.id), (queued[project.id] ?? []).isEmpty else {
             let alert = NSAlert()
             alert.messageText = "“\(project.name)” is busy right now"

@@ -13328,7 +13328,7 @@ final class Store: ObservableObject {
         }
         // Changes someone suggested to an app on GitHub: now, and every quarter of an hour (`SuggestedChanges`). A try of
         // one left from before (a crash, a quit that couldn't wait) goes first, with all it made.
-        SuggestionTrial.sweep()
+        Task.detached { SuggestionTrial.sweep() }
         startCheckingSuggestions()
     }
 

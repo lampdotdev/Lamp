@@ -522,6 +522,25 @@ final class SuggestedChangesTests: XCTestCase {
         for place in saved { XCTAssertFalse(FileManager.default.fileExists(atPath: place.path), place.path) }
     }
 
+    /// A try ended before its app opened has had its folder, and the list in it, taken away; if the app opens late and
+    /// saves something before it's made to quit, what it saved still goes, by the list the try kept from the start.
+    func testWhatALateCopySavesGoesWithItsTry() throws {
+        let place = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-trial-late-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: place) }
+        let folder = place.appendingPathComponent("Trials/gen")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let manifest = SuggestionTrial.Manifest(wish: "tally", number: 3, bundleID: Edition.appBundlePrefix + "trial-abc",
+                                                dataID: Edition.appBundlePrefix + "trial-abc")
+        let home = place.appendingPathComponent("home")
+        let saved = home.appendingPathComponent("Library/Application Support/\(manifest.dataID)")
+        // The folder, list and all, already gone; then the late copy saves.
+        try FileManager.default.createDirectory(at: saved, withIntermediateDirectories: true)
+        SuggestionTrial.remove(folder, home: home)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: saved.path), "with no list left, nothing says what it saved")
+        SuggestionTrial.remove(folder, manifest: manifest, home: home)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: saved.path), "the list kept from the start says")
+    }
+
     /// A change to the same lines the person changed isn't settled in a copy: the try stops and says so, and leaves its
     /// folder for the caller to take away.
     @MainActor

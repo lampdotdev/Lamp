@@ -52,16 +52,19 @@ enum SuggestionTrial {
         let number: Int
         let generation: String
         let folder: URL
+        /// What it leaves, known before anything is made, so whatever ends it takes it all away.
+        let manifest: Manifest
         var stage: Stage = .preparing
         var build: Process?
         var app: NSRunningApplication?
         var watching: NSObjectProtocol?
 
-        init(wish: String, number: Int, generation: String, folder: URL) {
+        init(wish: String, number: Int, generation: String, folder: URL, manifest: Manifest) {
             self.wish = wish
             self.number = number
             self.generation = generation
             self.folder = folder
+            self.manifest = manifest
         }
     }
 
@@ -82,7 +85,9 @@ enum SuggestionTrial {
     static func installValues(for copy: LampProject) -> [String: String] {
         var values = Template.installValues(for: copy)
         for secret in ["token", "widgetToken", "widgetPort", "port", "macHost"] { values[secret] = "" }
+        // Its folder under "apps" is the copy's own.
         values["apps"] = copy.dir.deletingLastPathComponent().path
+        values["folder"] = copy.dir.lastPathComponent
         return values
     }
 
@@ -105,6 +110,7 @@ enum SuggestionTrial {
                 library.appendingPathComponent("Application Support/\(id)"),
                 library.appendingPathComponent("Caches/\(id)"),
                 library.appendingPathComponent("HTTPStorages/\(id)"),
+                library.appendingPathComponent("HTTPStorages/\(id).binarycookies"),
                 library.appendingPathComponent("WebKit/\(id)"),
                 library.appendingPathComponent("Preferences/\(id).plist"),
                 library.appendingPathComponent("Saved Application State/\(id).savedState"),
@@ -113,11 +119,16 @@ enum SuggestionTrial {
         return places
     }
 
-    /// Takes away one try's folder and everything its app saved, from what its folder's list says.
-    static func remove(_ trial: URL, home: URL = FileManager.default.homeDirectoryForCurrentUser) {
+    /// Takes away one try's folder and everything its app saved, from its list (`manifest`, else the one in its folder).
+    /// A copy still running (after a crash, or a quit that couldn't wait for it) is made to quit first, so it can't
+    /// write its data again once it's gone.
+    static func remove(_ trial: URL, manifest given: Manifest? = nil, home: URL = FileManager.default.homeDirectoryForCurrentUser) {
         let fm = FileManager.default
-        if let data = try? Data(contentsOf: trial.appendingPathComponent("trial.json")),
-           let manifest = try? JSONDecoder().decode(Manifest.self, from: data) {
+        let read = (try? Data(contentsOf: trial.appendingPathComponent("trial.json"))).flatMap { try? JSONDecoder().decode(Manifest.self, from: $0) }
+        if let manifest = given ?? read, manifest.bundleID.hasPrefix(Edition.appBundlePrefix + "trial-") {
+            let running = NSRunningApplication.runningApplications(withBundleIdentifier: manifest.bundleID)
+            for app in running { app.forceTerminate() }
+            for _ in 0..<40 where running.contains(where: { !$0.isTerminated }) { Thread.sleep(forTimeInterval: 0.05) }
             for place in leftovers(of: manifest, home: home) where fm.fileExists(atPath: place.path) { try? fm.removeItem(at: place) }
             // Its preferences are cached by macOS too; asked to forget them so the file doesn't come back.
             CFPreferencesAppSynchronize(manifest.bundleID as CFString)
@@ -186,7 +197,7 @@ extension Store {
         guard SuggestionTrial.canTry(project), let kept = GitHubRepo.kept(for: project), GitHubRepo.isUp(project),
               let request = SuggestedChanges.record(for: project)?.request(number) else { return }
         Task {
-            guard let gh = await readyForTrial(project) else { return }
+            guard let gh = await readyForSuggestion(project) else { return }
             endAllTrials()
             fetchingSuggestion[project.id] = number
             suggestionsRevision += 1
@@ -198,17 +209,6 @@ extension Store {
                 NSAlert(error: error).runModal()
             }
         }
-    }
-
-    private func readyForTrial(_ project: LampProject) async -> String? {
-        guard let gh = await Publish.gh(), await Publish.login(gh: gh) != nil else {
-            let alert = NSAlert()
-            alert.messageText = "Sign in to GitHub with gh first"
-            alert.informativeText = "Lamp reads what people sent with your own GitHub sign-in."
-            alert.runModal()
-            return nil
-        }
-        return gh
     }
 
     /// Try It, on the review: the copy is made, merged, built and opened, unless it's ended meanwhile.
@@ -226,12 +226,15 @@ extension Store {
         endAllTrials()
         let generation = UUID().uuidString.lowercased()
         let folder = SuggestionTrial.folder.appendingPathComponent(generation)
-        let running = SuggestionTrial.Running(wish: project.id, number: number, generation: generation, folder: folder)
+        let manifest = SuggestionTrial.manifest(for: SuggestionTrial.copy(of: project, generation: generation), wish: project.id, number: number)
+        let running = SuggestionTrial.Running(wish: project.id, number: number, generation: generation, folder: folder, manifest: manifest)
+        // Off the main thread: a copy is a whole app with its history.
+        func remove() { Task.detached { SuggestionTrial.remove(folder, manifest: manifest) } }
         trials[project.id] = running
         func current() -> Bool { trials[project.id]?.generation == generation }
         // Whatever happened, what it made goes; only the try still current says so.
         func fail(_ message: String) {
-            SuggestionTrial.remove(folder)
+            remove()
             guard current() else { return }
             running.stage = .failed(message)
             trials[project.id] = running
@@ -246,14 +249,14 @@ extension Store {
         } catch {
             return fail(error.localizedDescription)
         }
-        guard current() else { return SuggestionTrial.remove(folder) }
+        guard current() else { return remove() }
         running.stage = .building
         trials[project.id] = running
         suggestionsRevision += 1
         var output: [String] = []
         let status = await Self.buildSparing("./build.sh", for: copy, env: [:], started: { running.build = $0 }) { output = $0 }
         running.build = nil
-        guard current() else { return SuggestionTrial.remove(folder) }
+        guard current() else { return remove() }
         guard status == 0, fm.fileExists(atPath: copy.builtURL.path) else {
             print("Trying #\(number) of \(project.name) didn't build:\n" + output.suffix(20).joined(separator: "\n"))
             return fail("It didn't build as it is. Bring it in instead, and Lamp works it out with you.")
@@ -273,14 +276,14 @@ extension Store {
             for inner in "$LAMP_APP"/Contents/PlugIns/*.appex(N); do codesign --force -s - "$inner"; done
             codesign --force -s - "$LAMP_APP"
             """, cwd: folder, env: ["LAMP_APP": run.path], login: false) { _ in }
-        guard current() else { return SuggestionTrial.remove(folder) }
+        guard current() else { return remove() }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.createsNewApplicationInstance = true
         configuration.addsToRecentItems = false
         guard let app = try? await NSWorkspace.shared.openApplication(at: run, configuration: configuration) else {
             return fail("The copy didn't open.")
         }
-        guard current() else { app.forceTerminate(); return SuggestionTrial.remove(folder) }
+        guard current() else { app.forceTerminate(); return remove() }
         running.app = app
         running.stage = .open
         // Quitting the copy ends the try.
@@ -318,22 +321,28 @@ extension Store {
                 app.forceTerminate()
                 for _ in 0..<10 where !app.isTerminated { Thread.sleep(forTimeInterval: 0.05) }
             }
-            SuggestionTrial.remove(running.folder)
+            SuggestionTrial.remove(running.folder, manifest: running.manifest)
         }
     }
 
     private static func finish(_ running: SuggestionTrial.Running) {
         if let watching = running.watching { NSWorkspace.shared.notificationCenter.removeObserver(watching) }
         if let build = running.build { Subprocess.terminateTree(build) }
-        let folder = running.folder
-        guard let app = running.app, !app.isTerminated else { return SuggestionTrial.remove(folder) }
+        let folder = running.folder, manifest = running.manifest
+        guard let app = running.app, !app.isTerminated else {
+            return Task.detached { SuggestionTrial.remove(folder, manifest: manifest) }.ignore()
+        }
         app.terminate()
         // Given a moment to save and go; then made to, before its data is taken away.
         Task.detached {
             for _ in 0..<20 where !app.isTerminated { try? await Task.sleep(for: .milliseconds(100)) }
             if !app.isTerminated { app.forceTerminate() }
             for _ in 0..<20 where !app.isTerminated { try? await Task.sleep(for: .milliseconds(100)) }
-            SuggestionTrial.remove(folder)
+            SuggestionTrial.remove(folder, manifest: manifest)
         }
     }
+}
+
+private extension Task {
+    func ignore() {}
 }

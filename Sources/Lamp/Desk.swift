@@ -93,7 +93,9 @@ struct WishDesk: View {
             sidebar
             // Changes people sent, when the person goes to them: in place of the list, with Back.
             if let wish = store.suggestionsOpen {
+                // Its own for each app: what's picked, searched and filtered in one isn't carried to another.
                 SuggestionsPanel(wish: wish) { store.suggestionsOpen = nil }
+                    .id(wish)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 deskList
