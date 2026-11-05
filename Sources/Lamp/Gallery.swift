@@ -971,6 +971,9 @@ enum Gallery {
         wishLink("Release, putting it on GitHub", values: releaseValues(putOnGitHub: true), stage: .sending, link: true, changed: true,
                  gitHubStage: .working("Making someone/disk-map…"), setup: firstPush()),
         wishLink("Released, put on GitHub", link: true, copied: true, gitHub: true, gitHubStage: .put("someone/disk-map", "v4")),
+        wishLink("Release, GitHub has changes to bring in", values: releaseValues(), link: true, changed: true, gitHubBehind: true),
+        wishLink("Released, GitHub has changes to bring in", link: true, copied: true, gitHubBehind: true,
+                 gitHubStage: .failed("The link is updated, but someone/disk-map on GitHub isn't: it has changes there that Disk Map doesn't have yet.")),
         wishLink("Released, putting on GitHub failed", values: releaseValues(putOnGitHub: true), link: true, changed: true,
                  gitHubStage: .failed("The link is updated, but Disk Map isn't on GitHub yet: GitHub didn't take it: the connection was lost."),
                  setup: firstPush(settled: true)),
@@ -996,7 +999,7 @@ enum Gallery {
     private static func wishLink(_ name: String, values: WishLinkCard.Values? = nil, picture: Bool = true, retake: Bool = true,
                                  stage: WishLinkCard.Stage = .editing, link: Bool = false, copied: Bool = false,
                                  changed: Bool = false, canIncludeFile: Bool = false, noLicense: String? = nil, writingNotes: Bool = false,
-                                 gitHub: Bool = false, gitHubNote: String? = nil, gitHubStage: WishLinkCard.GitHubStage? = nil,
+                                 gitHub: Bool = false, gitHubBehind: Bool = false, gitHubNote: String? = nil, gitHubStage: WishLinkCard.GitHubStage? = nil,
                                  setup: WishLinkCard.GitHubSetup? = nil, width: CGFloat? = 440) -> Entry {
         Entry(group: "Share Link", name: name) {
             let folder = Starters.folder?.appendingPathComponent("diskmap")
@@ -1007,7 +1010,8 @@ enum Gallery {
                 limits: WishLink.cardLimits, link: link ? "https://lamp.dev/w/AyTkit4xCc" : nil, changed: !link || changed,
                 stage: stage, copied: copied, retake: retake ? {} : nil, retaking: false, canIncludeFile: canIncludeFile, noLicense: noLicense,
                 writingNotes: writingNotes, gitHub: gitHub ? "someone/disk-map" : nil, gitHubNote: gitHubNote, gitHubStage: gitHubStage,
-                retryGitHub: { if case .failed = gitHubStage { return {} } else { return nil } }(), gitHubSetup: setup,
+                retryGitHub: { if case .failed = gitHubStage, !gitHubBehind { return {} } else { return nil } }(),
+                gitHubBehind: gitHubBehind ? "someone/disk-map" : nil, bringIn: gitHubBehind ? {} : nil, gitHubSetup: setup,
                 share: {}, copy: {}, stop: {}, close: {}, width: width)
             return AnyView(card
                 .background(Paper.page, in: RoundedRectangle(cornerRadius: 16))

@@ -185,6 +185,10 @@ public struct WishLinkCard: View {
     /// box, what the commits show on GitHub (an address the person's git signs with).
     let gitHubNote: String?
     let gitHubStage: GitHubStage?
+    /// The app's repository ("owner/name") when it has changes on GitHub the app doesn't: the card offers to bring them in
+    /// (`bringIn`) in place of the box, and a release goes to the link alone.
+    let gitHubBehind: String?
+    let bringIn: (() -> Void)?
     /// Tries the GitHub half of the last release again, after it failed; nil when it can't be (the app changed since).
     let retryGitHub: (() -> Void)?
     let gitHubSetup: GitHubSetup?
@@ -201,7 +205,8 @@ public struct WishLinkCard: View {
     public init(icon: NSImage?, picture: NSImage?, values: Binding<Values>, limits: Limits, link: String?, changed: Bool,
                 stage: Stage, copied: Bool, retake: (() -> Void)?, retaking: Bool, canIncludeFile: Bool = false, noLicense: String? = nil,
                 writingNotes: Bool = false, gitHub: String? = nil, gitHubNote: String? = nil, gitHubStage: GitHubStage? = nil,
-                retryGitHub: (() -> Void)? = nil, gitHubSetup: GitHubSetup? = nil, setUpGitHub: GitHubSetupActions = .none,
+                retryGitHub: (() -> Void)? = nil, gitHubBehind: String? = nil, bringIn: (() -> Void)? = nil,
+                gitHubSetup: GitHubSetup? = nil, setUpGitHub: GitHubSetupActions = .none,
                 share: @escaping () -> Void, copy: @escaping () -> Void, stop: @escaping () -> Void, close: @escaping () -> Void,
                 width: CGFloat? = 480) {
         self.noLicense = noLicense
@@ -210,6 +215,8 @@ public struct WishLinkCard: View {
         self.gitHubNote = gitHubNote
         self.gitHubStage = gitHubStage
         self.retryGitHub = retryGitHub
+        self.gitHubBehind = gitHubBehind
+        self.bringIn = bringIn
         self.gitHubSetup = gitHubSetup
         self.setUpGitHub = setUpGitHub
         self.icon = icon
@@ -275,7 +282,16 @@ public struct WishLinkCard: View {
                     Text(noLicense).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 // Shown where it's chosen: the release goes to the app's repository too while it's ticked.
-                if let gitHub {
+                if let gitHubBehind {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("\(gitHubBehind) has changes on GitHub that this app doesn't have yet. Bring them in, then release.")
+                            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        if let bringIn {
+                            Button("Bring In Changes", action: bringIn).controlSize(.small).disabled(stage == .sending)
+                                .help("Shows what changed there, then merges it into this app, keeping your changes")
+                        }
+                    }
+                } else if let gitHub {
                     Toggle("Also update GitHub (\(gitHub))", isOn: $values.alsoGitHub)
                         .toggleStyle(.checkbox)
                         .font(.callout)

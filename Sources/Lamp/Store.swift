@@ -3840,6 +3840,8 @@ final class Store: ObservableObject {
         /// Another copy `existing` follows, pulled in (`Following`): Update always merges it, since it's someone else's
         /// copy rather than a newer one of where the wish came from.
         var following: Following.Followed? = nil
+        /// What changed in the wish's own repository on GitHub, brought in (`BringIn`): Update always merges it.
+        var bringingIn: BringIn.Pull? = nil
     }
 
     /// Whether the wish's files differ from the version that arrived last (a shared file opened, or updated from): any
@@ -3875,7 +3877,8 @@ final class Store: ObservableObject {
     /// AI's check being a part of it only when AI is set up (`Sharing.review`), and building it always takes a click on
     /// that review (`ImportReview.opening`). During the welcome the file is kept and the welcome gives way to it
     /// (`OnboardingView.arrive`); its review opens as the welcome ends.
-    func importApp(from file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil) {
+    func importApp(from file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil,
+                   bringingIn: BringIn.Pull? = nil) {
         NSApp.activate()
         Task {
             // A file that launched Lamp arrives before Lamp has looked at setup: the look is waited for, so
@@ -3892,7 +3895,7 @@ final class Store: ObservableObject {
                 }
                 return
             }
-            review(file, updating: target, fetched: fetched, following: following)
+            review(file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn)
         }
     }
 
@@ -3902,7 +3905,8 @@ final class Store: ObservableObject {
     }
 
     /// Unpacks a shared app and shows its review.
-    private func review(_ file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil) {
+    private func review(_ file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil,
+                        bringingIn: BringIn.Pull? = nil) {
         // The newest request wins: a file opened while an earlier one is still unpacking, or a Cancel
         // meanwhile, makes the earlier result unwanted when it arrives.
         let request = UUID()
@@ -3924,6 +3928,7 @@ final class Store: ObservableObject {
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
             var pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file), existing: existingCopy(of: package, updating: target))
             pending.following = following
+            pending.bringingIn = bringingIn
             // Only where the two met: a wish that can't be lined up keeps Update.
             if Mix.isOn, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
                let into = Mix.copy(of: package, among: projects), await Mix.meeting(package, history: history, with: into) != nil {
@@ -4029,8 +4034,8 @@ final class Store: ObservableObject {
                 }
             }
             let changed = pending.prepared != nil ? false : pending.changedHere ? true : await changedSinceArrival(project)
-            if changed || pending.following != nil {
-                await mergeUpdate(pending.package, into: project, following: pending.following)
+            if changed || pending.following != nil || pending.bringingIn != nil {
+                await mergeUpdate(pending.package, into: project, following: pending.following, bringingIn: pending.bringingIn)
                 return
             }
             defer { finish(project) }
@@ -4164,8 +4169,10 @@ final class Store: ObservableObject {
     /// from it, or what the two copies last shared (`Following.base`), with its own ref; only the credit for work it
     /// brings joins the wish's credits (`Mix.creditsTaken`), so where the wish came from stays as it was; and the commit
     /// pulled in is kept for the next time.
+    /// `bringingIn` is what changed in the wish's own repository on GitHub (`BringIn`): measured against the one base
+    /// the pull names, credited as a followed copy is, and kept as brought in only once it's saved.
     func mergeUpdate(_ package: Sharing.Package, into project: LampProject, original: Starters.Starter? = nil,
-                     following: Following.Followed? = nil) async {
+                     following: Following.Followed? = nil, bringingIn: BringIn.Pull? = nil) async {
         let fm = FileManager.default
         defer { try? fm.removeItem(at: package.folder) }
         let before = "Before bringing in an update"
@@ -4195,19 +4202,33 @@ final class Store: ObservableObject {
             ref = Following.incomingRef(for: following)
             accepted = Following.acceptedRef(for: following)
         }
+        var given: Upstream.Given? = nil
+        if let bringingIn {
+            source = nil
+            commit = nil
+            ref = BringIn.incomingRef
+            do {
+                given = try await BringIn.given(for: bringingIn, kept: GitHubRepo.kept(for: project), in: project)
+            } catch {
+                finish(project)
+                log(project, .error, error.localizedDescription)
+                return
+            }
+        }
         let arrival = await Versions.list(project).first { Self.arrivalMessages.contains($0.message) }?.id
-        let place = following.map { Following.title(of: $0) }
+        let place = following.map { Following.title(of: $0) } ?? bringingIn.map { "\($0.repo) on GitHub" }
             ?? (original != nil ? "the original" : source.map { "\($0.owner)/\($0.name) on GitHub" } ?? "the shared app")
         let merged: Upstream.Merged
         do {
-            merged = try await Upstream.merge(package, into: project, from: source, commit: commit, arrival: arrival, ref: ref, accepted: accepted)
+            merged = try await Upstream.merge(package, into: project, from: source, commit: commit, arrival: arrival, ref: ref, accepted: accepted, given: given)
+            if let bringingIn { await BringIn.keepBase(bringingIn, mark: merged.baseMark, in: project) }
             // What the reviewed file says each app reaches: the wish's own, and each of its apps merged in its folder.
             SharedNetwork.arrive(package, in: project, arriving: false)
             for part in package.parts {
                 guard let app = parts(of: project).first(where: { $0.dir.lastPathComponent.lowercased() == part.folder.lowercased() }) else { continue }
                 SharedNetwork.arrive(part.package, in: app, arriving: false)
             }
-            if let credits = package.credits { try Credits.add(following == nil ? credits : Mix.creditsTaken(credits), to: project) }
+            if let credits = package.credits { try Credits.add(following == nil && bringingIn == nil ? credits : Mix.creditsTaken(credits), to: project) }
             WishReleases.arrive(package.releases, in: project)
             if let original { try Starters.keepFile(of: original, in: project) }
 
@@ -4220,33 +4241,40 @@ final class Store: ObservableObject {
         }
         // An app the package brings that the wish doesn't have yet is made as an update makes one; the apps it has
         // were merged in their folders.
+        // A bring-in with an app left out hasn't brought in everything: it isn't counted, so the card offers it again.
+        var bringingIn = bringingIn
         if !merged.newParts.isEmpty {
             var arriving = package
             arriving.parts = merged.newParts
             let notIn = await installParts(of: arriving, into: project, onlyNew: true)
-            if !notIn.isEmpty { log(project, .error, "\(notIn.joined(separator: ", ")) couldn't be put in place.") }
+            if !notIn.isEmpty {
+                log(project, .error, "\(notIn.joined(separator: ", ")) couldn't be put in place.")
+                bringingIn = nil
+            }
         }
         guard merged.conflicts.isEmpty else {
             Versions.rememberConflicts(project, files: merged.conflicts, from: place, ref: ref)
             let request = "Bring in what's new in \(place), keeping my changes."
             // A followed copy's pull-in counts once the agent has settled it (`settlePull`).
             if let following, let pulled { Following.setPending(Following.Pending(followed: following, version: pulled, request: request), for: project) }
+            if let bringingIn { BringIn.setPending(BringIn.Pending(pull: bringingIn, request: request), for: project) }
             finish(project)
             send(request, to: project)
             return
         }
         defer { finish(project) }
-        if let following, await !Versions.hasUnsavedChanges(project) {
-            if let pulled {
+        if following != nil || bringingIn != nil, await !Versions.hasUnsavedChanges(project) {
+            if let following, let pulled {
                 await Following.promote(following, in: project)
                 Following.brought(pulled, from: following, into: project)
                 followingRevision += 1
             }
+            if let bringingIn { await BringIn.accept(bringingIn, in: project) }
             log(project, .status, "You already have everything from \(place).")
             return
         }
         if await Versions.hasUnsavedChanges(project) {
-            let message = following != nil ? "Pulled in \(place)" : original != nil ? "Merged the latest original"
+            let message = following != nil || bringingIn != nil ? "Pulled in \(place)" : original != nil ? "Merged the latest original"
                 : source == nil ? "Merged a newer shared file" : "Merged the latest from GitHub"
             guard await Versions.save(project, message: message) else {
                 log(project, .error, Self.updateFailed)
@@ -4260,6 +4288,7 @@ final class Store: ObservableObject {
                 Following.brought(pulled, from: following, into: project)
                 followingRevision += 1
             }
+            if let bringingIn { await BringIn.accept(bringingIn, in: project) }
         }
         log(project, .status, "Brought in what's new from \(place), keeping your changes. Building it now…")
         if await build(project) == nil {
@@ -4974,6 +5003,7 @@ final class Store: ObservableObject {
             result = await turn(messages, attachments: saved, asked: asked, on: project)
             await settleUpdate(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
             await settlePull(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
+            await settleBringIn(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
             // The scaffold's early build is the turn's until it's settled, whichever way the turn ended (a question, a
             // failure, a Stop): released before it, the next turn's build could run beside it on the same files.
             await owner.early?.value
@@ -9330,7 +9360,8 @@ final class Store: ObservableObject {
     func restoreBegun(_ project: LampProject, to version: AppVersion, startingAgain: Bool = false) async {
         dropPausedRequest(project)
         let renaming = self.renaming(project, to: version, in: await Versions.list(project))
-        guard await Versions.restore(project, to: version, message: Versions.restoredMessage(to: version), renaming: renaming) else {
+        guard await Versions.restore(project, to: version, message: Versions.restoredMessage(to: version), trailer: Versions.restoredTrailer(version),
+                                     renaming: renaming) else {
             log(project, .status, "The app is already like “\(version.label)”")
             return
         }
