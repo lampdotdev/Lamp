@@ -22,7 +22,7 @@ each request is written in advance with the part it adds, a request of one's own
 done (Lamp), and Undo takes back the newest change. Without the script, and for search engines, every part is on the
 page in order. The chat is drawn as Lamp draws the chat beside an app (LampSidebarKit), from the same colors
 (`Paper.swift`) and shapes: a title bar with the red light (it puts the chat away; Lamp's mark at the corner brings it
-back), Lamp's mark and Undo; what's asked in ink bubbles and what Lamp says in paper ones, both with Messages' tail;
+back), Lamp's mark, "Lamp: Editing lamp.dev" (as Lamp's own chat names the app it's beside) and Undo; what's asked in ink bubbles and what Lamp says in paper ones, both with Messages' tail;
 the requests as outlined tiles whose gray icons (Phosphor's bold set) take their own color
 under the pointer; and the round message box with the round ink Send. Where there's room it's a window of its own
 down the right edge, off the window's edges with round corners and a window's shadow; on a phone it's pinned to the foot of the
