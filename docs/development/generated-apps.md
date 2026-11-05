@@ -284,7 +284,9 @@ was a Put on GitHub… of its own under Share; a chat of an older Lamp that stil
 out. A repository a first push made before failing, with nothing up yet (`GitHubRepo.isUp` false), is gone on with,
 its choices settled. Once the wish is up, as for the person's own repository a wish was opened from (`ownOrigin`), a
 release updates GitHub too, staged and uploaded as the first time with the choices made then (`Repo.license`, `Repo.picture`). One commit per update, on top of
-what's there (a shallow clone, the tree replaced; unchanged when only the export's own marks differ), never the wish's
+what's there (a shallow clone, the tree replaced; unchanged when only the export's own marks differ; never over commits
+the wish hasn't brought in, nor undoing a README or other file edited there: Bring In Changes, `BringIn`, in
+[wishes](wishes.md)), never the wish's
 own history, which holds every version and the chat's attachments. Its commits, the page's and Send Changes Back's
 are made as `GitHubRepo.author` says: someone whose git signs commits (`commit.gpgSign`, read where the commit is made, so
 conditional settings for a folder, branch or remote count) gets them as their git makes them, their name, address and
@@ -495,7 +497,8 @@ nothing to send. What would be pushed is
 checked for keys once more as it is (`ShareCheck.secrets`). The fork is made with `gh` when
 the person has none (`Contribute.fork`), and the one commit is pushed to a branch of it and a pull request opened on
 the repository (`Contribute.send`). The request's text (`Contribute.summary`) is the wish's line, the names its
-versions since it arrived were given (never the requests themselves, never the chat) and the files changed. The person's own repository is refused (a release on its link updates it, `GitHubRelease`).
+versions since it arrived were given (never the requests themselves, never the chat) and the files changed. The person's own repository is refused (a release on its link updates it, `GitHubRelease`). Once its owner merges the
+request, their Share Link card offers Bring In Changes before their next release (`BringIn`).
 
 On a Mac without Lamp (an app copied over, or kept after Lamp was removed), the wand is on all the same
 (`LampMagic.isOn` when `LampMagic.lampInstalled` is false) and the chat beside the app is the sidebar extension with

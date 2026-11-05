@@ -372,6 +372,9 @@ enum WishLink {
         /// The app's repository on GitHub, which a release goes to too while its box is ticked (`GitHubRelease`), or why
         /// it can't from here.
         var gitHub: GitHubRelease.Target?
+        /// The app's repository when it has changes on GitHub the app doesn't (`BringIn`): the card offers Bring In
+        /// Changes in place of the box, and a release goes to the link alone.
+        var gitHubBehind: GitHubRelease.Target?
         var gitHubNote: String?
         var gitHubStage: WishLinkCard.GitHubStage?
         /// Finding the repository, or how the wish would go there the first time: until it's found, the card can't show
@@ -469,8 +472,14 @@ enum WishLink {
             guard cards[id]?.gitHubFinding == finding else { return }
             cards[id]?.gitHubFinding = nil
             cards[id]?.gitHub = nil
+            cards[id]?.gitHubBehind = nil
             cards[id]?.gitHubNote = nil
             switch found {
+            case .behind(let target):
+                cards[id]?.gitHubBehind = target
+                cards[id]?.firstPush?.discard()
+                cards[id]?.firstPush = nil
+                cards[id]?.values.putOnGitHub = false
             case .ready(let target):
                 cards[id]?.gitHub = target
                 cards[id]?.gitHubNote = GitHubRepo.note(for: target.authors)
@@ -494,6 +503,20 @@ enum WishLink {
                 cards[id]?.values.putOnGitHub = false
             }
         }
+    }
+
+    /// Looks for the repository again, once the wish brought in its changes (`BringIn.accept`): the card then offers to
+    /// release there, as a new Release Update, so the link, the version and GitHub agree.
+    func findAgain(_ project: LampProject) {
+        guard cards[project.id] != nil else { return }
+        if cards[project.id]?.gitHubBehind != nil, case .failed = cards[project.id]?.gitHubStage { cards[project.id]?.gitHubStage = nil }
+        findGitHub(project)
+    }
+
+    /// Bring In Changes: what changed on GitHub comes into the app, reviewed (`Store.bringInFromGitHub`).
+    func bringIn(_ project: LampProject) {
+        guard cards[project.id]?.gitHubBehind != nil else { return }
+        Store.shared.bringInFromGitHub(project)
     }
 
     /// Checks what the first push would put up with the card's choices, so the card shows it before anything goes.
@@ -723,6 +746,13 @@ enum WishLink {
                 // It's on GitHub now: the card offers to update it, as for any wish that's there.
                 if cards[id]?.gitHubOperation == operation { findGitHub(project) }
             }
+        } catch let moved as GitHubRepo.Moved {
+            // Trying again can't fix this: the changes there come into the app first, then a new release goes up.
+            settled()
+            guard cards[id]?.gitHubOperation == operation else { return }
+            cards[id]?.gitHub = nil
+            if case .update(let target) = work { cards[id]?.gitHubBehind = target }
+            say(.failed("The link is updated, but \(moved.repo) on GitHub isn't: it has changes there that \(project.name) doesn't have yet."))
         } catch {
             settled()
             guard cards[id]?.gitHubOperation == operation else { return }

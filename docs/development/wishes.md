@@ -410,7 +410,29 @@ card stays busy until everything is pushed, then only GitHub Pages' build is wai
 that's still waiting then neither speaks on the card once a newer one started (`gitHubOperation`) nor writes its record
 over a newer push's. GitHub says how it went in a line of its own (`WishLinkCard.GitHubStage`), so a failure there never
 hides the link's, which works whatever GitHub does; Try GitHub Again runs that half alone with the same version and
-lines, and only while the wish is still at the version released (else the card says to release again). A link that
+lines, and only while the wish is still at the version released (else the card says to release again).
+A repository that has moved on from the last commit the wish has of it (`Repo.expected`: what Lamp pushed, or what the
+wish brought in since, `taken`) is never gone over (`GitHubRepo.Moved`): someone's pull request from Send Changes Back,
+merged by the owner, or an edit made on GitHub. Finding it asks GitHub (`GitHubRelease.isBehind`, `ls-remote`), and the
+card shows Bring In Changes in the box's place (`gitHubBehind`), so a release goes to the link alone; a release that
+finds it moved meanwhile says so with Bring In Changes, not Try GitHub Again. Bring In Changes (`BringIn`) fetches the
+repository with the person's own sign-in (so a private one works), into a folder of Lamp's, and the base commit into
+the wish's git; the review is an update's, and Update merges it (`Store.mergeUpdate`'s `bringingIn`) against that one
+base and nothing else (`BringIn.given`, `Upstream.merge`'s `given`): the staged tree kept from the last bring-in
+(`BringIn.snapshot`, so a force push since can't bring back what it took away), else the commit, else, from Lamp's own
+push, the wish's version it carried; with none, nothing is brought in. The wish's own repository is never followed as
+a copy and never joins the chain; only the credit for work the change uses joins the credits (`Mix.creditsTaken`). It
+counts once saved, clean or settled by the agent's turn (`BringIn.Pending`, `Store.settleBringIn`), and not when an app it
+brings couldn't be made: `taken` names the commit with the version that saved it (`takenIn`), which the wish's history
+must still have, with no Undo or going back to before it since (`BringIn.holds`, by `Lamp-Undid` and `Lamp-Restored`,
+each followed to the version it went back to),
+else it's offered again from Lamp's push. Bringing in changes the wish, so it's released with a new Release Update.
+The release then goes on top of what was brought in, and what changed on GitHub since Lamp's push stays as GitHub has it
+unless it's the app's (`GitHubRepo.keptFromGitHub`), on that push and every one after (`Repo.ownFiles`): a README or
+license edited there, a file only GitHub has; the app's
+files, and what Lamp makes from them, follow the app, a file it brought in and took away again staying away; a file
+Lamp writes itself to build the app (the root's or a part's in its folder), edited there, is refused, saying which. The push records the new commit without
+`taken`. A link that
 fails sends nothing to GitHub, and says so. The first link of a wish that's on GitHub makes the link and releases there too, as v1
 (or the next number), with no lines, the commit's message then the old "Update <name> from Lamp". A wish that isn't on GitHub (`GitHubRelease.Found.new`) gets "Also put on GitHub" in the box's place, unticked each
 time the card opens, since a first push makes its code public by default. Ticking it stages and checks what would go up

@@ -29,6 +29,9 @@ enum GitHubRepo {
     /// remix starts from the repository only while both hold (`remixOrigin`). Nil from a Lamp before they were kept.
     /// `page` is the page's address (a web game's or a web app's), once GitHub has put it up. `picture` is whether the person had the README
     /// show the wish's picture, which an update keeps to.
+    /// `taken` is a commit of the repository's that came after `commit` (someone's pull request merged on GitHub, an
+    /// edit made there) whose changes the wish has brought in since (`BringIn`), so the next release goes on top of it;
+    /// a push of Lamp's records a new `commit` without it.
     struct Repo: Codable, Equatable {
         var repo: String   // "owner/name"
         var url: String
@@ -38,6 +41,23 @@ enum GitHubRepo {
         var version: String? = nil
         var page: String? = nil
         var picture: Bool? = nil
+        var taken: String? = nil
+        /// The wish's own version `taken` was saved in, which its history must still have (`BringIn.holds`).
+        var takenIn: String? = nil
+        /// Files the repository keeps as GitHub has them (`keptFromGitHub`): each push keeps them so, not only the first
+        /// after they changed there.
+        var ownFiles: [String]? = nil
+
+        /// The commit the repository must be at for the wish to go over it: the last one whose changes the wish has.
+        var expected: String? { taken ?? commit }
+    }
+
+    /// The repository has commits the wish hasn't brought in (`BringIn`), so putting the wish there would undo them:
+    /// said apart from a failure that trying again can fix.
+    struct Moved: LocalizedError {
+        let repo: String
+        let name: String
+        var errorDescription: String? { "\(repo) has changes on GitHub that \(name) doesn't have yet." }
     }
 
     static func url(_ repo: String) -> String { "https://github.com/\(repo)" }
@@ -143,7 +163,7 @@ enum GitHubRepo {
         // The file itself never goes up: it would double the code beside it, and git would keep every version of it.
         // Its credits end the chain with this wish, named where it's going: the repository's address, which a
         // remix opened from there carries on, and the commit up there now, which the next one is on top of.
-        let shared = try Sharing.export(project, repository: repo.map(url), commit: kept(for: project).flatMap { $0.repo == repo ? $0.commit : nil })
+        let shared = try Sharing.export(project, repository: repo.map(url), commit: kept(for: project).flatMap { $0.repo == repo ? $0.expected : nil })
         defer { try? fm.removeItem(at: shared.deletingLastPathComponent()) }
         guard Subprocess.runBlocking("/usr/bin/ditto", ["-x", "-k", shared.path, tree.path], timeout: 120).ok else {
             throw Failure(message: "Couldn't unpack \(project.name)'s files.")
@@ -494,7 +514,12 @@ enum GitHubRepo {
     /// `release` is a release of the wish's (Release Update, `GitHubRelease`): its lines are the commit's message, and once
     /// the code is up it's made a release of the repository's too, tagged with its version, before the page goes up.
     /// `pushed` hears when everything is up and only GitHub's building of the page is left to wait for.
+    /// `lastPushed` is the commit Lamp last pushed, when the wish has brought in commits made on GitHub after it
+    /// (`expected` then names the latest of them): what changed there since is weighed file by file (`keptFromGitHub`),
+    /// so nothing of it is lost. `broughtIn` lists the files of the app as the wish brought them in (`BringIn.paths`).
+    /// `keeping` are the files earlier pushes kept as GitHub has them (`Repo.ownFiles`), which this one keeps too.
     static func upload(_ staged: Staged, of project: LampProject, to repo: String, gh: String, login: String, isNew: Bool, expected: String? = nil,
+                       lastPushed: String? = nil, broughtIn: Set<String> = [], keeping: [String] = [],
                        isPrivate: Bool, license: Bool, picture: Bool? = nil, authors shown: [Author]? = nil,
                        release: GitHubRelease.Version? = nil, pushed: @escaping @Sendable () -> Void = {},
                        step: @escaping @Sendable (String) -> Void) async throws -> (repo: Repo, changed: Bool) {
@@ -523,6 +548,7 @@ enum GitHubRepo {
 
         let work: URL
         var changed = true
+        var theirs: [String] = []
         // The repository's own branch, what its clone checked out; a new one's is main.
         var branch = "main"
         if isNew {
@@ -552,8 +578,15 @@ enum GitHubRepo {
             let checkedOut = await Subprocess.run(git, ["symbolic-ref", "--short", "HEAD"], cwd: clone, mergeErrors: false, timeout: 10)
             guard checkedOut.ok, !checkedOut.output.trimmed.isEmpty else { throw Failure(message: "Lamp couldn't tell which branch \(repo) keeps its code on.") }
             branch = checkedOut.output.trimmed
-            if let expected, await head(git, in: clone) != expected {
-                throw Failure(message: "\(repo) has changes on GitHub that \(project.name) doesn't have, and putting it there would undo them.")
+            let there = await head(git, in: clone)
+            if let expected, there != expected { throw Moved(repo: repo, name: project.name) }
+            // What changed on GitHub since Lamp's last push, which the wish brought in: each file stays as GitHub has
+            // it unless it's the app's (`keptFromGitHub`).
+            // Those an earlier push kept stay kept, but for a file the app has come to have since.
+            theirs = keeping.filter { ["README.md", "LICENSE"].contains($0) || !fm.fileExists(atPath: tree.appendingPathComponent($0).path) }
+            if let lastPushed, let there, lastPushed != there {
+                for path in try await keptFromGitHub(in: clone, since: lastPushed, tree: tree, broughtIn: broughtIn, project: project, gh: gh)
+                where !theirs.contains(path) { theirs.append(path) }
             }
             // The wish takes the place of what's there, but for what a wish never carries: a hidden file or folder at the
             // top (the person's .github/workflows, .gitignore, an editor's settings) stays as it is, with the tree's own
@@ -569,6 +602,11 @@ enum GitHubRepo {
             }
             for item in try fm.contentsOfDirectory(at: tree, includingPropertiesForKeys: nil) where item.lastPathComponent != ".git" {
                 try merge(item, into: clone.appendingPathComponent(item.lastPathComponent))
+            }
+            for path in theirs {
+                let restored = await Subprocess.run(git, ["checkout", "-q", "HEAD", "--", path], cwd: clone, timeout: 30)
+                // Taken away on GitHub: it stays away.
+                if !restored.ok { try? fm.removeItem(at: clone.appendingPathComponent(path)) }
             }
             let added = await Subprocess.run(git, ["add", "-A"], cwd: clone, timeout: 120)
             guard added.ok else { throw Failure(message: "Couldn't prepare the repository: \(added.output.trimmed.suffix(200))") }
@@ -602,7 +640,8 @@ enum GitHubRepo {
             guard pushed.ok else { throw Failure(message: "GitHub didn't take it: \(pushed.output.trimmed.suffix(200))") }
         }
         var record = Repo(repo: repo, url: url, license: license, commit: await head(git, in: work),
-                          isPublic: await isPublic(repo, gh: gh), version: staged.version, page: kept(for: project)?.page, picture: picture)
+                          isPublic: await isPublic(repo, gh: gh), version: staged.version, page: kept(for: project)?.page, picture: picture,
+                          ownFiles: theirs.isEmpty ? nil : theirs)
         if let release, let commit = record.commit {
             // Kept first: the code is up whatever happens to the release.
             keep(record, for: project)
@@ -634,6 +673,45 @@ enum GitHubRepo {
         try await Publish.servePage(repo, commit: pagePushed.commit, changed: pagePushed.changed, gh: gh, step: step)
         record.page = page.url
         return (record, changed || pagePushed.changed || kept(for: project)?.page != page.url)
+    }
+
+    /// The files changed on GitHub since Lamp's last push (`lastPushed`) that stay as GitHub has them when the wish goes
+    /// over the clone: the repository's own (a README or license edited there, a file added there that the app never had),
+    /// never the app's. The app's files are what the wish has (`tree`), with what it brought in from GitHub in them
+    /// (`broughtIn`, so a file it took away again stays away); what Lamp makes from the app (its manifest, the shared
+    /// file, its credits) follows the app. A file Lamp writes itself to build the app (build.sh, Package.swift), edited on
+    /// GitHub, can't be both: it's refused, saying which, rather than undone.
+    /// When Lamp can't get its last push from GitHub any more (a force push), every file GitHub has that the app doesn't
+    /// is the repository's own, and its README and license stay as GitHub has them.
+    static func keptFromGitHub(in clone: URL, since lastPushed: String, tree: URL, broughtIn: Set<String>, project: LampProject, gh: String) async throws -> [String] {
+        let git = git
+        let fetched = await Subprocess.run(git, signedIn(gh: gh) + ["fetch", "-q", "--depth", "1", "origin", lastPushed], cwd: clone, timeout: 300)
+        let listed = fetched.ok
+            ? await Subprocess.run(git, ["diff", "--name-only", "--no-renames", "-z", lastPushed, "HEAD"], cwd: clone, mergeErrors: false, timeout: 60)
+            : await Subprocess.run(git, ["ls-tree", "-r", "--name-only", "-z", "HEAD"], cwd: clone, mergeErrors: false, timeout: 60)
+        guard listed.ok else { throw Failure(message: "Lamp couldn't tell what changed on GitHub: \(listed.output.trimmed.suffix(200))") }
+        let site = FileManager.default.fileExists(atPath: tree.appendingPathComponent("\(StaticSite.folder)/lamp-app.json").path)
+        var kept: [String] = []
+        for path in listed.output.split(separator: "\0").map(String.init) where !path.isEmpty {
+            let inLamps = site && path.hasPrefix(StaticSite.folder + "/")
+            let relative = inLamps ? String(path.dropFirst(StaticSite.folder.count + 1)) : path
+            let top = relative.split(separator: "/").first.map(String.init) ?? relative
+            // A hidden file at the top is left as it is already (`upload`), or is the app's (a site's served ones).
+            if path.hasPrefix(".") { continue }
+            if ["lamp-app.json", Credits.file].contains(relative) || (top == relative && relative.hasSuffix(".lampapp")) { continue }
+            // Lamp's own files for the app the path is in: a part's in its folder (`Sharing.layout`), the root's at the top.
+            let (root, parts) = Sharing.layout(of: project)
+            let part = parts.first { relative.hasPrefix($0.dir.lastPathComponent + "/") }
+            if part.map({ isOwned(String(relative.dropFirst($0.dir.lastPathComponent.count + 1)), in: $0) }) ?? isOwned(relative, in: root) {
+                throw Failure(message: "\(path) was changed on GitHub, and Lamp writes it itself, so putting \(project.name) there would undo that. Change it back on GitHub, or ask for the change in the app.")
+            }
+            if !["README.md", "LICENSE"].contains(path) {
+                if FileManager.default.fileExists(atPath: tree.appendingPathComponent(path).path) { continue }
+                if broughtIn.contains(path) || broughtIn.contains(relative) { continue }
+            }
+            kept.append(path)
+        }
+        return kept
     }
 
     /// Copies `item` to `to`, a folder into what's there already, file by file.
