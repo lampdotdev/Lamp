@@ -9,7 +9,7 @@ import LampSidebarKit
 /// What goes up is what a shared file carries (`Sharing.export`: the code, APP.md, the icon, the app's own files,
 /// credits.json and the licenses it names; never the chat, the app's data or a key), unpacked so the code reads on
 /// GitHub, with Lamp's own files beside it (build.sh, Package.swift, LampSupport.swift and the rest, so `zsh build.sh`
-/// makes the app on any Mac with Apple's tools and no Lamp), the shared file itself (what Lamp opens today), a README
+/// makes the app on any Mac with Apple's tools and no Lamp), a README
 /// that says what it is, how to remix it with Lamp and what it's based on, an MIT license when the person wants one, and
 /// the wish's picture when they include it, which shows whatever is in the app at the time.
 /// A web game or a web app in a public repository also gets its page, to play or use in any browser, on the repository's
@@ -139,7 +139,7 @@ enum GitHubRepo {
     /// Stages the repository for `repo`, its README's remix link going to `link` (the wish's Share Link, which works
     /// for someone without Lamp) when there is one: refused, with why, when the wish can't leave this Mac.
     /// Without a repository it's staged as it would be for one not yet made (a check of what it would hold,
-    /// `GitHubProjects.check`): the chain ends with the wish as its shared file does, and the README names no address.
+    /// `GitHubProjects.check`): the chain ends with the wish as its export does, and the README names no address.
     /// `isPublic` is whether anyone will be able to read the repository: its README then offers it by a link of Lamp's
     /// site (`Showcase.remix`), which Lamp fetches without a sign-in, and a web game gets its page (`withPage`; a starter's
     /// repository stages its own, `StarterRepos.stagePage`). `picture` is the wish's picture for the README to show, when
@@ -159,16 +159,15 @@ enum GitHubRepo {
         try fm.createDirectory(at: tree, withIntermediateDirectories: true)
 
         // The wish as a shared file, held to the same checks and carrying the credits with this wish at the end of the
-        // chain, and its contents unpacked beside it: the code as people read it on GitHub.
-        let fileName = Publish.slug(project.name) + ".lampapp"
-        // The file's credits end the chain with this wish, named where it's going: the repository's address, which a
+        // chain, unpacked: the code as people read it on GitHub, which is what Lamp opens from there (`RepoImport.open`).
+        // The file itself never goes up: it would double the code beside it, and git would keep every version of it.
+        // Its credits end the chain with this wish, named where it's going: the repository's address, which a
         // remix opened from there carries on, and the commit up there now, which the next one is on top of.
         let shared = try Sharing.export(project, repository: repo.map(url), commit: kept(for: project).flatMap { $0.repo == repo ? $0.expected : nil })
         defer { try? fm.removeItem(at: shared.deletingLastPathComponent()) }
         guard Subprocess.runBlocking("/usr/bin/ditto", ["-x", "-k", shared.path, tree.path], timeout: 120).ok else {
             throw Failure(message: "Couldn't unpack \(project.name)'s files.")
         }
-        try fm.copyItem(at: shared, to: tree.appendingPathComponent(fileName))
         // Lamp's own files for each of the wish's apps, where the shared file put that app (`Sharing.layout`: one at the
         // root, the others in their folders), so the code builds as it is: the shared file leaves them out because
         // the Lamp that opens it writes its own.
@@ -195,11 +194,11 @@ enum GitHubRepo {
         // The file's credits.json ends the chain with this wish, for whoever opens it; the README is this wish's own, so it
         // names what the wish was remixed from, not itself.
         let chain = Credits.read(tree.appendingPathComponent(Credits.file)) ?? credits
-        let open = Publish.OpenInLamp(link: link, file: fileName)
+        let open = Publish.OpenInLamp(link: link)
         let build = Build(alone: root.platform.target.recipe.buildsAlone, app: root.platform.target.identity.name, others: !parts.isEmpty,
                           // Web/ even for a wish whose one app is in a part: the export puts that app at the root (`Sharing.layout`).
                           page: Publish.hasPage(project) ? (site ? "" : TVTemplate.webFolder + "/") : nil)
-        // The icon the shared file carries, as it's drawn: never a picture of the app running, which could show the
+        // The icon the export carries, as it's drawn: never a picture of the app running, which could show the
         // person's data.
         let icon = fm.fileExists(atPath: tree.appendingPathComponent(LampFile.iconEntry).path) ? LampFile.iconEntry : nil
         // The ideas its chat offers beside it on a Mac without Lamp (`RemixSuggestions`), each a remix of its own.
@@ -420,11 +419,10 @@ enum GitHubRepo {
             if let link = open.link {
                 text += "[Make your own](\(link.absoluteString)) from this app, with Lamp or by getting Lamp from that page. "
             }
-            if let file = open.file {
-                text += (open.link == nil ? "Download" : "Or download") + " [\(file)](\(file)) and open it with Lamp (double-click it, or File → Import Shared App…): "
-                    + "you get this exact app, yours to change, with the credits below kept. The code here is what that file holds."
-            } else if let repo {
-                text += (open.link == nil ? "In" : "Or, in") + " Lamp, choose File → Open from GitHub… and paste `\(url(repo))`: "
+            if let repo {
+                // Only a private repository's README says this, which Lamp can't fetch by its address without a sign-in:
+                // a clone of it opens as the repository does.
+                text += (open.link == nil ? "Clone" : "Or clone") + " `\(url(repo))` and open its folder with Lamp (File → Import Shared App…): "
                     + "you get this exact app, yours to change, with the credits below kept."
             }
         }
@@ -592,7 +590,8 @@ enum GitHubRepo {
             }
             // The wish takes the place of what's there, but for what a wish never carries: a hidden file or folder at the
             // top (the person's .github/workflows, .gitignore, an editor's settings) stays as it is, with the tree's own
-            // over it file by file. Lamp's folder in a site's repository is Lamp's, and goes whole.
+            // over it file by file. Lamp's folder in a site's repository is Lamp's, and goes whole. So does the shared
+            // file an older Lamp put at the top beside the code, which the tree no longer carries.
             // A site's hidden files that travel with its page (`ScreenFiles.servedHidden`) are the wish's too: replaced, or
             // taken away when the wish has none.
             let site = fm.fileExists(atPath: tree.appendingPathComponent("\(StaticSite.folder)/lamp-app.json").path)
@@ -611,14 +610,15 @@ enum GitHubRepo {
             }
             let added = await Subprocess.run(git, ["add", "-A"], cwd: clone, timeout: 120)
             guard added.ok else { throw Failure(message: "Couldn't prepare the repository: \(added.output.trimmed.suffix(200))") }
-            // Unchanged when nothing but the export's own marks differ: the shared file's manifest says when it was made,
-            // and the file is zipped afresh each time. The manifest's other fields matter (which device an app opens on),
-            // so it's compared with only its time left out; the archive follows the manifest.
+            // Unchanged when nothing but the export's own marks differ: the manifest says when it was made. Its other
+            // fields matter (which device an app opens on), so it's compared with only its time left out.
             // The chain names the commit up there (`Sharing.export`), which each push moves on: the credits compare
             // without it, so real credit changes count and the bookkeeping doesn't.
+            // A shared file an older Lamp put beside the code is gone from the tree, and that counts as a change: it's
+            // taken away with this commit, never left to grow the repository.
             // A site's are in Lamp's folder (`StaticSite.layOut`).
             let at = fm.fileExists(atPath: tree.appendingPathComponent("\(StaticSite.folder)/lamp-app.json").path) ? StaticSite.folder + "/" : ""
-            if await Subprocess.run(git, ["diff", "--cached", "--quiet", "--", ".", ":(exclude)\(at)lamp-app.json", ":(exclude)\(at)*.lampapp", ":(exclude)\(at)\(Credits.file)"], cwd: clone, timeout: 60).ok {
+            if await Subprocess.run(git, ["diff", "--cached", "--quiet", "--", ".", ":(exclude)\(at)lamp-app.json", ":(exclude)\(at)\(Credits.file)"], cwd: clone, timeout: 60).ok {
                 let before = await Subprocess.run(git, ["show", "HEAD:\(at)lamp-app.json"], cwd: clone, mergeErrors: false, timeout: 30)
                 let credits = await Subprocess.run(git, ["show", "HEAD:\(at)\(Credits.file)"], cwd: clone, mergeErrors: false, timeout: 30)
                 if before.ok, let after = try? Data(contentsOf: clone.appendingPathComponent("\(at)lamp-app.json")),
@@ -660,7 +660,7 @@ enum GitHubRepo {
         keep(record, for: project)
         // The page's Open in Lamp and Remix… start from the code just pushed with it, which is the game it plays.
         step("Putting up its page on GitHub…")
-        let open = Publish.OpenInLamp(link: page.link, file: nil, origin: .repository(url: url, commit: commit))
+        let open = Publish.OpenInLamp(link: page.link, origin: .repository(url: url, commit: commit))
         try Data(Publish.withCreditBar(page.html, credits: page.credits, open: open, suggestions: page.suggestions,
                                        name: project.name, about: page.about).utf8)
             .write(to: page.folder.appendingPathComponent("index.html"))

@@ -185,6 +185,9 @@ public struct WishLinkCard: View {
     /// box, what the commits show on GitHub (an address the person's git signs with).
     let gitHubNote: String?
     let gitHubStage: GitHubStage?
+    /// Lamp is still finding the app on GitHub: said in the GitHub row's place, and nothing is released until the row
+    /// shows where it goes.
+    let checkingGitHub: Bool
     /// The app's repository ("owner/name") when it has changes on GitHub the app doesn't: the card offers to bring them in
     /// (`bringIn`) in place of the box, and a release goes to the link alone.
     let gitHubBehind: String?
@@ -205,7 +208,7 @@ public struct WishLinkCard: View {
     public init(icon: NSImage?, picture: NSImage?, values: Binding<Values>, limits: Limits, link: String?, changed: Bool,
                 stage: Stage, copied: Bool, retake: (() -> Void)?, retaking: Bool, canIncludeFile: Bool = false, noLicense: String? = nil,
                 writingNotes: Bool = false, gitHub: String? = nil, gitHubNote: String? = nil, gitHubStage: GitHubStage? = nil,
-                retryGitHub: (() -> Void)? = nil, gitHubBehind: String? = nil, bringIn: (() -> Void)? = nil,
+                checkingGitHub: Bool = false, retryGitHub: (() -> Void)? = nil, gitHubBehind: String? = nil, bringIn: (() -> Void)? = nil,
                 gitHubSetup: GitHubSetup? = nil, setUpGitHub: GitHubSetupActions = .none,
                 share: @escaping () -> Void, copy: @escaping () -> Void, stop: @escaping () -> Void, close: @escaping () -> Void,
                 width: CGFloat? = 480) {
@@ -214,6 +217,7 @@ public struct WishLinkCard: View {
         self.gitHub = gitHub
         self.gitHubNote = gitHubNote
         self.gitHubStage = gitHubStage
+        self.checkingGitHub = checkingGitHub
         self.retryGitHub = retryGitHub
         self.gitHubBehind = gitHubBehind
         self.bringIn = bringIn
@@ -282,7 +286,9 @@ public struct WishLinkCard: View {
                     Text(noLicense).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 // Shown where it's chosen: the release goes to the app's repository too while it's ticked.
-                if let gitHubBehind {
+                if checkingGitHub {
+                    HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Checking GitHub…").foregroundStyle(.secondary) }.font(.callout)
+                } else if let gitHubBehind {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("\(gitHubBehind) has changes on GitHub that this app doesn't have yet. Bring them in, then release.")
                             .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -383,7 +389,7 @@ public struct WishLinkCard: View {
             Button("Cancel", role: .cancel, action: close).keyboardShortcut(.cancelAction)
             Button(link == nil ? "Copy Link" : "Release Update", action: share)
                 .keyboardShortcut(.defaultAction)
-                .disabled(!values.isComplete || !canPutOnGitHub)
+                .disabled(!values.isComplete || checkingGitHub || !canPutOnGitHub)
         }
     }
 

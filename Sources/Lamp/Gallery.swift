@@ -927,6 +927,7 @@ enum Gallery {
         wishLink("No license", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includeFile: true),
                  canIncludeFile: true, noLicense: "Found Code by Someone came with no license. Make sure you're comfortable sharing it."),
         // An app that's on GitHub: the release goes there too while its box is ticked, and says how it went apart from the link.
+        wishLink("Release, checking GitHub", values: releaseValues(), link: true, changed: true, checkingGitHub: true),
         wishLink("Release, also to GitHub", values: releaseValues(), link: true, changed: true, gitHub: true),
         wishLink("Release, git signs the commits", values: releaseValues(), link: true, changed: true, gitHub: true,
                  gitHubNote: "Your git signs your commits, so they go as you sign them, showing someone@example.com on GitHub."),
@@ -1000,7 +1001,7 @@ enum Gallery {
                                  stage: WishLinkCard.Stage = .editing, link: Bool = false, copied: Bool = false,
                                  changed: Bool = false, canIncludeFile: Bool = false, noLicense: String? = nil, writingNotes: Bool = false,
                                  gitHub: Bool = false, gitHubBehind: Bool = false, gitHubNote: String? = nil, gitHubStage: WishLinkCard.GitHubStage? = nil,
-                                 setup: WishLinkCard.GitHubSetup? = nil, width: CGFloat? = 440) -> Entry {
+                                 checkingGitHub: Bool = false, setup: WishLinkCard.GitHubSetup? = nil, width: CGFloat? = 440) -> Entry {
         Entry(group: "Share Link", name: name) {
             let folder = Starters.folder?.appendingPathComponent("diskmap")
             let card = WishLinkCard(
@@ -1010,7 +1011,7 @@ enum Gallery {
                 limits: WishLink.cardLimits, link: link ? "https://lamp.dev/w/AyTkit4xCc" : nil, changed: !link || changed,
                 stage: stage, copied: copied, retake: retake ? {} : nil, retaking: false, canIncludeFile: canIncludeFile, noLicense: noLicense,
                 writingNotes: writingNotes, gitHub: gitHub ? "someone/disk-map" : nil, gitHubNote: gitHubNote, gitHubStage: gitHubStage,
-                retryGitHub: { if case .failed = gitHubStage, !gitHubBehind { return {} } else { return nil } }(),
+                checkingGitHub: checkingGitHub, retryGitHub: { if case .failed = gitHubStage, !gitHubBehind { return {} } else { return nil } }(),
                 gitHubBehind: gitHubBehind ? "someone/disk-map" : nil, bringIn: gitHubBehind ? {} : nil, gitHubSetup: setup,
                 share: {}, copy: {}, stop: {}, close: {}, width: width)
             return AnyView(card

@@ -2,8 +2,8 @@ import XCTest
 @testable import Lamp
 
 /// Send Changes Back sends only what the remix changed, on top of where the repository is now: measured from what the
-/// remix last took in, never from the commit its credits name, with Lamp's own files, the manifest's marks and the
-/// shared file left as the repository has them but for the change.
+/// remix last took in, never from the commit its credits name, with Lamp's own files and the manifest's marks left
+/// as the repository has them but for the change, and the shared file an older Lamp put beside the code taken away.
 final class ContributeTests: XCTestCase {
     private let escape = HistoryEscapeTests()
     private var folders: [URL] = []
@@ -50,8 +50,8 @@ final class ContributeTests: XCTestCase {
         return repo
     }
 
-    /// Changes the repository and commits it with its shared file made again from what it shares, as a push from Lamp
-    /// does. The new commit.
+    /// Changes the repository and commits it with its shared file made again from what it shares, as a push from an
+    /// older Lamp did. The new commit.
     @discardableResult
     private func commit(_ repo: URL, _ files: [String: String?], _ message: String) throws -> String {
         try write(files, in: repo)
@@ -104,14 +104,6 @@ final class ContributeTests: XCTestCase {
         return shown?.status == 0 ? shown?.output : nil
     }
 
-    /// The shared file in the prepared commit, unpacked.
-    private func sharedFile(of prepared: Contribute.Prepared) throws -> URL {
-        let out = prepared.folder.appendingPathComponent("check-\(UUID().uuidString)")
-        _ = try git("mkdir -p \(Sandbox.quoted(out.path)) && git show \(prepared.commit):drive.lampapp > \(Sandbox.quoted(out.path))/drive.zip "
-                    + "&& /usr/bin/ditto -x -k \(Sandbox.quoted(out.path))/drive.zip \(Sandbox.quoted(out.path))/files", in: prepared.clone)
-        return out.appendingPathComponent("files")
-    }
-
     // MARK: The cases
 
     /// A remix opened from a shared file that names the commit before the one it went up in, changed here, while the
@@ -137,12 +129,7 @@ final class ContributeTests: XCTestCase {
         for path in ["Sources/Radio.swift", "Sources/LampSupport.swift", "Package.swift", "build.sh", "README.md", "lamp-app.json", Credits.file, "icon.json"] {
             XCTAssertEqual(file(path, at: prepared.commit, in: prepared.clone), file(path, at: tip, in: prepared.clone), path)
         }
-        let unpacked = try sharedFile(of: prepared)
-        for path in ["Sources/App.swift", "Sources/Gearbox.swift", "Sources/Radio.swift", "lamp-app.json", Credits.file] {
-            XCTAssertEqual(try? String(contentsOf: unpacked.appendingPathComponent(path), encoding: .utf8),
-                           file(path, at: prepared.commit, in: prepared.clone), "the shared file has \(path) as the code does")
-        }
-        XCTAssertFalse(FileManager.default.fileExists(atPath: unpacked.appendingPathComponent("Sources/LampSupport.swift").path))
+        XCTAssertNil(file("drive.lampapp", at: prepared.commit, in: prepared.clone), "the shared file an older Lamp put up is taken away")
     }
 
     /// Changed here, then updated from the repository, which later took that update's change back: the remix is measured
@@ -172,8 +159,7 @@ final class ContributeTests: XCTestCase {
         XCTAssertEqual(file("Sources/App.swift", at: prepared.commit, in: prepared.clone), "a\nb\nc\n")
     }
 
-    /// A change the repository already has leaves nothing to send, even where its shared file was zipped as Lamp zipped
-    /// one before (with ditto), which remaking it would change.
+    /// A change the repository already has leaves nothing to send, and its shared file isn't taken away on its own.
     func testAChangeTheRepositoryHasIsNothingToSend() async throws {
         let repo = try repository(["Sources/App.swift": "a\nb\nc\n"])
         let (project, _) = try await remix(of: ["Sources/App.swift": "a\nb\nc\n"], commit: try git("git rev-parse HEAD", in: repo))
@@ -217,8 +203,6 @@ final class ContributeTests: XCTestCase {
         XCTAssertNil(file("Sources/Radio.swift", at: prepared.commit, in: prepared.clone))
         XCTAssertNil(file("Sources/Old.swift", at: prepared.commit, in: prepared.clone))
         XCTAssertEqual(file("README.md", at: prepared.commit, in: prepared.clone), "# Drive, now\n")
-        let unpacked = try sharedFile(of: prepared)
-        XCTAssertEqual(Contribute.regularFiles(in: unpacked), ["Sources/App.swift", "Sources/New.swift", Credits.file, "icon.json", "lamp-app.json"].sorted())
     }
 
     /// A new line for the app, written after an update was taken in, goes in the manifest; the repository's identity,
@@ -288,7 +272,8 @@ final class ContributeTests: XCTestCase {
                                     folder(ours) + "/Twos.kt": "package \(ours)\n\nval step = 2\n"], "Twos")
 
         let prepared = try await prepare(receiver, from: repo)
-        XCTAssertEqual(prepared.changed, [folder(theirs) + "/MainActivity.kt", folder(theirs) + "/Twos.kt", "drive.lampapp"].sorted())
+        // drive.lampapp isn't named for this wish (Tally), so it isn't Lamp's to take away.
+        XCTAssertEqual(prepared.changed, [folder(theirs) + "/MainActivity.kt", folder(theirs) + "/Twos.kt"].sorted())
         let sent = try XCTUnwrap(file(folder(theirs) + "/MainActivity.kt", at: prepared.commit, in: prepared.clone))
         XCTAssertEqual(sent, (file(folder(theirs) + "/MainActivity.kt", at: first, in: prepared.clone) ?? "") + "\n// Counts by twos\n")
         XCTAssertEqual(file(folder(theirs) + "/Twos.kt", at: prepared.commit, in: prepared.clone), "package \(theirs)\n\nval step = 2\n")
@@ -312,8 +297,6 @@ final class ContributeTests: XCTestCase {
         XCTAssertEqual(sent, "", "the key is in what would be pushed")
         let capabilities = try XCTUnwrap(file(Template.Capabilities.file, at: prepared.commit, in: prepared.clone))
         XCTAssertEqual(try JSONSerialization.jsonObject(with: Data(capabilities.utf8)) as? NSDictionary, ["background": true])
-        let unpacked = try sharedFile(of: prepared)
-        XCTAssertFalse(try String(contentsOf: unpacked.appendingPathComponent(Template.Capabilities.file), encoding: .utf8).contains(key))
     }
 
     /// Work credited here after the remix arrived keeps its credit, though Lamp's running record of credits has it too.
