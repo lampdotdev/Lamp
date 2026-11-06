@@ -276,7 +276,7 @@ messages, only to Lamp's own paths), and a claim tries the Mac's IPv4 addresses 
 a wish talks to the wish's other apps through the host too: it opens the page's `ws://` links to the home network
 and passes their frames (`ws` web messages), while the page keeps the wish's handshake and seals (the "Wishes" guide). The page's console, uncaught
 errors and the host's own lines go to `LocalState\log.txt`, which the bridge's `log` reads (`DeviceApps.log`). The agent's looks never picture the Xbox (`AgentPreview`), so a web kind is
-looked at in its preview, but a look at a game that has gone on one adds the last lines of that log (`deviceLogTail`):
+looked at in its preview, but a look at a game that has gone on one adds the last lines of that log (`withDeviceLog`):
 the frames-a-second report the game writes every ten seconds is the only word from the console of how it runs there. A controller in WebView2
 sends its buttons as key presses named "Unidentified" with Edge's old key codes; lamp.js renames them before the page
 hears them (`padKeys`: the d-pad and left stick are the arrows, A is Enter and presses what has focus, B is Escape,

@@ -14823,12 +14823,12 @@ final class Store: ObservableObject {
         guard let preview = AgentPreview.app(for: app) else {
             return await underTurn(of: project, app) {
                 guard let turn = turns[app.id], turn.agent != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
-                return await buildWithoutPreview(app, in: turn)
+                return await withDeviceLog(await buildWithoutPreview(app, in: turn), of: app)
             }
         }
         return await underTurn(of: project, app) {
-            await look(at: preview, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
-                       reopen: reopen, onDevice: onDevice, shape: arguments["shape"] as? String, tryOn: app.device)
+            await withDeviceLog(await look(at: preview, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
+                                           reopen: reopen, onDevice: onDevice, shape: arguments["shape"] as? String, tryOn: app.device), of: app)
         }
     }
 
@@ -14926,9 +14926,14 @@ final class Store: ObservableObject {
     /// which the look only speaks of, and which the turn's end delivers to.
     private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false, onDevice: Bool = false,
                       shape: String? = nil, tryOn: String? = nil) async -> (Int, [String: Any]) {
-        var answer = withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice, shape: shape, tryOn: tryOn), of: project)
-        // Every look at a game that has gone on the person's Xbox, whichever way it went, says what the game logged there.
-        if answer.0 == 200, let text = answer.1["text"] as? String, Privacy.sharesLog, let (device, tail) = await deviceLogTail(project) {
+        withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice, shape: shape, tryOn: tryOn), of: project)
+    }
+
+    /// Every look at a game that has gone on the person's Xbox, whichever way it went (a preview, or only a build for a
+    /// game with none), says what the game logged there.
+    private func withDeviceLog(_ answer: (Int, [String: Any]), of app: LampProject) async -> (Int, [String: Any]) {
+        var answer = answer
+        if answer.0 == 200, let text = answer.1["text"] as? String, Privacy.sharesLog, let (device, tail) = await deviceLogTail(app) {
             answer.1["text"] = text + "\n\nWhat it logged on the person's \(device) since it last opened there (how many frames a second it "
                 + "gets there is the line it writes every ten seconds; it isn't open there now if that line is old):\n\(tail)"
         }
