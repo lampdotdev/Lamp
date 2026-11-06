@@ -38,9 +38,11 @@ enum Privacy {
             let inside = String(path.dropFirst(home.count))
             if inside.hasPrefix("/.lamp/runtime/") {
                 let name = (inside as NSString).lastPathComponent
-                // The screenshots, the smaller copies of them and of painted art the agent is shown, and the
-                // screen as text, which says what the pictures show.
-                if name.hasSuffix(".png") || name.hasSuffix(".jpg") || name == "screen.txt", !sharesPictures { return .deny(picturesOff) }
+                // The screenshots, the smaller copies of them and of painted art the agent is shown, the screen as
+                // text, which says what the pictures show, and the windows that couldn't be pictured, by their titles.
+                if name.hasSuffix(".png") || name.hasSuffix(".jpg") || name == "screen.txt" || name == "capture.txt", !sharesPictures {
+                    return .deny(picturesOff)
+                }
                 if name.hasSuffix("log.txt"), !sharesLog { return .deny(logOff) }
             }
             return .allow

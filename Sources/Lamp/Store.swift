@@ -7273,6 +7273,8 @@ final class Store: ObservableObject {
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
         var pictures = Runtime.pictures(of: project)
+        // A window it couldn't picture is said, never shown as the app's own drawing without its page or game.
+        if Privacy.sharesPictures, let missed = Runtime.missedPictures(of: project, since: asked) { text += "\n\n" + missed }
         // A game's window that drew nothing to picture (`lookAtOpenGame` says the same).
         if inWindow, let first = pictures.first, GameKit.isBlank(first) {
             pictures = []
@@ -11436,7 +11438,7 @@ final class Store: ObservableObject {
                 + "on another Space or on a sleeping display, or the game drew nothing. Look again in a moment; if it stays blank, "
                 + "ask the person to bring the game's window into view, or read what the game logged."
         } else if screenshots.isEmpty {
-            text += " The game didn't send a picture of its window."
+            text += " " + (Runtime.missedPictures(of: mac, since: asked) ?? "The game didn't send a picture of its window.")
         } else if motion, Privacy.sharesPictures {
             if let watched = await Runtime.motion(of: mac) {
                 text = watched.text + " " + text
@@ -15324,9 +15326,12 @@ final class Store: ObservableObject {
                 lead += "The app didn't answer the request to watch it; it may need rebuilding. "
             }
         }
+        // A window the app couldn't picture is said, never shown as the app's own drawing without its page or game.
+        let missed = Runtime.missedPictures(of: project, since: since)
         var text = lead + note + " " + (screenshots.isEmpty
-            ? "It has no window open, so there's no picture. If it lives in the menu bar, use_app's bar_icon opens its panel."
-            : Privacy.sharesPictures ? (lead.isEmpty ? "Pictures of its windows follow, frontmost first; x and y for use_app are pixels in the first." : "") : Privacy.picturesOff)
+            ? missed ?? "It has no window open, so there's no picture. If it lives in the menu bar, use_app's bar_icon opens its panel."
+            : Privacy.sharesPictures ? (lead.isEmpty ? "Pictures of its windows follow, frontmost first; x and y for use_app are pixels in the first." : "")
+                + (missed.map { " " + $0 } ?? "") : Privacy.picturesOff)
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         text += " This look took \(Int(Date().timeIntervalSince(began).rounded())) seconds."
         text += Self.handingHint(for: project)

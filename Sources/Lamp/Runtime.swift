@@ -407,10 +407,31 @@ enum Runtime {
             ["screenshot.png", "screenshot-2.png", "screenshot-3.png"].map { folder(project).appendingPathComponent($0) }
                 .filter { (try? $0.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast > date }
         }
-        for _ in 0..<Int(seconds * 4) where fresh().isEmpty {
+        // An app that couldn't picture its windows says so (`missedPictures`), and nothing more is coming.
+        for _ in 0..<Int(seconds * 4) where fresh().isEmpty && missedPictures(of: project, since: date) == nil {
             try? await Task.sleep(for: .milliseconds(250))
         }
         return fresh()
+    }
+
+    /// What the app said it couldn't picture in its latest pictures since `date` (`LampRuntime.snapshot` writes
+    /// capture.txt): a window the system gave no picture of, which the app's own drawing would show without its page,
+    /// game or video, so it's left out. Said to the agent in a sentence; nil when every window was pictured. The
+    /// windows' titles say what's on screen, so they go only where pictures may (`Privacy.sharesPictures`): with pictures
+    /// kept from the agent, the sentence is a fixed one, said before anything in the file is read.
+    static func missedPictures(of project: LampProject, since date: Date = .distantPast) -> String? {
+        let url = folder(project).appendingPathComponent("capture.txt")
+        guard let size = AppFile.attributes(url, in: project).flatMap({ $0.modified > date ? $0.size : nil }), size > 0 else { return nil }
+        let after = "so it's left out rather than shown without what the system draws in it (a page, a game or video). "
+            + "Look again in a moment; if it stays, ask the person to bring the window into view."
+        guard Privacy.sharesPictures else { return "Lamp couldn't take a picture of the app's window, " + after }
+        guard let data = AppFile.read(url, in: project), data.count <= 4000,
+              let report = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return "Lamp couldn't take a picture of the app's window, " + after
+        }
+        let windows = (report["windows"] as? [String] ?? []).filter { !$0.isEmpty }
+        let why = (report["why"] as? String).map { " (\($0))" } ?? ""
+        return "Lamp couldn't take a picture of \(windows.isEmpty ? "the app's window" : windows.joined(separator: ", "))\(why), " + after
     }
 
     /// What the app says happened when it carried out a `use_app` request (see `LampDriver` in the app), and

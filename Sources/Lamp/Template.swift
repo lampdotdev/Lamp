@@ -6705,9 +6705,12 @@ enum Template {
                 popover.contentViewController = content
                 popover.behavior = .transient
                 popover.show(relativeTo: wand.bounds, of: wand, preferredEdge: wand.isFlipped ? .maxY : .minY)
+                coachWindow = content.view.window
                 DispatchQueue.main.asyncAfter(deadline: .now() + 8) { popover.performClose(nil) }
             }
         }
+        /// The note `coach` shows, which is Lamp's and not the app's: the app's pictures leave it out.
+        @MainActor static weak var coachWindow: NSWindow?
 
         /// The chat beside the window: a borderless panel of the app's, attached to the window as its child so macOS
         /// moves, stacks and hides it with the window, holding the card on its glass. It takes the keyboard for the
@@ -7430,7 +7433,7 @@ enum Template {
         /// whatever there is (a menu bar app may have nothing).
         @MainActor
         private static func firstSnapshot(waited: Double = 0) {
-            guard windowsOnScreen.isEmpty, waited < 2 else {
+            guard openWindows.isEmpty, waited < 2 else {
                 DispatchQueue.main.asyncAfter(deadline: .now() + (waited < 2 ? 0.5 : 0)) { MainActor.assumeIsolated { snapshot() } }
                 return
             }
@@ -7449,7 +7452,8 @@ enum Template {
         @MainActor
         private static func snapshotNow(then done: (@MainActor () -> Void)?) {
             LampDriver.keepBarPanel()
-            let windows = windowsOnScreen
+            // Every open window, those the last pictures found clear included: each is looked at afresh.
+            let windows = openWindows
             guard !windows.isEmpty else { done?(); return }   // nothing on screen: keep the last pictures
             // The app's own window, not a dialog or sheet in front of it (a menu bar app's panel when that's all it has):
             // the desk keeps this picture until the next launch.
@@ -7459,20 +7463,18 @@ enum Template {
             if loading { previewAtTheLatest() }
             let previewWindow = previewTaken || loading ? nil : windows.first(where: { !$0.isSheet && !($0 is NSPanel) }) ?? windows.first(where: LampDriver.isBarPanel)
             if previewWindow != nil { previewTaken = true }
-            let front = Array(windows.prefix(3))
-            let seen = capturable()
-            let shots = front.map { seen ? shot(of: $0) : nil }
+            // A few windows past the three pictured, since a clear one (a popover closing, a helper window that shows
+            // nothing) is left out and the next one takes its place.
+            let front = Array(windows.prefix(5))
+            let unseen = whyNotCapturable()
+            let shots = front.map { unseen == nil ? shot(of: $0) : nil }
             // The desk's picture is never sent to the model, and a Share Link shows it large: taken sharper than the rest.
-            let previewShot = previewWindow.flatMap { seen ? shot(of: $0, longest: 2048) : nil }
-            // The front window as text, beside its picture (LampScreen), for the builder to read and act on by name: read
-            // now, with the window as it's pictured, and written with the pictures, so a later snapshot's text never
-            // lands beside this one's pictures.
-            let words = LampScreen.text(for: LampDriver.elements(in: windows[0]).map(\.item))
+            let previewShot = previewWindow.flatMap { unseen == nil ? shot(of: $0, longest: 2048) : nil }
             // The window server's pictures are taken off the main thread: the first after a build has the system check
             // the app's signature before it answers, which can take seconds, and the app froze (a spinning cursor) meanwhile.
             pictures.async {
-                let taken = shots.map { $0.flatMap(capture) }
-                let previewPicture = previewShot.flatMap(capture)
+                let taken = shots.map { $0.map(capture) ?? .none }
+                let previewPicture = previewShot.map(capture) ?? .none
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         // The picture Lamp's desk shows when the pointer rests on this app's icon: the first window it
@@ -7480,7 +7482,7 @@ enum Template {
                         // A window of one color (a game's loading screen, a page not drawn yet) is taken again a few
                         // seconds later, for up to a minute, keeping the last picture meanwhile.
                         if let previewWindow {
-                            if let png = previewPicture ?? drawn(previewWindow), !looksBlank(png) || previewRetakes >= 20 {
+                            if let png = usable(previewPicture, of: previewWindow), !looksBlank(png) || previewRetakes >= 20 {
                                 try? png.write(to: folder.appendingPathComponent("preview.png"), options: .atomic)
                             } else {
                                 previewTaken = false
@@ -7490,6 +7492,27 @@ enum Template {
                                 }
                             }
                         }
+                        // A window that shows nothing is left out; one the system gave no picture of, where the app's
+                        // own drawing would leave out a page, a game or video, is said to Lamp instead (capture.txt).
+                        // A clear window is left out of `windowsOnScreen` too, until a picture shows something in it, so
+                        // the first picture, the screen as text and `use_app`'s actions are all of the same window. When
+                        // the front window can't be pictured, no window behind it takes its place as the first picture.
+                        var kept: [(window: NSWindow, png: Data)] = []
+                        var missed: [String] = []
+                        var clear: Set<Int> = []
+                        for (window, result) in zip(front, taken) where kept.count < 3 {
+                            if case .clear = result { clear.insert(window.windowNumber); continue }
+                            if let png = usable(result, of: window) {
+                                if isClear(png) { clear.insert(window.windowNumber) } else { kept.append((window, png)) }
+                            } else {
+                                missed.append(window.title.isEmpty ? "a window" : "\"\(window.title)\"")
+                                if kept.isEmpty { break }
+                            }
+                        }
+                        showsNothing = clear
+                        // The pictured front window as text, beside its picture (LampScreen), for the builder to read and act
+                        // on by name, written with the pictures, so a later snapshot's text never lands beside this one's.
+                        let words = kept.first.flatMap { LampScreen.text(for: LampDriver.elements(in: $0.window).map(\.item)) }
                         let text = folder.appendingPathComponent("screen.txt")
                         if let words {
                             try? words.write(to: text, atomically: true, encoding: .utf8)
@@ -7498,17 +7521,82 @@ enum Template {
                         }
                         for index in 0..<3 {
                             let url = folder.appendingPathComponent(index == 0 ? "screenshot.png" : "screenshot-\(index + 1).png")
-                            if index < front.count, let png = taken[index] ?? drawn(front[index]) {
-                                try? png.write(to: url, options: .atomic)
+                            if index < kept.count {
+                                try? kept[index].png.write(to: url, options: .atomic)
                             } else {
                                 try? FileManager.default.removeItem(at: url)
                             }
+                        }
+                        let note = folder.appendingPathComponent("capture.txt")
+                        if missed.isEmpty {
+                            try? FileManager.default.removeItem(at: note)
+                        } else {
+                            // The titles apart from the reason, whatever lines a title holds.
+                            let report: [String: Any] = ["windows": missed, "why": unseen ?? "the system gave no picture of it"]
+                            try? JSONSerialization.data(withJSONObject: report).write(to: note, options: .atomic)
                         }
                         done?()
                     }
                 }
             }
         }
+
+        /// What the window server gave for a window: a picture, a clear one only (the window shows nothing, as a
+        /// popover closing doesn't), or none.
+        enum Taken: Sendable {
+            case picture(Data)
+            case clear
+            case none
+        }
+
+        /// A picture to keep of the window: the window server's, or when it gave none, the app's own drawing, but only
+        /// of a window with nothing in it the app's drawing leaves out (`drawsElsewhere`), which would be passed off as
+        /// the window while missing the game.
+        @MainActor
+        private static func usable(_ taken: Taken, of window: NSWindow) -> Data? {
+            switch taken {
+            case .picture(let png): return png
+            case .clear: return nil
+            case .none: return drawsElsewhere(window) ? nil : drawn(window)
+            }
+        }
+
+        // begin LampRuntime.pictureChecks
+        /// Whether a picture is all but clear: nothing in it is drawn at all, as a window fading out or one that's only a
+        /// clear holder gives. Seen at 64 by 64, no pixel more than 1/32 opaque.
+        nonisolated static func isClear(_ png: Data) -> Bool {
+            guard let source = CGImageSourceCreateWithData(png as CFData, nil),
+                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return false }
+            switch image.alphaInfo {
+            case .none, .noneSkipFirst, .noneSkipLast: return false
+            default: break
+            }
+            let side = 64
+            var pixels = [UInt8](repeating: 0, count: side * side * 4)
+            let drew = pixels.withUnsafeMutableBytes { bytes -> Bool in
+                guard let context = CGContext(data: bytes.baseAddress, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
+                                              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+                context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+                return true
+            }
+            guard drew else { return false }
+            return stride(from: 3, to: pixels.count, by: 4).allSatisfy { pixels[$0] < 8 }
+        }
+        /// Whether some of the window is drawn where the app's own drawing of it (`cacheDisplay`) can't reach: a web page
+        /// (another process draws it), Metal (a game's or a 3D scene's frames) or video. Looked up by name, as the app may
+        /// not link the frameworks.
+        @MainActor
+        static func drawsElsewhere(_ window: NSWindow) -> Bool {
+            let kinds = ["WKWebView", "CAMetalLayer", "AVPlayerLayer", "AVSampleBufferDisplayLayer"].compactMap(NSClassFromString)
+            func layerElsewhere(_ layer: CALayer) -> Bool {
+                kinds.contains { layer.isKind(of: $0) } || (layer.sublayers ?? []).contains(where: layerElsewhere)
+            }
+            func elsewhere(_ view: NSView) -> Bool {
+                kinds.contains { view.isKind(of: $0) } || view.layer.map(layerElsewhere) == true || view.subviews.contains(where: elsewhere)
+            }
+            return (window.contentView?.superview ?? window.contentView).map(elsewhere) ?? false
+        }
+        // end LampRuntime.pictureChecks
 
         @MainActor private static var previewTaken = false
         @MainActor private static var previewRetakes = 0
@@ -7568,23 +7656,46 @@ enum Template {
             return Shot(number: window.windowNumber, size: view.bounds.size, scale: scale(of: window, longest: longest))
         }
 
-        /// The window server's picture of a window, as a PNG at the size every picture of it is sent at.
-        static func capture(_ shot: Shot) -> Data? {
-            shown(number: shot.number).flatMap { png($0, size: shot.size, scale: shot.scale) }
+        /// The window server's picture of a window, as a PNG at the size every picture of it is sent at. A first try can
+        /// come back with none, a clear one or one of one color (a page between frames, a window still appearing), so it's
+        /// tried again up to three times, 150 ms apart: under half a second for a window. One of one color after that is
+        /// the window as it is (a game that drew nothing), and Lamp says so; none is said to Lamp, never made up.
+        static func capture(_ shot: Shot) -> Taken {
+            var result = Taken.none
+            for attempt in 0..<4 {
+                if attempt > 0 { Thread.sleep(forTimeInterval: 0.15) }
+                guard let image = shown(number: shot.number), let png = png(image, size: shot.size, scale: shot.scale) else { continue }
+                if isClear(png) {
+                    if case .none = result { result = .clear }
+                    continue
+                }
+                result = .picture(png)
+                if !looksBlank(png) { break }
+            }
+            return result
         }
 
         /// Open windows, frontmost first. A dialog or sheet comes before the window it's attached to: it's
         /// what the user has to deal with first, and `orderedWindows` leaves those out.
         @MainActor
-        static var windowsOnScreen: [NSWindow] {
+        static var windowsOnScreen: [NSWindow] { openWindows.filter { !showsNothing.contains($0.windowNumber) } }
+
+        /// The windows the last pictures found clear (`snapshot`): nothing in them is on screen, so they're not the window
+        /// pictured, read or acted on.
+        @MainActor private static var showsNothing: Set<Int> = []
+
+        /// `windowsOnScreen` with those the last pictures found clear.
+        @MainActor
+        private static var openWindows: [NSWindow] {
             func withSheets(_ window: NSWindow) -> [NSWindow] { (window.attachedSheet.map(withSheets) ?? []) + [window] }
             var windows = NSApp.orderedWindows.flatMap(withSheets)
             // Alerts and panels shown on their own.
             windows.insert(contentsOf: NSApp.windows.filter { $0 is NSPanel && !$0.isSheet && !windows.contains($0) }, at: 0)
             // Not the clear windows a change's effect is drawn in (LampTransition), nor the chat's panel beside a window,
-            // which another process draws and the app pictures as blank: the pictures are of the app.
+            // which another process draws and the app pictures as blank, nor the note pointing at the wand: the pictures
+            // are of the app.
             return windows.filter { $0.isVisible && !$0.isMiniaturized && $0.frame.width > 40 && $0.frame.height > 40
-                && !($0 is LampTransition.Glass) && !($0 is LampSidebar.Beside) }
+                && !($0 is LampTransition.Glass) && !($0 is LampSidebar.Beside) && $0 !== LampSidebar.coachWindow }
         }
 
         /// Picture pixels per window point: at most 1024 pixels on the long side unless asked for more, a size models see unscaled and read
@@ -7654,9 +7765,16 @@ enum Template {
         /// Whether the window server would give a picture now: not while the app is hidden, the screen is locked or the
         /// display sleeps, when it hands back a blank one.
         @MainActor
-        private static func capturable() -> Bool {
+        private static func capturable() -> Bool { whyNotCapturable() == nil }
+
+        /// Why the window server would give no picture now, in Lamp's words to the agent, or nil when it would.
+        @MainActor
+        private static func whyNotCapturable() -> String? {
             let session = CGSessionCopyCurrentDictionary() as? [String: Any]
-            return NSApp.isHidden == false && session?["CGSSessionScreenIsLocked"] == nil && CGDisplayIsAsleep(CGMainDisplayID()) == 0
+            if NSApp.isHidden { return "the app is hidden" }
+            if session?["CGSSessionScreenIsLocked"] != nil { return "the screen is locked" }
+            if CGDisplayIsAsleep(CGMainDisplayID()) != 0 { return "the display is asleep" }
+            return nil
         }
 
         private static func shown(number: Int) -> CGImage? {
