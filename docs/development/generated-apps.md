@@ -435,7 +435,7 @@ from GitHub… on a project that isn't a wish offers Make App, a new wish whose 
 
 A shared app's review is one piece of work Lamp owns from the click to the answer (`Store.ReviewWork`): fetching the
 update, unpacking it, reading its code (`Sharing.inspect`, off the main actor) and asking the AI, in one task that Cancel,
-a newer review and the deadline (`Store.reviewDeadline`) all stop, the fetch's git included (`RepoImport.clone`). A second
+a newer review and the deadline (`Store.reviewDeadline`) all stop, the fetch's git and an engine answering for the AI included (`RepoImport.clone`, `AppAI.viaEngine`); the review never waits for either to exit. A file opened during the welcome waits for it on its own before it takes the review, so files opened together are each kept (`WaitingImport`). A second
 Review Update… on the same wish while it runs is the same review; a stopped review's fetch never opens a sheet (`owns`).
 Its stage shows where it was asked for: beside the wish on the desk ("Fetching update…", with Cancel) until its sheet is
 up, then on the sheet. A reading that didn't finish is never a review: the sheet, or the desk line, says why with Try

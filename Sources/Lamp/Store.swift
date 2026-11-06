@@ -748,6 +748,9 @@ final class Store: ObservableObject {
     private var reviewTask: Task<Void, Never>?
     /// The AI's part of the review (`Sharing.review`), which the deadline can stop on its own: the code is read by then.
     private var askingTask: Task<ImportReview, Never>?
+    /// Hands the AI's part of the review its outcome, once (`settleAsking`): its answer, or nil when it was stopped. The
+    /// review waits on this rather than on `askingTask`, so the deadline settles it even if an engine never exits.
+    private var askingSettle: ((ImportReview?) -> Void)?
     private var reviewTimer: Task<Void, Never>?
     /// What Try Again does after a review failed: the same request again.
     private var reviewRetry: (() -> Void)?
@@ -805,6 +808,7 @@ final class Store: ObservableObject {
     private func endReview() {
         reviewTask?.cancel()
         askingTask?.cancel()
+        settleAsking(nil)
         reviewTimer?.cancel()
         reviewTask = nil
         askingTask = nil
@@ -838,6 +842,7 @@ final class Store: ObservableObject {
         if work.stage == .asking {
             reviewWork?.outOfTime = true
             askingTask?.cancel()
+            settleAsking(nil)
             return
         }
         failReview(id, "Lamp couldn't finish checking this in time.", detail: "Nothing was changed.")
@@ -889,10 +894,27 @@ final class Store: ObservableObject {
         setReviewStage(.asking, for: id)
         let asking = Task.detached(priority: .userInitiated) { await Sharing.review(package, inspection: found) }
         askingTask = asking
-        var review = await withTaskCancellationHandler { await asking.value } onCancel: { asking.cancel() }
+        // Whichever comes first: the AI's answer, or the review being stopped (Cancel, a newer review, the deadline).
+        // Stopping it cancels the AI's requests, which stops an engine's process (`AppAI.viaEngine`), but the review
+        // never waits for that to finish.
+        let answered: ImportReview? = await withTaskCancellationHandler {
+            await withCheckedContinuation { (done: CheckedContinuation<ImportReview?, Never>) in
+                askingSettle = { done.resume(returning: $0) }
+                Task { [weak self] in
+                    let review = await asking.value
+                    self?.settleAsking(review)
+                }
+            }
+        } onCancel: {
+            asking.cancel()
+            Task { @MainActor [weak self] in self?.settleAsking(nil) }
+        }
         guard !Task.isCancelled, reviewWork?.id == id, !(reviewWork?.failed ?? true) else { return }
-        // Stopped by the deadline: what Lamp's own reading found stands, and the AI's part is said not to have run.
-        if reviewWork?.outOfTime == true {
+        var review: ImportReview
+        if let answered, reviewWork?.outOfTime != true {
+            review = answered
+        } else {
+            // Stopped by the deadline: what Lamp's own reading found stands, and the AI's part is said not to have run.
             review = ImportReview(inspection: found)
             review.asked = true
             review.note = "Lamp's AI check didn't finish in time. Look at the list above carefully."
@@ -908,6 +930,12 @@ final class Store: ObservableObject {
     nonisolated static func readings(of package: Sharing.Package, reviewed: [String: NetworkPolicy]?) async -> [String: NetworkPolicy] {
         if let reviewed { return reviewed }
         return await offMain { SharedNetwork.readings(of: package) }
+    }
+
+    private func settleAsking(_ review: ImportReview?) {
+        let settle = askingSettle
+        askingSettle = nil
+        settle?(review)
     }
 
     /// Runs `work` off the main actor, stopping it (`Task.isCancelled` inside) when the caller is cancelled.
@@ -4132,11 +4160,30 @@ final class Store: ObservableObject {
     func importApp(from file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil,
                    bringingIn: BringIn.Pull? = nil, trying: Bool = false) {
         NSApp.activate()
-        guard let id = beginReview(wish: target, stage: .unpacking) else { return }
-        runReview(id, retry: { [weak self] in
-            self?.importApp(from: file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn, trying: trying)
-        }) { [weak self] in
-            await self?.openForReview(file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn, trying: trying, id: id)
+        Task {
+            // Each file waits for Lamp's first look at setup on its own, before it takes the one review there is: files
+            // opened together at launch, during the welcome, are each kept for it, in the order they came.
+            await setupLook.wait()
+            guard reviewsCanOpen else { return keepForWelcome(file, updating: target, fetched: fetched, following: following) }
+            guard let id = beginReview(wish: target, stage: .unpacking) else { return }
+            runReview(id, retry: { [weak self] in
+                self?.importApp(from: file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn, trying: trying)
+            }) { [weak self] in
+                await self?.openForReview(file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn, trying: trying,
+                                          waitForWelcome: false, id: id)
+            }
+        }
+    }
+
+    /// A shared app that came during the welcome, kept for its review once that's over (`openWaitingImport`).
+    private func keepForWelcome(_ file: URL, updating target: String?, fetched: RepoArchive.Fetched?, following: Following.Followed?) {
+        if waitingImport.keep(file, updating: target, fetched: fetched, following: following) {
+            arrivedImport += 1
+        } else {
+            let alert = NSAlert()
+            alert.messageText = "Finish the welcome first"
+            alert.informativeText = "Then open the shared app again."
+            alert.runModal()
         }
     }
 
@@ -4145,8 +4192,8 @@ final class Store: ObservableObject {
         WaitingImport.reviewsCanOpen(after: setupLook.isDone ? setup : nil, welcomeOver: Onboarding.isDone || welcomeFinished)
     }
 
-    /// Unpacks a shared app and shows its review, as the review `id`'s work. `waitForWelcome` is false for one kept
-    /// during the welcome, which is taken only once that's over (`openWaitingImport`).
+    /// Unpacks a shared app and shows its review, as the review `id`'s work. `waitForWelcome` is false for one that has
+    /// waited already (`importApp`) and for one kept during the welcome, taken only once that's over (`openWaitingImport`).
     private func openForReview(_ file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil,
                                bringingIn: BringIn.Pull? = nil, trying: Bool = false, waitForWelcome: Bool = true, id: UUID) async {
         if waitForWelcome {
@@ -4156,15 +4203,7 @@ final class Store: ObservableObject {
             guard owns(id) else { return }
             guard reviewsCanOpen else {
                 endReview()
-                if waitingImport.keep(file, updating: target, fetched: fetched, following: following) {
-                    arrivedImport += 1
-                } else {
-                    let alert = NSAlert()
-                    alert.messageText = "Finish the welcome first"
-                    alert.informativeText = "Then open the shared app again."
-                    alert.runModal()
-                }
-                return
+                return keepForWelcome(file, updating: target, fetched: fetched, following: following)
             }
         }
         setReviewStage(.unpacking, for: id)
