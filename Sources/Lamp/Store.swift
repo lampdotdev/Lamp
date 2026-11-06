@@ -11416,7 +11416,27 @@ final class Store: ObservableObject {
         text += " This look took \(Int(Date().timeIntervalSince(began).rounded())) seconds."
         text += GameKit.openGameNote(mac)
         if Privacy.sharesLog, let tail = Runtime.logTail(mac) { text += "\n\nWhat it logged:\n\(tail)" }
+        if Privacy.sharesLog, let (device, tail) = await deviceLogTail(project) {
+            text += "\n\nWhat it logged on the person's \(device) since it last opened there (how many frames a second it gets "
+                + "there is the line it writes every ten seconds; it isn't open there now if that line is old):\n\(tail)"
+        }
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
+    }
+
+    /// What a game put on the person's console last logged there, read back over the network for a look at it on this
+    /// Mac: Lamp never looks at the console itself, and without this every change made for it there was a guess, its frame
+    /// rate unknown. Nil when the game hasn't gone on one, the integration reads no log, or the console doesn't answer
+    /// within a few seconds (it's off, or asleep).
+    private func deviceLogTail(_ project: LampProject) async -> (device: String, tail: String)? {
+        guard project.openPlaces.contains(.device), DeviceApps.wentOnADevice(project),
+              let device = DeviceApps.device(for: project, among: devices) else { return nil }
+        let read = Task { try? await DeviceApps.log(project, on: device) }
+        let limit = Task { try? await Task.sleep(for: .seconds(5)); read.cancel() }
+        defer { limit.cancel() }
+        guard let log = await read.value ?? nil else { return nil }
+        let tail = Runtime.newestOfEach(log.split(separator: "\n", omittingEmptySubsequences: false).suffix(30))
+            .joined(separator: "\n").trimmed
+        return tail.isEmpty ? nil : (device.name, tail)
     }
 
     /// Why `use_app` doesn't press a game's phone page: the person's phones are the ones that join it, and Lamp has none
