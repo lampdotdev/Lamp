@@ -64,8 +64,12 @@ enum Talk {
             let question = (item["question"] as? String)?.trimmed ?? ""
             guard !question.isEmpty else { return .failure(.message("Every question needs its `question`.")) }
             if let trouble = tooLong(question, Words.question, as: "a question") { return .failure(trouble) }
-            let detail = (item["detail"] as? String)?.trimmed.nilIfEmpty
-            if let detail, let trouble = tooLong(detail, Words.questionDetail, as: "a question's `detail`") { return .failure(trouble) }
+            // The card is all the person reads of it, so every question says what it's about.
+            let detail = (item["detail"] as? String)?.trimmed ?? ""
+            guard !detail.isEmpty else {
+                return .failure(.message("“\(question)” needs its `detail`: a line on what it's about, for someone who has seen none of your work."))
+            }
+            if let trouble = tooLong(detail, Words.questionDetail, as: "a question's `detail`") { return .failure(trouble) }
             let options: [Option] = (item["options"] as? [[String: Any]] ?? []).compactMap { option in
                 guard let title = (option["title"] as? String)?.trimmed, !title.isEmpty else { return nil }
                 return Option(title: title, detail: (option["detail"] as? String)?.trimmed.nilIfEmpty,
@@ -113,17 +117,6 @@ enum Talk {
         return ask.questions.indices.map { index in
             ended(ask.questions[index].question, with: "?") + " " + ended(index < answers.count ? answers[index] : youDecide, with: ".")
         }.joined(separator: "\n")
-    }
-
-    /// Whether a message the agent wrote after its card only points at it ("Waiting for your answers.", "Pick one
-    /// above."), which the chat leaves out under the card. Told by its words, so a longer message, or one in a
-    /// language these don't cover, shows: a line said twice is better than what the question is about gone.
-    static func pointsAtCard(_ text: String) -> Bool {
-        let words = text.lowercased().split { !$0.isLetter && $0 != "'" && $0 != "’" }.map(String.init)
-        guard !words.isEmpty, words.count <= 12 else { return false }
-        let stems = ["wait", "answer", "pick", "choos", "choice", "card", "question", "click", "select", "repl", "respon"]
-        return words.contains { word in stems.contains { word.hasPrefix($0) } }
-            || text.lowercased().contains("let me know")
     }
 
     /// The card still waiting for its answer: the last one asked, with nothing said by the person since.

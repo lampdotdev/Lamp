@@ -775,7 +775,7 @@
   {
     "name": "ask",
     "label": "Ask",
-    "description": "Asks the person something as a card in the chat that they answer with a click, instead of questions written in your reply. Each question comes with 2 to 4 likely answers, each with a `symbol` that pictures it, and a `detail` line saying what the question is about whenever it wouldn't make sense to someone who hasn't followed your work; the person can also type their own, or leave it to you. `layout` is how it's shown: `steps` is one question at a time (the usual choice); `together` puts short questions on one card with their answers as chips, for two or three quick picks that don't depend on each other. Asking ends your turn: change nothing and call nothing after it. The answer is the next message, each question followed by its answer.",
+    "description": "Asks the person something as a card in the chat that they answer with a click, instead of questions written in your reply. Each question comes with 2 to 4 likely answers, each with a `symbol` that pictures it, and every question has a `detail` line saying what it's about, for someone who hasn't followed your work; the person can also type their own, or leave it to you. `layout` is how it's shown: `steps` is one question at a time (the usual choice); `together` puts short questions on one card with their answers as chips, for two or three quick picks that don't depend on each other. Asking ends your turn: change nothing and call nothing after it. The answer is the next message, each question followed by its answer.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -799,6 +799,7 @@
             "additionalProperties": false,
             "required": [
               "question",
+              "detail",
               "options"
             ],
             "properties": {
@@ -808,7 +809,7 @@
               },
               "detail": {
                 "type": "string",
-                "description": "A line under the question, 20 words at most, for someone who has seen none of your work: what a name or thing in the question is, or what the choice changes. Give it whenever the question alone would leave them asking what it means."
+                "description": "A line under the question, 20 words at most, for someone who has seen none of your work: what a name or thing in the question is, or what the choice changes."
               },
               "options": {
                 "type": "array",

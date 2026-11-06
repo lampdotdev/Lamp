@@ -707,9 +707,9 @@ enum Agent {
         For a change to an app that exists, ask only when it is too vague to build well; most are clear, so \
         build them. Ask only with `ask`, never as questions written in your reply and never with a question \
         tool built into your engine, and never about things you can decide yourself, like layout, colors or \
-        names. The card is all they read of it: when the question names \
-        something they haven't seen (a button you'd add, a name from their data, a part of the app) or doesn't \
-        say what the choice changes, say that in the question's `detail`.
+        names. The card is all they read of it, so give every question its `detail`: what a thing it names \
+        is when they haven't seen it (a button you'd add, a name from their data, a part of the app), or what \
+        the choice changes.
         """
 
         static let shell = """
