@@ -16,7 +16,8 @@ const tidy = (text) => String(text ?? "").trim().slice(0, WISH_LIMIT).trim();
 const escapeHTML = (text) => String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
 /**
- * With a remix's origin, the mark's value says what to start from as a link's query would ("starter=newyork"), since the
+ * With a remix's origin, the mark's value says what to start from as a link's query would ("starter=newyork", or
+ * "shared=<id>" for an app shared as a link, which a new Lamp opens itself), since the
  * mark is the attribute browsers are known to keep (`Wish.markedRemix` in Lamp); otherwise it's "1".
  */
 export function wishHTML(text, origin = null) {
@@ -33,9 +34,11 @@ export function wishLink(text) {
 /**
  * Copies the wish with Lamp's mark. Resolves "marked" when Lamp will find it by itself, "plain" when only the
  * words could be copied (to paste by hand), and "none" when the browser refused both.
- * Call it straight from a press: Safari only lets a page copy while a press is being handled.
+ * Call it straight from a press: Safari only lets a page copy while a press is being handled. `plain` is what goes when
+ * only words can be copied, when that's other than `text` (a shared app's description and change, since the mark
+ * naming the app is lost with the web form).
  */
-export async function copyWish(text, { clipboard = globalThis.navigator?.clipboard, Item = globalThis.ClipboardItem, origin = null } = {}) {
+export async function copyWish(text, { clipboard = globalThis.navigator?.clipboard, Item = globalThis.ClipboardItem, origin = null, plain = null } = {}) {
   const wish = tidy(text);
   // A remix is worth copying with no words: Lamp still opens on a copy of what it starts from. Lamp only looks at a
   // copy that has both forms, so the plain one is a space, which it trims to no request.
@@ -49,9 +52,10 @@ export async function copyWish(text, { clipboard = globalThis.navigator?.clipboa
       return "marked";
     }
   } catch {}
-  if (!wish) return "none";
+  const words = plain == null ? wish : tidy(plain);
+  if (!words) return "none";
   try {
-    await clipboard.writeText(wish);
+    await clipboard.writeText(words);
     return "plain";
   } catch {
     return "none";
@@ -125,6 +129,7 @@ export function remixFrom(search) {
 
 /** A remix's origin as the parameters Lamp reads, in its link and in the mark's value. */
 export function remixParams(origin) {
+  if (origin.shared) return new URLSearchParams({ shared: origin.shared });
   return new URLSearchParams(origin.starter ? { starter: origin.starter } : { repo: origin.repo, ...(origin.commit ? { commit: origin.commit } : {}) });
 }
 

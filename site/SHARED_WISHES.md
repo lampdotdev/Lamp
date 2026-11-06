@@ -33,7 +33,9 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   button that opens **Remix** with what's written, or else the change shown: a dialog with the change, a line on
   Lamp, and two ways on side by side: **Open in Lamp** on a Mac (`lamp://wish?shared=<id>` with the change, so the copy
   follows the link, or `lamp://wish?text=…` for a link without the wish's file) and **Get Lamp**, which downloads it and
-  copies the wish and the change with Lamp's mark (FIRST_IDEA.md). A request the link brought (`?ask=`) waits in the box. The function
+  copies the change with Lamp's mark naming the link (`data-lamp-wish="shared=<id>"`), so a new Lamp opens the shared app
+  itself as the link would, or the wish and the change for a link without its file (FIRST_IDEA.md). Get Lamp under a
+  picture copies the same, without a change. A request the link brought (`?ask=`) waits in the box. The function
   serves the built page (`dist/w/index.html`, bundled with it by `includeFiles`) with the wish in `#shared-wish`
   (its play address in `play`) and its own title, description and preview tags in place of the built page's; `npm run
   dev` gives it its own server's. On its own, `/w/` goes to the ideas page.

@@ -363,7 +363,8 @@ the starter at the commit this Lamp ships). A link without a request opens it wi
 goes through Open from GitHub…'s own fetch, review and credit (`importRepository`), the request kept beside it for the
 box. Nothing is sent or built from the link. During the welcome a starter's remix waits a moment (`Onboarding.keptRemix`, saved
 like the welcome's wish) and opens as the welcome gives way to the desk, with nothing set up, in the desk's own copy of the starter, put there moments
-before; the Download's copy is found by the welcome's one look at the clipboard (`Wish.markedRemix`). Wish
+before; the Download's copy is found by the welcome's one look at the clipboard (`Wish.markedRemix`). A shared app's
+page copies its link the same way (`Wish.markedShared`), which the welcome brings in as the link would (`takeShared`). Wish
 links are read as a browser's form writes them too (`Wish.items`: "+" is a space).
 
 #### Sharing a copy and following others

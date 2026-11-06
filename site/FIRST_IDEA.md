@@ -11,7 +11,8 @@ tell whether Lamp is installed:
 - **Download Lamp** copies the wish with a mark only Lamp looks for (an attribute in the clipboard's web
   form; the plain text is just the wish). A remix's Download (the homepage's remix dialog) puts what it starts from
   in the mark's value (`data-lamp-wish="starter=newyork"`), and Lamp's first open offers a copy of that with the
-  request in its box. The first time Lamp opens it looks at the clipboard once and, if
+  request in its box. A shared app's page names its link the same way (`shared=<id>`), and Lamp's first open brings
+  that app in as its link would. The first time Lamp opens it looks at the clipboard once and, if
   the mark is there, puts the wish in the first-app box. Anything else on the clipboard is left alone, and
   where macOS would ask before letting an app read it, Lamp doesn't read: the box offers "Paste my wish".
 - **Already have Lamp? Open Lamp with it** opens `lamp://wish?text=…`: the card sinks back into the
