@@ -34,9 +34,11 @@ export function wishLink(text) {
 /**
  * Copies the wish with Lamp's mark. Resolves "marked" when Lamp will find it by itself, "plain" when only the
  * words could be copied (to paste by hand), and "none" when the browser refused both.
- * Call it straight from a press: Safari only lets a page copy while a press is being handled.
+ * Call it straight from a press: Safari only lets a page copy while a press is being handled. `plain` is what goes when
+ * only words can be copied, when that's other than `text` (a shared app's description and change, since the mark
+ * naming the app is lost with the web form).
  */
-export async function copyWish(text, { clipboard = globalThis.navigator?.clipboard, Item = globalThis.ClipboardItem, origin = null } = {}) {
+export async function copyWish(text, { clipboard = globalThis.navigator?.clipboard, Item = globalThis.ClipboardItem, origin = null, plain = null } = {}) {
   const wish = tidy(text);
   // A remix is worth copying with no words: Lamp still opens on a copy of what it starts from. Lamp only looks at a
   // copy that has both forms, so the plain one is a space, which it trims to no request.
@@ -50,9 +52,10 @@ export async function copyWish(text, { clipboard = globalThis.navigator?.clipboa
       return "marked";
     }
   } catch {}
-  if (!wish) return "none";
+  const words = plain == null ? wish : tidy(plain);
+  if (!words) return "none";
   try {
-    await clipboard.writeText(wish);
+    await clipboard.writeText(words);
     return "plain";
   } catch {
     return "none";

@@ -380,7 +380,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
           track("idea_download", { idea: wish.name, place: "shared" });
           // The app itself, when it came with its file: the copy names the link (`shared=`), which a new Lamp opens.
           const origin = wish.file && wish.shared ? { shared: wish.shared } : null;
-          copyWish(origin ? "" : wish.wish, { origin }).then((copied) => {
+          copyWish(origin ? "" : wish.wish, { origin, plain: wish.wish }).then((copied) => {
             $<HTMLElement>("[data-still-get-label]").textContent = "Downloading…";
             note.textContent = copied === "marked" ? "Open Lamp when it's ready. This app will be there."
               : copied === "plain" ? "It's copied. Paste it into Lamp when it's ready."
@@ -464,7 +464,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
       track("idea_download", { idea: wish.name, place: "shared-remix" });
       const ask = $<HTMLElement>("[data-remix-to]").textContent ?? "";
       // The app itself with the change for it, when it came with its file; else its words with the change.
-      const copy = wish.file && wish.shared ? copyWish(ask, { origin: { shared: wish.shared } }) : copyWish(withAsk(wish.wish, ask));
+      const copy = wish.file && wish.shared ? copyWish(ask, { origin: { shared: wish.shared }, plain: withAsk(wish.wish, ask) }) : copyWish(withAsk(wish.wish, ask));
       copy.then((copied) => {
         $<HTMLElement>("[data-download-label]").textContent = "Downloading…";
         next.textContent = copied === "marked" ? "Open Lamp when it's ready. This app will be there."
