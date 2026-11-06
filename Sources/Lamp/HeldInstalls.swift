@@ -56,26 +56,32 @@ enum RunningFromBundle {
         }
     }
 
-    /// Whether the app itself is running from `bundle`: its own program, or a helper beside it, rather than one of
-    /// its extensions (the chat beside it, a widget, a share extension), which can outlive the app by a moment.
-    static func isAppOpen(among processes: [Running]) -> Bool {
-        processes.contains { !$0.path.contains(".appex/") }
-    }
-
-    /// Clears `bundle` for replacing: false while the app itself runs from it. Extensions left from an app that has
-    /// quit are given a moment to go, then ended, the way Lamp ends a widget's process: they have no app to be part of.
-    static func clear(_ bundle: URL) async -> Bool {
+    /// Clears `bundle` for replacing. False while anything runs from it that must be left alone: the app itself, or an
+    /// extension that may be in the person's hands with the app closed (a share sheet, its notes unsent). The extensions
+    /// at `endable` (inside `bundle`: the chat beside the app, its widget) have nothing of the person's in them once the
+    /// app has quit: given a moment to go, then ended, the way Lamp ends a widget's process. Nothing is awaited after
+    /// the last look, so the caller replaces the bundle on what it says.
+    static func clear(_ bundle: URL, endable: [URL]) async -> Bool {
+        guard let real = realpath(bundle.path, nil) else { return true }
+        let root = String(cString: real) + "/"
+        free(real)
+        let base = bundle.standardizedFileURL.path + "/"
+        let ends = endable.compactMap { url -> String? in
+            let path = url.standardizedFileURL.path
+            return path.hasPrefix(base) ? root + path.dropFirst(base.count) + "/" : nil
+        }
+        func mayEnd(_ process: Running) -> Bool { ends.contains { process.path.hasPrefix($0) } }
         var left = processes(inside: bundle)
-        for _ in 0..<20 where !left.isEmpty && !isAppOpen(among: left) {
+        for _ in 0..<20 where !left.isEmpty && left.allSatisfy(mayEnd) {
             try? await Task.sleep(for: .milliseconds(100))
             left = processes(inside: bundle)
         }
-        guard !isAppOpen(among: left) else { return false }
+        guard left.allSatisfy(mayEnd) else { return false }
         guard !left.isEmpty else { return true }
         for process in left { kill(process.pid, SIGTERM) }
         for _ in 0..<20 where !processes(inside: bundle).isEmpty { try? await Task.sleep(for: .milliseconds(100)) }
         let stubborn = processes(inside: bundle)
-        guard !isAppOpen(among: stubborn) else { return false }
+        guard stubborn.allSatisfy(mayEnd) else { return false }
         for process in stubborn { kill(process.pid, SIGKILL) }
         return true
     }

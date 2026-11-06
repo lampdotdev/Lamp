@@ -12785,20 +12785,23 @@ final class Store: ObservableObject {
         // is never put where it can be opened.
         guard AppUpdates.mayOpen(wish(of: project)) else { throw Sharing.ImportError(AppUpdates.notInstalledYet) }
 
+        // Its widget's process may be running, from this copy or another (one in the Trash): ended here, so no program
+        // outlives the copy it came from.
+        await WidgetProcess.end(for: project)
+        // That can take seconds, and a Stop pressed meanwhile still keeps this copy out.
+        try copy.staging.check()
         // The app isn't running by now (a build quits it, an icon waits for it to close), but that's only as good as
-        // NSWorkspace's list of running apps, which lags behind a launch. The kernel has the last word: a copy opened
-        // since this was staged is never replaced under it (`HeldInstalls` says what that breaks), and the build
-        // waits for it to close instead. An extension left from a copy that quit goes, as the widget's process does.
-        guard await RunningFromBundle.clear(project.installedURL) else {
+        // NSWorkspace's list of running apps, which lags behind a launch. The kernel has the last word, last thing
+        // before the swap: a copy opened since this was staged is never replaced under it (`HeldInstalls` says what
+        // that breaks), nor a share sheet open from it, and the build waits for the next quit instead. The chat or
+        // widget left from a copy that quit goes, as the widget's process does.
+        let endable = [Sidebar.extensionURL(in: project.installedURL), Template.widgetURL(in: project.installedURL, of: project)]
+        guard await RunningFromBundle.clear(project.installedURL, endable: endable) else {
             Sidebar.log.notice("held \(project.id, privacy: .public): open at \(project.installedURL.path, privacy: .public) as its copy was to go in")
             Runtime.holdBuild(project)
             _ = heldInstalls.mayInstall(project.id, running: true)
             throw StillOpen()
         }
-        // Its widget's process may be running from another copy (one in the Trash): ended here, last thing before the
-        // swap, so no program outlives the copy it came from.
-        await WidgetProcess.end(for: project)
-        // That can take seconds, and a Stop pressed meanwhile still keeps this copy out.
         try copy.staging.check()
         // What Lamp signed as the app's sidebar, the one program it will talk to there: only once this copy goes in.
         Sidebar.remember(project, signed: app)

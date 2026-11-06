@@ -246,8 +246,9 @@ chat says so, the build waits like a held icon (`HeldInstalls`) and goes in when
 the agent that what's on screen isn't its change and `use_app` is refused (`Turn.keptOpen`,
 `Runtime.holdsBuild`); a turn asks the app once. Whatever made the install, the swap itself (`Store.swapIn`)
 asks the kernel last for processes running from inside the installed copy (`RunningFromBundle`), since
-NSWorkspace's list of running apps lags behind a launch: with the app open the build is held for its next quit,
-and an extension left from a copy that quit is ended. While an install quits and reopens an app (`installingOnMac`)
+NSWorkspace's list of running apps lags behind a launch: with the app open, or a share extension from it (its sheet
+may be in the person's hands with the app closed), the build is held for its next quit, and the chat's or widget's
+extension left from a copy that quit is ended. Nothing is awaited between that look and the replace. While an install quits and reopens an app (`installingOnMac`)
 nothing else installs it: a wish's turn holds the wish, not the part it installs, so the old copy quitting would
 otherwise let a held install take the part and swap a second copy in under the one just opened, leaving its chat
 refused (its program's path gone). Lamp ends an app itself in one case only: it agreed to quit and
