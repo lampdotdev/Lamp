@@ -9692,7 +9692,20 @@ final class Store: ObservableObject {
     /// `ownStep`: the build a game's step makes while it's the change being put in (`stepPage`), which doesn't wait for
     /// itself; every other build waits for that change. `phone`: the version of the phone page that step checked, the only
     /// one it publishes.
+    /// Each app's build under way, for the next to wait on: two at once write the same folders and the one `turn.build`
+    /// slot, and a look let go after `lookLimit` can still be building when the turn's end builds again.
+    private var buildsUnderWay: [String: Task<Void, Never>] = [:]
+
     private func build(_ project: LampProject, inPlace: Bool = true, ownStep: Bool = false, phone: String? = nil) async -> String? {
+        let earlier = buildsUnderWay[project.id]
+        let (ended, end) = AsyncStream<Void>.makeStream()
+        let mine = Task { for await _ in ended {} }
+        buildsUnderWay[project.id] = mine
+        defer {
+            end.finish()
+            if buildsUnderWay[project.id] == mine { buildsUnderWay[project.id] = nil }
+        }
+        await earlier?.value
         // The open app glows while its change is built, until it goes in (`reloadInPlace`) or the install that
         // follows settles otherwise; a build that fails lets it go here.
         let glowing = exists(project) && AppTransition.begin(project)
