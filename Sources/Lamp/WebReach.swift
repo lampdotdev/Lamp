@@ -444,6 +444,7 @@ private struct Reader {
         for tokens in scripts { collectBindings(tokens) }
         for (index, tokens) in scripts.enumerated() { findBuilders(tokens, script: index) }
         for (index, tokens) in scripts.enumerated() { findRequests(tokens, script: index) }
+        readProperties()
         for literal in literals where !touched.contains(literal.text) {
             result.unknown = true
             result.why.append("\(literal.file): \(literal.text) isn't read by a request it can follow")
@@ -948,6 +949,9 @@ private struct Reader {
 
     var depth = 0
     var resolving: Set<String> = []
+    /// Properties a followed value reads, whose own values are still to be read (`property`), and those already read.
+    var propertiesToRead: [String] = []
+    var propertiesRead: Set<String> = []
 
     mutating func shapes(_ tokens: ArraySlice<Token>?) -> [WebReach.Shape] {
         guard let tokens, !tokens.isEmpty else { return [.any] }
@@ -1086,14 +1090,20 @@ private struct Reader {
     }
 
     mutating func property(_ name: String) -> [WebReach.Shape] {
-        let key = "." + name
-        if resolving.contains(key) { return [.any] }
-        resolving.insert(key)
-        defer { resolving.remove(key) }
         // A property may be given anything at run time (parsed JSON, a response, the DOM), so what the code gives it
-        // is never all it can be. Its values are still read, so the addresses in them count as followed.
-        _ = (properties[name] ?? []).map { shapes($0) }
+        // is never all it can be. Its values are still read, so the addresses in them count as followed: once each,
+        // after the requests (`readProperties`). Read again at every use, from inside the values of other properties,
+        // they made a game whose objects give properties from one another take longer to review than anyone would wait.
+        if propertiesRead.insert(name).inserted { propertiesToRead.append(name) }
         return [.any]
+    }
+
+    /// The values of every property a followed value reads, and of those their values read in turn, each read once and
+    /// from the top, so how deep a property was reached never cuts its values short.
+    mutating func readProperties() {
+        while let name = propertiesToRead.popLast() {
+            for value in properties[name] ?? [] { _ = shapes(value) }
+        }
     }
 
     func moduleShapes(_ tokens: ArraySlice<Token>?) -> [WebReach.Shape] {

@@ -249,6 +249,34 @@ final class WebReachTests: XCTestCase {
         XCTAssertFalse(found.unknown || found.connects, "\(found.why)")
     }
 
+    /// A game's objects give properties of the same few names (x, speed, offset…) from one another, across its files. Each
+    /// property is read once, however many values name it: read again at every use, a game shaped like this never finished
+    /// its review. Reading less never makes it safer: what a request reads from a property is still unknown, and an address
+    /// given only to properties no request reads is still one the reading can't follow.
+    func testPropertiesThatNameEachOtherAreReadOnce() {
+        let names = (0..<16).map { "p\($0)" }
+        var script = ""
+        for (i, name) in names.enumerated() {
+            for step in 1...3 {
+                script += "this.\(name) = this.\(names[(i + step) % names.count]) + other.\(names[(i + 2 * step + 1) % names.count]);\n"
+            }
+        }
+        script += "el.style.transform = `translate(${this.p0}px, ${this.p1}px)`;\n"
+        let start = Date()
+        let game = WebReach.analyze(code: [("game.js", script)])
+        XCTAssertLessThan(Date().timeIntervalSince(start), 10)
+        XCTAssertFalse(game.unknown || game.connects, "\(game.why)")
+
+        // An address reached through a chain of properties is read, and the request that reads it is unknown.
+        let followed = WebReach.analyze(code: [("game.js", script + "this.p15 = this.p15 + 'https://elsewhere.example/feed';\nfetch(this.p0);\n")])
+        XCTAssertTrue(followed.unknown, "\(followed)")
+        XCTAssertFalse(followed.why.contains { $0.contains("isn't read by a request") }, "\(followed.why)")
+        // One given only to a property nothing followed reads is still unknown.
+        let unread = WebReach.analyze(code: [("game.js", script + "this.unused = 'https://elsewhere.example/feed';\n")])
+        XCTAssertTrue(unread.unknown, "\(unread)")
+        XCTAssertTrue(unread.why.contains { $0.contains("isn't read by a request") }, "\(unread.why)")
+    }
+
     /// Sites are named as their hosts: unrelated sites under one public suffix stay apart, and none is named by a suffix.
     func testSitesAreNamedByTheirHosts() {
         func label(_ hosts: Set<String>) -> String? { TVFiles.connects(WebReach.Result(hosts: hosts))?.label }

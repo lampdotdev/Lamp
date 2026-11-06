@@ -1674,6 +1674,8 @@ extension Sharing {
     static func review(_ package: Package) async -> ImportReview {
         let found = inspect(package)
         var review = ImportReview(inspection: found)
+        // A review closed or replaced meanwhile (`Store.reviewing`) is never shown: its AI requests aren't sent.
+        if Task.isCancelled { return review }
         // No AI to ask is an ordinary state for someone who was only sent an app, not a failure: the same
         // words whether nothing can answer at all or the route apps use is OpenRouter without a key.
         // (`available` is the test `AppAI.resolve` and the pickers use.)

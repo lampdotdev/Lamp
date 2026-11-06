@@ -636,8 +636,7 @@ extension Store {
             }
             let pending = PendingImport(package: package, existing: wish, prepared: job, copy: copy.id, copyHead: head)
             pendingImport = pending
-            let review = await Sharing.review(package)
-            if pendingImport?.id == pending.id { pendingImport?.review = review }
+            await check(pending)
         }
     }
 
