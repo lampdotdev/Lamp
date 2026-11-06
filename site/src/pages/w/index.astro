@@ -5,7 +5,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
 
 <!--
   A wish shared as a link (lamp.dev/w/<id>): a page for playing it. The wish fills the window, playing when Lamp sent
-  its page, else its picture, under a header with its name and who it's by. Making one's own is kept to a slim band at
+  its page, else its picture (or icon) with what it does and how to get it, under a header with its name and who it's by. Making one's own is kept to a slim band at
   the foot that reads as a prompt box, with the changes Lamp suggests turning in it, and can be put away; Lamp itself
   is only a quiet "Made with Lamp" in the header and a line in the dialog Remix opens. It's on the site's paper and ink, in its
   type, with thin rules and nothing more, so nothing competes with the wish; put away, the bars leave the wish on black,
@@ -51,7 +51,19 @@ import { DOWNLOAD_URL } from "../../lib/download";
           <svg aria-hidden="true" viewBox="0 0 16 16" class="size-4 fill-none stroke-current stroke-[1.5] [stroke-linecap:round] [stroke-linejoin:round]"><path data-enter d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" /><path data-exit hidden d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5" /></svg>
         </button>
       </div>
-      <img data-picture hidden alt="" class="block max-h-full w-auto max-w-full" />
+      <!-- An app that doesn't play here (a Mac app, or one too big to play): its picture as it is, else its icon large,
+           with what it does and how to get it under it, so the page is never empty. -->
+      <div data-still hidden class="still">
+        <img data-picture hidden alt="" class="still-picture" />
+        <img data-still-icon hidden alt="" width="128" height="128" class="still-icon" />
+        <p data-about class="still-about"></p>
+        <div class="still-actions">
+          <a data-still-get href={DOWNLOAD_URL} class="shared-button shared-button-outline"><span data-still-get-label>Get Lamp</span></a>
+          <a data-still-open href="/" class="shared-button">Open in Lamp</a>
+          <a data-still-mail hidden href="/" class="shared-button">Email me the link</a>
+        </div>
+        <p data-still-note class="still-note"></p>
+      </div>
     </main>
 
     <!-- Making one's own: a prompt box with the changes Lamp suggests for it turning in it as its placeholder, and a send
@@ -118,6 +130,19 @@ import { DOWNLOAD_URL } from "../../lib/download";
     width: min(100cqw, 100cqh * var(--shape)); aspect-ratio: var(--shape);
   }
   .play-frame.fills { width: 100cqw; height: 100cqh; aspect-ratio: auto; }
+
+  /* An app shown still: as much of the room as its picture can take, with its line and buttons kept under it. */
+  .still { display: flex; flex-direction: column; align-items: center; gap: 1rem; max-width: 100%; max-height: 100%; min-height: 0; text-align: center; }
+  .still[hidden] { display: none; }
+  .still-picture { display: block; min-height: 0; max-width: 100%; flex: 0 1 auto; object-fit: contain; border-radius: 0.5rem;
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1); }
+  .still-icon { width: 8rem; height: 8rem; flex: none; }
+  .still-picture[hidden], .still-icon[hidden] { display: none; }
+  .still-about { margin: 0; max-width: 34rem; font-size: 1.0625rem; line-height: 1.45; flex: none; }
+  .still-about:empty { display: none; }
+  .still-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem; flex: none; }
+  .still-note { margin: 0; font-size: 0.8125rem; color: var(--color-muted-ink); flex: none; }
+  .still-note:empty { display: none; }
 
   /* The page comes in as it opens (`.built`, from the script): the wish fades up, and a moment later the band rises
      into its place. Without the script, or where less motion is asked for, it's simply there. */
@@ -327,11 +352,47 @@ import { DOWNLOAD_URL } from "../../lib/download";
         button.querySelector<SVGPathElement>("[data-exit]")!.toggleAttribute("hidden", !full);
         focusPlay();
       });
-    } else if (wish.picture) {
-      const picture = $<HTMLImageElement>("[data-picture]");
-      picture.src = wish.picture;
-      picture.alt = `${wish.name}, as it looks`;
-      picture.hidden = false;
+    } else {
+      // Not played here: what it looks like (its picture, else its icon), what it does, and how to get it. Lamp opens
+      // it on a Mac; anywhere else, the link goes to their Mac by email.
+      $<HTMLElement>("[data-still]").hidden = false;
+      if (wish.picture) {
+        const picture = $<HTMLImageElement>("[data-picture]");
+        picture.src = wish.picture;
+        picture.alt = `${wish.name}, as it looks`;
+        picture.hidden = false;
+      } else if (wish.icon) {
+        const big = $<HTMLImageElement>("[data-still-icon]");
+        big.src = wish.icon;
+        big.alt = wish.name;
+        big.hidden = false;
+      }
+      $<HTMLElement>("[data-about]").textContent = wish.about ?? "";
+      const onMac = /Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2;
+      const openIt = $<HTMLAnchorElement>("[data-still-open]");
+      const getIt = $<HTMLAnchorElement>("[data-still-get]");
+      const mail = $<HTMLAnchorElement>("[data-still-mail]");
+      const note = $<HTMLElement>("[data-still-note]");
+      if (onMac) {
+        openIt.href = (wish.file && wish.shared ? sharedWishLink(wish.shared, "") : wishLink(wish.wish)) ?? "/";
+        openIt.addEventListener("click", () => track("idea_sent", { idea: wish.name, place: "shared" }));
+        getIt.addEventListener("click", () => {
+          track("idea_download", { idea: wish.name, place: "shared" });
+          copyWish(wish.wish).then((copied) => {
+            $<HTMLElement>("[data-still-get-label]").textContent = "Downloading…";
+            note.textContent = copied === "marked" ? "Open Lamp when it's ready. This app will be there."
+              : copied === "plain" ? "It's copied. Paste it into Lamp when it's ready."
+              : "Copy the app's name, and ask Lamp for it when it's ready.";
+          });
+        });
+      } else {
+        openIt.hidden = true;
+        getIt.hidden = true;
+        mail.hidden = false;
+        mail.href = `mailto:?subject=${encodeURIComponent(wish.name)}&body=${encodeURIComponent(location.href)}`;
+        mail.addEventListener("click", () => track("idea_mailed", { idea: wish.name, place: "shared" }));
+        note.textContent = "It opens with Lamp, on a Mac.";
+      }
     }
 
     // The header and the band go and come back together, by the chevron in the window's corner, and stay as they were
