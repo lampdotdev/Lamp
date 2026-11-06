@@ -375,6 +375,13 @@ enum Gallery {
         option("Internationalization", "globe"), option("Accessibility", "accessibility"),
         option("Localization", "character.book.closed"), option("Documentation", "doc.text"),
     ])
+    /// A question that needs its line under it: alone, nothing says what the button or the names are.
+    private static let watch = Talk.Question(question: "Add a Watch button that opens Orbit onto Vega?", options: [
+        option("Not now", "xmark"), option("Add it", "plus.circle"),
+    ], detail: "Orbit is the sky map you made; Vega is the star you saved.")
+    private static let reminder = Talk.Question(question: "Remind you when Vega rises?", options: [
+        option("No"), option("Ten minutes before"),
+    ], detail: "A notification, even while Orbit is closed.")
 
     private static let askEntries: [Entry] = [
         ask("One question", Talk.Ask(layout: .steps, questions: [kind])),
@@ -382,6 +389,8 @@ enum Gallery {
         ask("Steps, four answers", Talk.Ask(layout: .steps, questions: [four])),
         ask("Steps, long words", Talk.Ask(layout: .steps, questions: [longWords, share])),
         ask("Together", Talk.Ask(layout: .together, questions: [kind, when, share])),
+        ask("A question with a line on what it's about", Talk.Ask(layout: .steps, questions: [watch])),
+        ask("Together, with lines on what they're about", Talk.Ask(layout: .together, questions: [watch, reminder])),
         ask("Answered by clicking", Talk.Ask(layout: .steps, questions: [kind, when], answers: ["Habits", Talk.youDecide]), isOpen: false),
         ask("Answered, waiting in line", Talk.Ask(layout: .steps, questions: [kind, when], answers: ["Habits", Talk.youDecide]),
             isOpen: false, waiting: .inLine),

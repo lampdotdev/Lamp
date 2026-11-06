@@ -26,7 +26,7 @@ enum Talk {
     /// long sentence in it is a paragraph again, set in bold. Too long goes back to the agent to say shorter, so
     /// every engine is held to the same; the tools' descriptions give the same numbers.
     enum Words {
-        static let question = 10, option = 4, wish = 40, progress = 12
+        static let question = 10, questionDetail = 20, option = 4, wish = 40, progress = 12
     }
 
     static func words(in text: String) -> Int { text.split(whereSeparator: \.isWhitespace).count }
@@ -64,6 +64,8 @@ enum Talk {
             let question = (item["question"] as? String)?.trimmed ?? ""
             guard !question.isEmpty else { return .failure(.message("Every question needs its `question`.")) }
             if let trouble = tooLong(question, Words.question, as: "a question") { return .failure(trouble) }
+            let detail = (item["detail"] as? String)?.trimmed.nilIfEmpty
+            if let detail, let trouble = tooLong(detail, Words.questionDetail, as: "a question's `detail`") { return .failure(trouble) }
             let options: [Option] = (item["options"] as? [[String: Any]] ?? []).compactMap { option in
                 guard let title = (option["title"] as? String)?.trimmed, !title.isEmpty else { return nil }
                 return Option(title: title, detail: (option["detail"] as? String)?.trimmed.nilIfEmpty,
@@ -78,7 +80,7 @@ enum Talk {
             for option in options {
                 if let trouble = tooLong(option.title, Words.option, as: "an answer's `title` (more goes in `detail`)") { return .failure(trouble) }
             }
-            questions.append(Question(question: question, options: options))
+            questions.append(Question(question: question, options: options, detail: detail))
         }
         // One question has nothing to lay out together.
         return .success(Ask(layout: layout ?? .steps, questions: questions))
@@ -111,6 +113,17 @@ enum Talk {
         return ask.questions.indices.map { index in
             ended(ask.questions[index].question, with: "?") + " " + ended(index < answers.count ? answers[index] : youDecide, with: ".")
         }.joined(separator: "\n")
+    }
+
+    /// Whether a message the agent wrote after its card only points at it ("Waiting for your answers.", "Pick one
+    /// above."), which the chat leaves out under the card. Told by its words, so a longer message, or one in a
+    /// language these don't cover, shows: a line said twice is better than what the question is about gone.
+    static func pointsAtCard(_ text: String) -> Bool {
+        let words = text.lowercased().split { !$0.isLetter && $0 != "'" && $0 != "’" }.map(String.init)
+        guard !words.isEmpty, words.count <= 12 else { return false }
+        let stems = ["wait", "answer", "pick", "choos", "choice", "card", "question", "click", "select", "repl", "respon"]
+        return words.contains { word in stems.contains { word.hasPrefix($0) } }
+            || text.lowercased().contains("let me know")
     }
 
     /// The card still waiting for its answer: the last one asked, with nothing said by the person since.

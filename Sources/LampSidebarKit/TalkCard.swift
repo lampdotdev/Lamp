@@ -28,7 +28,8 @@ public enum TalkCard {
     public struct Question: Codable, Equatable {
         public var question: String
         public var options: [Option]
-        /// A line under the question, for what it's about: Lamp's own cards have one (`Starters`), the agent's don't.
+        /// A line under the question, for what it's about: Lamp's own cards (`Starters`), and the agent's when the
+        /// question alone wouldn't say what a name in it is or what the choice changes.
         public var detail: String?
         /// Only the person can answer it (Lamp's device card): no "Decide for me".
         public var personOnly: Bool?
