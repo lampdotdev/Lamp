@@ -1150,6 +1150,8 @@ final class Store: ObservableObject {
         /// A look let go after `lookLimit` that's still running: its build or launch would overlap a new look's, so none
         /// starts until it ends.
         var straggler: UUID?
+        /// Ends when that look does, for the turn's end to wait on before its own build (`waitForStraggler`).
+        var stragglerEnds: Task<Void, Never>?
         /// Each app the last look at it built and opened, and how that launch went, by app: a wish's apps are looked
         /// at in one turn, and one's crash is no word on another.
         var installed: [String: Bool] = [:]
@@ -6003,6 +6005,7 @@ final class Store: ObservableObject {
             turn.autoApply?.cancel()
             turn.autoApply = nil
             await turn.applying?.value
+            await waitForStraggler(turn)
             // Codex was interrupted to be given the person's messages (`steer`): it goes on in the same
             // conversation with them, unless the turn was stopped or ended meanwhile, or Lamp stopped the model.
             guard let message = turn.codexCut else { break }
@@ -14934,10 +14937,10 @@ final class Store: ObservableObject {
         // A look waits on the app in many ways (a build, a launch, a window's first frame, a step going in), and one that
         // never answers held the look, and every later one ("already looking"), until the turn's end, with the chat stuck
         // on it. So it's given a limit, under the five minutes an engine waits on a tool before giving up on it itself.
-        final class Once { var done = false }
+        final class Once { var done = false; var work: Task<Void, Never>? }
         let once = Once(), began = Date(), turn = turns[project.id]
         let answer: (Int, [String: Any])? = await withCheckedContinuation { finished in
-            Task { @MainActor in
+            once.work = Task { @MainActor in
                 let answer = await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice, shape: shape, tryOn: tryOn)
                 guard !once.done else { return }
                 once.done = true
@@ -14956,6 +14959,7 @@ final class Store: ObservableObject {
             turn.look.inProgress = false
             turn.look.holder = nil
             turn.look.straggler = holder
+            turn.look.stragglerEnds = once.work
             if turns[project.id] === turn {
                 progress[project.id]?.looking = false
                 if !turn.stopped { note(Activity.thinking, for: project) }
@@ -14966,6 +14970,29 @@ final class Store: ObservableObject {
             + "its window may still be under way, or the app may have closed). Lamp let it go; a new look waits until that one ends. "
             + "Go on with the request, and if a later look can't start or doesn't finish either, finish without one and say in a "
             + "sentence that you couldn't see the change."])
+    }
+
+    /// The turn's end builds and opens the app, which would overlap a look let go that's still building or launching it:
+    /// that look is waited on first, for at most another `lookLimit`. One still running after that waits on something
+    /// else than a build of its own, and the turn goes on.
+    private func waitForStraggler(_ turn: Turn) async {
+        guard turn.look.straggler != nil, let ends = turn.look.stragglerEnds else { return }
+        final class Once { var done = false }
+        let once = Once()
+        await withCheckedContinuation { (finished: CheckedContinuation<Void, Never>) in
+            Task { @MainActor in
+                await ends.value
+                guard !once.done else { return }
+                once.done = true
+                finished.resume()
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(Self.lookLimit))
+                guard !once.done else { return }
+                once.done = true
+                finished.resume()
+            }
+        }
     }
 
     /// How long a look waits for the app before letting go.
