@@ -277,6 +277,34 @@ final class WebReachTests: XCTestCase {
         XCTAssertTrue(unread.why.contains { $0.contains("isn't read by a request") }, "\(unread.why)")
     }
 
+    /// A name is worked out once, however many values name it: a chain of declarations, an object given its own entry,
+    /// and the same few local names declared from one another in many functions each made a review that never finished.
+    /// A name given itself still can't be told.
+    func testNamesThatNameEachOtherAreWorkedOutOnce() {
+        func timed(_ script: String, _ line: UInt = #line) -> WebReach.Result {
+            let start = Date()
+            let found = WebReach.analyze(code: [("game.js", script)])
+            XCTAssertLessThan(Date().timeIntervalSince(start), 10, line: line)
+            return found
+        }
+        let chain = (0..<22).map { "var a\($0) = a\($0 + 1);" }.joined(separator: "\n") + "\nvar a22 = 'sprites/car.png';\nimg.src = a0;"
+        let declared = timed(chain)
+        XCTAssertFalse(declared.unknown || declared.connects, "\(declared.why)")
+
+        let itself = timed("var q = {p: q.p}; img.src = q.p;")
+        XCTAssertTrue(itself.unknown, "\(itself)")
+
+        let names = (0..<6).map { "n\($0)" }
+        var locals = ""
+        for function in 0..<25 {
+            locals += "function step\(function)() {\n"
+            for (k, name) in names.enumerated() { locals += "  const \(name) = \(names[(k + 1) % 6]) + \(names[(k + 2) % 6]);\n" }
+            locals += "}\n"
+        }
+        let shared = timed(locals + "el.style.left = `${n0}px`;")
+        XCTAssertFalse(shared.unknown || shared.connects, "\(shared.why)")
+    }
+
     /// Sites are named as their hosts: unrelated sites under one public suffix stay apart, and none is named by a suffix.
     func testSitesAreNamedByTheirHosts() {
         func label(_ hosts: Set<String>) -> String? { TVFiles.connects(WebReach.Result(hosts: hosts))?.label }

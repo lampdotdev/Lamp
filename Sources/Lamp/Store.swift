@@ -717,7 +717,8 @@ final class Store: ObservableObject {
 
     /// Checks the review that's up and shows what it found, unless that review has gone by then.
     func check(_ pending: PendingImport) async {
-        let task = Task.detached(priority: .userInitiated) { await Sharing.review(pending.package) }
+        let package = pending.package
+        let task = Task.detached(priority: .userInitiated) { await Sharing.review(package) }
         reviewing = task
         let review = await task.value
         if pendingImport?.id == pending.id { pendingImport?.review = review }
