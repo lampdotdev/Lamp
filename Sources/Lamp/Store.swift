@@ -9728,7 +9728,11 @@ final class Store: ObservableObject {
         owner?.building = true
         defer { owner?.building = false }
         if let owner, let applying = owner.applying, !owner.reloading, owner.applyingSources != Runtime.fingerprint(project) { applying.cancel() }
-        if !ownStep { await owner?.applying?.value }
+        if !ownStep {
+            await owner?.applying?.value
+            // The step's own build, ending meanwhile, cleared the flag: this one is still building, and a later step waits.
+            owner?.building = true
+        }
         await owner?.warming?.value
         // Not said when the game open on this Mac already shows these sources (a step put them in), nor for a step's own
         // build, which runs beside the agent's work and is said once it's in ("Put into …"): the person waits on neither.
