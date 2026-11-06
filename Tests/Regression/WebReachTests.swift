@@ -249,6 +249,62 @@ final class WebReachTests: XCTestCase {
         XCTAssertFalse(found.unknown || found.connects, "\(found.why)")
     }
 
+    /// A game's objects give properties of the same few names (x, speed, offset…) from one another, across its files. Each
+    /// property is read once, however many values name it: read again at every use, a game shaped like this never finished
+    /// its review. Reading less never makes it safer: what a request reads from a property is still unknown, and an address
+    /// given only to properties no request reads is still one the reading can't follow.
+    func testPropertiesThatNameEachOtherAreReadOnce() {
+        let names = (0..<16).map { "p\($0)" }
+        var script = ""
+        for (i, name) in names.enumerated() {
+            for step in 1...3 {
+                script += "this.\(name) = this.\(names[(i + step) % names.count]) + other.\(names[(i + 2 * step + 1) % names.count]);\n"
+            }
+        }
+        script += "el.style.transform = `translate(${this.p0}px, ${this.p1}px)`;\n"
+        let start = Date()
+        let game = WebReach.analyze(code: [("game.js", script)])
+        XCTAssertLessThan(Date().timeIntervalSince(start), 10)
+        XCTAssertFalse(game.unknown || game.connects, "\(game.why)")
+
+        // An address reached through a chain of properties is read, and the request that reads it is unknown.
+        let followed = WebReach.analyze(code: [("game.js", script + "this.p15 = this.p15 + 'https://elsewhere.example/feed';\nfetch(this.p0);\n")])
+        XCTAssertTrue(followed.unknown, "\(followed)")
+        XCTAssertFalse(followed.why.contains { $0.contains("isn't read by a request") }, "\(followed.why)")
+        // One given only to a property nothing followed reads is still unknown.
+        let unread = WebReach.analyze(code: [("game.js", script + "this.unused = 'https://elsewhere.example/feed';\n")])
+        XCTAssertTrue(unread.unknown, "\(unread)")
+        XCTAssertTrue(unread.why.contains { $0.contains("isn't read by a request") }, "\(unread.why)")
+    }
+
+    /// A name is worked out once, however many values name it: a chain of declarations, an object given its own entry,
+    /// and the same few local names declared from one another in many functions each made a review that never finished.
+    /// A name given itself still can't be told.
+    func testNamesThatNameEachOtherAreWorkedOutOnce() {
+        func timed(_ script: String, _ line: UInt = #line) -> WebReach.Result {
+            let start = Date()
+            let found = WebReach.analyze(code: [("game.js", script)])
+            XCTAssertLessThan(Date().timeIntervalSince(start), 10, line: line)
+            return found
+        }
+        let chain = (0..<22).map { "var a\($0) = a\($0 + 1);" }.joined(separator: "\n") + "\nvar a22 = 'sprites/car.png';\nimg.src = a0;"
+        let declared = timed(chain)
+        XCTAssertFalse(declared.unknown || declared.connects, "\(declared.why)")
+
+        let itself = timed("var q = {p: q.p}; img.src = q.p;")
+        XCTAssertTrue(itself.unknown, "\(itself)")
+
+        let names = (0..<6).map { "n\($0)" }
+        var locals = ""
+        for function in 0..<25 {
+            locals += "function step\(function)() {\n"
+            for (k, name) in names.enumerated() { locals += "  const \(name) = \(names[(k + 1) % 6]) + \(names[(k + 2) % 6]);\n" }
+            locals += "}\n"
+        }
+        let shared = timed(locals + "el.style.left = `${n0}px`;")
+        XCTAssertFalse(shared.unknown || shared.connects, "\(shared.why)")
+    }
+
     /// Sites are named as their hosts: unrelated sites under one public suffix stay apart, and none is named by a suffix.
     func testSitesAreNamedByTheirHosts() {
         func label(_ hosts: Set<String>) -> String? { TVFiles.connects(WebReach.Result(hosts: hosts))?.label }

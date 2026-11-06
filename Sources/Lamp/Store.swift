@@ -705,7 +705,23 @@ final class Store: ObservableObject {
     @Published var iconColors: [String: String] = [:]
     /// The shared app whose review is up. When it goes, the next one kept during the welcome gets its turn.
     @Published var pendingImport: PendingImport? {
-        didSet { if pendingImport == nil, oldValue != nil { openWaitingImport() } }
+        didSet {
+            // Its check goes with it: a review closed, or replaced by another, is never shown.
+            if pendingImport?.id != oldValue?.id { reviewing?.cancel(); reviewing = nil }
+            if pendingImport == nil, oldValue != nil { openWaitingImport() }
+        }
+    }
+
+    /// The check of the review that's up (`Sharing.review`).
+    private var reviewing: Task<ImportReview, Never>?
+
+    /// Checks the review that's up and shows what it found, unless that review has gone by then.
+    func check(_ pending: PendingImport) async {
+        let package = pending.package
+        let task = Task.detached(priority: .userInitiated) { await Sharing.review(package) }
+        reviewing = task
+        let review = await task.value
+        if pendingImport?.id == pending.id { pendingImport?.review = review }
     }
 
     /// A shell command an agent wants to run, or a file outside the app's folder it wants, waiting for the user
@@ -3968,8 +3984,7 @@ final class Store: ObservableObject {
             if let existing = pending.existing { pending.changedHere = await changedSinceArrival(existing) }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
             pendingImport = pending
-            let review = await Sharing.review(package)
-            if pendingImport?.id == pending.id { pendingImport?.review = review }
+            await check(pending)
         }
     }
 

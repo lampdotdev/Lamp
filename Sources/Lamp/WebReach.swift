@@ -238,6 +238,9 @@ private struct Reader {
     /// Web addresses written in the code, and those a request or link that was followed reads.
     var literals: [(text: String, file: String)] = []
     var touched: Set<String> = []
+    /// The first token of each value given in a declaration (`declarations`), which the plain `name = …` reading passes
+    /// over: read twice, each name's values doubled at every step through it.
+    var declared: Set<Int> = []
     /// Functions that make an element of a tag they're given and set each of an object's properties on it as an
     /// attribute (`el('a', { href: … })`): by name, which parameter is the tag and which the attributes.
     var builders: [String: (tag: Int, attributes: Int)] = [:]
@@ -444,6 +447,7 @@ private struct Reader {
         for tokens in scripts { collectBindings(tokens) }
         for (index, tokens) in scripts.enumerated() { findBuilders(tokens, script: index) }
         for (index, tokens) in scripts.enumerated() { findRequests(tokens, script: index) }
+        readProperties()
         for literal in literals where !touched.contains(literal.text) {
             result.unknown = true
             result.why.append("\(literal.file): \(literal.text) isn't read by a request it can follow")
@@ -482,7 +486,7 @@ private struct Reader {
             }
             if token.kind == .ident, previous?.text != ".", i + 1 < tokens.count {
                 let next = tokens[i + 1].text
-                if next == "=" || next == "+=" || next == "||=" || next == "??=" {
+                if next == "=" || next == "+=" || next == "||=" || next == "??=", i + 2 < tokens.count, !declared.contains(tokens[i + 2].id) {
                     let end = Syntax.expressionEnd(tokens, from: i + 2)
                     if next == "+=" { appends.insert(token.text) }
                     bindings[token.text, default: []].append(tokens[(i + 2)..<end])
@@ -539,6 +543,7 @@ private struct Reader {
                 if i < tokens.count, tokens[i].text == "=" {
                     let end = Syntax.expressionEnd(tokens, from: i + 1, stopAtComma: true)
                     bindings[name, default: []].append(tokens[(i + 1)..<end])
+                    if i + 1 < end { declared.insert(tokens[i + 1].id) }
                     if Self.lampBlocks.contains(name) { redefined.insert(name) }
                     i = end
                 } else {
@@ -948,6 +953,11 @@ private struct Reader {
 
     var depth = 0
     var resolving: Set<String> = []
+    /// Properties a followed value reads, whose own values are still to be read (`property`), and those already read.
+    var propertiesToRead: [String] = []
+    var propertiesRead: Set<String> = []
+    /// What a name, or an object's entry ("object.name"), was worked out to be the first time it was (`once`).
+    var known: [String: [WebReach.Shape]] = [:]
 
     mutating func shapes(_ tokens: ArraySlice<Token>?) -> [WebReach.Shape] {
         guard let tokens, !tokens.isEmpty else { return [.any] }
@@ -1054,13 +1064,28 @@ private struct Reader {
     }
 
     mutating func name(_ name: String) -> [WebReach.Shape] {
-        if opaque.contains(name) || resolving.contains(name) { return [.any] }
+        if opaque.contains(name) { return [.any] }
         guard let values = bindings[name], !values.isEmpty else { return [.any] }
-        resolving.insert(name)
-        defer { resolving.remove(name) }
-        var result = unique(values.flatMap { shapes($0) })
-        // url += …: what it was, and more after.
-        if appends.contains(name) { result = unique(result + result.map { Self.join($0, .any) }) }
+        return once(name) { reader in
+            var result = reader.unique(values.flatMap { reader.shapes($0) })
+            // url += …: what it was, and more after.
+            if reader.appends.contains(name) { result = reader.unique(result + result.map { Self.join($0, .any) }) }
+            return result
+        }
+    }
+
+    /// Works out `key` once and keeps it for every later use; unknown while `key` is itself being worked out (a name
+    /// given itself). Worked out again at every use, the names a page gives from one another (the same few local names
+    /// in many functions) took longer to read than anyone would wait. What's kept may have been cut short where it met a
+    /// name being worked out, or went too deep: that only puts unknown where more might have been told, never less, so
+    /// a later use is never taken for safer than it is.
+    mutating func once(_ key: String, _ work: (inout Reader) -> [WebReach.Shape]) -> [WebReach.Shape] {
+        if let kept = known[key] { return kept }
+        if resolving.contains(key) { return [.any] }
+        resolving.insert(key)
+        let result = work(&self)
+        resolving.remove(key)
+        known[key] = result
         return result
     }
 
@@ -1082,18 +1107,24 @@ private struct Reader {
             guard let entry else { return nil }
             found.append(entry)
         }
-        return unique(found.flatMap { shapes($0) })
+        return once(object + "." + name) { reader in reader.unique(found.flatMap { reader.shapes($0) }) }
     }
 
     mutating func property(_ name: String) -> [WebReach.Shape] {
-        let key = "." + name
-        if resolving.contains(key) { return [.any] }
-        resolving.insert(key)
-        defer { resolving.remove(key) }
         // A property may be given anything at run time (parsed JSON, a response, the DOM), so what the code gives it
-        // is never all it can be. Its values are still read, so the addresses in them count as followed.
-        _ = (properties[name] ?? []).map { shapes($0) }
+        // is never all it can be. Its values are still read, so the addresses in them count as followed: once each,
+        // after the requests (`readProperties`). Read again at every use, from inside the values of other properties,
+        // they made a game whose objects give properties from one another take longer to review than anyone would wait.
+        if propertiesRead.insert(name).inserted { propertiesToRead.append(name) }
         return [.any]
+    }
+
+    /// The values of every property a followed value reads, and of those their values read in turn, each read once and
+    /// from the top, so how deep a property was reached never cuts its values short.
+    mutating func readProperties() {
+        while let name = propertiesToRead.popLast() {
+            for value in properties[name] ?? [] { _ = shapes(value) }
+        }
     }
 
     func moduleShapes(_ tokens: ArraySlice<Token>?) -> [WebReach.Shape] {
