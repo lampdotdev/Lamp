@@ -20,7 +20,8 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   own host under the play host (`playOrigin`: `<id in hex>.play.lamp.dev`), so one shared page can never read what
   another saved in the browser, and never on lamp.dev itself; framed only by the site (`frame-ancestors`). Each file is passed on as it comes from Blob; one of 16 MB or more (`DIRECT_FILE`, a game's map data, say) is sent straight to Blob instead, since the CDN keeps nothing over 20 MB from a function. That needs Blob to call it what it is, so files are kept with their own type, and a page kept that way has `page.sizes`. A page's
   version counts up for the link (`pageVersion`), so an address never plays two different pages. The page goes with
-  the wish's file: taking the file away takes the page too. Without a play host, the page shows the wish's picture.
+  the wish's file: taking the file away takes the page too. Without a play host, the page shows the wish's picture (or its icon, when it has none) with its
+  line and how to get it.
 - The page (`/w/<id>`, `src/pages/w/index.astro` filled by `lib/shared-wish-page.js`, served by `api/wish-page.js`
   through a rewrite in `vercel.json`): a page of the wish's own, for playing it, plain, on the site's paper and ink (the wish between thin-ruled bars, on black once they're put away),
   with Lamp only a quiet "Made with Lamp" in the header beside the wish's icon, name and who it's by. The wish fills the
@@ -32,7 +33,9 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   button that opens **Remix** with what's written, or else the change shown: a dialog with the change, a line on
   Lamp, and two ways on side by side: **Open in Lamp** on a Mac (`lamp://wish?shared=<id>` with the change, so the copy
   follows the link, or `lamp://wish?text=…` for a link without the wish's file) and **Get Lamp**, which downloads it and
-  copies the wish and the change with Lamp's mark (FIRST_IDEA.md). A request the link brought (`?ask=`) waits in the box. The function
+  copies the change with Lamp's mark naming the link (`data-lamp-wish="shared=<id>"`), so a new Lamp opens the shared app
+  itself as the link would, or the wish and the change for a link without its file (FIRST_IDEA.md). Get Lamp under a
+  picture copies the same, without a change. A request the link brought (`?ask=`) waits in the box. The function
   serves the built page (`dist/w/index.html`, bundled with it by `includeFiles`) with the wish in `#shared-wish`
   (its play address in `play`) and its own title, description and preview tags in place of the built page's; `npm run
   dev` gives it its own server's. On its own, `/w/` goes to the ideas page.

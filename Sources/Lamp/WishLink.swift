@@ -112,9 +112,14 @@ enum WishLink {
     }
 
     /// The picture the desk shows of the wish, read as the app's own file, or else its one app's when that's in a part
-    /// of its own (a game in its folder): nil when there's none.
-    static func picture(of project: LampProject) -> Data? {
-        for app in [project] + [Publish.pageApp(project)].compactMap({ $0 }).filter({ $0.dir != project.dir }) {
+    /// of its own (a game in its folder), or else the one its chat goes beside (a Mac app in Mac/ beside the wish's
+    /// own), then any other of its apps': nil when none has one. A link without a picture shows only the app's icon.
+    @MainActor static func picture(of project: LampProject) -> Data? {
+        let store = Store.shared
+        var apps: [LampProject] = []
+        for app in [project, Publish.pageApp(project), store.chatApp(of: project)].compactMap({ $0 }) + store.apps(of: project)
+        where !apps.contains(where: { $0.dir == app.dir }) { apps.append(app) }
+        for app in apps {
             if let data = AppFile.read(Runtime.previewURL(app), in: project), NSImage(data: data) != nil { return data }
         }
         return Starters.shippedPreview(of: project).flatMap { try? Data(contentsOf: $0) }
@@ -839,17 +844,25 @@ enum WishLink {
         }
     }
 
-    /// The app can take a new picture of itself while it's open on this Mac.
-    func canRetake(_ project: LampProject) -> Bool { Store.shared.openOnMac.contains(project.id) && project.destination == .mac }
+    /// The app can take a new picture of itself while it's open on this Mac: the wish's own, or the Mac app its chat
+    /// goes beside (Paperclip's, in Mac/).
+    func canRetake(_ project: LampProject) -> Bool { Self.pictured(project) != nil }
 
-    /// A new picture of the app as it is now, from its front window.
+    /// The app whose front window a new picture is of, while it's open on this Mac.
+    private static func pictured(_ project: LampProject) -> LampProject? {
+        let app = Store.shared.chatApp(of: project)
+        return Store.shared.openOnMac.contains(app.id) && app.destination == .mac ? app : nil
+    }
+
+    /// A new picture of the app as it is now, from its front window: whatever the person has brought forward, a
+    /// companion's bubble as much as a window.
     func retake(_ project: LampProject) {
-        guard canRetake(project), cards[project.id]?.retaking == false else { return }
+        guard let app = Self.pictured(project), cards[project.id]?.retaking == false else { return }
         cards[project.id]?.retaking = true
         let asked = Date()
-        Runtime.requestScreenshots(of: project)
+        Runtime.requestScreenshots(of: app)
         Task {
-            let taken = await Runtime.screenshots(of: project, since: asked).first
+            let taken = await Runtime.screenshots(of: app, since: asked).first
             let data = taken.flatMap { AppFile.read($0, in: project) }.flatMap { NSImage(data: $0) == nil ? nil : $0 }
             guard cards[project.id] != nil else { return }
             cards[project.id]?.retaking = false

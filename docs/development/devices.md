@@ -275,8 +275,9 @@ messages, only to Lamp's own paths), and a claim tries the Mac's IPv4 addresses 
 `.local` name over IPv6, which the claim, opened for the device's IPv4 address, refuses. A game's or a screen's page of
 a wish talks to the wish's other apps through the host too: it opens the page's `ws://` links to the home network
 and passes their frames (`ws` web messages), while the page keeps the wish's handshake and seals (the "Wishes" guide). The page's console, uncaught
-errors and the host's own lines go to `LocalState\log.txt`, which the bridge's `log` reads for Lamp's own checks of an
-install; the agent's looks never reach the Xbox (`AgentPreview`), so a web kind is looked at in its preview. A controller in WebView2
+errors and the host's own lines go to `LocalState\log.txt`, which the bridge's `log` reads (`DeviceApps.log`). The agent's looks never picture the Xbox (`AgentPreview`), so a web kind is
+looked at in its preview, but a look at a game that has gone on one adds the last lines of that log (`withDeviceLog`):
+the frames-a-second report the game writes every ten seconds is the only word from the console of how it runs there. A controller in WebView2
 sends its buttons as key presses named "Unidentified" with Edge's old key codes; lamp.js renames them before the page
 hears them (`padKeys`: the d-pad and left stick are the arrows, A is Enter and presses what has focus, B is Escape,
 the rest Edge's `Gamepad…` names). A key a page makes can't carry a key code, so the remote's arrows in a TV app or a screen (`Lamp.onKey`, `Lamp.key`) read a key by its name too (`nameOf`), or the controller would move nothing. `navigator.getGamepads()` gives the standard mapping. Its web view never shakes the controller, so lamp.js puts its own `vibrationActuator` on every gamepad in the host, whose `playEffect` and `reset` go to the host as `rumble` messages, played with Windows.Gaming.Input as a native game's `lamp_rumble` is. The web view numbers controllers in another order than the host, so each effect carries what the page sees on its gamepad (buttons, sticks) and the host shakes the controller whose reading matches, remembering the pair for effects asked while nothing tells them apart. A package Lamp put on a
@@ -848,7 +849,7 @@ install's last step, and put back sooner, a person's "on" made a non-game a game
 game always, and a web app when its capabilities.json says `{"game": true}` (`Template.Capabilities.game`), which the
 rules ask of anything played, or its icon.json does (`IconSpec.game`, which the agent has written for every game, so one
 made before capabilities.json asked is a game too). That's an explicit line the agent writes, not a guess from the code: three.js draws scenes
-that aren't games and a game may not use it. The native host logs the memory the console gave it, which says which it got.
+that aren't games and a game may not use it. Both hosts, native and web, log the memory the console gave the app, which says which it got.
 
 The tools are a download (`WindowsTools`), in `Edition.sharedDeveloperFolder`/Windows like Android's, in two parts.
 sokol-shdc at a pinned commit (for Apple silicon and Intel), which every build of a game needs, is fetched by itself the

@@ -140,8 +140,10 @@ enum Parts {
     /// the app in its own folder) is never an app's folder. Lamp's own folders come first, in the order its kinds are
     /// listed, then the rest by name.
     static func folders(in wish: URL) -> [String] {
+        // Worked out once, not for each name: it asks every kind for its folders, a device's from the integrations.
+        let notApps = notAppFolders(in: wish)
         let names = ((try? FileManager.default.contentsOfDirectory(atPath: wish.path)) ?? []).filter { name in
-            guard !name.hasPrefix("."), !notAppFolders(in: wish).contains(name) else { return false }
+            guard !name.hasPrefix("."), !notApps.contains(name) else { return false }
             let values = try? wish.appendingPathComponent(name).resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
             return values?.isDirectory == true && values?.isSymbolicLink != true
         }

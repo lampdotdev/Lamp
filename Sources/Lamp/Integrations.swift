@@ -15,7 +15,32 @@ enum Integrations {
     private static var shippedFolder: URL? { Bundle.main.resourceURL?.appendingPathComponent("Devices") }
 
     /// The person's, and Lamp's own (shipped), which win: a written integration never stands in for one Lamp checked.
+    /// Read again only when the person's folder has changed, since a chat panel asks several times on each look at
+    /// where it goes; Lamp's own never change while it runs.
     static func all() -> [Integration] {
+        let mark = folderMark()
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        if let cached, cached.mark == mark { return cached.all }
+        let read = readAll()
+        cached = (mark, read)
+        return read
+    }
+
+    private static let cacheLock = NSLock()
+    private static var cached: (mark: [String], all: [Integration])?
+
+    /// Each file in the person's folder by name, size and when it was written: any change to one, or one added or
+    /// taken away, reads them all again.
+    private static func folderMark() -> [String] {
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey]
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: keys)) ?? []
+        return files.filter { $0.pathExtension == "json" }.map { file in
+            let values = try? file.resourceValues(forKeys: Set(keys))
+            return "\(file.lastPathComponent) \(values?.fileSize ?? -1) \(values?.contentModificationDate?.timeIntervalSinceReferenceDate ?? 0)"
+        }.sorted()
+    }
+
+    private static func readAll() -> [Integration] {
         var byID: [String: Integration] = [:]
         for (folder, shipped) in [(folder, false), (shippedFolder, true)] {
             guard let folder else { continue }
@@ -70,6 +95,12 @@ enum Integrations {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try? encoder.encode(integration).write(to: folder.appendingPathComponent(integration.id + ".json"), options: .atomic)
+        forget()
+    }
+
+    /// Lamp changed the person's folder itself: the next look reads it, even within the file system's clock tick.
+    private static func forget() {
+        cacheLock.lock(); cached = nil; cacheLock.unlock()
     }
 
     /// A step's check passed on a device of this model and software: Lamp marks how it's known now. A step that needed
@@ -94,6 +125,7 @@ enum Integrations {
         where file.pathExtension == "json" && isShipped(file.deletingPathExtension().lastPathComponent) {
             try? FileManager.default.removeItem(at: file)
         }
+        forget()
     }
 
     // MARK: Devices kept

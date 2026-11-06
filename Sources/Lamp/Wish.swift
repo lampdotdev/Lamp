@@ -153,8 +153,18 @@ enum Wish {
         return remix(starter: named("starter"), repo: named("repo"), commit: named("commit"), text: plain)
     }
 
+    /// An app shared as a link, copied with Lamp's mark by its page's Get Lamp (`data-lamp-wish="shared=<id>"`), with
+    /// the change asked for it, if any, as the words. Nil for any other copy.
+    static func markedShared(html: String?, plain: String?) -> Shared? {
+        guard let html, let found = html.range(of: #"\#(mark)="shared=([^"&]*)""#, options: .regularExpression) else { return nil }
+        let id = String(html[found].dropFirst(mark.count + 2 + "shared=".count).dropLast())
+        return isSharedID(id) ? Shared(id: id, text: tidy(plain)) : nil
+    }
+
     enum Look: Equatable {
         case wish(String)
+        /// An app shared as a link, copied by its page's Get Lamp: opened as the link would open it.
+        case shared(Shared)
         /// A remix copied by the site's Download: a copy of a starter or a repository, with the request.
         case remix(Remix)
         /// A browser's copy is waiting, but reading it would make macOS ask the person first.
@@ -174,6 +184,7 @@ enum Wish {
             }
         }
         let html = pasteboard.string(forType: .html), plain = pasteboard.string(forType: .string)
+        if let shared = markedShared(html: html, plain: plain) { return .shared(shared) }
         if let remix = markedRemix(html: html, plain: plain) { return .remix(remix) }
         return marked(html: html, plain: plain).map(Look.wish) ?? .nothing
     }

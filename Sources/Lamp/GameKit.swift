@@ -1507,6 +1507,16 @@ extension Agent.Rules {
         gamePlaces(project, xbox: project.openPlaces.contains(.device) ? GameKit.xboxModel(for: project) : nil)
     }
 
+    /// A web game's budget on a Series X or S. Its web view prepares each draw on the console's processor, which a
+    /// Series S has nearly as fast as a Series X, so the draws are the limit there, not the picture: a city of about 1,000
+    /// draws a frame with a two-cascade shadow map comes to about 30 frames a second there, the shadows about 40% of it.
+    static func xboxWebBudget(triangles: String) -> String {
+        "under about 500 draws a frame, counting each shadow pass (a shadow map draws again everything that casts into it, "
+            + "a cascaded one once per cascade), and \(triangles) triangles (many copies of one shape as one instanced mesh, "
+            + "nothing far off drawn), textures at most 2048 px, a shadow map only when it's drawn again rarely (as the player "
+            + "moves some meters, not every frame), split screen half that for each view"
+    }
+
     static func gamePlaces(_ project: LampProject, xbox: String?) -> String {
         let places = project.openPlaces, web = GameKit.engine(project) == .web
         // Slowest first; an iPhone, which has to stay cool on battery, below a Series S.
@@ -1515,12 +1525,12 @@ extension Agent.Rules {
             switch xbox {
             case let model? where model.localizedCaseInsensitiveContains("Series X"):
                 budgets.append((4, "the person's \(model)'s, which gives a game in Developer Mode most of its GPU" + (web ? ", drawn by its web view" : "") + ": "
-                    + (web ? "under about 1,000 draws and 1,000,000 triangles a frame (many copies of one shape as one instanced mesh)" : "under about 1,500 draws and 2,000,000 vertices a frame")
-                    + ", textures at most 2048 px, one shadow map and a light post-process pass at most"))
+                    + (web ? xboxWebBudget(triangles: "1,000,000") + ", a light post-process pass at most"
+                        : "under about 1,500 draws and 2,000,000 vertices a frame, textures at most 2048 px, one shadow map and a light post-process pass at most")))
             case let model? where model.localizedCaseInsensitiveContains("Series"):
                 budgets.append((3, "the person's \(model)'s, which gives a game in Developer Mode most of its GPU, about a third of a Series X's" + (web ? ", drawn by its web view" : "") + ": "
-                    + (web ? "under about 600 draws and 600,000 triangles a frame (many copies of one shape as one instanced mesh)" : "under about 900 draws and 1,200,000 vertices a frame")
-                    + ", textures at most 2048 px, one shadow map at most, no post-processing"))
+                    + (web ? xboxWebBudget(triangles: "600,000") + ", no post-processing"
+                        : "under about 900 draws and 1,200,000 vertices a frame, textures at most 2048 px, one shadow map at most, no post-processing")))
             case let model:
                 budgets.append((0, (model.map { "the person's \($0)'s" } ?? "an Xbox One's, the slowest console the game may run on")
                     + ", which gives a game in Developer Mode only part of its GPU: "
@@ -1577,7 +1587,8 @@ extension Agent.Rules {
     person's own press takes the game back at once, and use_app is off until their next message. `look_at_app` with \
     `on_device` builds the game for where Try On points and looks at it in that place's preview: the game's window on \
     this Mac, or the iPhone or iPad simulator, never the person's own iPhone, iPad or Xbox; `use_app` then takes only \
-    what that place takes. Lamp can't press a phone page or a controller anywhere but the game's window on this Mac: \
+    what that place takes. Once the game has gone on the person's Xbox, a look also gives what it last logged there, \
+    with how many frames a second it gets there: that, not this Mac's, says how it runs on the Xbox. Lamp can't press a phone page or a controller anywhere but the game's window on this Mac: \
     only the person can play it there.
     """
 
