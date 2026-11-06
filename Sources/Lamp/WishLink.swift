@@ -848,10 +848,12 @@ enum WishLink {
     /// goes beside (Paperclip's, in Mac/).
     func canRetake(_ project: LampProject) -> Bool { Self.pictured(project) != nil }
 
-    /// The app whose front window a new picture is of, while it's open on this Mac.
+    /// The app whose front window a new picture is of, while it's open on this Mac: its Mac copy, wherever Try On points
+    /// (a game for the Mac and the Xbox, pointed at the Xbox, is still pictured in its window here).
     private static func pictured(_ project: LampProject) -> LampProject? {
         let app = Store.shared.chatApp(of: project)
-        return Store.shared.openOnMac.contains(app.id) && app.destination == .mac ? app : nil
+        guard Store.shared.openOnMac.contains(app.id), app.destination == .mac || app.openPlaces.contains(.mac) else { return nil }
+        return app.at(.mac)
     }
 
     /// A new picture of the app as it is now, from its front window: whatever the person has brought forward, a
