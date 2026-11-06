@@ -492,7 +492,9 @@ can't show is said, never shown another way: a change that waits for Reload or d
 your latest change"), and a picture that looks blank, one even color where the game is drawn (`GameKit.isBlank`), which a
 window covered, on another Space or on a sleeping display gives once its page stops drawing, and so does a game that
 draws nothing; which of those it is can't be told, so the answer says it looks blank, sends no picture, and asks the
-agent to look again or ask the person to bring the window into view. A closed game is opened by the look, as any Mac
+agent to look again or ask the person to bring the window into view. A window the game couldn't picture at all is said
+the same way, with why (`Runtime.missedPictures`), never replaced by the app's own drawing of it, which leaves out the
+page (how the pictures are taken is in the generated apps guide, after `use_app`). A closed game is opened by the look, as any Mac
 app is. A look with `reopen` starts the game from its beginning: the app is opened again with `-LampFreshStart YES`
 (`Store.freshStarts`, taken by that one launch), whose page then skips both the place kept for its reopening and the
 recent snapshot of an older build (lamp-game.js's `claim()`, `lampFreshStart`, set once a launch by LampPage.swift),

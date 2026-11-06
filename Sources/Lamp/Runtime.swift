@@ -407,10 +407,24 @@ enum Runtime {
             ["screenshot.png", "screenshot-2.png", "screenshot-3.png"].map { folder(project).appendingPathComponent($0) }
                 .filter { (try? $0.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast > date }
         }
-        for _ in 0..<Int(seconds * 4) where fresh().isEmpty {
+        // An app that couldn't picture its windows says so (`missedPictures`), and nothing more is coming.
+        for _ in 0..<Int(seconds * 4) where fresh().isEmpty && missedPictures(of: project, since: date) == nil {
             try? await Task.sleep(for: .milliseconds(250))
         }
         return fresh()
+    }
+
+    /// What the app said it couldn't picture in its latest pictures since `date` (`LampRuntime.snapshot` writes
+    /// capture.txt): a window the system gave no picture of, which the app's own drawing would show without its page,
+    /// game or video, so it's left out. Said to the agent as is, in a sentence; nil when every window was pictured.
+    static func missedPictures(of project: LampProject, since date: Date = .distantPast) -> String? {
+        let url = folder(project).appendingPathComponent("capture.txt")
+        guard AppFile.attributes(url, in: project)?.modified ?? .distantPast > date, let data = AppFile.read(url, in: project) else { return nil }
+        let lines = String(decoding: data.prefix(2000), as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: true)
+        guard let windows = lines.first else { return nil }
+        let why = lines.dropFirst().first.map(String.init) ?? "the system gave no picture of it"
+        return "Lamp couldn't take a picture of \(windows) (\(why)), so it's left out rather than shown without what the system "
+            + "draws in it (a page, a game or video). Look again in a moment; if it stays, ask the person to bring the window into view."
     }
 
     /// What the app says happened when it carried out a `use_app` request (see `LampDriver` in the app), and

@@ -52,6 +52,15 @@ stepper takes a number or a step, and what has no action of its own, or isn't li
 is clicked at a point, pixels in the picture. Lamp tells an app built before the list existed by a line of the
 heading in its binary (`Store.screenTextMarker`): such an app is told to be rebuilt when a target is used.
 
+The pictures themselves (`LampRuntime.snapshot`, screenshot.png and up to two more) are the window server's, tried a
+few times in under half a second when it gives none, a clear one or one of one color (`LampRuntime.capture`). A window
+that pictures clear shows nothing and is left out, as are Lamp's own windows over the app (the chat beside it, the
+note pointing at the wand, a change's effect), so the app's window is the first picture. When the window server gives
+no picture, the app's own drawing (`cacheDisplay`) is used only for a window with nothing drawn outside the app
+(`LampRuntime.drawsElsewhere`: a web page, Metal, video), since it would show such a window without its page or game.
+Otherwise the window is left out and named in capture.txt with why, which Lamp tells the agent
+(`Runtime.missedPictures`) instead of sending a picture that looks like the window but isn't.
+
 **Showcase mode.** An app opened with `LAMP_SHOWCASE` set to a folder holding a showcase.json is being recorded for
 a reel (`LampShowcase`; "A starter's reel" in the desk guide): it keeps its data in that folder, starting empty
 (LampStore imports any `data/<name>.json` there), LampAI's calls are answered from the script (every route, through
