@@ -64,6 +64,36 @@ enum LlamaInstall {
         }
     }
 
+    /// Whether the fetched build can read a model that names these (its architecture and its tokenizer's, from the
+    /// model's file), so a model it can't run is never chosen: one newer than the build stops at "unknown model
+    /// architecture". llama.cpp keeps each name it reads a model's file for as a string of its own in its library, so
+    /// the library is looked through rather than a list kept here, and a newer pin brings its names with it. Nil before
+    /// the build is fetched, when there's nothing to ask.
+    static func knows(_ names: [String]) -> Bool? {
+        guard let folder else { return nil }
+        let library = folder.appendingPathComponent("libllama.dylib")
+        knownLock.lock()
+        defer { knownLock.unlock() }
+        if known?.folder != folder {
+            guard let data = try? Data(contentsOf: library.resolvingSymlinksInPath(), options: .alwaysMapped) else { return nil }
+            known = (folder, data, [:])
+        }
+        return names.allSatisfy { name in
+            if let answer = known!.answers[name] { return answer }
+            let answer = holds(known!.data, name)
+            known!.answers[name] = answer
+            return answer
+        }
+    }
+
+    /// Whether a library holds `name` as a C string of its own, not as the end or start of a longer one.
+    static func holds(_ library: Data, _ name: String) -> Bool {
+        library.range(of: Data([0] + Array(name.utf8) + [0])) != nil
+    }
+
+    private static let knownLock = NSLock()
+    nonisolated(unsafe) private static var known: (folder: URL, data: Data, answers: [String: Bool])?
+
     /// Whether a folder holds the server, and every program and library in it is signed as Lamp is. Links (a library's
     /// versioned names) are left to what they point to, which is checked in its own right.
     static func verified(_ folder: URL) -> Bool {

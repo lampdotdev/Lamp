@@ -25,6 +25,9 @@ struct InstalledModel: Identifiable, Hashable {
     let bytes: Int64
     let vision: Bool
     let deletable: Bool     // Lamp only deletes GGUF models it can see in the shared cache
+    /// Whether this Lamp's llama.cpp can run it (`LocalModels.runs`). One it can't is listed, to delete, but never
+    /// chosen for anything.
+    var runs = true
 }
 
 /// Models that run on this Mac. Downloads go into the shared Hugging Face cache
@@ -153,6 +156,8 @@ final class LocalModels: ObservableObject {
         guard serverInstall?.token == token else { return }
         serverInstall = nil
         serverInstalled = LlamaInstall.isInstalled
+        // Which models it can run is known now it's here.
+        if failure == nil { refresh() }
         let waiting = serverWaiters.values
         serverWaiters = [:]
         for waiter in waiting {
@@ -290,9 +295,11 @@ final class LocalModels: ObservableObject {
                 if let mmproj { files.append(mmproj) }
                 let quant = groups.count > 1 ? "-" + (key.split(separator: "-").last.map(String.init) ?? key) : ""
                 let id = preferredID ?? Self.slug(base + quant)
+                let urls = files.map { dir.appendingPathComponent($0) }
                 return InstalledModel(id: id, name: base + quant.replacingOccurrences(of: "-", with: " "), repo: repo,
-                                      format: .gguf, source: source, files: files.map { dir.appendingPathComponent($0) },
-                                      bytes: files.reduce(0) { $0 + size($1) }, vision: mmproj != nil, deletable: deletable)
+                                      format: .gguf, source: source, files: urls,
+                                      bytes: files.reduce(0) { $0 + size($1) }, vision: mmproj != nil, deletable: deletable,
+                                      runs: runs(urls[0]))
             }
         }
         // MLX: a config.json with quantization (or an mlx-community repo) plus safetensors weights.
@@ -310,6 +317,79 @@ final class LocalModels: ObservableObject {
         return []
     }
 
+    /// Whether this Lamp's llama.cpp can run the GGUF model in this file: whether it knows the architecture and the
+    /// tokenizer the file names (`LlamaInstall.knows`). A model the shared cache got from elsewhere can be newer than the
+    /// pinned build, which then answers every request for it with "failed to load". Taken to run while the server isn't
+    /// here to ask, and when the file can't be read, where loading it is what tells.
+    nonisolated static func runs(_ file: URL) -> Bool {
+        let names = ggufNames(file)
+        return names.isEmpty || LlamaInstall.knows(names) != false
+    }
+
+    /// The names a GGUF file's header gives for its architecture and its tokenizer's pre-tokenizer, the two llama.cpp
+    /// must know to load it; empty when the file isn't one it can read. Kept by file, size and date, since the models are
+    /// scanned often and a header can run to megabytes (the tokenizer's whole vocabulary).
+    nonisolated static func ggufNames(_ file: URL) -> [String] {
+        let real = file.resolvingSymlinksInPath()
+        let values = try? real.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let key = "\(real.path)|\(values?.fileSize ?? 0)|\(values?.contentModificationDate?.timeIntervalSince1970 ?? 0)"
+        headerLock.lock()
+        defer { headerLock.unlock() }
+        if let kept = headers[key] { return kept }
+        let names = (try? Data(contentsOf: real, options: .alwaysMapped)).map { ggufNames(in: $0) } ?? []
+        headers[key] = names
+        return names
+    }
+
+    private nonisolated static let headerLock = NSLock()
+    nonisolated(unsafe) private static var headers: [String: [String]] = [:]
+
+    /// The same, read from a GGUF file's bytes (version 2 or later): `general.architecture`, then
+    /// `tokenizer.ggml.pre` when the file has one.
+    nonisolated static func ggufNames(in data: Data) -> [String] {
+        var at = data.startIndex
+        func take(_ count: Int) -> Data? {
+            guard count >= 0, data.endIndex - at >= count else { return nil }
+            defer { at += count }
+            return data[at..<at + count]
+        }
+        func integer(_ size: Int) -> UInt64? {
+            take(size).map { $0.reversed().reduce(0) { $0 << 8 | UInt64($1) } }
+        }
+        func string() -> String? {
+            guard let count = integer(8), count < 1 << 31, let bytes = take(Int(count)) else { return nil }
+            return String(decoding: bytes, as: UTF8.self)
+        }
+        // Moves past a value of a type, saying whether it could.
+        func skip(_ type: UInt64) -> Bool {
+            switch type {
+            case 0, 1, 7: return take(1) != nil
+            case 2, 3: return take(2) != nil
+            case 4, 5, 6: return take(4) != nil
+            case 10, 11, 12: return take(8) != nil
+            case 8: return string() != nil
+            case 9:
+                guard let inner = integer(4), let count = integer(8) else { return false }
+                for _ in 0..<count where !skip(inner) { return false }
+                return true
+            default: return false
+            }
+        }
+        guard take(4) == Data("GGUF".utf8), let version = integer(4), version >= 2,
+              integer(8) != nil, let count = integer(8) else { return [] }
+        var architecture: String?, pre: String?
+        for _ in 0..<count {
+            guard let key = string(), let type = integer(4) else { break }
+            if type == 8, key == "general.architecture" || key == "tokenizer.ggml.pre" {
+                guard let value = string() else { break }
+                if key == "general.architecture" { architecture = value } else { pre = value }
+                if architecture != nil, pre != nil { break }
+            } else if !skip(type) { break }
+        }
+        guard let architecture else { return [] }
+        return [architecture] + (pre.map { [$0] } ?? [])
+    }
+
     private nonisolated static func slug(_ text: String) -> String {
         text.lowercased().filter { $0.isLetter || $0.isNumber || ".-_".contains($0) }
     }
@@ -325,7 +405,7 @@ final class LocalModels: ObservableObject {
         let fm = FileManager.default
         try? fm.removeItem(at: Self.routerDir)
         try? fm.createDirectory(at: Self.routerDir, withIntermediateDirectories: true)
-        for model in installed where model.format == .gguf {
+        for model in installed where model.format == .gguf && model.runs {
             let dir = Self.routerDir.appendingPathComponent(model.id)
             try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
             for file in model.files {
@@ -642,7 +722,7 @@ final class LocalModels: ObservableObject {
     /// Registers local models with Lamp's pi through `models.json` (OpenAI-compatible endpoints).
     func writePiModels() {
         var providers: [String: Any] = [:]
-        let gguf = installed.filter { $0.format == .gguf }
+        let gguf = installed.filter { $0.format == .gguf && $0.runs }
         if !gguf.isEmpty {
             providers[Builder.localProvider] = [
                 "baseUrl": "\(Self.baseURL)/v1", "api": "openai-completions", "apiKey": Self.apiKey,

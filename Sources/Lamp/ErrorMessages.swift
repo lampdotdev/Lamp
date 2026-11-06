@@ -9,6 +9,10 @@ enum ErrorMessages {
     static let providerBusy = "The AI is busy right now. Wait a minute and try again."
     static let connectionFailed = "Couldn't reach the AI. Check your internet connection and try again."
     static let localServerUnreachable = "Couldn't reach the local model server. Check Settings → AI Providers → Native Mac AI."
+    /// A model on this Mac that the server couldn't start, most often one newer than this Lamp's copy of llama.cpp.
+    static let localModelFailed = "The model on this Mac couldn't start. Pick another in Settings → AI Providers → Native Mac AI, or update Lamp."
+    static let localModelCantRunSuffix = " is too new for this Lamp to run. Pick another model in Settings → AI Providers → Native Mac AI, or update Lamp."
+    static func localModelCantRun(_ model: String) -> String { model + localModelCantRunSuffix }
 
     static let openFailedPrefix = "Couldn't open the app: "
     static let installFailedPrefix = "Couldn't install the app: "
