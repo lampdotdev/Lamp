@@ -9696,16 +9696,20 @@ final class Store: ObservableObject {
     /// slot, and a look let go after `lookLimit` can still be building when the turn's end builds again.
     private var buildsUnderWay: [String: Task<Void, Never>] = [:]
 
+    /// A step's own build (`ownStep`, from `stepPage`) keeps out of it: every other build already waits for the step under
+    /// way (`turn.applying`), and a step waiting here on a build that waits on it would never end.
     private func build(_ project: LampProject, inPlace: Bool = true, ownStep: Bool = false, phone: String? = nil) async -> String? {
-        let earlier = buildsUnderWay[project.id]
         let (ended, end) = AsyncStream<Void>.makeStream()
         let mine = Task { for await _ in ended {} }
-        buildsUnderWay[project.id] = mine
+        if !ownStep {
+            let earlier = buildsUnderWay[project.id]
+            buildsUnderWay[project.id] = mine
+            await earlier?.value
+        }
         defer {
             end.finish()
             if buildsUnderWay[project.id] == mine { buildsUnderWay[project.id] = nil }
         }
-        await earlier?.value
         // The open app glows while its change is built, until it goes in (`reloadInPlace`) or the install that
         // follows settles otherwise; a build that fails lets it go here.
         let glowing = exists(project) && AppTransition.begin(project)
