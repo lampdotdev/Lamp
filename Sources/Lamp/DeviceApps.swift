@@ -449,9 +449,11 @@ enum DeviceApps {
     }
 
     /// What the app's own log on the device holds now, through the bridge's `log`; nil when the integration has none.
+    /// Read from the copy Lamp last put there, which a newer build that hasn't gone on yet doesn't name.
     static func log(_ project: LampProject, on device: Device) async throws -> String? {
         guard let integration = integration(for: project), let log = integration.bridge?.log, !log.isEmpty else { return nil }
-        return try await IntegrationRunner(integration: integration, device: device).run(log, extra: values(project)).log
+        let extra = installedValues(project, on: device) ?? values(project)
+        return try await IntegrationRunner(integration: integration, device: device).run(log, extra: extra).log
     }
 
     /// Notes which package is on which device once its install went through, for the next install to end it first.

@@ -11419,6 +11419,24 @@ final class Store: ObservableObject {
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
     }
 
+    /// What a game put on the person's console last logged there, read back over the network for a look at it on this
+    /// Mac: Lamp never looks at the console itself, and without this every change made for it there was a guess, its frame
+    /// rate unknown. Nil when the game hasn't gone on one, the integration reads no log, or the console doesn't answer
+    /// within a few seconds (it's off, or asleep). The console is the one the app itself has under Try On: a look's
+    /// project is often its Mac copy, which chooses none.
+    private func deviceLogTail(_ project: LampProject) async -> (device: String, tail: String)? {
+        let project = current(project) ?? project
+        guard GameKit.isGame(project), project.openPlaces.contains(.device), DeviceApps.wentOnADevice(project),
+              let device = DeviceApps.device(for: project, among: devices) else { return nil }
+        let read = Task { try? await DeviceApps.log(project, on: device) }
+        let limit = Task { try? await Task.sleep(for: .seconds(5)); read.cancel() }
+        defer { limit.cancel() }
+        guard let log = await read.value ?? nil else { return nil }
+        let tail = Runtime.newestOfEach(log.split(separator: "\n", omittingEmptySubsequences: false).suffix(30))
+            .joined(separator: "\n").trimmed
+        return tail.isEmpty ? nil : (device.name, tail)
+    }
+
     /// Why `use_app` doesn't press a game's phone page: the person's phones are the ones that join it, and Lamp has none
     /// of its own to join with.
     nonisolated static let noPhoneUse = "use_app can't press a game's phone page: only the person's own phones join the game, "
@@ -14805,12 +14823,12 @@ final class Store: ObservableObject {
         guard let preview = AgentPreview.app(for: app) else {
             return await underTurn(of: project, app) {
                 guard let turn = turns[app.id], turn.agent != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
-                return await buildWithoutPreview(app, in: turn)
+                return await withDeviceLog(await buildWithoutPreview(app, in: turn), of: app)
             }
         }
         return await underTurn(of: project, app) {
-            await look(at: preview, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
-                       reopen: reopen, onDevice: onDevice, shape: arguments["shape"] as? String, tryOn: app.device)
+            await withDeviceLog(await look(at: preview, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
+                                           reopen: reopen, onDevice: onDevice, shape: arguments["shape"] as? String, tryOn: app.device), of: app)
         }
     }
 
@@ -14909,6 +14927,17 @@ final class Store: ObservableObject {
     private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false, onDevice: Bool = false,
                       shape: String? = nil, tryOn: String? = nil) async -> (Int, [String: Any]) {
         withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice, shape: shape, tryOn: tryOn), of: project)
+    }
+
+    /// Every look at a game that has gone on the person's Xbox, whichever way it went (a preview, or only a build for a
+    /// game with none), says what the game logged there.
+    private func withDeviceLog(_ answer: (Int, [String: Any]), of app: LampProject) async -> (Int, [String: Any]) {
+        var answer = answer
+        if answer.0 == 200, let text = answer.1["text"] as? String, Privacy.sharesLog, let (device, tail) = await deviceLogTail(app) {
+            answer.1["text"] = text + "\n\nWhat it logged on the person's \(device) since it last opened there (how many frames a second it "
+                + "gets there is the line it writes every ten seconds; it isn't open there now if that line is old):\n\(tail)"
+        }
+        return answer
     }
 
     private func lookNow(at project: LampProject, prop: String?, motion: Bool, reopen: Bool, onDevice: Bool, shape: String? = nil,
