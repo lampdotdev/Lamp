@@ -7433,7 +7433,7 @@ enum Template {
         /// whatever there is (a menu bar app may have nothing).
         @MainActor
         private static func firstSnapshot(waited: Double = 0) {
-            guard windowsOnScreen.isEmpty, waited < 2 else {
+            guard openWindows.isEmpty, waited < 2 else {
                 DispatchQueue.main.asyncAfter(deadline: .now() + (waited < 2 ? 0.5 : 0)) { MainActor.assumeIsolated { snapshot() } }
                 return
             }
@@ -7452,7 +7452,8 @@ enum Template {
         @MainActor
         private static func snapshotNow(then done: (@MainActor () -> Void)?) {
             LampDriver.keepBarPanel()
-            let windows = windowsOnScreen
+            // Every open window, those the last pictures found clear included: each is looked at afresh.
+            let windows = openWindows
             guard !windows.isEmpty else { done?(); return }   // nothing on screen: keep the last pictures
             // The app's own window, not a dialog or sheet in front of it (a menu bar app's panel when that's all it has):
             // the desk keeps this picture until the next launch.
@@ -7469,10 +7470,6 @@ enum Template {
             let shots = front.map { unseen == nil ? shot(of: $0) : nil }
             // The desk's picture is never sent to the model, and a Share Link shows it large: taken sharper than the rest.
             let previewShot = previewWindow.flatMap { unseen == nil ? shot(of: $0, longest: 2048) : nil }
-            // The front window as text, beside its picture (LampScreen), for the builder to read and act on by name: read
-            // now, with the window as it's pictured, and written with the pictures, so a later snapshot's text never
-            // lands beside this one's pictures.
-            let words = LampScreen.text(for: LampDriver.elements(in: windows[0]).map(\.item))
             // The window server's pictures are taken off the main thread: the first after a build has the system check
             // the app's signature before it answers, which can take seconds, and the app froze (a spinning cursor) meanwhile.
             pictures.async {
@@ -7495,28 +7492,37 @@ enum Template {
                                 }
                             }
                         }
+                        // A window that shows nothing is left out; one the system gave no picture of, where the app's
+                        // own drawing would leave out a page, a game or video, is said to Lamp instead (capture.txt).
+                        // A clear window is left out of `windowsOnScreen` too, until a picture shows something in it, so
+                        // the first picture, the screen as text and `use_app`'s actions are all of the same window. When
+                        // the front window can't be pictured, no window behind it takes its place as the first picture.
+                        var kept: [(window: NSWindow, png: Data)] = []
+                        var missed: [String] = []
+                        var clear: Set<Int> = []
+                        for (window, result) in zip(front, taken) where kept.count < 3 {
+                            if case .clear = result { clear.insert(window.windowNumber); continue }
+                            if let png = usable(result, of: window) {
+                                if isClear(png) { clear.insert(window.windowNumber) } else { kept.append((window, png)) }
+                            } else {
+                                missed.append(window.title.isEmpty ? "a window" : "\"\(window.title)\"")
+                                if kept.isEmpty { break }
+                            }
+                        }
+                        showsNothing = clear
+                        // The pictured front window as text, beside its picture (LampScreen), for the builder to read and act
+                        // on by name, written with the pictures, so a later snapshot's text never lands beside this one's.
+                        let words = kept.first.flatMap { LampScreen.text(for: LampDriver.elements(in: $0.window).map(\.item)) }
                         let text = folder.appendingPathComponent("screen.txt")
                         if let words {
                             try? words.write(to: text, atomically: true, encoding: .utf8)
                         } else {
                             try? FileManager.default.removeItem(at: text)
                         }
-                        // A window that shows nothing is left out; one the system gave no picture of, where the app's
-                        // own drawing would leave out a page, a game or video, is said to Lamp instead (capture.txt).
-                        var kept: [Data] = []
-                        var missed: [String] = []
-                        for (window, result) in zip(front, taken) where kept.count < 3 {
-                            if case .clear = result { continue }
-                            if let png = usable(result, of: window) {
-                                if !isClear(png) { kept.append(png) }
-                            } else {
-                                missed.append(window.title.isEmpty ? "a window" : "\"\(window.title)\"")
-                            }
-                        }
                         for index in 0..<3 {
                             let url = folder.appendingPathComponent(index == 0 ? "screenshot.png" : "screenshot-\(index + 1).png")
                             if index < kept.count {
-                                try? kept[index].write(to: url, options: .atomic)
+                                try? kept[index].png.write(to: url, options: .atomic)
                             } else {
                                 try? FileManager.default.removeItem(at: url)
                             }
@@ -7671,7 +7677,15 @@ enum Template {
         /// Open windows, frontmost first. A dialog or sheet comes before the window it's attached to: it's
         /// what the user has to deal with first, and `orderedWindows` leaves those out.
         @MainActor
-        static var windowsOnScreen: [NSWindow] {
+        static var windowsOnScreen: [NSWindow] { openWindows.filter { !showsNothing.contains($0.windowNumber) } }
+
+        /// The windows the last pictures found clear (`snapshot`): nothing in them is on screen, so they're not the window
+        /// pictured, read or acted on.
+        @MainActor private static var showsNothing: Set<Int> = []
+
+        /// `windowsOnScreen` with those the last pictures found clear.
+        @MainActor
+        private static var openWindows: [NSWindow] {
             func withSheets(_ window: NSWindow) -> [NSWindow] { (window.attachedSheet.map(withSheets) ?? []) + [window] }
             var windows = NSApp.orderedWindows.flatMap(withSheets)
             // Alerts and panels shown on their own.

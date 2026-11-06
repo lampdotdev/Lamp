@@ -97,7 +97,7 @@ final class ScreenTextPrivacyTests: XCTestCase {
         let before = UserDefaults.standard.object(forKey: "shareAppPictures")
         defer { UserDefaults.standard.set(before, forKey: "shareAppPictures") }
         UserDefaults.standard.set(false, forKey: "shareAppPictures")
-        for file in [".lamp/runtime/screen.txt", ".lamp/runtime/screenshot.png"] {
+        for file in [".lamp/runtime/screen.txt", ".lamp/runtime/screenshot.png", ".lamp/runtime/capture.txt"] {
             guard case .deny = Privacy.verdict(tool: "read", path: file, project: project) else { return XCTFail("\(file) was allowed") }
         }
         guard case .allow = Privacy.verdict(tool: "read", path: ".lamp/runtime/log.txt", project: project) else { return XCTFail("the log was refused") }
