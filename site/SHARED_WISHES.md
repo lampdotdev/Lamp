@@ -20,7 +20,8 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   own host under the play host (`playOrigin`: `<id in hex>.play.lamp.dev`), so one shared page can never read what
   another saved in the browser, and never on lamp.dev itself; framed only by the site (`frame-ancestors`). Each file is passed on as it comes from Blob; one of 16 MB or more (`DIRECT_FILE`, a game's map data, say) is sent straight to Blob instead, since the CDN keeps nothing over 20 MB from a function. That needs Blob to call it what it is, so files are kept with their own type, and a page kept that way has `page.sizes`. A page's
   version counts up for the link (`pageVersion`), so an address never plays two different pages. The page goes with
-  the wish's file: taking the file away takes the page too. Without a play host, the page shows the wish's picture.
+  the wish's file: taking the file away takes the page too. Without a play host, the page shows the wish's picture (or its icon, when it has none) with its
+  line and how to get it.
 - The page (`/w/<id>`, `src/pages/w/index.astro` filled by `lib/shared-wish-page.js`, served by `api/wish-page.js`
   through a rewrite in `vercel.json`): a page of the wish's own, for playing it, plain, on the site's paper and ink (the wish between thin-ruled bars, on black once they're put away),
   with Lamp only a quiet "Made with Lamp" in the header beside the wish's icon, name and who it's by. The wish fills the
