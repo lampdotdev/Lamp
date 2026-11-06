@@ -9,8 +9,8 @@ import SwiftUI
 /// Bring Into My App.
 ///
 /// A request counts as seen once it's shown here, at the head it's shown at; new commits make it new again. A request
-/// closed and opened again at the same head is as it was. Mark All as Seen marks those the list shows when it's clicked.
-/// Not for Me sets one aside quietly (the sender hears nothing) until its sender changes it.
+/// closed and opened again at the same head is as it was. Mark All as Seen marks those the list shows when it's clicked,
+/// and shows only while one of them is new. Not for Me sets one aside quietly (the sender hears nothing) until its sender changes it.
 struct SuggestionsPanel: View {
     @EnvironmentObject private var store: Store
     /// The app whose changes show.
@@ -71,7 +71,7 @@ struct SuggestionsPanel: View {
         let shown = Self.shown(record, topic: topic, search: search, summaries: record.summaries)
         let chosen = (picked ?? preview?.picked).flatMap(record.about) ?? shown.first(where: { !record.isHidden($0) })
         return VStack(spacing: 0) {
-            header(project, record)
+            header(project, record, toMark: Self.toMark(record, topic: topic, search: search))
             Divider().overlay(Paper.rule)
             HStack(spacing: 0) {
                 list(record, shown: shown, chosen: chosen?.number).frame(width: 300)
@@ -96,7 +96,8 @@ struct SuggestionsPanel: View {
     }
 
     /// Back, which app (as a menu of those with changes), how many, and Mark All as Seen.
-    private func header(_ project: LampProject?, _ record: SuggestedChanges.Record?) -> some View {
+    private func header(_ project: LampProject?, _ record: SuggestedChanges.Record?,
+                        toMark: [(number: Int, head: String)] = []) -> some View {
         HStack(spacing: 12) {
             Button(action: back) { Label("Back", systemImage: "chevron.left") }
                 .buttonStyle(PaperButtonStyle(.outline, height: 28))
@@ -117,10 +118,10 @@ struct SuggestionsPanel: View {
                     .font(.system(size: 13)).foregroundStyle(Paper.muted)
             }
             Spacer()
-            if let project, let record, record.newCount > 0 {
+            if let project, !toMark.isEmpty {
                 Button("Mark All as Seen") {
-                    // Those new as the list stands now; one that changes after this click stays new.
-                    store.sawSuggestions(record.open.filter(record.isNew).map { ($0.number, $0.head) }, in: project)
+                    // Those new in the list as it stands now, at the heads shown; one that changes after this click stays new.
+                    store.sawSuggestions(toMark, in: project)
                 }
                 .buttonStyle(PaperButtonStyle(.outline, height: 28))
             }
@@ -214,6 +215,12 @@ struct SuggestionsPanel: View {
         guard var record = SuggestedChanges.record(for: project) else { return nil }
         record.summaries = SuggestionSummaries.fresh(record, about: SuggestionSummaries.about(project))
         return record
+    }
+
+    /// What Mark All as Seen marks: the new ones the list shows, with the topic and search as they are, at the heads
+    /// shown. Those the search or topic leaves out stay new.
+    static func toMark(_ record: SuggestedChanges.Record, topic: String?, search: String) -> [(number: Int, head: String)] {
+        shown(record, topic: topic, search: search, summaries: record.summaries).filter(record.isNew).map { ($0.number, $0.head) }
     }
 
     /// The open requests, newest first, in the topic chosen and matching the search (the line's words, the sender, the
