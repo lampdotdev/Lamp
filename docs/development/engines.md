@@ -375,9 +375,9 @@ Claude Code alone so far: Codex and pi have no such session.
   (`Turn.repairs`), its build errors, crashes and new errors in the log said afresh in its answer, and the request left
   open. The request's first save is a version; a later one amends it only while it's still the latest and the request's
   own (`OutsideRequest.amends`), writing its message and its list of apps again. The request ends when Claude Code stops
-  (the `Stop` hook, `endOutsideRequest`): what changed since the last checkpoint that went through, or a failure not known
-  to be fixed, is checked again, and still broken, Claude Code is turned back to fix it (`decision: block`) twice at most
-  per request (`OutsideRequest.stopBlocks`), counted apart from checkpoints; then the project is free and the person is
+  (the `Stop` hook, `endOutsideRequest`): code changed since the last checkpoint that went through (counted from the
+  code as that checkpoint began), files not yet in a version, or a failure not known to be fixed, is checked again, and
+  still broken, Claude Code is turned back to fix it (`decision: block`) twice at most per request (`OutsideRequest.stopBlocks`), counted apart from checkpoints; then the project is free and the person is
   told what's broken and what was saved. Stop doesn't run when the person interrupts Claude Code, so a request still open
   is ended by the next prompt or the session's end, never turned back.
 - **One operation at a time.** `OutsideWork` runs a session's applies, finishes and the tools that change the app, one

@@ -157,18 +157,20 @@ final class OutsideSessionTests: XCTestCase {
         XCTAssertFalse(request.amends(head: nil))
     }
 
-    /// Claude Code stopping checks the code again when it changed since the last checkpoint that went through, and when the
-    /// last checkpoint failed even though nothing changed since; not when the last good checkpoint saw this very code.
+    /// Claude Code stopping checks the code again when it changed since the last checkpoint that went through, when the
+    /// last checkpoint failed even though nothing changed since, and when a file no build reads is left out of a version;
+    /// not when the last good checkpoint saw this very code and everything is saved.
     func testStopChecksChangesAndUnresolvedFailures() {
         var request = OutsideRequest()
-        XCTAssertTrue(request.checksAtStop(code: "A"), "never checked")
+        XCTAssertTrue(request.checksAtStop(code: "A", unsaved: false), "never checked")
         request.checkpointed(at: "A", failed: false)
-        XCTAssertFalse(request.checksAtStop(code: "A"))
-        XCTAssertTrue(request.checksAtStop(code: "B"))
+        XCTAssertFalse(request.checksAtStop(code: "A", unsaved: false))
+        XCTAssertTrue(request.checksAtStop(code: "A", unsaved: true), "a README changed after the checkpoint is saved at the end")
+        XCTAssertTrue(request.checksAtStop(code: "B", unsaved: false))
         request.checkpointed(at: "B", failed: true)
-        XCTAssertTrue(request.checksAtStop(code: "B"), "a failure not known to be fixed is checked again")
+        XCTAssertTrue(request.checksAtStop(code: "B", unsaved: false), "a failure not known to be fixed is checked again")
         request.checkpointed(at: "B2", failed: false)
-        XCTAssertFalse(request.checksAtStop(code: "B2"))
+        XCTAssertFalse(request.checksAtStop(code: "B2", unsaved: false))
     }
 
     /// Stopping with something broken turns Claude Code back twice at most per request, however many checkpoints come

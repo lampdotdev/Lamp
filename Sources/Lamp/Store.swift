@@ -16133,10 +16133,13 @@ extension Store {
     private func checkpointOutside(_ session: OutsideSession, _ wish: LampProject) async -> (answer: [String: Any], found: String, failed: Bool) {
         guard let owner = turns[wish.id], owner.outside === session, let project = current(wish) else { return (["text": "No request is open."], "", false) }
         owner.report = [:]
+        // The code as the checkpoint begins is what it checks: an edit landing while it runs (a command already
+        // running) leaves the code different from this, so Claude Code stopping checks again.
+        let began = outsideFingerprint(wish)
         let result = await endOfRequest(project, owner: owner, saved: [], asked: owner.requests)
         let report = owner.report
         let failed = !owner.stopped && (report["build_errors"] != nil || report["crashes"] != nil || result.end == .failed)
-        owner.outsideRequest.checkpointed(at: outsideFingerprint(wish), failed: failed)
+        owner.outsideRequest.checkpointed(at: began, failed: failed)
         var lines: [String] = []
         if let errors = report["build_errors"] as? String {
             lines.append("Not saved: it doesn't build. Fix these, apply_change, then finish_request again:\n\n" + errors)
@@ -16165,7 +16168,9 @@ extension Store {
         guard let owner = turns[wish.id], owner.outside === session, let project = current(wish) else { return [:] }
         var said: String?
         var failed = false
-        if owner.outsideRequest.checksAtStop(code: outsideFingerprint(wish)) {
+        // Files no build reads (a README, a test) count too: a checkpoint saves every file of the project.
+        let unsaved = await Versions.hasChanges(in: project.dir)
+        if owner.outsideRequest.checksAtStop(code: outsideFingerprint(wish), unsaved: unsaved) {
             let checked = await checkpointOutside(session, wish)
             (said, failed) = (checked.found, checked.failed)
         }

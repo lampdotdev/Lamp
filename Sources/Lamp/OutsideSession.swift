@@ -200,7 +200,7 @@ struct OutsideRequest {
     static let stopBlocks = 2
     /// The version this request saved, while Lamp knows it to be the request's own.
     private(set) var savedCommit: String?
-    /// The code at the last checkpoint that left nothing broken.
+    /// The code as the last checkpoint that left nothing broken began.
     private(set) var lastGood: String?
     /// The last checkpoint left the code not building, or the app crashing on launch.
     private(set) var failing = false
@@ -217,9 +217,10 @@ struct OutsideRequest {
         if !failed { lastGood = code }
     }
 
-    /// Whether Claude Code stopping checks the code again: it changed since the last checkpoint that went through, or that
-    /// checkpoint's failure isn't known to be fixed.
-    func checksAtStop(code: String) -> Bool { failing || lastGood != code }
+    /// Whether Claude Code stopping checks the code again: it changed since the last checkpoint that went through, that
+    /// checkpoint's failure isn't known to be fixed, or the project has files not yet in a version (`unsaved`), which
+    /// a change to a file no build reads leaves without changing the code.
+    func checksAtStop(code: String, unsaved: Bool) -> Bool { failing || unsaved || lastGood != code }
 
     /// Claude Code is stopping with something broken: true to turn it back, while the request has blocks left. Counted
     /// apart from checkpoints, so a request can't be held open by checkpoints alone.
