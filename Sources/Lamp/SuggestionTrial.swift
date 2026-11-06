@@ -35,8 +35,10 @@ enum SuggestionTrial {
             && !GameKit.isGame(project) && !ScreenKit.hostsOnApple(project) && !GameKit.usesPlayer(project)
     }
 
-    /// Said beside the button.
+    /// Said on the button, when the pointer rests on it.
     static let note = "Opens a copy with none of your data. Your app stays as it is."
+    /// Said above the buttons, so it names the one it's about.
+    static let caption = "Try It First opens a copy with none of your data. Your app stays as it is."
 
     /// What a try leaves behind, written before anything else, for whoever cleans up after it.
     struct Manifest: Codable, Equatable {

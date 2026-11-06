@@ -349,28 +349,36 @@ struct SuggestionDetail: View {
 
     }
 
-    /// The buttons on one line where they fit, on two where they don't; none ever wraps its words. Show the Code and
-    /// what Try It First leaves alone go on the line under them.
+    /// The buttons on one line where they fit, with Show the Code at its start; on two where they don't, Show the Code
+    /// beside Bring Into My App; and one under another in the narrowest window. None ever wraps its words. What Try It
+    /// First leaves alone is said above them all, naming the button, so it's never read as being about another.
     private var actions: some View {
-        VStack(alignment: .trailing, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             // A try of it, while it lasts, where its buttons are.
             if let trial { trying(trial) }
+            if case .open = standing, !record.isHidden(request), SuggestionTrial.canTry(project), trial == nil {
+                note(SuggestionTrial.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) { Spacer(minLength: 0); firstButtons; mainButton }
+                HStack(spacing: 10) { codeLink; Spacer(minLength: 8); firstButtons; mainButton }
                 VStack(alignment: .trailing, spacing: 8) {
                     HStack(spacing: 10) { Spacer(minLength: 0); firstButtons }
+                    HStack(spacing: 10) { codeLink; Spacer(minLength: 8); mainButton }
+                }
+                VStack(alignment: .trailing, spacing: 8) {
+                    firstButtons
                     mainButton
+                    codeLink
                 }
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Button("Show the Code") { store.viewSuggestion(project, number: request.number) }
-                    .buttonStyle(.link).font(.system(size: 12.5)).foregroundStyle(Paper.muted).fixedSize()
-                Spacer(minLength: 8)
-                if case .open = standing, !record.isHidden(request), SuggestionTrial.canTry(project), trial == nil {
-                    note(SuggestionTrial.note).multilineTextAlignment(.trailing)
-                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
+    }
+
+    private var codeLink: some View {
+        Button("Show the Code") { store.viewSuggestion(project, number: request.number) }
+            .buttonStyle(.link).font(.system(size: 12.5)).foregroundStyle(Paper.muted).fixedSize()
     }
 
     @ViewBuilder private var firstButtons: some View {
@@ -563,6 +571,9 @@ extension Gallery {
     /// The desk's panel of changes sent, in each state it's in, from made-up requests to a made-up app.
     static let suggestionEntries: [Entry] = [
         panel("Many changes, explained"),
+        // The desk's window is 760 wide at its least, and the panel is what's left beside the sidebar.
+        panel("Many changes, a narrower window", width: 680),
+        panel("Many changes, the narrowest window", width: 540),
         panel("One without an explanation yet", picked: 9),
         panel("Set aside", picked: 18),
         panel("Trying it", trial: .building),
@@ -577,7 +588,7 @@ extension Gallery {
                                                  dir: URL(fileURLWithPath: "/nonexistent"))
 
     private static func panel(_ name: String, picked: Int? = nil, standing: SuggestedChanges.Standing? = nil,
-                              trial: SuggestionTrial.Running.Stage? = nil, empty: Bool = false) -> Entry {
+                              trial: SuggestionTrial.Running.Stage? = nil, empty: Bool = false, width: CGFloat = 940) -> Entry {
         Entry(group: "Sent to you", name: name) {
             var preview = SuggestionsPanel.Preview(project: littleHouse, record: empty ? SuggestedChanges.Record(repo: "someone/little-house") : sentRecord,
                                                    yours: ["Sources/Fire.swift"], picked: picked)
@@ -589,8 +600,10 @@ extension Gallery {
                 preview.trial = running
             }
             return AnyView(SuggestionsPanel(wish: littleHouse.id, back: {}, preview: preview)
-                .frame(width: 940, height: 600)
-                .background(Paper.page))
+                .frame(width: width, height: 600)
+                .background(Paper.page)
+                // The gallery's window isn't given the store, which the panel asks what's busy; without it the entry crashes.
+                .environmentObject(Store.shared))
         }
     }
 
