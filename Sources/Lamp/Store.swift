@@ -14973,10 +14973,18 @@ final class Store: ObservableObject {
     }
 
     /// The turn's end builds and opens the app, which would overlap a look let go that's still building or launching it:
-    /// that look is waited on first, for at most another `lookLimit`. One still running after that waits on something
-    /// else than a build of its own, and the turn goes on.
+    /// that look is waited on first, for at most another `lookLimit`. A build of its own still running then is ended, as
+    /// Stop ends one, and the look is given a moment to come back from it; the turn goes on after that whatever it waits on.
     private func waitForStraggler(_ turn: Turn) async {
         guard turn.look.straggler != nil, let ends = turn.look.stragglerEnds else { return }
+        await wait(for: ends, atMost: Self.lookLimit)
+        guard turn.look.straggler != nil, let build = turn.build else { return }
+        _ = Subprocess.terminateTree(build)
+        await wait(for: ends, atMost: 15)
+    }
+
+    /// Waits for a task to end, or for the time given, whichever comes first.
+    private func wait(for ends: Task<Void, Never>, atMost seconds: TimeInterval) async {
         final class Once { var done = false }
         let once = Once()
         await withCheckedContinuation { (finished: CheckedContinuation<Void, Never>) in
@@ -14987,7 +14995,7 @@ final class Store: ObservableObject {
                 finished.resume()
             }
             Task { @MainActor in
-                try? await Task.sleep(for: .seconds(Self.lookLimit))
+                try? await Task.sleep(for: .seconds(seconds))
                 guard !once.done else { return }
                 once.done = true
                 finished.resume()
