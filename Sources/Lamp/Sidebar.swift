@@ -482,6 +482,7 @@ final class SidebarServer {
                                          button: store.setup.installRequested ? "Show Installer" : "Install…")
         }
         state.readingAt = readingAt[project.id]
+        state.inClaudeCode = store.outsideSessions[store.wish(of: project).id]?.chatMark
         state.panel = panels[project.id]
         switch state.panel {
         case .versions:

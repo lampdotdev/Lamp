@@ -37,6 +37,9 @@ import Foundation
     private(set) var ending: Ending?
     /// Claude Code's own conversation, as its hooks say: what Lamp's notes and skills briefs were told goes by it.
     var conversation: String?
+    /// What the chat is sent while the session lasts (`SidebarState.inClaudeCode`), so it closes: new each time the chat
+    /// is opened meanwhile (`Store.chatOpenedInSession`).
+    var chatMark = UUID()
     /// One operation at a time, across the wish and its parts.
     let work = OutsideWork()
     /// Messages from the chat handed over in an answer, and when: they count as received once a later call from the

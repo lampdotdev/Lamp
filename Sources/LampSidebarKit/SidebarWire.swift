@@ -104,6 +104,10 @@ public struct SidebarState: Codable, Equatable {
     /// Where the person was reading when this chat was last drawn anywhere: the first line in view, or nil at the end.
     /// A chat drawn again elsewhere (beside the app, in Lamp's panel) opens there (`SidebarCommand.scrolled`).
     public var readingAt: UUID?
+    /// Set while Claude Code has the wish in a terminal ("Work in Claude Code" in Lamp): it's worked on there, so the chat
+    /// closes wherever it's drawn until the session ends, when Lamp opens it again. A new value each time the chat is
+    /// opened meanwhile, since a chat closed beside its app keeps its connection and would otherwise stay open.
+    public var inClaudeCode: UUID?
 
     public init(app: String, lines: [SidebarLine], working: String?, workingSince: Date?, empty: Bool, busy: Bool,
                 draft: String, draftVersion: Int, attachments: [SidebarAttachment]) {

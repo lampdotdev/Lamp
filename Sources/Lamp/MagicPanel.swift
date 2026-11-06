@@ -284,6 +284,7 @@ final class MagicPanel {
         // A chat closed beside the app keeps its connection, so opening it again is told only this way.
         dismissed.remove(Store.shared.wish(of: project).id)
         chatOpenedInApp(project)
+        Store.shared.chatOpenedInSession(project)
     }
 
     // MARK: Following an app

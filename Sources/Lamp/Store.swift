@@ -7457,9 +7457,9 @@ final class Store: ObservableObject {
         case "ping":
             return reply([:])
         case "tools/list":
-            // A terminal session has its own three besides (`OutsideSession.tools`).
-            let own = outside != nil || turns[project.id]?.outside != nil ? Self.outsideMcpTools : []
-            let tools = (Self.mcpTools + own).filter { Memory.isOn || !Memory.tools.contains($0["name"] as? String ?? "") }
+            // A terminal session has its own list (`outsideMcpTools`).
+            let served = outside != nil || turns[project.id]?.outside != nil ? Self.outsideMcpTools : Self.mcpTools
+            let tools = served.filter { Memory.isOn || !Memory.tools.contains($0["name"] as? String ?? "") }
             return reply(["tools": tools + (fileTools ? FileTools.definitions : [])])
         case "tools/call":
             let params = message["params"] as? [String: Any] ?? [:]
@@ -8429,13 +8429,18 @@ final class Store: ObservableObject {
     private nonisolated static let toolsTemplate: String? = Bundle.main.resourceURL
         .flatMap { try? String(contentsOf: $0.appendingPathComponent("lamp-tools.json"), encoding: .utf8) }
     // `label` is pi's: MCP clients see name, description and inputSchema.
-    static var mcpTools: [[String: Any]] { servedTools(terminal: false) }
-    /// The tools only a terminal session has (`OutsideSession.tools`), marked `terminal` in lamp-tools.json.
-    static var outsideMcpTools: [[String: Any]] { servedTools(terminal: true) }
-    private static func servedTools(terminal: Bool) -> [[String: Any]] {
+    static var mcpTools: [[String: Any]] { servedTools(toTerminal: false) }
+    /// What a terminal session is served (`OutsideSession`): every tool, its own (marked `terminal`) included, each
+    /// with its `terminalDescription` where it has one, since there nothing goes into the app by itself.
+    static var outsideMcpTools: [[String: Any]] { servedTools(toTerminal: true) }
+    private static func servedTools(toTerminal: Bool) -> [[String: Any]] {
         ((try? JSONSerialization.jsonObject(with: toolsJSON)) as? [[String: Any]] ?? [])
-            .filter { ($0["terminal"] as? Bool ?? false) == terminal }
-            .map { tool in tool.filter { $0.key != "label" && $0.key != "terminal" } }
+            .filter { toTerminal || !($0["terminal"] as? Bool ?? false) }
+            .map { tool in
+                var served = tool
+                if toTerminal, let description = tool["terminalDescription"] { served["description"] = description }
+                return served.filter { !["label", "terminal", "terminalDescription"].contains($0.key) }
+            }
     }
     /// `toolsJSON` as pi's extension reads it, in Lamp's own pi folder: written again as each pi starts, so it has the
     /// table as it is then.
@@ -15729,6 +15734,13 @@ extension Store {
 
     func inClaudeCode(_ project: LampProject) -> Bool { outsideSessions[wish(of: project).id] != nil }
 
+    /// The chat was opened beside the app while a session has the wish: a new mark closes it again.
+    func chatOpenedInSession(_ project: LampProject) {
+        guard let session = outsideSessions[wish(of: project).id] else { return }
+        session.chatMark = UUID()
+        objectWillChange.send()
+    }
+
     /// Opens Terminal with Lamp's launcher for the wish: it claims the session with a ticket good once, and runs
     /// Claude Code as Lamp sets it up.
     func workInClaudeCode(_ project: LampProject) {
@@ -15821,6 +15833,8 @@ extension Store {
         case .closed, .takenBack: log(wish, .status, "Claude Code is done with \(wish.name).")
         }
         guard why != .lampQuit else { return }
+        // The chat closed while the session had the wish (`SidebarState.inClaudeCode`): it's back beside the app.
+        if isRunning(chatApp(of: wish)) { MagicPanel.shared.openChat(in: wish) }
         startQueued(wish)
     }
 

@@ -927,7 +927,7 @@ extension Agent {
     - (Terminal) You are Claude Code in the person's terminal, working on this app for them: they read your replies \
     and answer you here, not in Lamp's chat. Lamp's chat beside the app shows only that you're at work and your \
     `progress` lines.
-    - (Terminal) Nothing you save goes into the app by itself here, whatever a tool's description says. When a change \
+    - (Terminal) Nothing you save goes into the app by itself here. When a change \
     is ready to see, call `apply_change` with a new `operation_id`: Lamp builds it and puts it into the open app, live \
     when it can or held for Reload, and says which, with any build errors, crash or new errors in the app's log for you \
     to fix. Lamp fixes nothing for you. Give an `operation_id` again only to retry a call whose answer never came. An \

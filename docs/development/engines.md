@@ -366,6 +366,9 @@ Claude Code alone so far: Codex and pi have no such session.
   devices, parts) and what waits in the chat. `Turn.outside` names the session, `Turn.mayWork` is what the tool gates
   ask, and `Turn.agent` stays Lamp's own process: what only Lamp's engine has (saves going in by themselves, steering,
   Reload between steps) stays off. Between requests the session may do MCP's handshake and list its tools, never call one.
+- **Tools that read true for it.** A session is served every tool (`Store.outsideMcpTools`), and a tool whose
+  description says something untrue there (that saves go into the app by themselves) has a `terminalDescription` in
+  `lamp-tools.json`, served to it instead. A change to such a description changes both.
 - **Nothing goes in by itself.** `apply_change` puts the change in the way a look does and answers per app with `live`,
   `held`, `opened`, `reopened`, `built`, `unchanged`, `not_built` or `crashed`. `finish_request` (and the `Stop` hook,
   which ends whatever is still open) ends the request with `endOfRequest`, the same end a turn has, without the rounds
@@ -374,6 +377,10 @@ Claude Code alone so far: Codex and pi have no such session.
   after another across the wish and its parts, and holds its edits and commands at Lamp's hook while one runs. An apply's
   answer is kept by its `operation_id` and the code it began with: a retry gets it again, and code changed during the
   apply makes it `stale`.
+- **The chat steps aside.** While a session has the wish its chat is closed wherever it's drawn
+  (`SidebarState.inClaudeCode`, which `ChatScreen` closes on), and closed again if it's opened meanwhile
+  (`Store.chatOpenedInSession` gives it a new mark). When the session ends Lamp opens it beside the app again
+  (`MagicPanel.openChat`). An app built before this reaches its chat only once Lamp builds it again (`BuildStamp`).
 - **What the person sends meanwhile** waits in the chat's line; it rides on the session's next tool answer or request,
   and is the request's once a later call shows the answer arrived (`received`). `ask` shows the card as for any engine,
   and `wait_for_answer` gives the answer once it's in.
