@@ -1147,6 +1147,9 @@ final class Store: ObservableObject {
         var inProgress = false
         /// Which look holds `inProgress`: one let go after `lookLimit` may still end later, and mustn't free a newer one.
         var holder: UUID?
+        /// A look let go after `lookLimit` that's still running: its build or launch would overlap a new look's, so none
+        /// starts until it ends.
+        var straggler: UUID?
         /// Each app the last look at it built and opened, and how that launch went, by app: a wish's apps are looked
         /// at in one turn, and one's crash is no word on another.
         var installed: [String: Bool] = [:]
@@ -14932,7 +14935,7 @@ final class Store: ObservableObject {
         // never answers held the look, and every later one ("already looking"), until the turn's end, with the chat stuck
         // on it. So it's given a limit, under the five minutes an engine waits on a tool before giving up on it itself.
         final class Once { var done = false }
-        let once = Once(), began = Date()
+        let once = Once(), began = Date(), turn = turns[project.id]
         let answer: (Int, [String: Any])? = await withCheckedContinuation { finished in
             Task { @MainActor in
                 let answer = await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice, shape: shape, tryOn: tryOn)
@@ -14948,16 +14951,21 @@ final class Store: ObservableObject {
             }
         }
         if let answer { return withLateCrash(answer, of: project) }
-        if let turn = turns[project.id] {
+        // Only the turn and the look that began this: after Stop, another turn and its look are left as they are.
+        if let turn, let holder = turn.look.holder, turn.look.inProgress {
             turn.look.inProgress = false
             turn.look.holder = nil
-            progress[project.id]?.looking = false
-            if !turn.stopped { note(Activity.thinking, for: project) }
+            turn.look.straggler = holder
+            if turns[project.id] === turn {
+                progress[project.id]?.looking = false
+                if !turn.stopped { note(Activity.thinking, for: project) }
+            }
         }
         log(project, .detail, "A look gave up after \(Int(Date().timeIntervalSince(began))) seconds without an answer from the app.")
         return (200, ["text": "The look didn't finish in \(Int(Self.lookLimit / 60)) minutes: the app didn't answer it (a build, a launch or "
-            + "its window may still be under way, or the app may have closed). Lamp let it go, so you can look again; if the next look "
-            + "doesn't finish either, finish without one and say in a sentence that you couldn't see the change."])
+            + "its window may still be under way, or the app may have closed). Lamp let it go; a new look waits until that one ends. "
+            + "Go on with the request, and if a later look can't start or doesn't finish either, finish without one and say in a "
+            + "sentence that you couldn't see the change."])
     }
 
     /// How long a look waits for the app before letting go.
@@ -14982,6 +14990,10 @@ final class Store: ObservableObject {
             return (409, ["error": "Lamp isn't working on this app right now."])
         }
         guard !turn.look.inProgress else { return (200, ["text": "Lamp is already looking at the app. Wait for that result."]) }
+        guard turn.look.straggler == nil else {
+            return (200, ["text": "The look Lamp let go is still waiting on the app, so a new one can't start yet. Go on without it, "
+                + "or finish and say in a sentence that you couldn't see the change."])
+        }
         turn.look.inProgress = true
         let holder = UUID()
         turn.look.holder = holder
@@ -15005,6 +15017,7 @@ final class Store: ObservableObject {
         say(TurnProgress.activity(for: ToolCall("look_at_app")))
         defer {
             // A look let go after `lookLimit` ending now leaves a newer one as it is.
+            if turn.look.straggler == holder { turn.look.straggler = nil }
             if turn.look.holder == holder {
                 turn.look.inProgress = false
                 turn.look.holder = nil
