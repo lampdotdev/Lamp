@@ -417,16 +417,21 @@ enum Runtime {
     /// What the app said it couldn't picture in its latest pictures since `date` (`LampRuntime.snapshot` writes
     /// capture.txt): a window the system gave no picture of, which the app's own drawing would show without its page,
     /// game or video, so it's left out. Said to the agent in a sentence; nil when every window was pictured. The
-    /// windows' titles say what's on screen, so they go only where pictures may (`Privacy.sharesPictures`).
+    /// windows' titles say what's on screen, so they go only where pictures may (`Privacy.sharesPictures`): with pictures
+    /// kept from the agent, the sentence is a fixed one, said before anything in the file is read.
     static func missedPictures(of project: LampProject, since date: Date = .distantPast) -> String? {
         let url = folder(project).appendingPathComponent("capture.txt")
-        guard AppFile.attributes(url, in: project)?.modified ?? .distantPast > date, let data = AppFile.read(url, in: project) else { return nil }
-        let lines = String(decoding: data.prefix(2000), as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: true)
-        guard let named = lines.first else { return nil }
-        let windows = Privacy.sharesPictures ? String(named) : "the app's window"
-        let why = lines.dropFirst().first.map(String.init) ?? "the system gave no picture of it"
-        return "Lamp couldn't take a picture of \(windows) (\(why)), so it's left out rather than shown without what the system "
-            + "draws in it (a page, a game or video). Look again in a moment; if it stays, ask the person to bring the window into view."
+        guard let size = AppFile.attributes(url, in: project).flatMap({ $0.modified > date ? $0.size : nil }), size > 0 else { return nil }
+        let after = "so it's left out rather than shown without what the system draws in it (a page, a game or video). "
+            + "Look again in a moment; if it stays, ask the person to bring the window into view."
+        guard Privacy.sharesPictures else { return "Lamp couldn't take a picture of the app's window, " + after }
+        guard let data = AppFile.read(url, in: project), data.count <= 4000,
+              let report = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return "Lamp couldn't take a picture of the app's window, " + after
+        }
+        let windows = (report["windows"] as? [String] ?? []).filter { !$0.isEmpty }
+        let why = (report["why"] as? String).map { " (\($0))" } ?? ""
+        return "Lamp couldn't take a picture of \(windows.isEmpty ? "the app's window" : windows.joined(separator: ", "))\(why), " + after
     }
 
     /// What the app says happened when it carried out a `use_app` request (see `LampDriver` in the app), and

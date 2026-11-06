@@ -7531,8 +7531,9 @@ enum Template {
                         if missed.isEmpty {
                             try? FileManager.default.removeItem(at: note)
                         } else {
-                            let why = unseen ?? "the system gave no picture of it"
-                            try? (missed.joined(separator: ", ") + "\n" + why).write(to: note, atomically: true, encoding: .utf8)
+                            // The titles apart from the reason, whatever lines a title holds.
+                            let report: [String: Any] = ["windows": missed, "why": unseen ?? "the system gave no picture of it"]
+                            try? JSONSerialization.data(withJSONObject: report).write(to: note, options: .atomic)
                         }
                         done?()
                     }

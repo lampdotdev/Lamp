@@ -104,4 +104,33 @@ final class ScreenTextPrivacyTests: XCTestCase {
         UserDefaults.standard.set(true, forKey: "shareAppPictures")
         guard case .allow = Privacy.verdict(tool: "read", path: ".lamp/runtime/screen.txt", project: project) else { return XCTFail("the text was refused") }
     }
+
+    /// A window the app couldn't picture is named by its title, which says what's on screen as a picture would: with
+    /// pictures kept from the agent, nothing of a title reaches it, a title of several lines included.
+    func testAMissedWindowsTitleGoesWithThePictures() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-privacy-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let project = LampProject(id: "coinflip", name: "Coin Flip", exe: "CoinFlip", dir: dir)
+        let runtime = Runtime.folder(project)
+        try FileManager.default.createDirectory(at: runtime, withIntermediateDirectories: true)
+        // As the app writes it, for a window titled "Report" and "Confidential acquisition target" on a second line.
+        let windows = ["\"Report\nConfidential acquisition target\""]
+        let data = try JSONSerialization.data(withJSONObject: ["windows": windows, "why": "the system gave no picture of it"])
+        try data.write(to: runtime.appendingPathComponent("capture.txt"))
+        let before = UserDefaults.standard.object(forKey: "shareAppPictures")
+        defer { UserDefaults.standard.set(before, forKey: "shareAppPictures") }
+        // And a file in any other shape, such as a title's lines followed by the reason, which a reader of lines takes apart.
+        for file in [data, Data("\"Report\nConfidential acquisition target\"\nthe system gave no picture of it".utf8)] {
+            try file.write(to: runtime.appendingPathComponent("capture.txt"))
+            UserDefaults.standard.set(false, forKey: "shareAppPictures")
+            let kept = try XCTUnwrap(Runtime.missedPictures(of: project))
+            XCTAssertFalse(kept.contains("Report"), kept)
+            XCTAssertFalse(kept.contains("Confidential"), kept)
+        }
+        try data.write(to: runtime.appendingPathComponent("capture.txt"))
+        UserDefaults.standard.set(true, forKey: "shareAppPictures")
+        let shared = try XCTUnwrap(Runtime.missedPictures(of: project))
+        XCTAssertTrue(shared.contains("Confidential acquisition target"), shared)
+        XCTAssertTrue(shared.contains("(the system gave no picture of it)"), shared)
+    }
 }
