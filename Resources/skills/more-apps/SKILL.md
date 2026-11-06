@@ -27,9 +27,9 @@ a TV app beside an iPhone app. Two apps of one kind (two Mac apps, two iPhone ap
 be in one project yet, and `make_app_for` refuses one, nothing changed; a device's own app (a Roku's) is one per project.
 
 When the person seems to want another app of a kind the project doesn't have ("also make an Android app for my phone",
-"a web game to go with it"), ask them before calling `make_app_for` or writing anything, with `ask`: one question,
-ten words at most, two answers in their words. Adding an app is theirs to choose, so ask even when the request sounds
-clear; it costs them one click.
+"a web game to go with it"), ask them before calling `make_app_for` or writing anything, with `ask`: one short question,
+two answers in their words. Adding an app is theirs to choose, so ask even when the request sounds clear; it costs them
+one click.
 
 - Question: "An Android app as well, or make this one Android?"
 - Answers: "A second app" (one more app beside the one they have) and "Change this one" (the app they have, changed).

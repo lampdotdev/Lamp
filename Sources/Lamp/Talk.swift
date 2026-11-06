@@ -23,10 +23,11 @@ enum Talk {
     static let optionLimit = 4
 
     /// The most words each piece of a card may have. A card is read at a glance and answered with a click: a
-    /// long sentence in it is a paragraph again, set in bold. Too long goes back to the agent to say shorter, so
-    /// every engine is held to the same; the tools' descriptions give the same numbers.
+    /// question is one plain sentence and an answer a few words, and anything longer is a paragraph again, set in
+    /// bold. Too long goes back to the agent to say shorter, so every engine is held to the same; the tools'
+    /// descriptions give the same numbers.
     enum Words {
-        static let question = 10, questionDetail = 20, option = 4, wish = 40, progress = 12
+        static let question = 20, questionDetail = 20, option = 4, wish = 40, progress = 12
     }
 
     static func words(in text: String) -> Int { text.split(whereSeparator: \.isWhitespace).count }

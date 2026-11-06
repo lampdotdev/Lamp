@@ -805,7 +805,7 @@
             "properties": {
               "question": {
                 "type": "string",
-                "description": "The question, 10 words at most, in everyday words and the person's language: “Who cooks?”"
+                "description": "The question, one plain sentence of 20 words at most, in everyday words and the person's language: “Who cooks?”"
               },
               "detail": {
                 "type": "string",
