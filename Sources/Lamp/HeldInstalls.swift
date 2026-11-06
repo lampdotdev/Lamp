@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 /// Installs of an app's new icon that are waiting for the app to close.
 ///
@@ -29,4 +30,53 @@ struct HeldInstalls {
 
     /// A build installed the app, icon and all: nothing is waiting for it any more.
     mutating func installed(_ app: String) { waiting.remove(app) }
+}
+
+/// The programs running from inside an installed app, as the kernel has them: the last word before the app is
+/// replaced. NSWorkspace's list of running apps lags behind a launch, so a copy opened a moment ago can be missing
+/// from it, and replacing the bundle under it leaves its chat refused for good (its program's path is gone, so
+/// Lamp can't tell it's the app's).
+enum RunningFromBundle {
+    struct Running { let pid: pid_t; let path: String }
+
+    /// Every process whose program is inside `bundle`.
+    static func processes(inside bundle: URL) -> [Running] {
+        // The kernel gives a program's real path; Foundation's own resolving drops "/private" from it, so `realpath`.
+        guard let real = realpath(bundle.path, nil) else { return [] }
+        let prefix = String(cString: real) + "/"
+        free(real)
+        var pids = [pid_t](repeating: 0, count: Int(proc_listallpids(nil, 0)) + 64)
+        let count = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.stride)))
+        guard count > 0 else { return [] }
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        return pids.prefix(count).compactMap { pid in
+            guard pid > 0, proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+            let path = String(cString: buffer)
+            return path.hasPrefix(prefix) ? Running(pid: pid, path: path) : nil
+        }
+    }
+
+    /// Whether the app itself is running from `bundle`: its own program, or a helper beside it, rather than one of
+    /// its extensions (the chat beside it, a widget, a share extension), which can outlive the app by a moment.
+    static func isAppOpen(among processes: [Running]) -> Bool {
+        processes.contains { !$0.path.contains(".appex/") }
+    }
+
+    /// Clears `bundle` for replacing: false while the app itself runs from it. Extensions left from an app that has
+    /// quit are given a moment to go, then ended, the way Lamp ends a widget's process: they have no app to be part of.
+    static func clear(_ bundle: URL) async -> Bool {
+        var left = processes(inside: bundle)
+        for _ in 0..<20 where !left.isEmpty && !isAppOpen(among: left) {
+            try? await Task.sleep(for: .milliseconds(100))
+            left = processes(inside: bundle)
+        }
+        guard !isAppOpen(among: left) else { return false }
+        guard !left.isEmpty else { return true }
+        for process in left { kill(process.pid, SIGTERM) }
+        for _ in 0..<20 where !processes(inside: bundle).isEmpty { try? await Task.sleep(for: .milliseconds(100)) }
+        let stubborn = processes(inside: bundle)
+        guard !isAppOpen(among: stubborn) else { return false }
+        for process in stubborn { kill(process.pid, SIGKILL) }
+        return true
+    }
 }

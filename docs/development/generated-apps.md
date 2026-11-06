@@ -244,7 +244,13 @@ about unsaved work first: Lamp sends the quit request itself and reads the reply
 waits, with the app in front and "Waiting for … to close…" in the chat. Kept open, the app isn't replaced: the
 chat says so, the build waits like a held icon (`HeldInstalls`) and goes in when the app closes, and a look tells
 the agent that what's on screen isn't its change and `use_app` is refused (`Turn.keptOpen`,
-`Runtime.holdsBuild`); a turn asks the app once. Lamp ends an app itself in one case only: it agreed to quit and
+`Runtime.holdsBuild`); a turn asks the app once. Whatever made the install, the swap itself (`Store.swapIn`)
+asks the kernel last for processes running from inside the installed copy (`RunningFromBundle`), since
+NSWorkspace's list of running apps lags behind a launch: with the app open the build is held for its next quit,
+and an extension left from a copy that quit is ended. While an install quits and reopens an app (`installingOnMac`)
+nothing else installs it: a wish's turn holds the wish, not the part it installs, so the old copy quitting would
+otherwise let a held install take the part and swap a second copy in under the one just opened, leaving its chat
+refused (its program's path gone). Lamp ends an app itself in one case only: it agreed to quit and
 is still there. One that doesn't answer may be stuck or in the middle of a long save, and from outside the two
 look the same, so Lamp never ends it: a copy that answers Lamp's "still there?" (`LampRuntime` answers on the
 main thread, and says it listens by leaving its process id in its runtime folder) is asked that before it is
