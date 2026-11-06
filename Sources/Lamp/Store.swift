@@ -1550,7 +1550,7 @@ final class Store: ObservableObject {
         // A setup card (a key or sign-in, a model, the icon, the phone's AI) while Claude Code works on the wish from a
         // terminal: its chat is closed, so the card's own sheet comes up by itself, and goes when it's done.
         if [.offer, .needsKey, .drawIcon].contains(kind), outsideSessions[project.id] != nil {
-            SetupSheet.shared.show(project, line: line, returningFocus: true)
+            SetupSheet.shared.show(project, line: line, byItself: true)
         }
     }
 

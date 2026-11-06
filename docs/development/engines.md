@@ -397,8 +397,9 @@ Claude Code alone so far: Codex and pi have no such session.
   the terminal about the command as Lamp confined it; under "Only when risky" Claude Code's own classifier still decides,
   and what it would ask about is asked there too (a session has no `PermissionRequest` hook).
 - **Cards that only Lamp can show** come up by themselves, without the chat. A setup card (a key or sign-in, a model,
-  the icon, the phone's AI), offered by `offer_setup` or by Lamp, opens its own sheet (`SetupSheet`, from `Store.log`),
-  which gives the keyboard back to the terminal when it's done. The device card (`device_permission`) floats alone
+  the icon, the phone's AI), offered by `offer_setup` or by Lamp, opens its own sheet (`SetupSheet`, from `Store.log`)
+  as a non-activating panel: it floats over the terminal without making Lamp the active app, so the desk stays where
+  it is, takes the keyboard when clicked, and leaves it with the terminal when it closes. The device card (`device_permission`) floats alone
   (`DeviceCardPanel`), takes neither focus nor Return, and its click is the call's answer, kept as the chat's card
   would keep it; the session's end closes it unanswered.
 - **The end.** Take Back, Stop beside one of its requests, the window closing or Claude Code quitting ends the session
