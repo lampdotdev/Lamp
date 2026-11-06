@@ -1172,6 +1172,11 @@ final class Store: ObservableObject {
     private var iconFallbackWhenFree: Set<String> = []
     private var pendingIconArt: Set<String> = []     // artwork finished during a turn, to apply after it
     private var heldInstalls = HeldInstalls()        // new icons waiting for their app to close
+    /// Apps an install is putting in and opening on this Mac (`installNow`), from before it quits the open copy until
+    /// the new one opens. Nothing else installs them meanwhile: a wish's turn holds the wish, not the part it installs,
+    /// so the old copy quitting would otherwise let a held install or a refresh take the part, stage a copy of its own
+    /// and swap it in under the copy just opened.
+    private var installingOnMac: Set<String> = []
     private var heldDrawingOffers: Set<String> = []  // "Draw Icon…" wanted during a turn, to offer after it
     private var artApplied: [String: IconSpec] = [:] // the spec whose artwork the rendered icon includes
     private var iconDesigns: [String: Task<Void, Never>] = [:]   // icons designed from the first message
@@ -5203,8 +5208,9 @@ final class Store: ObservableObject {
             // for the Mac. It stays waiting, and goes in when Try On is back on this Mac.
             // Nor while a change that just went into it is watched: its going may be that change's crash, whose build
             // mustn't replace the version the person had (`setAside`).
+            // Nor while an install of its own is under way: the app closing is that install quitting it.
             return !project.onIOS && !isRunning(project) && FileManager.default.fileExists(atPath: project.builtURL.path)
-                && reloadWatches[id] == nil && setAsideChanges[id] == nil
+                && reloadWatches[id] == nil && setAsideChanges[id] == nil && !installingOnMac.contains(id)
         }
         for project in projects where due.contains(project.id) {
             guard begin(project) != nil else { continue }
@@ -10806,6 +10812,9 @@ final class Store: ObservableObject {
         // Asked once in a turn: a second build in it leaves the app the person kept open alone.
         let asked = owner?.keptOpen == true && isRunning(project)
         let wasOpen = isRunning(project)
+        // From here until it's opened again, nothing else installs it (`installingOnMac`).
+        installingOnMac.insert(project.id)
+        defer { installingOnMac.remove(project.id) }
         // The new copy is put together and signed in Lamp's own folder while the old one is still open, so the app is
         // closed only for the swap. Nothing of the installed copy is touched until it has closed.
         var staged: SignedCopy?
@@ -10861,6 +10870,12 @@ final class Store: ObservableObject {
         } catch is Staging.Stopped {
             owner?.didNotOpen = true
             return "The app was stopped before it opened."
+        } catch is StillOpen {
+            // Opened again since it quit for this: it's the person's now, as an app kept open is, and the build waits.
+            owner?.keptOpen = true
+            owner?.didNotOpen = true
+            refreshOpenApps()
+            return nil
         } catch {
             log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
             owner?.didNotOpen = true
@@ -12497,7 +12512,7 @@ final class Store: ObservableObject {
     /// as for any install, so no request or Play takes it while the copy is staged, and the copy goes in only if the
     /// app is still closed by then.
     func refreshInstalled(_ project: LampProject) {
-        guard project.holdsApp, Sidebar.applies(to: project), !project.onIOS, !busy.contains(project.id),
+        guard project.holdsApp, Sidebar.applies(to: project), !project.onIOS, !busy.contains(project.id), !installingOnMac.contains(project.id),
               FileManager.default.fileExists(atPath: project.builtURL.path), FileManager.default.fileExists(atPath: project.installedURL.path),
               setAsideChanges[project.id] == nil, reloadWatches[project.id] == nil, !liveBuildFailed.contains(project.id),
               !Runtime.holdsBuild(project) else { return }
@@ -12756,6 +12771,9 @@ final class Store: ObservableObject {
         return SignedCopy(app: app, signed: signed, staging: staging, replaced: replaced, requirement: requirement, iconReady: iconReady)
     }
 
+    /// The app was found open as its copy was to go in (`swapIn`): the build waits for it to close.
+    struct StillOpen: LocalizedError { var errorDescription: String? { "the app was open." } }
+
     /// The rest of `deploy`, once the app is closed: the signed copy takes the installed one's place.
     private func swapIn(_ copy: SignedCopy, for project: LampProject) async throws {
         let fm = FileManager.default, app = copy.app
@@ -12767,10 +12785,23 @@ final class Store: ObservableObject {
         // is never put where it can be opened.
         guard AppUpdates.mayOpen(wish(of: project)) else { throw Sharing.ImportError(AppUpdates.notInstalledYet) }
 
-        // The app isn't running by now (a build quits it, an icon waits for it to close), but its widget's
-        // process may be: ended here, last thing before the swap, so no program outlives the copy it came from.
+        // Its widget's process may be running, from this copy or another (one in the Trash): ended here, so no program
+        // outlives the copy it came from.
         await WidgetProcess.end(for: project)
         // That can take seconds, and a Stop pressed meanwhile still keeps this copy out.
+        try copy.staging.check()
+        // The app isn't running by now (a build quits it, an icon waits for it to close), but that's only as good as
+        // NSWorkspace's list of running apps, which lags behind a launch. The kernel has the last word, last thing
+        // before the swap: a copy opened since this was staged is never replaced under it (`HeldInstalls` says what
+        // that breaks), nor a share sheet open from it, and the build waits for the next quit instead. The chat or
+        // widget left from a copy that quit goes, as the widget's process does.
+        let endable = [Sidebar.extensionURL(in: project.installedURL), Template.widgetURL(in: project.installedURL, of: project)]
+        guard await RunningFromBundle.clear(project.installedURL, endable: endable) else {
+            Sidebar.log.notice("held \(project.id, privacy: .public): open at \(project.installedURL.path, privacy: .public) as its copy was to go in")
+            Runtime.holdBuild(project)
+            _ = heldInstalls.mayInstall(project.id, running: true)
+            throw StillOpen()
+        }
         try copy.staging.check()
         // What Lamp signed as the app's sidebar, the one program it will talk to there: only once this copy goes in.
         Sidebar.remember(project, signed: app)
