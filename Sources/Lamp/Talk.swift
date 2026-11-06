@@ -26,7 +26,7 @@ enum Talk {
     /// long sentence in it is a paragraph again, set in bold. Too long goes back to the agent to say shorter, so
     /// every engine is held to the same; the tools' descriptions give the same numbers.
     enum Words {
-        static let question = 10, option = 4, wish = 40, progress = 12
+        static let question = 10, questionDetail = 20, option = 4, wish = 40, progress = 12
     }
 
     static func words(in text: String) -> Int { text.split(whereSeparator: \.isWhitespace).count }
@@ -64,6 +64,12 @@ enum Talk {
             let question = (item["question"] as? String)?.trimmed ?? ""
             guard !question.isEmpty else { return .failure(.message("Every question needs its `question`.")) }
             if let trouble = tooLong(question, Words.question, as: "a question") { return .failure(trouble) }
+            // The card is all the person reads of it, so every question says what it's about.
+            let detail = (item["detail"] as? String)?.trimmed ?? ""
+            guard !detail.isEmpty else {
+                return .failure(.message("“\(question)” needs its `detail`: a line on what it's about, for someone who has seen none of your work."))
+            }
+            if let trouble = tooLong(detail, Words.questionDetail, as: "a question's `detail`") { return .failure(trouble) }
             let options: [Option] = (item["options"] as? [[String: Any]] ?? []).compactMap { option in
                 guard let title = (option["title"] as? String)?.trimmed, !title.isEmpty else { return nil }
                 return Option(title: title, detail: (option["detail"] as? String)?.trimmed.nilIfEmpty,
@@ -78,7 +84,7 @@ enum Talk {
             for option in options {
                 if let trouble = tooLong(option.title, Words.option, as: "an answer's `title` (more goes in `detail`)") { return .failure(trouble) }
             }
-            questions.append(Question(question: question, options: options))
+            questions.append(Question(question: question, options: options, detail: detail))
         }
         // One question has nothing to lay out together.
         return .success(Ask(layout: layout ?? .steps, questions: questions))

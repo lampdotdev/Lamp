@@ -28,7 +28,8 @@ public enum TalkCard {
     public struct Question: Codable, Equatable {
         public var question: String
         public var options: [Option]
-        /// A line under the question, for what it's about: Lamp's own cards have one (`Starters`), the agent's don't.
+        /// A line under the question, for what it's about: Lamp's own cards (`Starters`), and the agent's when the
+        /// question alone wouldn't say what a name in it is or what the choice changes.
         public var detail: String?
         /// Only the person can answer it (Lamp's device card): no "Decide for me".
         public var personOnly: Bool?
@@ -126,9 +127,12 @@ public enum TalkCard {
         }
 
         /// The questions as plain words, for everything that reads a chat line's text.
+        /// The questions in plain words, as an engine that didn't ask them is told them (`CatchUp`): each with the
+        /// line the card showed under it, so the choice reaches it as it was explained to the person.
         public var text: String {
             questions.map { question in
-                question.question + "\n" + question.options.map { "- " + $0.title }.joined(separator: "\n")
+                ([question.question] + [question.detail].compactMap { $0 } + question.options.map { "- " + $0.title })
+                    .joined(separator: "\n")
             }.joined(separator: "\n\n")
         }
     }

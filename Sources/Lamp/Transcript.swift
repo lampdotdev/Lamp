@@ -186,26 +186,15 @@ extension LogLine {
         // what Lamp is doing.
         let hidden = Talk.cardMessages(in: lines).union(lines.filter { $0.byLamp == true }.map(\.id))
         if details { return lines.filter { !hidden.contains($0.id) }.map(\.withOutcome) }
-        // After the agent's questions its card is the answer: whatever it says on the way out ("Waiting for
-        // your answers.") would sit under the card saying the same.
-        var afterAsk: Set<UUID> = []
-        var asked = false
-        for line in lines {
-            switch line.kind {
-            case .agent where asked: afterAsk.insert(line.id)
-            case .ask: asked = true
-            case .user: asked = false
-            default: break
-            }
-        }
+        // What the agent says after its card shows like anything else it says: it may be what the question is
+        // about, and no list of words tells that apart from a line that only points at the card.
         let retrying = refusedAskRetries(in: lines)
         // A result card saved by an earlier Lamp isn't shown: the agent's last message says what it did. A turn's summary
         // stays, for how long it worked (`ChatItem.items`), and isn't drawn as a line of its own. A tool call is a step
         // in the words the live line said while it ran (`steps(said:)`).
         return said(lines.map(\.withOutcome).filter {
             !hidden.contains($0.id) && !retrying.contains($0.id)
-                && ($0.kind == .agent ? !afterAsk.contains($0.id)
-                    : $0.kind == .summary || $0.kind == .tool || !$0.isDetail && $0.kind != .result)
+                && ($0.kind == .agent || $0.kind == .summary || $0.kind == .tool || !$0.isDetail && $0.kind != .result)
         })
     }
 

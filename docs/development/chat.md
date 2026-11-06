@@ -11,7 +11,7 @@ A capability given to one engine must be given to all of them that can take it, 
   taken when it's left to Lamp; an answer never grants access or approves an outside action (`Agent.Rules.ask`). Each piece of a card has a word limit (`Talk.Words`, the same numbers as the
   tools' descriptions), and a call over it is turned away for the agent to say shorter, whichever engine it is. Its
   pieces are tools: `ask` puts questions in the chat as a card answered by clicking, laid out as the agent
-  chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own). What a
+  chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own). Every question the agent asks has a line under it (`detail`, `Talk.Words.questionDetail`) saying what a name in it is or what the choice changes, drawn in both layouts, since the card is all the person reads (`Agent.Rules.ask`); a question without one goes back to the agent, as a long one does. What the agent writes after its card shows like any other message. What a
   request came to is the agent's last message, in a sentence or two (`Agent.Rules.finish`), under the line that says
   the app is ready or updated; a card for it said no more than that message did and hid what it said beyond it.
   While longer work goes on, the agent says how it's going with `progress`: a line of 12 words at most, shown at once

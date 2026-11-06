@@ -79,7 +79,7 @@ final class RefusedAskTests: XCTestCase {
     /// Every way `ask` is turned back tells the agent the person didn't see it; `progress`, which shares the word
     /// count, doesn't.
     func testTheRefusalSaysTheQuestionsWerentShown() {
-        let long = ["questions": [["question": "Which?", "options": [["title": "Yes, a web app on LG"], ["title": "No"]]]]]
+        let long = ["questions": [["question": "Which?", "detail": "A web app runs in your LG's browser.", "options": [["title": "Yes, a web app on LG"], ["title": "No"]]]]]
         guard case .failure(let trouble) = Talk.ask(from: long, hasSymbol: { _ in true }) else { return XCTFail() }
         XCTAssertTrue(trouble.text.hasSuffix(Talk.askNotShown), trouble.text)
         guard case .failure(let empty) = Talk.ask(from: [:], hasSymbol: { _ in true }) else { return XCTFail() }

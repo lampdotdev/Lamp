@@ -26,14 +26,15 @@ final class ProgressLineTests: XCTestCase {
                         "more", "progress:Starting on it."])
     }
 
-    /// Every progress line and message stays in the chat while the turn goes on, not only the latest; what's said
-    /// after the agent's questions is left out, since the card says it.
+    /// Every progress line and message stays in the chat while the turn goes on, not only the latest, and what's
+    /// said after the agent's questions too.
     func testEverythingSaidIsShownAsItIsSaid() {
         let lines = [LogLine(kind: .user, text: "go"), LogLine(kind: .agent, text: "I'll start."),
                      LogLine(kind: .progress, text: "One."), LogLine(kind: .agent, text: "Now the week."),
                      LogLine(kind: .progress, text: "Two."), LogLine(kind: .ask, text: "which?"),
                      LogLine(kind: .agent, text: "Waiting for you.")]
-        XCTAssertEqual(LogLine.visible(lines, details: false).map(\.text), ["go", "I'll start.", "One.", "Now the week.", "Two.", "which?"])
+        XCTAssertEqual(LogLine.visible(lines, details: false).map(\.text), ["go", "I'll start.", "One.", "Now the week.", "Two.", "which?",
+                                                                       "Waiting for you."])
     }
 
     /// Once the turn is over, what was said on the way stays a message; the steps fold where they came, above the answer.
