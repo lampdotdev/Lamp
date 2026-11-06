@@ -711,6 +711,13 @@ struct DeskWishMenu: View {
             Button("Start Over") { Task { await store.startAgain(project) } }
                 .disabled(busy)
         }
+        // Claude Code in a terminal, in place of the chat (`OutsideSession`), and back.
+        if store.inClaudeCode(project) {
+            Button("Take Back from Claude Code") { store.takeBackFromClaudeCode(project) }
+        } else if store.canWorkInClaudeCode(project) {
+            Button("Work in Claude Code") { store.workInClaudeCode(project) }
+                .disabled(busy)
+        }
         // The chat's own Versions panel, in Lamp's panel unless the app is open with its chat beside it: going back to
         // one from here is the chat's, and rebuilds the app as it does there.
         if entry?.hasVersions == true {

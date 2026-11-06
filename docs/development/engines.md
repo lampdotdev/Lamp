@@ -345,3 +345,39 @@ A capability given to one engine must be given to all of them that can take it, 
 Before opening a PR that touches any of this, check each engine's `case` in `Agent.run` and its parser,
 and say in the PR description which engines you tried.
 
+
+## Claude Code in a terminal
+
+"Work in Claude Code" (the desk's menu for a wish built at least once) hands the wish to Claude Code in a Terminal window,
+in place of the chat beside the app (`OutsideSession`, the `Store` extension "Work in Claude Code"). It's a trial, for
+Claude Code alone so far: Codex and pi have no such session.
+
+- **Lamp launches it.** Terminal opens a file that deletes itself and runs `lamp-code.sh` with a ticket in its environment,
+  good once and for two minutes. The launcher claims the session with it (`/outside/claim`) and gets the session's token,
+  the wish's folder and the command, and runs Claude Code in the foreground. The token stays in memory and in that
+  process tree; the files Lamp writes (`.lamp/mcp.json`, the command file) never hold it. The command is a turn's own
+  (`Agent.claudeSetup`, shared with `Agent.run`): `--restricted`, `--strict-mcp-config`, the same tool list, hooks,
+  approvals, privacy checks and sandbox, without `-p` and the flags for reading its output, plus two hooks of its own
+  and `Agent.outsideNote`. Every check of Lamp's holds as it does for a turn: nothing is waived because the person
+  started the session.
+- **A request is a turn with the session as its owner.** The prompt typed in the terminal begins it (the
+  `UserPromptSubmit` hook, `/outside/begin`, which refuses the prompt when Lamp can't be reached): it takes the wish as
+  `begin` does, posts the words in the chat, and answers with what `Agent.run` adds to a request (notes, AI, skills,
+  devices, parts) and what waits in the chat. `Turn.outside` names the session, `Turn.mayWork` is what the tool gates
+  ask, and `Turn.agent` stays Lamp's own process: what only Lamp's engine has (saves going in by themselves, steering,
+  Reload between steps) stays off. Between requests the session may do MCP's handshake and list its tools, never call one.
+- **Nothing goes in by itself.** `apply_change` puts the change in the way a look does and answers per app with `live`,
+  `held`, `opened`, `reopened`, `built`, `unchanged`, `not_built` or `crashed`. `finish_request` (and the `Stop` hook,
+  which ends whatever is still open) ends the request with `endOfRequest`, the same end a turn has, without the rounds
+  that start Lamp's agent (`Turn.repairs`): build errors, crashes and new errors in the log go back in its answer.
+- **One operation at a time.** `OutsideWork` runs a session's applies, finishes and the tools that change the app, one
+  after another across the wish and its parts, and holds its edits and commands at Lamp's hook while one runs. An apply's
+  answer is kept by its `operation_id` and the code it began with: a retry gets it again, and code changed during the
+  apply makes it `stale`.
+- **What the person sends meanwhile** waits in the chat's line; it rides on the session's next tool answer or request,
+  and is the request's once a later call shows the answer arrived (`received`). `ask` shows the card as for any engine,
+  and `wait_for_answer` gives the answer once it's in.
+- **The end.** Take Back, Stop beside one of its requests, the window closing or Claude Code quitting ends the session
+  (`endOutside`): nothing more is taken, Claude Code is stopped and waited for, a running build is stopped as Stop does
+  and waited for, and an open request ends without building or saving what was never applied: those edits stay in the
+  folder for whoever works on the wish next. Only then is the wish free and what waits in the chat starts.

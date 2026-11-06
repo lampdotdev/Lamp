@@ -316,121 +316,13 @@ extension Agent {
                             env: env.merging(environment(prompt: prompt, files: files, project: project, session: session ?? "",
                                                          sessionDir: project.dir.appendingPathComponent(".lamp/pi-sessions").path, defers: defers)) { $1 })
         case .claude:
-            // Lamp builds the app itself. Attachments are listed in the prompt; Claude reads them.
-            // Isolated from the user's own Claude Code setup, whether this is their copy (with their sign-in) or
-            // Lamp's (EngineInstall): --restricted ignores settings files (hooks, permission rules, plugins) while
-            // keeping Lamp's --settings; --strict-mcp-config
-            // skips their MCP servers and --disable-slash-commands their skills. --tools then lists exactly
-            // what the agent gets; in particular, it omits Claude Code's interactive AskUserQuestion tool.
-            // Shell commands go through a PreToolUse hook that asks Lamp and waits for the user's answer; Lamp
-            // replies in Claude Code's hook format. If Lamp can't be reached the hook fails and the command is denied.
-            env["LAMP_TOKEN"] = token
-            env["LAMP_SYSTEM"] = systemPrompt(for: project) + tryRules + Self.claudeNote + sandboxNote
-            // No background commands, as pi has none: after answering, Claude Code waits for one it started (a
-            // server the agent ran to try something) and takes another turn once it ends, so a server kept the turn
-            // going with nobody to answer to. A command that runs long stops at its time limit instead.
-            env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
-            // Compacts at Lamp's size, not near the model's window: with a million tokens it would wait until the
-            // pictures resent with every request had long passed what one request can carry (`Conversation`).
-            env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = String(Conversation.compactAt)
-            // How commands are approved (Settings → Building):
-            // - auto: Claude Code's own classifier (--permission-mode auto) runs routine commands; when it would
-            //   ask, its PermissionRequest hook sends the request to Lamp's approval card.
-            // - always: a PreToolUse hook sends every shell command to Lamp first.
-            // - never: the shell is allowed outright.
-            // Hooks call Lamp's gateway and wait for the user; if Lamp can't be reached the hook fails and the
-            // command is denied.
-            var approval = CommandApproval.current
-            if approval.isAutomatic && CommandApproval.claudeAutoUnavailable { approval = .always }
-            // When Lamp can't be reached (or answers with an error), the hook says no itself: Claude Code treats a
-            // hook that fails any other way as "carry on", which for a tool on the allowed list means running it.
-            // curl gives up before the hook's own deadline so that fallback gets to run.
-            func hook(_ urlVariable: String, event: String) -> [String: Any] {
-                let reason = "Lamp could not be reached, so this was not allowed."
-                let refusal: [String: Any] = event == "PermissionRequest"
-                    ? ["hookEventName": event, "decision": ["behavior": "deny", "message": reason]]
-                    : ["hookEventName": event, "permissionDecision": "deny", "permissionDecisionReason": reason]
-                let fallback = String(decoding: try! JSONSerialization.data(withJSONObject: ["hookSpecificOutput": refusal]), as: UTF8.self)
-                    .replacingOccurrences(of: "'", with: "'\\''")
-                return ["type": "command", "timeout": 3600,
-                        "command": "/usr/bin/curl -sf --max-time 3540 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\" || printf '%s' '\(fallback)'"]
-            }
-            var permissionMode = "acceptEdits"
-            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__assets,mcp__lamp__offer_setup,mcp__lamp__make_app_for,mcp__lamp__remove_app,mcp__lamp__rename_app,mcp__lamp__use_icon_picture,mcp__lamp__connectors,mcp__lamp__lampify,mcp__lamp__shared_copy,mcp__lamp__suggested_changes,mcp__lamp__network_devices,mcp__lamp__device_integration,mcp__lamp__device_permission,mcp__lamp__ask,mcp__lamp__progress,mcp__lamp__write_wish,mcp__lamp__read_skill"
-            if Memory.isOn { allowed += ",mcp__lamp__read_notes,mcp__lamp__save_notes" }
-            // look_at_app and use_app come from Lamp's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
-            // it the only server. The config is a file that reads the token from the environment, so the
-            // token isn't on the command line for every process on the Mac to see.
-            // A look can build the app, and a use_app batch can wait a minute or more: well past the engines'
-            // default tool timeouts (pi's extension allows ten minutes).
-            env["MCP_TOOL_TIMEOUT"] = "600000"
-            let mcpConfig = project.dir.appendingPathComponent(".lamp/mcp.json")
-            let mcp: [String: Any] = ["mcpServers": ["lamp": ["type": "http", "url": "http://127.0.0.1:\(Gateway.port)/mcp",
-                                                               "headers": ["Authorization": "Bearer ${LAMP_TOKEN}"]]]]
-            try? JSONSerialization.data(withJSONObject: mcp).write(to: mcpConfig)
-            env["LAMP_CLAUDE_MCP"] = mcpConfig.path
-            // The file tools go through Lamp's privacy check like pi's and Codex's do, whatever the approval
-            // mode: a read outside the app's folder asks, and sign-ins and keys are never opened.
-            env["LAMP_FILE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-file"
-            var preToolUse: [[String: Any]] = [["matcher": "Read|Edit|Write|Glob|Grep", "hooks": [hook("LAMP_FILE_URL", event: "PreToolUse")]]]
-            var hooks: [String: Any] = [:]
-            var autoMode: [String: Any]?
-            // Every shell command goes to Lamp before it runs, in every mode but Never, so the setting means
-            // the same with Claude Code as with pi and Codex: Lamp's decision model decides what is routine, and
-            // the user sees the rest. Claude's own classifier never gets to wave a command through on its own.
-            // In every mode, Never included: the hook is also how a command comes back confined (Sandbox); with
-            // Never, Lamp answers at once without a card.
-            env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude"
-            preToolUse.append(["matcher": "Bash", "hooks": [hook("LAMP_APPROVE_URL", event: "PreToolUse")]])
-            switch approval {
-            case .risky:
-                // Claude Code's own classifier (auto mode) decides, shell commands included: Lamp's hook only hands
-                // each command back confined (Sandbox), with no decision, and what the classifier would ask about
-                // comes to Lamp's card through PermissionRequest. A command that ran is said in the chat afterwards.
-                // `classifyAllShell` keeps any narrow allow rule from letting a command past it.
-                permissionMode = "auto"
-                env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-confine"
-                env["LAMP_RAN_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-ran"
-                // A command that ran says so whether it succeeded or failed (a failing build or test).
-                hooks["PostToolUse"] = [["matcher": "Bash", "hooks": [hook("LAMP_RAN_URL", event: "PostToolUse")]]]
-                hooks["PostToolUseFailure"] = [["matcher": "Bash", "hooks": [hook("LAMP_RAN_URL", event: "PostToolUseFailure")]]]
-                // What the classifier refused is the classifier's to refuse (the agent is told why), and the chat says so.
-                env["LAMP_REFUSED_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-refused"
-                hooks["PermissionDenied"] = [["matcher": "Bash", "hooks": [hook("LAMP_REFUSED_URL", event: "PermissionDenied")]]]
-                // Lamp's rule for the person's devices beside the classifier's own (`$defaults` keeps them).
-                autoMode = ["classifyAllShell": true, "soft_deny": ["$defaults", "Device Control: " + DevicePermissions.commandRule]]
-                env["LAMP_PERMISSION_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-permission"
-                hooks["PermissionRequest"] = [["matcher": "*", "hooks": [hook("LAMP_PERMISSION_URL", event: "PermissionRequest")]]]
-            case .always:
-                break
-            case .never:
-                allowed += ",Bash"
-            }
-            hooks["PreToolUse"] = preToolUse
-            var settings: [String: Any] = ["hooks": hooks]
-            if let autoMode { settings["autoMode"] = autoMode }
-            env["LAMP_CLAUDE_SETTINGS"] = String(decoding: (try? JSONSerialization.data(withJSONObject: settings)) ?? Data("{}".utf8), as: UTF8.self)
-            env["LAMP_CLAUDE_MODE"] = permissionMode
-            env["LAMP_CLAUDE_ALLOWED"] = allowed
-            env["LAMP_TOOL"] = EngineInstall.path(for: .claude) ?? "claude"
-            env.merge(EngineInstall.environment(for: .claude)) { $1 }
+            let flags = claudeSetup(project: project, token: token, env: &env, outside: false)
             // The request goes in on Claude Code's input, which stays open while it works: a message the person
             // sends meanwhile is written there too, and Claude Code hands it to the model after the tools it is
             // running (Store.steer), in the same turn. Lamp closes the input once Claude Code has answered.
-            var command = """
-            "$LAMP_TOOL" -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --replay-user-messages \\
-              --restricted --strict-mcp-config --mcp-config "$LAMP_CLAUDE_MCP" --disable-slash-commands \\
-              --tools 'Read,Edit,Write,Glob,Grep,Bash,WebFetch,WebSearch' \\
-              --permission-mode "$LAMP_CLAUDE_MODE" --allowedTools "$LAMP_CLAUDE_ALLOWED" \\
-              --settings "$LAMP_CLAUDE_SETTINGS" \\
-              --append-system-prompt "$LAMP_SYSTEM"
-            """
+            var command = "\"$LAMP_TOOL\" -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --replay-user-messages \\\n  " + flags
             if session != nil { command += " --resume \"$LAMP_SESSION\"" }
-            let model = Builder.engineModel(.claude)
-            if !model.isEmpty {
-                env["LAMP_MODEL"] = model
-                command += " --model \"$LAMP_MODEL\""
-            }
+            command += claudeModel(&env)
             return AgentRun(command: command, env: env, opening: claudeMessage(prompt))
         case .codex:
             // Isolated from the user's own Codex setup, whether this is their copy (with their sign-in) or Lamp's
@@ -873,4 +765,189 @@ enum EngineSignIn {
         let result = await Subprocess.run(tool, arguments, env: env, timeout: timeout, started: started)
         return (result.status, result.output)
     }
+}
+
+extension Agent {
+    /// Claude Code's setup for a run of Lamp's: its environment (in `env`), and the flags every run takes, which name
+    /// that environment rather than carry it. Shared by a turn Lamp runs (`run`, which reads its output) and a session
+    /// in a terminal (`outside`, `outsideClaude`), so the two have the same tools, hooks, confinement and isolation.
+    @MainActor static func claudeSetup(project: LampProject, token: String, env: inout [String: String], outside: Bool) -> String {
+        // Lamp builds the app itself. Attachments are listed in the prompt; Claude reads them.
+        // Isolated from the user's own Claude Code setup, whether this is their copy (with their sign-in) or
+        // Lamp's (EngineInstall): --restricted ignores settings files (hooks, permission rules, plugins) while
+        // keeping Lamp's --settings; --strict-mcp-config
+        // skips their MCP servers and --disable-slash-commands their skills. --tools then lists exactly
+        // what the agent gets; in particular, it omits Claude Code's interactive AskUserQuestion tool.
+        // Shell commands go through a PreToolUse hook that asks Lamp and waits for the user's answer; Lamp
+        // replies in Claude Code's hook format. If Lamp can't be reached the hook fails and the command is denied.
+        env["LAMP_TOKEN"] = token
+        env["LAMP_SYSTEM"] = systemPrompt(for: project) + tryRules + Self.claudeNote + sandboxNote + (outside ? Self.outsideNote : "")
+        // No background commands, as pi has none: after answering, Claude Code waits for one it started (a
+        // server the agent ran to try something) and takes another turn once it ends, so a server kept the turn
+        // going with nobody to answer to. A command that runs long stops at its time limit instead.
+        env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
+        // Compacts at Lamp's size, not near the model's window: with a million tokens it would wait until the
+        // pictures resent with every request had long passed what one request can carry (`Conversation`).
+        env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = String(Conversation.compactAt)
+        // How commands are approved (Settings → Building):
+        // - auto: Claude Code's own classifier (--permission-mode auto) runs routine commands; when it would
+        //   ask, its PermissionRequest hook sends the request to Lamp's approval card.
+        // - always: a PreToolUse hook sends every shell command to Lamp first.
+        // - never: the shell is allowed outright.
+        // Hooks call Lamp's gateway and wait for the user; if Lamp can't be reached the hook fails and the
+        // command is denied.
+        var approval = CommandApproval.current
+        if approval.isAutomatic && CommandApproval.claudeAutoUnavailable { approval = .always }
+        // When Lamp can't be reached (or answers with an error), the hook says no itself: Claude Code treats a
+        // hook that fails any other way as "carry on", which for a tool on the allowed list means running it.
+        // curl gives up before the hook's own deadline so that fallback gets to run.
+        func hook(_ urlVariable: String, event: String) -> [String: Any] {
+            let reason = "Lamp could not be reached, so this was not allowed."
+            let refusal: [String: Any] = event == "PermissionRequest"
+                ? ["hookEventName": event, "decision": ["behavior": "deny", "message": reason]]
+                : ["hookEventName": event, "permissionDecision": "deny", "permissionDecisionReason": reason]
+            let fallback = String(decoding: try! JSONSerialization.data(withJSONObject: ["hookSpecificOutput": refusal]), as: UTF8.self)
+                .replacingOccurrences(of: "'", with: "'\\''")
+            return ["type": "command", "timeout": 3600,
+                    "command": "/usr/bin/curl -sf --max-time 3540 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\" || printf '%s' '\(fallback)'"]
+        }
+        var permissionMode = "acceptEdits"
+        var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__assets,mcp__lamp__offer_setup,mcp__lamp__make_app_for,mcp__lamp__remove_app,mcp__lamp__rename_app,mcp__lamp__use_icon_picture,mcp__lamp__connectors,mcp__lamp__lampify,mcp__lamp__shared_copy,mcp__lamp__suggested_changes,mcp__lamp__network_devices,mcp__lamp__device_integration,mcp__lamp__device_permission,mcp__lamp__ask,mcp__lamp__progress,mcp__lamp__write_wish,mcp__lamp__read_skill"
+        if Memory.isOn { allowed += ",mcp__lamp__read_notes,mcp__lamp__save_notes" }
+        // A session in a terminal puts its changes in, and ends its requests, itself (`OutsideSession`).
+        if outside { allowed += "," + OutsideSession.tools.map { "mcp__lamp__" + $0 }.joined(separator: ",") }
+        // look_at_app and use_app come from Lamp's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
+        // it the only server. The config is a file that reads the token from the environment, so the
+        // token isn't on the command line for every process on the Mac to see.
+        // A look can build the app, and a use_app batch can wait a minute or more: well past the engines'
+        // default tool timeouts (pi's extension allows ten minutes).
+        env["MCP_TOOL_TIMEOUT"] = "600000"
+        let mcpConfig = project.dir.appendingPathComponent(".lamp/mcp.json")
+        let mcp: [String: Any] = ["mcpServers": ["lamp": ["type": "http", "url": "http://127.0.0.1:\(Gateway.port)/mcp",
+                                                           "headers": ["Authorization": "Bearer ${LAMP_TOKEN}"]]]]
+        try? JSONSerialization.data(withJSONObject: mcp).write(to: mcpConfig)
+        env["LAMP_CLAUDE_MCP"] = mcpConfig.path
+        // The file tools go through Lamp's privacy check like pi's and Codex's do, whatever the approval
+        // mode: a read outside the app's folder asks, and sign-ins and keys are never opened.
+        env["LAMP_FILE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-file"
+        var preToolUse: [[String: Any]] = [["matcher": "Read|Edit|Write|Glob|Grep", "hooks": [hook("LAMP_FILE_URL", event: "PreToolUse")]]]
+        var hooks: [String: Any] = [:]
+        var autoMode: [String: Any]?
+        // Every shell command goes to Lamp before it runs, in every mode but Never, so the setting means
+        // the same with Claude Code as with pi and Codex: Lamp's decision model decides what is routine, and
+        // the user sees the rest. Claude's own classifier never gets to wave a command through on its own.
+        // In every mode, Never included: the hook is also how a command comes back confined (Sandbox); with
+        // Never, Lamp answers at once without a card.
+        env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude"
+        preToolUse.append(["matcher": "Bash", "hooks": [hook("LAMP_APPROVE_URL", event: "PreToolUse")]])
+        switch approval {
+        case .risky:
+            // Claude Code's own classifier (auto mode) decides, shell commands included: Lamp's hook only hands
+            // each command back confined (Sandbox), with no decision, and what the classifier would ask about
+            // comes to Lamp's card through PermissionRequest. A command that ran is said in the chat afterwards.
+            // `classifyAllShell` keeps any narrow allow rule from letting a command past it.
+            permissionMode = "auto"
+            env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-confine"
+            env["LAMP_RAN_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-ran"
+            // A command that ran says so whether it succeeded or failed (a failing build or test).
+            hooks["PostToolUse"] = [["matcher": "Bash", "hooks": [hook("LAMP_RAN_URL", event: "PostToolUse")]]]
+            hooks["PostToolUseFailure"] = [["matcher": "Bash", "hooks": [hook("LAMP_RAN_URL", event: "PostToolUseFailure")]]]
+            // What the classifier refused is the classifier's to refuse (the agent is told why), and the chat says so.
+            env["LAMP_REFUSED_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-refused"
+            hooks["PermissionDenied"] = [["matcher": "Bash", "hooks": [hook("LAMP_REFUSED_URL", event: "PermissionDenied")]]]
+            // Lamp's rule for the person's devices beside the classifier's own (`$defaults` keeps them).
+            autoMode = ["classifyAllShell": true, "soft_deny": ["$defaults", "Device Control: " + DevicePermissions.commandRule]]
+            env["LAMP_PERMISSION_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-permission"
+            hooks["PermissionRequest"] = [["matcher": "*", "hooks": [hook("LAMP_PERMISSION_URL", event: "PermissionRequest")]]]
+        case .always:
+            break
+        case .never:
+            allowed += ",Bash"
+        }
+        hooks["PreToolUse"] = preToolUse
+        if outside { hooks.merge(outsideHooks(&env)) { $1 } }
+        var settings: [String: Any] = ["hooks": hooks]
+        if let autoMode { settings["autoMode"] = autoMode }
+        env["LAMP_CLAUDE_SETTINGS"] = String(decoding: (try? JSONSerialization.data(withJSONObject: settings)) ?? Data("{}".utf8), as: UTF8.self)
+        env["LAMP_CLAUDE_MODE"] = permissionMode
+        env["LAMP_CLAUDE_ALLOWED"] = allowed
+        env["LAMP_TOOL"] = EngineInstall.path(for: .claude) ?? "claude"
+        env.merge(EngineInstall.environment(for: .claude)) { $1 }
+        return """
+        --restricted --strict-mcp-config --mcp-config "$LAMP_CLAUDE_MCP" --disable-slash-commands \\
+          --tools 'Read,Edit,Write,Glob,Grep,Bash,WebFetch,WebSearch' \\
+          --permission-mode "$LAMP_CLAUDE_MODE" --allowedTools "$LAMP_CLAUDE_ALLOWED" \\
+          --settings "$LAMP_CLAUDE_SETTINGS" \\
+          --append-system-prompt "$LAMP_SYSTEM"
+        """
+    }
+
+    /// The model chosen for Claude Code in Settings, as a flag, its name in `env`; nothing for Claude Code's own default.
+    static func claudeModel(_ env: inout [String: String]) -> String {
+        let model = Builder.engineModel(.claude)
+        guard !model.isEmpty else { return "" }
+        env["LAMP_MODEL"] = model
+        return " --model \"$LAMP_MODEL\""
+    }
+
+    /// Claude Code for a session in a terminal (`OutsideSession`): everything a turn's run has, but interactive (no
+    /// `-p` and none of the flags for reading its output), with the session's two hooks, its tools and the rules for
+    /// working outside the chat. The environment and the command the launcher runs.
+    @MainActor static func outsideClaude(project: LampProject, token: String) -> (env: [String: String], command: String) {
+        var env: [String: String] = ["LAMP_DIR": project.dir.path, "PATH": ToolLocator.userPath]
+        let flags = claudeSetup(project: project, token: token, env: &env, outside: true)
+        var command = "\"$LAMP_TOOL\" " + flags
+        command += claudeModel(&env)
+        return (env, command)
+    }
+
+    /// The session's own hooks: a prompt typed in the terminal begins a request (and is refused when Lamp can't be
+    /// reached, so no work goes on that Lamp doesn't know of); Claude Code stopping ends it, as `finish_request` does,
+    /// which is a convenience: the request is ended anyway when the next begins or the session ends.
+    private static func outsideHooks(_ env: inout [String: String]) -> [String: Any] {
+        env["LAMP_BEGIN_URL"] = "http://127.0.0.1:\(Gateway.port)/outside/begin"
+        env["LAMP_FINISH_URL"] = "http://127.0.0.1:\(Gateway.port)/outside/finish"
+        func post(_ urlVariable: String, fallback: [String: Any], seconds: Int) -> [String: Any] {
+            let fallback = String(decoding: try! JSONSerialization.data(withJSONObject: fallback), as: UTF8.self)
+                .replacingOccurrences(of: "'", with: "'\\''")
+            return ["type": "command", "timeout": seconds,
+                    "command": "/usr/bin/curl -sf --max-time \(seconds - 10) -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\" || printf '%s' '\(fallback)'"]
+        }
+        let unreachable = "Lamp could not be reached, so this request wasn't started."
+        return [
+            "UserPromptSubmit": [["hooks": [post("LAMP_BEGIN_URL", fallback: ["decision": "block", "reason": unreachable], seconds: 120)]]],
+            "Stop": [["hooks": [post("LAMP_FINISH_URL", fallback: ["systemMessage": "Lamp could not be reached to finish this request."], seconds: 900)]]],
+        ]
+    }
+
+    /// The rules for a session in a terminal, after the ones every engine has: they say where the person reads and
+    /// answers, and that a change goes in only when asked for, which is so for no other run.
+    static let outsideNote = """
+
+    - (Terminal) You are Claude Code in the person's terminal, working on this app for them: they read your replies \
+    and answer you here, not in Lamp's chat. Lamp's chat beside the app shows only that you're at work and your \
+    `progress` lines.
+    - (Terminal) Nothing you save goes into the app by itself here, whatever a tool's description says. When a change \
+    is ready to see, call `apply_change` with a new `operation_id`: Lamp builds it and puts it into the open app, live \
+    when it can or held for Reload, and says which, with any build errors, crash or new errors in the app's log for you \
+    to fix. Lamp fixes nothing for you. Give an `operation_id` again only to retry a call whose answer never came. An \
+    answer that says `stale` means files changed while it ran: call it again with a new id.
+    - (Terminal) When the request is done, call `finish_request`: Lamp builds what's left, settles every app of the \
+    project and saves the version. If it reports errors, fix them, `apply_change`, and `finish_request` again.
+    - (Terminal) `ask` shows your questions as a card in Lamp's chat; then call `wait_for_answer`, again if it says \
+    there's no answer yet. The person may answer you here in the terminal instead.
+    - (Terminal) Messages the person sends in Lamp's chat come to you in tool answers and with their next request, \
+    marked as from Lamp's chat: they're requests like any other.
+    """
+
+    /// `liveNote` for a session in a terminal, where a change goes in when it's applied, not by itself.
+    static let outsideLiveNote = """
+
+
+    ---
+    The person has this app open and is watching it as you work. A change goes into the open app when you call \
+    `apply_change`: at once when it can, or waiting until they press Reload, when until then they see nothing of it. \
+    So work in small steps and apply each, prefer the shape of change that goes in live, and say what they can see \
+    now, not what you've written. Each apply tells you which way the change went and why.
+    """
 }

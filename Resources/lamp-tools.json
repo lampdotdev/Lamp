@@ -899,5 +899,62 @@
       ],
       "type": "object"
     }
+  },
+  {
+    "name": "apply_change",
+    "label": "Apply the change",
+    "terminal": true,
+    "description": "Only in a terminal session: puts what you've saved into the app now, the way a look does (only the files you changed are compiled when the app is open), and says how it went for each app of the project: `live` (it's in the open app), `held` (it waits for the person to press Reload, with why), `opened` or `reopened`, `built`, `unchanged`, or `not_built` with the compiler's errors, and any crash or new errors in the app's log, with a picture of the app. Lamp fixes nothing itself: errors are yours to fix. Calls run one at a time, and your edits wait while one runs.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_id"
+      ],
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "description": "A new id for each apply. The same id again only to retry a call whose answer never came: if nothing changed since, you get its answer, marked `retried`, and nothing runs twice."
+        },
+        "part": {
+          "type": "string",
+          "description": "Which of the project's apps, as for look_at_app (\"mac\", \"iphone\", \"tv\"…). Left out: every app with changes."
+        }
+      }
+    }
+  },
+  {
+    "name": "finish_request",
+    "label": "Finish the request",
+    "terminal": true,
+    "description": "Only in a terminal session: ends the person's request as Lamp ends one of its own: builds whatever is still to build, settles every app of the project (opening the ones you changed), saves the version, and reports build errors, crashes and new errors in the app's log, without fixing any. Call it once your work for the request is done; after fixing what it reports, apply and finish again.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "description": "Optional, as for apply_change: the same id retries a call whose answer never came."
+        }
+      }
+    }
+  },
+  {
+    "name": "wait_for_answer",
+    "label": "Wait for the answer",
+    "terminal": true,
+    "description": "Only in a terminal session, after `ask`: waits for the person's answer to your card in Lamp's chat, up to `seconds`, and gives it. If there's none yet, it says so: call it again, or go on with what you can.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300,
+          "description": "How long to wait, 120 at most is usual."
+        }
+      }
+    }
   }
 ]
