@@ -798,24 +798,19 @@ extension Agent {
         // command is denied.
         var approval = CommandApproval.current
         if approval.isAutomatic && CommandApproval.claudeAutoUnavailable { approval = .always }
-        // When Lamp can't be reached (or answers with an error), the hook says no itself: Claude Code treats a
-        // hook that fails any other way as "carry on", which for a tool on the allowed list means running it.
-        // curl gives up before the hook's own deadline so that fallback gets to run.
-        func hook(_ urlVariable: String, event: String) -> [String: Any] {
-            let reason = "Lamp could not be reached, so this was not allowed."
-            let refusal: [String: Any] = event == "PermissionRequest"
-                ? ["hookEventName": event, "decision": ["behavior": "deny", "message": reason]]
-                : ["hookEventName": event, "permissionDecision": "deny", "permissionDecisionReason": reason]
-            let fallback = String(decoding: try! JSONSerialization.data(withJSONObject: ["hookSpecificOutput": refusal]), as: UTF8.self)
-                .replacingOccurrences(of: "'", with: "'\\''")
-            return ["type": "command", "timeout": 3600,
-                    "command": "/usr/bin/curl -sf --max-time 3540 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\" || printf '%s' '\(fallback)'"]
-        }
+        func hook(_ urlVariable: String, event: String) -> [String: Any] { claudeHook(urlVariable, event: event) }
         var permissionMode = "acceptEdits"
         var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__assets,mcp__lamp__offer_setup,mcp__lamp__make_app_for,mcp__lamp__remove_app,mcp__lamp__rename_app,mcp__lamp__use_icon_picture,mcp__lamp__connectors,mcp__lamp__lampify,mcp__lamp__shared_copy,mcp__lamp__suggested_changes,mcp__lamp__network_devices,mcp__lamp__device_integration,mcp__lamp__device_permission,mcp__lamp__ask,mcp__lamp__progress,mcp__lamp__write_wish,mcp__lamp__read_skill"
         if Memory.isOn { allowed += ",mcp__lamp__read_notes,mcp__lamp__save_notes" }
         // A session in a terminal puts its changes in, and ends its requests, itself (`OutsideSession`).
-        if outside { allowed += "," + OutsideSession.tools.map { "mcp__lamp__" + $0 }.joined(separator: ",") }
+        // It asks with Claude Code's own AskUserQuestion, in the terminal, where the person is; an answer there allows
+        // nothing: commands and files are still asked about on their own. Lamp's `ask` isn't served to it.
+        if outside {
+            allowed += "," + OutsideSession.tools.map { "mcp__lamp__" + $0 }.joined(separator: ",") + ",AskUserQuestion"
+            allowed = allowed.split(separator: ",").filter { !OutsideSession.withheld.map { "mcp__lamp__" + $0 }.contains(String($0)) }
+                .joined(separator: ",")
+        }
+        env["LAMP_CLAUDE_TOOLS"] = "Read,Edit,Write,Glob,Grep,Bash,WebFetch,WebSearch" + (outside ? ",AskUserQuestion" : "")
         // look_at_app and use_app come from Lamp's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
         // it the only server. The config is a file that reads the token from the environment, so the
         // token isn't on the command line for every process on the Mac to see.
@@ -858,7 +853,9 @@ extension Agent {
             // Lamp's rule for the person's devices beside the classifier's own (`$defaults` keeps them).
             autoMode = ["classifyAllShell": true, "soft_deny": ["$defaults", "Device Control: " + DevicePermissions.commandRule]]
             env["LAMP_PERMISSION_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-permission"
-            hooks["PermissionRequest"] = [["matcher": "*", "hooks": [hook("LAMP_PERMISSION_URL", event: "PermissionRequest")]]]
+            // What the classifier would ask about comes to Lamp's card; a terminal session's person is asked by Claude
+            // Code's own prompt instead, there in the terminal, about the command as Lamp's hook confined it.
+            if !outside { hooks["PermissionRequest"] = [["matcher": "*", "hooks": [hook("LAMP_PERMISSION_URL", event: "PermissionRequest")]]] }
         case .always:
             break
         case .never:
@@ -875,11 +872,25 @@ extension Agent {
         env.merge(EngineInstall.environment(for: .claude)) { $1 }
         return """
         --restricted --strict-mcp-config --mcp-config "$LAMP_CLAUDE_MCP" --disable-slash-commands \\
-          --tools 'Read,Edit,Write,Glob,Grep,Bash,WebFetch,WebSearch' \\
+          --tools "$LAMP_CLAUDE_TOOLS" \\
           --permission-mode "$LAMP_CLAUDE_MODE" --allowedTools "$LAMP_CLAUDE_ALLOWED" \\
           --settings "$LAMP_CLAUDE_SETTINGS" \\
           --append-system-prompt "$LAMP_SYSTEM"
         """
+    }
+
+    /// When Lamp can't be reached (or answers with an error), the hook says no itself: Claude Code treats a
+    /// hook that fails any other way as "carry on", which for a tool on the allowed list means running it.
+    /// curl gives up before the hook's own deadline so that fallback gets to run.
+    static func claudeHook(_ urlVariable: String, event: String) -> [String: Any] {
+        let reason = "Lamp could not be reached, so this was not allowed."
+        let refusal: [String: Any] = event == "PermissionRequest"
+            ? ["hookEventName": event, "decision": ["behavior": "deny", "message": reason]]
+            : ["hookEventName": event, "permissionDecision": "deny", "permissionDecisionReason": reason]
+        let fallback = String(decoding: try! JSONSerialization.data(withJSONObject: ["hookSpecificOutput": refusal]), as: UTF8.self)
+            .replacingOccurrences(of: "'", with: "'\\''")
+        return ["type": "command", "timeout": 3600,
+                "command": "/usr/bin/curl -sf --max-time 3540 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\" || printf '%s' '\(fallback)'"]
     }
 
     /// The model chosen for Claude Code in Settings, as a flag, its name in `env`; nothing for Claude Code's own default.
@@ -904,7 +915,7 @@ extension Agent {
     /// The session's own hooks: a prompt typed in the terminal begins a request (and is refused when Lamp can't be
     /// reached, so no work goes on that Lamp doesn't know of); Claude Code stopping ends it, as `finish_request` does,
     /// which is a convenience: the request is ended anyway when the next begins or the session ends.
-    private static func outsideHooks(_ env: inout [String: String]) -> [String: Any] {
+    static func outsideHooks(_ env: inout [String: String]) -> [String: Any] {
         env["LAMP_BEGIN_URL"] = "http://127.0.0.1:\(Gateway.port)/outside/begin"
         env["LAMP_FINISH_URL"] = "http://127.0.0.1:\(Gateway.port)/outside/finish"
         func post(_ urlVariable: String, fallback: [String: Any], seconds: Int) -> [String: Any] {
@@ -925,17 +936,21 @@ extension Agent {
     static let outsideNote = """
 
     - (Terminal) You are Claude Code in the person's terminal, working on this app for them: they read your replies \
-    and answer you here, not in Lamp's chat. Lamp's chat beside the app shows only that you're at work and your \
-    `progress` lines.
+    and answer you here. Lamp's chat beside the app is closed while you work.
     - (Terminal) Nothing you save goes into the app by itself here. When a change \
     is ready to see, call `apply_change` with a new `operation_id`: Lamp builds it and puts it into the open app, live \
     when it can or held for Reload, and says which, with any build errors, crash or new errors in the app's log for you \
     to fix. Lamp fixes nothing for you. Give an `operation_id` again only to retry a call whose answer never came. An \
     answer that says `stale` means files changed while it ran: call it again with a new id.
     - (Terminal) When the request is done, call `finish_request`: Lamp builds what's left, settles every app of the \
-    project and saves the version. If it reports errors, fix them, `apply_change`, and `finish_request` again.
-    - (Terminal) `ask` shows your questions as a card in Lamp's chat; then call `wait_for_answer`, again if it says \
-    there's no answer yet. The person may answer you here in the terminal instead.
+    project and saves the version. The request stays open until you stop: if it reports errors, fix them, \
+    `apply_change`, and `finish_request` again, which saves into the same version. When you stop, Lamp checks the app \
+    once more, and if it's broken you're asked to go on and fix it.
+    - (Terminal) Lamp's `ask` isn't here: wherever your rules say to ask with `ask`, ask the person with \
+    AskUserQuestion instead. Their answer to a question allows nothing: Lamp and Claude Code still ask about commands \
+    and files on their own, in this terminal, and about a device only on Lamp's card. `device_permission` and \
+    `offer_setup` show their card to the person by itself, outside the terminal: `device_permission` waits for their \
+    click and answers with it, so don't end your turn for it.
     - (Terminal) Messages the person sends in Lamp's chat come to you in tool answers and with their next request, \
     marked as from Lamp's chat: they're requests like any other.
     """

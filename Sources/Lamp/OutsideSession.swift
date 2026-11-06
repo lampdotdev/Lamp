@@ -49,7 +49,10 @@ import Foundation
     init(wish: String) { self.wish = wish }
 
     /// The tools only a session has, besides every engine's (lamp-tools.json, marked `terminal`).
-    static let tools = ["apply_change", "finish_request", "wait_for_answer"]
+    static let tools = ["apply_change", "finish_request"]
+    /// Lamp's tools a session isn't served, and refuses when called anyway: `ask` puts a card in a chat that's closed
+    /// while the session has the wish, so the session asks with Claude Code's own AskUserQuestion, in the terminal.
+    static let withheld: Set<String> = ["ask"]
 
     var isLive: Bool { launcher != nil && ending == nil }
 
@@ -105,6 +108,8 @@ import Foundation
     private var answers: [String: [String: Any]] = [:]
 
     var isBusy: Bool { busy }
+    /// How many operations wait their turn.
+    var queued: Int { waiting.count }
 
     /// Runs `work` once every operation asked before it is done. Nil, without running it, when the session ended first.
     func run<T>(_ work: () async -> T) async -> T? {
@@ -124,13 +129,29 @@ import Foundation
             let key = id.flatMap { $0.isEmpty ? nil : $0 + "|" + before }
             if let key, var kept = answers[key] {
                 kept["retried"] = true
-                return kept
+                return Self.told(kept)
             }
             var answer = await work()
             if fingerprint() != before { answer["stale"] = true }
+            // Kept as the work gave it, flags and all, so what's said of them is put in front once, as it's handed out.
             if let key { answers[key] = answer }
-            return answer
+            return Self.told(answer)
         }
+    }
+
+    /// The answer with what its flags mean put before its text: only the text reaches Claude Code.
+    static func told(_ answer: [String: Any]) -> [String: Any] {
+        var lines: [String] = []
+        if answer["retried"] as? Bool == true {
+            lines.append("retried: this is the answer to the first call with this operation_id; nothing ran again.")
+        }
+        if answer["stale"] as? Bool == true {
+            lines.append("stale: files changed while this ran, so it didn't build everything that's written now. Call it again with a new operation_id.")
+        }
+        guard !lines.isEmpty else { return answer }
+        var told = answer
+        told["text"] = (lines + [answer["text"] as? String ?? ""]).filter { !$0.isEmpty }.joined(separator: "\n\n")
+        return told
     }
 
     /// Returns once no operation is running (at once when none is). Lamp's hook for the session's own edits and
@@ -169,6 +190,43 @@ import Foundation
         let idle = idleWaiting
         idleWaiting = []
         for waiter in idle { waiter.resume() }
+    }
+}
+
+/// One request of a session, from the prompt to Claude Code stopping: what its checkpoints (`finish_request`) have left,
+/// for the next checkpoint and for the request's end.
+struct OutsideRequest {
+    /// How often Claude Code stopping is turned back to fix what's broken, per request, before the request ends anyway.
+    static let stopBlocks = 2
+    /// The version this request saved, while Lamp knows it to be the request's own.
+    private(set) var savedCommit: String?
+    /// The code at the last checkpoint that left nothing broken.
+    private(set) var lastGood: String?
+    /// The last checkpoint left the code not building, or the app crashing on launch.
+    private(set) var failing = false
+    private(set) var blocks = 0
+
+    /// Whether a checkpoint amends the request's version: only one this request made, and only while it's still the
+    /// latest (a restore or another commit since makes the next one a version of its own).
+    func amends(head: String?) -> Bool { savedCommit != nil && head == savedCommit }
+
+    mutating func saved(_ commit: String) { savedCommit = commit }
+
+    mutating func checkpointed(at code: String, failed: Bool) {
+        failing = failed
+        if !failed { lastGood = code }
+    }
+
+    /// Whether Claude Code stopping checks the code again: it changed since the last checkpoint that went through, or that
+    /// checkpoint's failure isn't known to be fixed.
+    func checksAtStop(code: String) -> Bool { failing || lastGood != code }
+
+    /// Claude Code is stopping with something broken: true to turn it back, while the request has blocks left. Counted
+    /// apart from checkpoints, so a request can't be held open by checkpoints alone.
+    mutating func turnsBack(failed: Bool) -> Bool {
+        guard failed, blocks < Self.stopBlocks else { return false }
+        blocks += 1
+        return true
     }
 }
 

@@ -16,9 +16,15 @@ final class SetupSheet: NSObject, ObservableObject, NSWindowDelegate {
     var isShowing: Bool { showing != nil }
 
     private var window: NSPanel?
+    /// The app that was in front when the sheet came up by itself (a terminal Claude Code works in), to be put back.
+    private var returnTo: NSRunningApplication?
 
-    func show(_ project: LampProject, line: LogLine) {
+    /// `returningFocus`: the sheet came up without a click, and the app in front gets the keyboard back once it goes.
+    func show(_ project: LampProject, line: LogLine, returningFocus: Bool = false) {
+        returnTo = nil
         close()
+        let front = NSWorkspace.shared.frontmostApplication
+        returnTo = returningFocus && front?.processIdentifier != ProcessInfo.processInfo.processIdentifier ? front : nil
         showing = (project.id, line.id)
         if line.kind == .drawIcon { Store.shared.iconFromPlayground(project) }
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 520, height: 300),
@@ -36,7 +42,12 @@ final class SetupSheet: NSObject, ObservableObject, NSWindowDelegate {
         } else {
             panel.center()
             panel.level = .floating
+            // Up by itself while another app is in front (a terminal Claude Code works in), Lamp may not come forward:
+            // a panel hides while its app is in the background, and this one has to be seen to be clicked.
+            panel.hidesOnDeactivate = false
+            if returnTo != nil { NSApp.activate(ignoringOtherApps: true) }
             panel.makeKeyAndOrderFront(nil)
+            panel.orderFrontRegardless()
         }
     }
 
@@ -45,10 +56,17 @@ final class SetupSheet: NSObject, ObservableObject, NSWindowDelegate {
         self.window = nil
         if let parent = window.sheetParent { parent.endSheet(window) } else { window.close() }
         showing = nil
+        giveFocusBack()
     }
 
     func windowWillClose(_ notification: Notification) {
-        if (notification.object as? NSWindow) === window { window = nil; showing = nil }
+        if (notification.object as? NSWindow) === window { window = nil; showing = nil; giveFocusBack() }
+    }
+
+    private func giveFocusBack() {
+        guard let app = returnTo else { return }
+        returnTo = nil
+        app.activate()
     }
 }
 

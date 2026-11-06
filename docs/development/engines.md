@@ -370,20 +370,37 @@ Claude Code alone so far: Codex and pi have no such session.
   description says something untrue there (that saves go into the app by themselves) has a `terminalDescription` in
   `lamp-tools.json`, served to it instead. A change to such a description changes both.
 - **Nothing goes in by itself.** `apply_change` puts the change in the way a look does and answers per app with `live`,
-  `held`, `opened`, `reopened`, `built`, `unchanged`, `not_built` or `crashed`. `finish_request` (and the `Stop` hook,
-  which ends whatever is still open) ends the request with `endOfRequest`, the same end a turn has, without the rounds
-  that start Lamp's agent (`Turn.repairs`): build errors, crashes and new errors in the log go back in its answer.
+  `held`, `opened`, `reopened`, `built`, `unchanged`, `not_built` or `crashed`. `finish_request` is a checkpoint
+  (`checkpointOutside`): the same end a turn has (`endOfRequest`), without the rounds that start Lamp's agent
+  (`Turn.repairs`), its build errors, crashes and new errors in the log said afresh in its answer, and the request left
+  open. The request's first save is a version; a later one amends it only while it's still the latest and the request's
+  own (`OutsideRequest.amends`), writing its message and its list of apps again. The request ends when Claude Code stops
+  (the `Stop` hook, `endOutsideRequest`): what changed since the last checkpoint that went through, or a failure not known
+  to be fixed, is checked again, and still broken, Claude Code is turned back to fix it (`decision: block`) twice at most
+  per request (`OutsideRequest.stopBlocks`), counted apart from checkpoints; then the project is free and the person is
+  told what's broken and what was saved. Stop doesn't run when the person interrupts Claude Code, so a request still open
+  is ended by the next prompt or the session's end, never turned back.
 - **One operation at a time.** `OutsideWork` runs a session's applies, finishes and the tools that change the app, one
   after another across the wish and its parts, and holds its edits and commands at Lamp's hook while one runs. An apply's
   answer is kept by its `operation_id` and the code it began with: a retry gets it again, and code changed during the
-  apply makes it `stale`.
+  apply makes it `stale`; both are said at the top of the answer's text, the only part Claude Code reads
+  (`OutsideWork.told`).
 - **The chat steps aside.** While a session has the wish its chat is closed wherever it's drawn
   (`SidebarState.inClaudeCode`, which `ChatScreen` closes on), and closed again if it's opened meanwhile
   (`Store.chatOpenedInSession` gives it a new mark). When the session ends Lamp opens it beside the app again
   (`MagicPanel.openChat`). An app built before this reaches its chat only once Lamp builds it again (`BuildStamp`).
 - **What the person sends meanwhile** waits in the chat's line; it rides on the session's next tool answer or request,
-  and is the request's once a later call shows the answer arrived (`received`). `ask` shows the card as for any engine,
-  and `wait_for_answer` gives the answer once it's in.
+  and is the request's once a later call shows the answer arrived (`received`). Lamp's `ask` isn't served to a session,
+  and is refused if called (`OutsideSession.withheld`): it asks with Claude Code's own AskUserQuestion, in the terminal,
+  whose answer allows nothing. Where Lamp itself needs the person for a command or a file (a card for Lamp's own
+  engines), a session's hook answers `ask` with Lamp's reason (`Store.ApprovalAnswer.askThere`), and Claude Code asks in
+  the terminal about the command as Lamp confined it; under "Only when risky" Claude Code's own classifier still decides,
+  and what it would ask about is asked there too (a session has no `PermissionRequest` hook).
+- **Cards that only Lamp can show** come up by themselves, without the chat. A setup card (a key or sign-in, a model,
+  the icon, the phone's AI), offered by `offer_setup` or by Lamp, opens its own sheet (`SetupSheet`, from `Store.log`),
+  which gives the keyboard back to the terminal when it's done. The device card (`device_permission`) floats alone
+  (`DeviceCardPanel`), takes neither focus nor Return, and its click is the call's answer, kept as the chat's card
+  would keep it; the session's end closes it unanswered.
 - **The end.** Take Back, Stop beside one of its requests, the window closing or Claude Code quitting ends the session
   (`endOutside`): nothing more is taken, Claude Code is stopped and waited for, a running build is stopped as Stop does
   and waited for, and an open request ends without building or saving what was never applied: those edits stay in the

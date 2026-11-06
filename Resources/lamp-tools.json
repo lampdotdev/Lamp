@@ -438,6 +438,7 @@
     "name": "offer_setup",
     "label": "Offer setup",
     "description": "Shows the person a card in the chat offering to set up a kind of AI this app can't use yet, or can use only a slower way: a key, a download, or a sign-in, which they choose. The end of a request says what the app has. Call it once, when a feature you're building needs it or would be clearly better with it, instead of mentioning keys or settings in your reply; build the feature anyway, so it works once it's set up. Not when it's already set up, or the person said Not Now.",
+    "terminalDescription": "Shows the person a card of Lamp's own, beside this terminal, offering to set up a kind of AI this app can't use yet, or can use only a slower way: a key, a download, or a sign-in, which they choose. The end of a request says what the app has. Call it once, when a feature you're building needs it or would be clearly better with it, instead of mentioning keys or settings in your reply; build the feature anyway, so it works once it's set up, and carry on: the card doesn't wait. Not when it's already set up, or the person said Not Now.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -749,6 +750,7 @@
     "name": "device_permission",
     "label": "Ask about a device",
     "description": "Asks the person, on a card of Lamp's own, whether you may change one of their real devices: press a key, open an app, change the volume or input, turn it on or off. Call it before the first such change on that device, from a command or by using the app; reading a device needs no card. Lamp keeps the answer (once, or always for that device): change nothing on the device unless it allows it. Asking ends your turn: the answer is the next message.",
+    "terminalDescription": "Asks the person, on a card of Lamp's own that comes up beside this terminal, whether you may change one of their real devices: press a key, open an app, change the volume or input, turn it on or off. Call it before the first such change on that device, from a command or by using the app; reading a device needs no card. Lamp keeps the answer (once, or always for that device): change nothing on the device unless it allows it. The call waits for their click and answers with it: carry on from there.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -929,7 +931,7 @@
     "name": "finish_request",
     "label": "Finish the request",
     "terminal": true,
-    "description": "Only in a terminal session: ends the person's request as Lamp ends one of its own: builds whatever is still to build, settles every app of the project (opening the ones you changed), saves the version, and reports build errors, crashes and new errors in the app's log, without fixing any. Call it once your work for the request is done; after fixing what it reports, apply and finish again.",
+    "description": "Only in a terminal session: saves the request's work as Lamp does at the end of a request: builds whatever is still to build, settles every app of the project (opening the ones you changed) and saves the version, then reports build errors, crashes and new errors in the app's log, without fixing any. The request stays open: after fixing what it reports, apply_change and call it again, and that save goes into the same version. Call it once your work for the request is done; the request itself ends when you stop, and Lamp checks the app again then.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -937,24 +939,6 @@
         "operation_id": {
           "type": "string",
           "description": "Optional, as for apply_change: the same id retries a call whose answer never came."
-        }
-      }
-    }
-  },
-  {
-    "name": "wait_for_answer",
-    "label": "Wait for the answer",
-    "terminal": true,
-    "description": "Only in a terminal session, after `ask`: waits for the person's answer to your card in Lamp's chat, up to `seconds`, and gives it. If there's none yet, it says so: call it again, or go on with what you can.",
-    "inputSchema": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "seconds": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 300,
-          "description": "How long to wait, 120 at most is usual."
         }
       }
     }

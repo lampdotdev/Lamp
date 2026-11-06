@@ -961,8 +961,10 @@ final class Store: ObservableObject {
         /// Lamp's own repair rounds at the turn's end (a build's errors, a crash, new errors in the log) start its
         /// agent again; a terminal session's request gets them back to fix instead (`report`).
         var repairs: Bool { outside == nil }
-        /// What the end of a terminal session's request found, for its `finish_request` answer.
+        /// What the latest checkpoint of a terminal session's request found, for its answer: made afresh at each.
         var report: [String: Any] = [:]
+        /// What a terminal session's request has saved and left broken so far (`OutsideRequest`).
+        var outsideRequest = OutsideRequest()
 
         var isWorking: Bool { agent != nil || build != nil }
 
@@ -1545,6 +1547,11 @@ final class Store: ObservableObject {
         // A first build's step in the next part closes the steps of the part before it, as something said would.
         if movedOn || ![.detail, .summary, .status, .tool].contains(kind) { closeSteps(project) }
         saveChat(project)
+        // A setup card (a key or sign-in, a model, the icon, the phone's AI) while Claude Code works on the wish from a
+        // terminal: its chat is closed, so the card's own sheet comes up by itself, and goes when it's done.
+        if [.offer, .needsKey, .drawIcon].contains(kind), outsideSessions[project.id] != nil {
+            SetupSheet.shared.show(project, line: line, returningFocus: true)
+        }
     }
 
     /// A line of a new app's first build, with the part of the plan it goes under in the chat (`Chapters`). The
@@ -5478,7 +5485,17 @@ final class Store: ObservableObject {
         // Nothing is committed when the agent changed no files.
         let label = owner.messages.filter { !$0.isEmpty }.joined(separator: "\n\n").nilIfEmpty
             ?? Self.label(attachments: saved)
-        let saving = await Versions.commitAll("-qm \"$LAMP_PROMPT\"", in: project.dir, env: ["LAMP_PROMPT": label])
+        // A terminal session's request saves at each checkpoint (`finish_request`): its first saves a version, a later
+        // one amends that version while it's still the latest, so the request stays one version Undo takes back whole.
+        let latest = owner.outside != nil ? await Versions.head(project) : nil
+        let amending = owner.outside != nil && owner.outsideRequest.amends(head: latest)
+        let saving: Versions.Saved
+        if amending {
+            saving = await Versions.hasChanges(in: project.dir)
+                ? await Versions.commitAll("-q --amend -m \"$LAMP_PROMPT\"", in: project.dir, env: ["LAMP_PROMPT": label]) : .nothingToSave
+        } else {
+            saving = await Versions.commitAll("-qm \"$LAMP_PROMPT\"", in: project.dir, env: ["LAMP_PROMPT": label])
+        }
         var committed = saving == .saved
         // Said once the turn's last save is known: a fix for a crash on launch saves again, and may get through.
         var unsaved = saving == .failed
@@ -5588,7 +5605,10 @@ final class Store: ObservableObject {
             versionsRevision += 1
         }
         if !crashes.isEmpty { owner.report["crashes"] = crashes.values.joined(separator: "\n\n") }
-        if committed, let head = await Versions.head(project) { owner.report["version"] = head }
+        if committed, let head = await Versions.head(project) {
+            owner.report["version"] = head
+            if owner.outside != nil { owner.outsideRequest.saved(head) }
+        }
         let failed = !crashes.isEmpty || owner.stopped || owner.phoneReady == false
         // Not over an app that couldn't be put in place or opened either: that isn't a failed turn, but the
         // card would say it's ready next to the line saying it didn't open.
@@ -6763,11 +6783,11 @@ final class Store: ObservableObject {
     /// `sandboxed`: the command will run confined to the app (Sandbox), so where it looks isn't in question.
     /// `said` is what the agent said the command is for, which names it in the chat (`LogLine.said`).
     private func approveCommand(_ command: String, for project: LampProject, escalated: Bool, shell: Bool = true, sandboxed: Bool,
-                                said: String? = nil, call: String? = nil) async -> Bool {
+                                said: String? = nil, call: String? = nil) async -> ApprovalAnswer {
         switch CommandApproval.current {
         case .never:
             log(project, .status, "Ran: \(command)", said: said, call: call)
-            return true
+            return .allowed
         case .risky where !escalated:
             let judgment = await commandJudgment(command, for: project, aboutRequest: !sandboxed)
             // A command the sandbox confines can only change the app's own folder (Sandbox), so only one the
@@ -6777,24 +6797,24 @@ final class Store: ObservableObject {
             // the sandbox leaves the network open, so it isn't the only guard, but a "low" there runs it.
             if judgment.verdict == .run || (sandboxed && judgment.verdict == .unsure && judgment.judged) {
                 log(project, .status, "Ran: \(command)", said: said, call: call)
-                return true
+                return .allowed
             }
             // A risky verdict always has its reason; if one were ever missing, the card still comes up as flagged.
             let flagged = judgment.verdict == .risky ? judgment.reason ?? .reachesBeyond : nil
-            let allowed = await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged,
-                                                said: said)
-            if allowed, shell { log(project, .status, "Ran: \(command)", said: said, call: call) }
+            let allowed = await approval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged,
+                                         said: said)
+            if allowed == .allowed, shell { log(project, .status, "Ran: \(command)", said: said, call: call) }
             return allowed
         case .risky where shell:
             // Claude Code's own classifier judged it and asked: the person decides, with no second check of
             // Lamp's and no rating that runs it on a "low".
-            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, said: said,
-                                         mayRunOnRating: false)
+            return await approval(for: project, command: command, shell: shell, sandboxed: sandboxed, said: said,
+                                  mayRunOnRating: false)
         default:
             // A command allowed on the card is a step like any other, by the name the agent gave it, whichever engine
             // asked, as one that needed no card is.
-            let allowed = await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, said: said)
-            if allowed, shell { log(project, .status, "Ran: \(command)", said: said, call: call) }
+            let allowed = await approval(for: project, command: command, shell: shell, sandboxed: sandboxed, said: said)
+            if allowed == .allowed, shell { log(project, .status, "Ran: \(command)", said: said, call: call) }
             return allowed
         }
     }
@@ -6818,16 +6838,27 @@ final class Store: ObservableObject {
     /// Applies Settings → Building → Permissions and Privacy to one of the agent's file tools, about to touch `path`: pi's own
     /// tools ask through its extension, Codex's come from Lamp's MCP endpoint. The reason is for the agent.
     private func fileAccess(tool: String, path: String, for project: LampProject) async -> (allowed: Bool, reason: String?) {
+        let (answer, reason) = await fileAccessAnswer(tool: tool, path: path, for: project)
+        return (answer == .allowed, reason)
+    }
+
+    /// `fileAccess`, with the person asked where they are (`ApprovalAnswer.askThere`) when Lamp would put up a card that
+    /// nobody could see: a terminal session's.
+    private func fileAccessAnswer(tool: String, path: String, for project: LampProject) async -> (answer: ApprovalAnswer, reason: String?) {
         switch Privacy.verdict(tool: tool, path: path, project: project) {
-        case .allow: return (true, nil)
-        case .deny(let reason): return (false, reason)
+        case .allow: return (.allowed, nil)
+        case .deny(let reason): return (.refused, reason)
         case .ask:
             let card = Privacy.explanation(tool: tool, path: path, project: project)
-            let allowed = await requestApproval(for: project, command: card.command,
-                                                title: "The agent wants a file outside this app's folder",
-                                                explanation: card.explanation)
-            return (allowed, allowed ? "Approved in Lamp."
-                : "The user didn't allow that. It's outside the app's folder; work with what's inside it, or say what you need and why.")
+            let answer = await approval(for: project, command: card.command,
+                                        title: "The agent wants a file outside this app's folder",
+                                        explanation: card.explanation)
+            switch answer {
+            case .allowed: return (answer, "Approved in Lamp.")
+            case .askThere(let why): return (answer, why)
+            case .refused:
+                return (answer, "The user didn't allow that. It's outside the app's folder; work with what's inside it, or say what you need and why.")
+            }
         }
     }
 
@@ -6847,15 +6878,28 @@ final class Store: ObservableObject {
     func requestApproval(for project: LampProject, command: String, title: String? = nil,
                          explanation given: CommandExplanation? = nil, shell: Bool = true, sandboxed: Bool = false,
                          flagged: CommandRisk.Reason? = nil, said: String? = nil, mayRunOnRating: Bool = true) async -> Bool {
-        guard !command.trimmed.isEmpty else { return false }
+        await approval(for: project, command: command, title: title, explanation: given, shell: shell, sandboxed: sandboxed,
+                       flagged: flagged, said: said, mayRunOnRating: mayRunOnRating) == .allowed
+    }
+
+    /// How a step that may need the person was answered. `askThere`: Lamp needs the person, and the card would go to a chat
+    /// nobody can see (a terminal session's, closed while it has the wish), so they're asked where they are, by Claude
+    /// Code's own prompt, with what Lamp would have said. Every check before the card is made as for any engine.
+    enum ApprovalAnswer: Equatable { case allowed, refused, askThere(String) }
+
+    /// `requestApproval`, with the person asked where they are when the card would go nowhere (`ApprovalAnswer`).
+    func approval(for project: LampProject, command: String, title: String? = nil,
+                  explanation given: CommandExplanation? = nil, shell: Bool = true, sandboxed: Bool = false,
+                  flagged: CommandRisk.Reason? = nil, said: String? = nil, mayRunOnRating: Bool = true) async -> ApprovalAnswer {
+        guard !command.trimmed.isEmpty else { return .refused }
         if turns[project.id]?.allowAll == true {
             log(project, .detail, "Ran (allowed for this turn): \(command)")
-            return true
+            return .allowed
         }
         // One request per app at a time, from here on: a second one waits, including through the
         // explanation below, so two can't both put up a card for the same slot.
         while approvals[project.id] != nil || turns[project.id]?.approving == true { try? await Task.sleep(for: .milliseconds(200)) }
-        guard let turn = turns[project.id], turn.mayWork else { return false }   // the agent is gone: nobody to answer for
+        guard let turn = turns[project.id], turn.mayWork else { return .refused }   // the agent is gone: nobody to answer for
         turn.approving = true
         defer { turn.approving = false }
         // The rating comes first when it could spare the card: a command the checks left to it, or that Claude
@@ -6869,19 +6913,25 @@ final class Store: ObservableObject {
             note("Checking a command", for: project)
             let rating = Task { await explain(command, for: project, sandboxed: sandboxed) }
             if let answer = await Self.answer(of: rating, within: Self.ratingWait) { (given, asked) = (answer, true) } else { late = rating }
-            guard turn.mayWork else { return false }
+            guard turn.mayWork else { return .refused }
         }
         // The setting is read again: it may have changed while the rating was worked out.
         if ratingDecides, CommandApproval.current == .risky, CommandRisk.runsOnRating(given, flagged: flagged) {
             // The caller says it ran, as for an Allow.
             log(project, .detail, "Ran without asking (\(given?.risk ?? "") risk): \(given?.summary ?? "")")
             note(said ?? "Running a command", for: project)   // as after an Allow, so "Checking a command" doesn't stay
-            return true
+            return .allowed
+        }
+        // A terminal session's chat is closed: the person answers Claude Code's own prompt there, told why Lamp asks.
+        if turn.outside != nil {
+            log(project, .detail, "Asked in the terminal: \(command)")
+            let what = given.map { $0.summary.trimmed }?.nilIfEmpty.map { $0 + " " } ?? ""
+            return .askThere("Lamp asks you: " + what + Self.whyAsked(file: title != nil, flagged: flagged))
         }
         NSApp.requestUserAttention(.informationalRequest)
         note(title == nil ? "Waiting for your OK to run a command" : "Waiting for your OK", for: project)
         let lateRating = late
-        return await withCheckedContinuation { continuation in
+        let allowed: Bool = await withCheckedContinuation { continuation in
             // Asked already and nothing came back: the card says so rather than wait for an answer that isn't coming.
             var pending = PendingApproval(command: command, answer: continuation,
                                           explanation: given?.raised(for: flagged) ?? (asked ? .unexplained(flagged: flagged) : nil))
@@ -6903,6 +6953,7 @@ final class Store: ObservableObject {
                 approvals[project.id]?.explanation = rating?.raised(for: flagged) ?? .unexplained(flagged: flagged)
             } }
         }
+        return allowed ? .allowed : .refused
     }
 
     /// How long a command waits for the in-app model's rating before its card comes up without it.
@@ -8430,12 +8481,14 @@ final class Store: ObservableObject {
         .flatMap { try? String(contentsOf: $0.appendingPathComponent("lamp-tools.json"), encoding: .utf8) }
     // `label` is pi's: MCP clients see name, description and inputSchema.
     static var mcpTools: [[String: Any]] { servedTools(toTerminal: false) }
-    /// What a terminal session is served (`OutsideSession`): every tool, its own (marked `terminal`) included, each
+    /// What a terminal session is served (`OutsideSession`): every tool but those it can't use there (`withheld`), its
+    /// own (marked `terminal`) included, each
     /// with its `terminalDescription` where it has one, since there nothing goes into the app by itself.
     static var outsideMcpTools: [[String: Any]] { servedTools(toTerminal: true) }
     private static func servedTools(toTerminal: Bool) -> [[String: Any]] {
         ((try? JSONSerialization.jsonObject(with: toolsJSON)) as? [[String: Any]] ?? [])
             .filter { toTerminal || !($0["terminal"] as? Bool ?? false) }
+            .filter { !toTerminal || !OutsideSession.withheld.contains($0["name"] as? String ?? "") }
             .map { tool in
                 var served = tool
                 if toTerminal, let description = tool["terminalDescription"] { served["description"] = description }
@@ -13135,7 +13188,7 @@ final class Store: ObservableObject {
             upgradeIconArt(project)
         case .new: log(project, .offer, reason, offer: offer)
         }
-        return "Lamp showed the person a card in the chat to set up \(offer.capability.title.lowercased()). Carry on; don't mention keys or settings in your reply."
+        return "Lamp showed the person a card to set up \(offer.capability.title.lowercased()). Carry on; don't mention keys or settings in your reply."
     }
 
     /// Lamp's own words for an offer it makes when an app hit something nothing here can do.
@@ -14335,16 +14388,17 @@ final class Store: ObservableObject {
                 // One of Claude Code's file tools, before it runs: the same check pi's and Codex's get.
                 let names = ["Read": "read", "Edit": "edit", "Write": "write", "Glob": "find", "Grep": "grep"]
                 let path = input["file_path"] as? String ?? input["path"] as? String ?? project.dir.path
-                var (allowed, reason) = (false, nil as String?)
+                var (answer, reason) = (ApprovalAnswer.refused, nil as String?)
                 if let session = turns[project.id]?.claudeSession,
                    Privacy.isOwnOutput(tool: names[tool] ?? "write", path: path, session: session, project: project) {
-                    allowed = true
+                    answer = .allowed
                 } else if tool == "Glob" || tool == "Grep", Privacy.wouldUncover(root: path, project: project) {
                     reason = "That search would pass over Lamp's own files, which aren't yours to open. Search a narrower folder."
                 } else {
-                    (allowed, reason) = await fileAccess(tool: names[tool] ?? "read", path: path, for: project)
+                    (answer, reason) = await fileAccessAnswer(tool: names[tool] ?? "read", path: path, for: project)
                 }
-                var output: [String: Any] = ["hookEventName": "PreToolUse", "permissionDecision": allowed ? "allow" : "deny"]
+                let decision = switch answer { case .allowed: "allow"; case .refused: "deny"; case .askThere: "ask" }
+                var output: [String: Any] = ["hookEventName": "PreToolUse", "permissionDecision": decision]
                 if let reason { output["permissionDecisionReason"] = reason }
                 return (200, ["hookSpecificOutput": output])
             }
@@ -14417,7 +14471,7 @@ final class Store: ObservableObject {
                 // Codex's PreToolUse hook can only block: an empty answer lets the command run.
                 // Codex says what its commands are for in its reasoning, which comes before them (`AgentEvent.naming`).
                 let allowed = await approveCommand(command, for: project, escalated: false, sandboxed: sandboxed,
-                                                   said: turns[project.id]?.naming, call: call)
+                                                   said: turns[project.id]?.naming, call: call) == .allowed
                 return (200, allowed ? [:] : ["hookSpecificOutput": ["hookEventName": "PreToolUse",
                                                                      "permissionDecision": "deny",
                                                                      "permissionDecisionReason": "The user denied this command in Lamp."]])
@@ -14425,8 +14479,15 @@ final class Store: ObservableObject {
             // Claude Code's hook and pi's extension carry the command's own description, so each command keeps its
             // own words whichever of the approval and the engine's output reaches Lamp first.
             let said = (input["description"] as? String ?? body["description"] as? String)?.trimmed.nilIfEmpty
-            let allowed = await approveCommand(command, for: project, escalated: escalated, shell: shell, sandboxed: sandboxed, said: said,
+            let decided = await approveCommand(command, for: project, escalated: escalated, shell: shell, sandboxed: sandboxed, said: said,
                                                call: call)
+            // A terminal session's person is asked by Claude Code's own prompt, about the command as Lamp confined it.
+            if case .askThere(let why) = decided, request.path.contains("format=claude"), !escalated {
+                var output: [String: Any] = ["hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": why]
+                if let confined { output["updatedInput"] = ["command": confined] }
+                return (200, ["hookSpecificOutput": output])
+            }
+            let allowed = decided == .allowed
             let reason = allowed ? "Approved in Lamp." : "The user denied this command in Lamp."
             // An allowed command goes back confined: the hooks run what Lamp hands them.
             if escalated {
@@ -15822,6 +15883,7 @@ extension Store {
         }
         if outsideSessions[id] === session { outsideSessions[id] = nil }
         outsideByToken[session.token] = nil
+        DeviceCardPanel.shared.dismiss(wish: id)
         agentTokens[session.token] = nil
         guard let wish else { return }
         if ([wish] + parts(of: wish)).contains(where: Runtime.sourcesChanged) {
@@ -15864,10 +15926,9 @@ extension Store {
         if let conversation = fields["session_id"] as? String { session.conversation = conversation }
         outsideCalled(session, project: wish)
         if route == "/outside/finish" {
-            // Claude Code stopped: the request ends if `finish_request` hasn't ended it, and the person sees how it went.
+            // Claude Code is stopping: the request ends here, unless what it leaves is broken and it's turned back to fix it.
             guard turns[wish.id]?.outside === session else { return (200, [:]) }
-            let answer = await session.work.run { await self.finishOutside(session, wish) }
-            return (200, answer.map { ["systemMessage": $0["text"] as? String ?? ""] } ?? [:])
+            return (200, await session.work.run { await self.endOutsideRequest(session, wish, mayTurnBack: true) } ?? [:])
         }
         return await beginOutside(session, wish, prompt: fields["prompt"] as? String ?? "")
     }
@@ -15876,9 +15937,9 @@ extension Store {
     /// their message, and Claude Code is told what Lamp tells every engine with a request, and what waits in the chat.
     private func beginOutside(_ session: OutsideSession, _ wish: LampProject, prompt: String) async -> (Int, [String: Any]) {
         func refuse(_ reason: String) -> (Int, [String: Any]) { (200, ["decision": "block", "reason": reason]) }
-        // One left open (its Stop hook never reached Lamp) ends first.
+        // One left open ends first: its Stop hook never reached Lamp, or Claude Code was interrupted, which runs no Stop hook.
         if let turn = turns[wish.id], turn.outside === session {
-            _ = await session.work.run { await self.finishOutside(session, wish) }
+            _ = await session.work.run { await self.endOutsideRequest(session, wish, mayTurnBack: false) }
         }
         // Other work of Lamp's on the wish (a Reload, an icon going in) is waited for, a while.
         let deadline = Date().addingTimeInterval(60)
@@ -15948,16 +16009,31 @@ extension Store {
             let id = (arguments["operation_id"] as? String)?.trimmed
             let answer = await session.work.apply(id: id, fingerprint: { self.outsideFingerprint(wish) }) {
                 guard session.isLive, self.turns[wish.id]?.outside === session else { return ["text": "No request is open."] }
-                return name == "apply_change" ? await self.applyChange(arguments, for: wish) : await self.finishOutside(session, wish)
+                return name == "apply_change" ? await self.applyChange(arguments, for: wish) : await self.checkpointOutside(session, wish).answer
             }
             return answer.map { (200, $0) } ?? ended
-        case "wait_for_answer":
-            return await waitForAnswer(arguments, session: session, for: wish)
-        case "ask":
-            let answer = talk(name, arguments, for: project)
-            guard answer.0 == 200, turns[wish.id]?.asked == true else { return answer }
-            return (200, ["text": "Lamp shows your questions as a card in its chat. Call wait_for_answer for the answer; the person may answer you here in the terminal instead."])
-        case "progress", "plan", "read_skill", "read_notes", "list_versions", "connectors", "network_devices", "offer_setup", "write_wish", "device_permission":
+        case _ where OutsideSession.withheld.contains(name):
+            // Not served to a session, and refused when called all the same: its card would go to a chat that's closed.
+            return (400, ["error": "`\(name)` isn't available here: the person is in this terminal. Ask them with AskUserQuestion."])
+        case "device_permission":
+            // The card the chat would hold, shown by itself: the chat is closed while the session has the wish. The
+            // person's click comes back as this call's answer, so Claude Code carries on rather than ending its turn.
+            let since = Date()
+            guard let (status, answer) = await mcpTool(name, arguments, for: project) else { return ended }
+            guard status == 200, let line = logs[wish.id]?.last(where: { $0.kind == .ask && ($0.at ?? .distantPast) >= since && $0.ask?.device != nil }),
+                  let ask = line.ask, let device = ask.device else { return (status, answer) }
+            turns[wish.id]?.asked = false
+            let choice = await DeviceCardPanel.shared.ask(ask, for: wish) ?? DevicePermissions.notNow
+            if var lines = logs[wish.id], Talk.give([choice], to: line.id, in: &lines) != nil {
+                logs[wish.id] = lines
+                saveChat(wish)
+            }
+            DevicePermissions.answer(choice, about: device, for: wish)
+            guard session.isLive else { return ended }
+            return (200, ["text": choice == DevicePermissions.notNow
+                ? "The person said not now: change nothing on \(device). Carry on without it."
+                : "The person chose \"\(choice)\" on Lamp's card: go ahead on \(device) with what you said."])
+        case "progress", "plan", "read_skill", "read_notes", "list_versions", "connectors", "network_devices", "offer_setup", "write_wish":
             return await mcpTool(name, arguments, for: project)
         default:
             guard let answered = await session.work.run({ await self.mcpTool(name, arguments, for: project) }) else { return ended }
@@ -16016,54 +16092,67 @@ extension Store {
         return ["text": lines.joined(separator: "\n\n"), "outcomes": outcomes, "screenshots": screenshots]
     }
 
-    /// `finish_request`, and Claude Code stopping: the request ends as Lamp's own do (`endOfRequest`), without the
-    /// rounds that start Lamp's agent, and the wish is free for the session's next request.
-    private func finishOutside(_ session: OutsideSession, _ wish: LampProject) async -> [String: Any] {
-        guard let owner = turns[wish.id], owner.outside === session, let project = current(wish) else { return ["text": "No request is open."] }
+    /// A checkpoint of a session's request (`finish_request`, and Claude Code stopping): what's written is built,
+    /// settled in every app and saved as Lamp ends a request of its own (`endOfRequest`), without the rounds that start
+    /// Lamp's agent, and what it finds is said, worked out afresh each time. The request stays open: the session fixes
+    /// what's broken, applies, and checkpoints again, and that save amends the request's version.
+    /// `found` is what it found without what the tool's answer adds about the request staying open, for Claude Code stopping.
+    private func checkpointOutside(_ session: OutsideSession, _ wish: LampProject) async -> (answer: [String: Any], found: String, failed: Bool) {
+        guard let owner = turns[wish.id], owner.outside === session, let project = current(wish) else { return (["text": "No request is open."], "", false) }
+        owner.report = [:]
         let result = await endOfRequest(project, owner: owner, saved: [], asked: owner.requests)
+        let report = owner.report
+        let failed = !owner.stopped && (report["build_errors"] != nil || report["crashes"] != nil || result.end == .failed)
+        owner.outsideRequest.checkpointed(at: outsideFingerprint(wish), failed: failed)
+        var lines: [String] = []
+        if let errors = report["build_errors"] as? String {
+            lines.append("Not saved: it doesn't build. Fix these, apply_change, then finish_request again:\n\n" + errors)
+        } else if let crashes = report["crashes"] as? String {
+            lines.append("Saved as version \(report["version"] as? String ?? owner.outsideRequest.savedCommit ?? "?"), but it crashes on launch. Fix it and finish_request again; the fix goes into the same version:\n\n" + crashes)
+        } else if result.end == .failed {
+            lines.append("Not everything went in: the chat beside the app says why.")
+        } else if let version = report["version"] as? String {
+            lines.append("Saved as version \(version): built and settled in every app.")
+        } else {
+            lines.append("Nothing new to save.")
+        }
+        if let errors = report["log_errors"] as? String, !errors.isEmpty { lines.append(errors) }
+        let found = lines.joined(separator: "\n\n")
+        lines.append("The request stays open until you stop: you can go on changing, applying and calling finish_request.")
+        var answer: [String: Any] = ["text": lines.joined(separator: "\n\n"), "end": "\(result.end)"]
+        if let version = report["version"] { answer["version"] = version }
+        return (answer, found, failed)
+    }
+
+    /// The end of a session's request: when Claude Code stops (`mayTurnBack`), or when the next prompt finds it still open.
+    /// What changed since the last checkpoint, or a checkpoint's failure not known to be fixed, is checked again first;
+    /// still broken as Claude Code stops, it's turned back to fix it (the `Stop` hook's `block`), a few times at most per
+    /// request. Then the wish is free, and the person is told what's broken and what was saved. The hook's answer.
+    private func endOutsideRequest(_ session: OutsideSession, _ wish: LampProject, mayTurnBack: Bool) async -> [String: Any] {
+        guard let owner = turns[wish.id], owner.outside === session, let project = current(wish) else { return [:] }
+        var said: String?
+        var failed = false
+        if owner.outsideRequest.checksAtStop(code: outsideFingerprint(wish)) {
+            let checked = await checkpointOutside(session, wish)
+            (said, failed) = (checked.found, checked.failed)
+        }
+        if mayTurnBack, owner.outsideRequest.turnsBack(failed: failed) {
+            return ["decision": "block", "reason": "Lamp checked the app as you stopped, and it's broken. Fix it, then stop again.\n\n" + (said ?? "")]
+        }
         owner.look.draftsDone = true
         for app in owner.look.draftWatch.keys { firstFrames.end(app: app) }
         if let tally = Self.outcomeTally(owner.outcomes, name: project.name) { log(project, .detail, tally) }
         if let pace = Self.paceTally(began: owner.began, shown: owner.shown, outcomes: owner.outcomes) { log(project, .detail, pace) }
         takeBackHanded(project)
         progress[project.id] = nil
-        let report = owner.report
         if turns[project.id] === owner { finish(project) }
-        var lines: [String] = []
-        switch result.end {
-        case .changed: lines.append("Finished: the change is built and settled in every app.")
-        case .replied: lines.append(owner.asked ? "Finished without building: a question of yours waits for its answer." : "Finished: nothing to build.")
-        case .failed: lines.append("Finished, but not everything went in.")
-        }
-        if let version = report["version"] as? String { lines.append("Saved as version \(version).") }
-        if let errors = report["build_errors"] as? String { lines.append("It doesn't build. Fix these, then apply_change and finish_request again:\n\n" + errors) }
-        if let crashes = report["crashes"] as? String { lines.append("It crashed on launch:\n\n" + crashes) }
-        if let errors = report["log_errors"] as? String, !errors.isEmpty { lines.append(errors) }
-        var answer: [String: Any] = ["text": lines.joined(separator: "\n\n"), "end": "\(result.end)"]
-        if let version = report["version"] { answer["version"] = version }
-        return answer
-    }
-
-    /// `wait_for_answer`: the person's answer to the session's card, once it's in the chat, up to the time asked.
-    private func waitForAnswer(_ arguments: [String: Any], session: OutsideSession, for wish: LampProject) async -> (Int, [String: Any]) {
-        let seconds = min(max((arguments["seconds"] as? NSNumber)?.doubleValue ?? 60, 1), 300)
-        let deadline = Date().addingTimeInterval(seconds)
-        while session.isLive, let turn = turns[wish.id], turn.outside === session {
-            guard turn.asked else { return (200, ["text": "No question of yours waits for an answer."]) }
-            if var waiting = queued[wish.id], let index = waiting.firstIndex(where: { $0.card != nil }) {
-                let answer = waiting.remove(at: index)
-                queued[wish.id] = waiting.isEmpty ? nil : waiting
-                saveWaiting()
-                // Into the chat as the person's answer, which closes the card.
-                _ = post([answer], to: wish)
-                turn.asked = false
-                away.personAsked(wish.id)
-                return (200, ["text": "The person answered in Lamp's chat:\n\n" + (answer.text.isEmpty ? "(no words)" : answer.text)])
-            }
-            guard Date() < deadline else { break }
-            try? await Task.sleep(for: .milliseconds(500))
-        }
-        return (200, ["text": "No answer yet. Call wait_for_answer again, or go on with what doesn't need it."])
+        guard failed || owner.outsideRequest.failing else { return said.map { ["systemMessage": $0] } ?? [:] }
+        // Ended broken: what's broken, and whether anything of the request is saved.
+        let saved = owner.outsideRequest.savedCommit.map { "Its last saved version is \($0)." }
+            ?? "Nothing of it was saved; its edits stay in the project's folder, not built."
+        let broken = owner.report["build_errors"] != nil ? "it doesn't build" : owner.report["crashes"] != nil ? "the app crashes on launch" : "not everything went in"
+        log(project, .error, "Claude Code's request ended with \(broken).")
+        return ["systemMessage": "This request ended with \(broken). \(saved)" + (said.map { "\n\n" + $0 } ?? "")]
     }
 
     /// A request's build errors at its end: carried into the next request for Lamp's own agent, or given back to the
