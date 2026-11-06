@@ -1145,6 +1145,8 @@ final class Store: ObservableObject {
     /// What the agent's `look_at_app` tool has done during the current turn.
     struct Look {
         var inProgress = false
+        /// Which look holds `inProgress`: one let go after `lookLimit` may still end later, and mustn't free a newer one.
+        var holder: UUID?
         /// Each app the last look at it built and opened, and how that launch went, by app: a wish's apps are looked
         /// at in one turn, and one's crash is no word on another.
         var installed: [String: Bool] = [:]
@@ -14926,8 +14928,40 @@ final class Store: ObservableObject {
     /// which the look only speaks of, and which the turn's end delivers to.
     private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false, onDevice: Bool = false,
                       shape: String? = nil, tryOn: String? = nil) async -> (Int, [String: Any]) {
-        withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice, shape: shape, tryOn: tryOn), of: project)
+        // A look waits on the app in many ways (a build, a launch, a window's first frame, a step going in), and one that
+        // never answers held the look, and every later one ("already looking"), until the turn's end, with the chat stuck
+        // on it. So it's given a limit, under the five minutes an engine waits on a tool before giving up on it itself.
+        final class Once { var done = false }
+        let once = Once(), began = Date()
+        let answer: (Int, [String: Any])? = await withCheckedContinuation { finished in
+            Task { @MainActor in
+                let answer = await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice, shape: shape, tryOn: tryOn)
+                guard !once.done else { return }
+                once.done = true
+                finished.resume(returning: answer)
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(Self.lookLimit))
+                guard !once.done else { return }
+                once.done = true
+                finished.resume(returning: nil)
+            }
+        }
+        if let answer { return withLateCrash(answer, of: project) }
+        if let turn = turns[project.id] {
+            turn.look.inProgress = false
+            turn.look.holder = nil
+            progress[project.id]?.looking = false
+            if !turn.stopped { note(Activity.thinking, for: project) }
+        }
+        log(project, .detail, "A look gave up after \(Int(Date().timeIntervalSince(began))) seconds without an answer from the app.")
+        return (200, ["text": "The look didn't finish in \(Int(Self.lookLimit / 60)) minutes: the app didn't answer it (a build, a launch or "
+            + "its window may still be under way, or the app may have closed). Lamp let it go, so you can look again; if the next look "
+            + "doesn't finish either, finish without one and say in a sentence that you couldn't see the change."])
     }
+
+    /// How long a look waits for the app before letting go.
+    nonisolated static let lookLimit: TimeInterval = 240
 
     /// Every look at a game that has gone on the person's Xbox, whichever way it went (a preview, or only a build for a
     /// game with none), says what the game logged there.
@@ -14949,6 +14983,8 @@ final class Store: ObservableObject {
         }
         guard !turn.look.inProgress else { return (200, ["text": "Lamp is already looking at the app. Wait for that result."]) }
         turn.look.inProgress = true
+        let holder = UUID()
+        turn.look.holder = holder
         progress[project.id]?.looking = true
         // Told at the end how long the look took: a cost the agent has seen is one it allows for, where "takes a
         // while" had it putting looks off.
@@ -14968,9 +15004,13 @@ final class Store: ObservableObject {
         }
         say(TurnProgress.activity(for: ToolCall("look_at_app")))
         defer {
-            turn.look.inProgress = false
-            if turns[project.id] === turn { progress[project.id]?.looking = false }
-            say(Activity.thinking)
+            // A look let go after `lookLimit` ending now leaves a newer one as it is.
+            if turn.look.holder == holder {
+                turn.look.inProgress = false
+                turn.look.holder = nil
+                if turns[project.id] === turn { progress[project.id]?.looking = false }
+                say(Activity.thinking)
+            }
         }
 
         try? await writeOwnFiles(project, all: false)
