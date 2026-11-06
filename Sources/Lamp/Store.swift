@@ -10820,6 +10820,7 @@ final class Store: ObservableObject {
         var staged: SignedCopy?
         if !asked {
             note("Installing \(project.name)…", for: project)
+            Sidebar.log.notice("staging \(project.id, privacy: .public)")
             do {
                 staged = try await stageSigned(project, owner: owner)
             } catch is Staging.Stopped {
@@ -10832,6 +10833,7 @@ final class Store: ObservableObject {
                 return nil
             }
         }
+        if staged != nil { Sidebar.log.notice("staged \(project.id, privacy: .public); closing its Mac copy") }
         guard !asked, let copy = staged, await quit(project, for: owner, only: .mac) else {
             staged?.discard()
             // The person kept the app open, with whatever it holds. It isn't replaced under them (HeldInstalls
@@ -13610,7 +13612,9 @@ final class Store: ObservableObject {
     private func quit(_ project: LampProject, for owner: Turn? = nil, only place: Destination? = nil) async -> Bool {
         // Lamp closing it isn't the app dying on launch.
         retireLaunches(of: project)
-        if project.onDevice {
+        // Quitting only its Mac copy (an install on this Mac) leaves the device, TV or Android copy alone, whichever
+        // place is chosen for it now: a game set to open on the Xbox still has its Mac copy to close before the swap.
+        if project.onDevice, place != .mac {
             // Its preview on this Mac too, with the page's sound and timers.
             TVPreview.close(project)
             refreshOpenApps()
@@ -13625,12 +13629,12 @@ final class Store: ObservableObject {
             }
             return true
         }
-        if project.onTV {
+        if project.onTV, place != .mac {
             TVPreview.close(project)
             refreshOpenApps()
             return true
         }
-        if project.onAndroid {
+        if project.onAndroid, place != .mac {
             let package = Template.androidPackage(for: project)
             if let running = androidApps[project.id] {
                 if let serial = await liveSerial(running) { await Adb.stop(package, on: serial) }
