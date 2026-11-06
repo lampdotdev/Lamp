@@ -74,6 +74,63 @@ final class SuggestionFixesTwoTests: XCTestCase {
         XCTAssertFalse(SuggestionSummaries.keep(summary, as: "1", in: project, repo: "someone/app"), "kept from the old description")
     }
 
+    // MARK: Mark All as Seen
+
+    /// Four new requests on one app, each with a kept plain-words account, and a fifth set aside.
+    private func fourNew() throws -> LampProject {
+        let (project, _) = try app("# App\nKeeps chores.\n")
+        let about = SuggestionSummaries.about(project)
+        let lines: [(Int, String, String, String)] = [
+            (1, "Flame color", "Blue flames", "The fire"),
+            (2, "Sound tweak", "Rain you can turn off", "Sounds"),
+            (3, "Another fire tweak", "Embers that glow", "The fire"),
+            (4, "Rain sound", "Louder thunder", "Sounds"),
+            (5, "Rain again", "Rain on the roof", "Sounds"),
+        ]
+        SuggestedChanges.change(project, repo: "someone/app") { record in
+            record.topics = ["The fire", "Sounds"]
+            record.open = lines.map { .init(number: $0.0, login: "sam", title: $0.1, head: "h\($0.0)", url: "u") }
+            for (number, title, headline, topic) in lines {
+                let made = SuggestionSummaries.hash(title: title, note: "", head: "h\(number)", about: about)
+                record.summaries[String(number)] = .init(made: made, headline: headline, points: [], topic: topic, partial: false)
+            }
+        }
+        SuggestedChanges.hide(5, head: "h5", in: project)
+        return project
+    }
+
+    private func newOnes(_ project: LampProject) throws -> Set<Int> {
+        let record = try XCTUnwrap(SuggestionsPanel.shownRecord(for: project))
+        return Set(record.open.filter(record.isNew).map(\.number))
+    }
+
+    /// Mark All as Seen marks only the new ones the list shows: a search matching a line's plain-words account alone,
+    /// a topic with a search, and nothing when nothing matches. The rest stay new once it's marked.
+    func testMarkAllAsSeenMarksOnlyWhatTheListShows() throws {
+        let project = try fourNew()
+        var record = try XCTUnwrap(SuggestionsPanel.shownRecord(for: project))
+        XCTAssertEqual(try newOnes(project), [1, 2, 3, 4])
+
+        // "rain" is in #2's account only, and in #4's title; #5 matches but is set aside.
+        let rain = SuggestionsPanel.toMark(record, topic: nil, search: "rain")
+        XCTAssertEqual(rain.map(\.number).sorted(), [2, 4])
+        XCTAssertEqual(rain.map(\.head).sorted(), ["h2", "h4"])
+        XCTAssertEqual(SuggestionsPanel.toMark(record, topic: nil, search: "turn off").map(\.number), [2])
+        SuggestedChanges.markSeen(SuggestionsPanel.toMark(record, topic: nil, search: "turn off"), in: project)
+        XCTAssertEqual(try newOnes(project), [1, 3, 4], "those the search left out stay new")
+
+        record = try XCTUnwrap(SuggestionsPanel.shownRecord(for: project))
+        let fire = SuggestionsPanel.toMark(record, topic: "The fire", search: "embers")
+        XCTAssertEqual(fire.map(\.number), [3])
+        SuggestedChanges.markSeen(fire, in: project)
+        XCTAssertEqual(try newOnes(project), [1, 4], "those the topic and search left out stay new")
+
+        record = try XCTUnwrap(SuggestionsPanel.shownRecord(for: project))
+        XCTAssertTrue(SuggestionsPanel.toMark(record, topic: nil, search: "nothing like this").isEmpty, "no button when nothing matches")
+        XCTAssertTrue(SuggestionsPanel.toMark(record, topic: "The fire", search: "thunder").isEmpty)
+        XCTAssertEqual(SuggestionsPanel.toMark(record, topic: nil, search: "").map(\.number).sorted(), [1, 4])
+    }
+
     // MARK: Reachable
 
     /// An app whose requests are all set aside is still listed, so Put Back can be reached; it counts none as new.
