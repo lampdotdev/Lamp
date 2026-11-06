@@ -11416,19 +11416,17 @@ final class Store: ObservableObject {
         text += " This look took \(Int(Date().timeIntervalSince(began).rounded())) seconds."
         text += GameKit.openGameNote(mac)
         if Privacy.sharesLog, let tail = Runtime.logTail(mac) { text += "\n\nWhat it logged:\n\(tail)" }
-        if Privacy.sharesLog, let (device, tail) = await deviceLogTail(project) {
-            text += "\n\nWhat it logged on the person's \(device) since it last opened there (how many frames a second it gets "
-                + "there is the line it writes every ten seconds; it isn't open there now if that line is old):\n\(tail)"
-        }
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
     }
 
     /// What a game put on the person's console last logged there, read back over the network for a look at it on this
     /// Mac: Lamp never looks at the console itself, and without this every change made for it there was a guess, its frame
     /// rate unknown. Nil when the game hasn't gone on one, the integration reads no log, or the console doesn't answer
-    /// within a few seconds (it's off, or asleep).
+    /// within a few seconds (it's off, or asleep). The console is the one the app itself has under Try On: a look's
+    /// project is often its Mac copy, which chooses none.
     private func deviceLogTail(_ project: LampProject) async -> (device: String, tail: String)? {
-        guard project.openPlaces.contains(.device), DeviceApps.wentOnADevice(project),
+        let project = current(project) ?? project
+        guard GameKit.isGame(project), project.openPlaces.contains(.device), DeviceApps.wentOnADevice(project),
               let device = DeviceApps.device(for: project, among: devices) else { return nil }
         let read = Task { try? await DeviceApps.log(project, on: device) }
         let limit = Task { try? await Task.sleep(for: .seconds(5)); read.cancel() }
@@ -14928,7 +14926,13 @@ final class Store: ObservableObject {
     /// which the look only speaks of, and which the turn's end delivers to.
     private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false, onDevice: Bool = false,
                       shape: String? = nil, tryOn: String? = nil) async -> (Int, [String: Any]) {
-        withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice, shape: shape, tryOn: tryOn), of: project)
+        var answer = withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice, shape: shape, tryOn: tryOn), of: project)
+        // Every look at a game that has gone on the person's Xbox, whichever way it went, says what the game logged there.
+        if answer.0 == 200, let text = answer.1["text"] as? String, Privacy.sharesLog, let (device, tail) = await deviceLogTail(project) {
+            answer.1["text"] = text + "\n\nWhat it logged on the person's \(device) since it last opened there (how many frames a second it "
+                + "gets there is the line it writes every ten seconds; it isn't open there now if that line is old):\n\(tail)"
+        }
+        return answer
     }
 
     private func lookNow(at project: LampProject, prop: String?, motion: Bool, reopen: Bool, onDevice: Bool, shape: String? = nil,
