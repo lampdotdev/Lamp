@@ -232,7 +232,7 @@ no policy covers (WebRTC, a link's preconnect and prefetch) is off (`NetworkPoli
 or every site for good, on that device. A game's own controllers relay is the one way out the app adds: the rules name
 it at `ws://127.0.0.1:<port>` for connecting only, for that launch, never kept with the sites or taken from the page
 (`ControllerRuntime.pageSites`, "Lamp's player" in the devices guide). Lamp's previews serve the same rules (`StagedFiles.policy`), with Lamp's own relay open to a TV game's page in its preview (the TV guide). A copy of the wish
-(a remix, an update's copy) is held as the wish is (`SharedNetwork.carry`, `arrive`). A phone's controller page reads it
+(a remix, an update's copy) is held as the wish is (`SharedNetwork.carry`, `arrive`). What an update or Keep Both records is the reading its review made of exactly that package (`Sharing.Inspection.readings`, kept as `PendingImport.readings`), not a second reading on the main actor; an update with no review (an original, a pull-in, an update's copy) reads it off the main actor (`Store.readings(of:reviewed:)`). A phone's controller page reads it
 too (`PhonePageReach`, under "TV apps"): its servers allow only the policy's sites, an app with Swift of the sender's
 included, since Lamp and an LG TV serve it outside the app's process; a game that serves its own page on the Mac,
 iPhone or iPad (`PhonePageServer`) does so in that process, where its Swift could change that too. A host elsewhere (a

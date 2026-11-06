@@ -707,21 +707,213 @@ final class Store: ObservableObject {
     @Published var pendingImport: PendingImport? {
         didSet {
             // Its check goes with it: a review closed, or replaced by another, is never shown.
-            if pendingImport?.id != oldValue?.id { reviewing?.cancel(); reviewing = nil }
+            if let old = oldValue, pendingImport?.id != old.id, reviewWork?.sheet == old.id { endReview() }
             if pendingImport == nil, oldValue != nil { openWaitingImport() }
         }
     }
 
-    /// The check of the review that's up (`Sharing.review`).
-    private var reviewing: Task<ImportReview, Never>?
+    /// The one review being made, from the click that asks for it until its sheet has Lamp's answer: fetching the
+    /// update, unpacking it, reading its code and asking the AI, all in one task Lamp owns (`reviewTask`). Asking again
+    /// for the same wish's update while it runs is the same review; anything else asked for, or Cancel, ends it, and
+    /// nothing it was doing can show a review after that (`owns`). Its stage is shown where it was asked for: beside
+    /// the wish on the desk until the review's sheet is up, and on the sheet after (`ImportReviewCard.progress`).
+    struct ReviewWork: Equatable {
+        enum Stage: Equatable { case fetching, unpacking, inspecting, asking, failed(String) }
+        let id = UUID()
+        /// The wish whose update this is; nil for a file or a repository opened as a new wish.
+        let wish: String?
+        var stage: Stage
+        /// The review's sheet, once it's up (`PendingImport.id`): closing it ends the work.
+        var sheet: UUID? = nil
+        /// The time ran out while the AI was asked (`reviewDeadline`): its requests were stopped.
+        var outOfTime = false
+        /// What was asked for, for a fetch: the same asked again while it runs is this review (`beginReview`).
+        var request: String? = nil
 
-    /// Checks the review that's up and shows what it found, unless that review has gone by then.
+        var failed: Bool { if case .failed = stage { true } else { false } }
+
+        /// What's said beside the control that asked for it, or on the sheet.
+        var line: String {
+            switch stage {
+            case .fetching: wish == nil ? "Fetching…" : "Fetching update…"
+            case .unpacking: "Unpacking…"
+            case .inspecting: "Checking its code…"
+            case .asking: "Asking Lamp's AI about it…"
+            case .failed(let why): why
+            }
+        }
+    }
+
+    @Published private(set) var reviewWork: ReviewWork?
+    private var reviewTask: Task<Void, Never>?
+    /// The AI's part of the review (`Sharing.review`), which the deadline can stop on its own: the code is read by then.
+    private var askingTask: Task<ImportReview, Never>?
+    private var reviewTimer: Task<Void, Never>?
+    /// What Try Again does after a review failed: the same request again.
+    private var reviewRetry: (() -> Void)?
+
+    /// How long a review has, from the click to Lamp's answer: fetching, unpacking, reading the code and asking the
+    /// AI. Past it the work is stopped, not left running: before the code is read through, the review fails and says
+    /// so, with Try Again, and nothing it read counts as checked; while the AI is asked, the review shows what Lamp's own
+    /// reading found and says the AI's check didn't finish.
+    nonisolated static let reviewDeadline: Duration = .seconds(300)
+
+    /// Starts a review's work, ending any other, and its deadline. Nil when the same `request` is already under way: a
+    /// second click is the same review, whose progress is already showing.
+    private func beginReview(wish: String?, stage: ReviewWork.Stage, sheet: UUID? = nil, request: String? = nil) -> UUID? {
+        if let request, let work = reviewWork, work.request == request, !work.failed { return nil }
+        let previous = reviewWork
+        endReview()
+        var work = ReviewWork(wish: wish, stage: stage)
+        work.sheet = sheet
+        work.request = request
+        reviewWork = work
+        // A sheet the ended work was still checking goes with it, so it isn't left saying it's checking; its file's
+        // folder goes too, and a prepared update's copy stays, for its Review Update… (`AppUpdates`).
+        if let up = previous?.sheet, up != sheet, let pending = pendingImport, pending.id == up {
+            try? FileManager.default.removeItem(at: pending.package.folder)
+            pendingImport = nil
+        }
+        let id = work.id
+        reviewTimer = Task { [weak self] in
+            try? await Task.sleep(for: Self.reviewDeadline)
+            guard !Task.isCancelled else { return }
+            self?.outOfTime(id)
+        }
+        return id
+    }
+
+    /// Runs the review's work as the one task Lamp keeps for it, so Cancel and the deadline can stop it.
+    private func runReview(_ id: UUID, retry: @escaping () -> Void, _ work: @escaping () async -> Void) {
+        guard reviewWork?.id == id else { return }
+        reviewRetry = retry
+        reviewTask = Task { await work() }
+    }
+
+    /// Whether the review `id` is still the one wanted: not cancelled, replaced, out of time or failed.
+    private func owns(_ id: UUID) -> Bool {
+        !Task.isCancelled && reviewWork?.id == id && reviewWork?.failed == false
+    }
+
+    private func setReviewStage(_ stage: ReviewWork.Stage, for id: UUID) {
+        guard reviewWork?.id == id else { return }
+        reviewWork?.stage = stage
+    }
+
+    /// The review's work is over: done, cancelled or replaced. Whatever it was doing is stopped (its fetch,
+    /// `RepoImport.clone`; its reading, `Sharing.inspect`; its AI requests).
+    private func endReview() {
+        reviewTask?.cancel()
+        askingTask?.cancel()
+        reviewTimer?.cancel()
+        reviewTask = nil
+        askingTask = nil
+        reviewTimer = nil
+        reviewRetry = nil
+        reviewWork = nil
+    }
+
+    /// A review that can't go on says why where it's shown, with Try Again; one with nowhere to show it (a file or a
+    /// repository opened as a new wish, before its sheet) says so in an alert.
+    private func failReview(_ id: UUID, _ why: String, detail: String? = nil) {
+        guard reviewWork?.id == id else { return }
+        reviewTask?.cancel()
+        askingTask?.cancel()
+        reviewTimer?.cancel()
+        let work = reviewWork
+        if work?.wish == nil, work?.sheet == nil {
+            endReview()
+            let alert = NSAlert()
+            alert.messageText = why
+            if let detail { alert.informativeText = detail }
+            alert.runModal()
+            openWaitingImport()
+            return
+        }
+        reviewWork?.stage = .failed(detail.map { "\(why) \($0)" } ?? why)
+    }
+
+    private func outOfTime(_ id: UUID) {
+        guard let work = reviewWork, work.id == id, !work.failed else { return }
+        if work.stage == .asking {
+            reviewWork?.outOfTime = true
+            askingTask?.cancel()
+            return
+        }
+        failReview(id, "Lamp couldn't finish checking this in time.", detail: "Nothing was changed.")
+    }
+
+    /// Try Again, after a review failed: the same request again (its sheet, when it was up, stays up for it).
+    func retryReview() {
+        guard reviewWork?.failed == true, let retry = reviewRetry else { return }
+        endReview()
+        retry()
+    }
+
+    /// Cancel beside the wish, while its update's review is fetched or unpacked, or after it failed there.
+    func cancelReview(of wish: String) {
+        guard reviewWork?.wish == wish else { return }
+        if let pending = pendingImport, pending.id == reviewWork?.sheet { return cancelImport() }
+        endReview()
+        openWaitingImport()
+    }
+
+    /// The review of the wish's update, while it's shown beside the wish on the desk: until its sheet is up.
+    func deskReview(of wish: String) -> ReviewWork? {
+        guard let work = reviewWork, work.wish == wish, work.sheet == nil else { return nil }
+        return work
+    }
+
+    /// Checks the review that's up and shows what it found, unless that review has gone by then: its code read off the
+    /// main actor, then the AI asked, as one review's work (`ReviewWork`).
     func check(_ pending: PendingImport) async {
+        guard pendingImport?.id == pending.id else { return }
+        // This sheet's review replaces whatever was under way.
+        endReview()
+        guard let id = beginReview(wish: pending.existing?.id, stage: .inspecting, sheet: pending.id) else { return }
+        runReview(id, retry: { [weak self] in
+            guard let self, self.pendingImport?.id == pending.id else { return }
+            Task { await self.check(pending) }
+        }) { [weak self] in await self?.inspectAndAsk(pending, id: id) }
+        await reviewTask?.value
+    }
+
+    /// The safety check of a review whose sheet is up: Lamp's own reading of the code, off the main actor, then the
+    /// AI's. A reading that didn't finish is never a review: the sheet says so, and its buttons stay off.
+    private func inspectAndAsk(_ pending: PendingImport, id: UUID) async {
+        setReviewStage(.inspecting, for: id)
         let package = pending.package
-        let task = Task.detached(priority: .userInitiated) { await Sharing.review(package) }
-        reviewing = task
-        let review = await task.value
-        if pendingImport?.id == pending.id { pendingImport?.review = review }
+        let found = await Self.offMain { Sharing.inspect(package) }
+        guard owns(id) else { return }
+        guard found.finished else { return failReview(id, "Lamp couldn't finish checking this.", detail: "Nothing was changed.") }
+        setReviewStage(.asking, for: id)
+        let asking = Task.detached(priority: .userInitiated) { await Sharing.review(package, inspection: found) }
+        askingTask = asking
+        var review = await withTaskCancellationHandler { await asking.value } onCancel: { asking.cancel() }
+        guard !Task.isCancelled, reviewWork?.id == id, !(reviewWork?.failed ?? true) else { return }
+        // Stopped by the deadline: what Lamp's own reading found stands, and the AI's part is said not to have run.
+        if reviewWork?.outOfTime == true {
+            review = ImportReview(inspection: found)
+            review.asked = true
+            review.note = "Lamp's AI check didn't finish in time. Look at the list above carefully."
+        }
+        guard pendingImport?.id == pending.id else { return }
+        pendingImport?.review = review
+        pendingImport?.readings = found.readings
+        endReview()
+    }
+
+    /// What each of a package's apps may reach: its review's reading when there is one (made of exactly this package),
+    /// and otherwise read now, off the main actor, since reading a large page takes a while.
+    nonisolated static func readings(of package: Sharing.Package, reviewed: [String: NetworkPolicy]?) async -> [String: NetworkPolicy] {
+        if let reviewed { return reviewed }
+        return await offMain { SharedNetwork.readings(of: package) }
+    }
+
+    /// Runs `work` off the main actor, stopping it (`Task.isCancelled` inside) when the caller is cancelled.
+    nonisolated static func offMain<T>(_ work: @escaping @Sendable () -> T) async -> T {
+        let task = Task.detached(priority: .userInitiated, operation: work)
+        return await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
     }
 
     /// A shell command an agent wants to run, or a file outside the app's folder it wants, waiting for the user
@@ -3726,29 +3918,41 @@ final class Store: ObservableObject {
     /// `following` is the copy `target` follows that this is pulled in from (`Following.pullIn`): Update then merges it.
     func importRepository(_ source: RepoImport.Source, request: String?, updating target: String? = nil, following: Following.Followed? = nil) {
         NSApp.activate()
-        Task {
-            let folder = RepoImport.cloneFolder()
-            do {
-                // With no git on this Mac, GitHub's archive of the commit, for anything but an update: that's a merge, which
-                // takes git in any case.
-                let fetched = !Versions.hasGit && target == nil ? try await RepoArchive.fetch(source, into: folder) : nil
-                let tree: URL
-                if let fetched { tree = fetched.tree } else { tree = try await RepoImport.clone(source, into: folder) }
-                // Someone's own project, not a wish: the agent can make it into one, which then gets its updates as
-                // any wish does (`AppUpdates`). A wish's own update that finds no wish there is an error as before.
-                if target == nil, !RepoImport.holdsWish(tree) {
-                    // The commit fetched, so the app is made from exactly the version the person opened.
-                    let commit = fetched?.commit ?? RepoImport.repository(of: tree)?.commit
-                    try? FileManager.default.removeItem(at: folder)
-                    offerToAdapt(source, commit: commit)
-                    return
-                }
-                if let request { try request.write(to: folder.appendingPathComponent(Self.requestFile), atomically: true, encoding: .utf8) }
-                importApp(from: tree, updating: target, fetched: fetched, following: following)
-            } catch {
+        // One fetch for a wish's update at a time: clicking again while it runs is the same review.
+        let asked = [target ?? "", source.url, source.ref ?? "", following?.id ?? "", request ?? ""].joined(separator: "\n")
+        guard let id = beginReview(wish: target, stage: .fetching, request: asked) else { return }
+        runReview(id, retry: { [weak self] in self?.importRepository(source, request: request, updating: target, following: following) }) { [weak self] in
+            await self?.fetchForReview(source, request: request, updating: target, following: following, id: id)
+        }
+    }
+
+    private func fetchForReview(_ source: RepoImport.Source, request: String?, updating target: String?, following: Following.Followed?, id: UUID) async {
+        let folder = RepoImport.cloneFolder()
+        do {
+            // With no git on this Mac, GitHub's archive of the commit, for anything but an update: that's a merge, which
+            // takes git in any case.
+            let fetched = !Versions.hasGit && target == nil ? try await RepoArchive.fetch(source, into: folder) : nil
+            let tree: URL
+            if let fetched { tree = fetched.tree } else { tree = try await RepoImport.clone(source, into: folder) }
+            // Cancelled, replaced or out of time meanwhile: what was fetched never opens a review.
+            guard owns(id) else { try? FileManager.default.removeItem(at: folder); return }
+            // Someone's own project, not a wish: the agent can make it into one, which then gets its updates as
+            // any wish does (`AppUpdates`). A wish's own update that finds no wish there is an error as before.
+            if target == nil, !RepoImport.holdsWish(tree) {
+                // The commit fetched, so the app is made from exactly the version the person opened.
+                let commit = fetched?.commit ?? RepoImport.repository(of: tree)?.commit
                 try? FileManager.default.removeItem(at: folder)
-                NSAlert(error: error).runModal()
+                endReview()
+                offerToAdapt(source, commit: commit)
+                return
             }
+            if let request { try request.write(to: folder.appendingPathComponent(Self.requestFile), atomically: true, encoding: .utf8) }
+            await openForReview(tree, updating: target, fetched: fetched, following: following, id: id)
+        } catch {
+            try? FileManager.default.removeItem(at: folder)
+            guard owns(id) else { return }
+            let failure = error as? Sharing.ImportError
+            failReview(id, failure?.message ?? "Lamp couldn't fetch the update.", detail: failure?.detail ?? (failure == nil ? error.localizedDescription : nil))
         }
     }
 
@@ -3887,6 +4091,9 @@ final class Store: ObservableObject {
         /// Someone's suggested change to try in a copy (`SuggestionTrial`): the review's one choice is Try It, and the
         /// wish itself is left alone.
         var trying = false
+        /// What each of its apps may reach, from the reading its review made of exactly this package
+        /// (`Sharing.Inspection.readings`): Update and Keep Both apply these, rather than reading it again.
+        var readings: [String: NetworkPolicy]? = nil
     }
 
     /// Whether the wish's files differ from the version that arrived last (a shared file opened, or updated from): any
@@ -3925,11 +4132,30 @@ final class Store: ObservableObject {
     func importApp(from file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil,
                    bringingIn: BringIn.Pull? = nil, trying: Bool = false) {
         NSApp.activate()
-        Task {
+        guard let id = beginReview(wish: target, stage: .unpacking) else { return }
+        runReview(id, retry: { [weak self] in
+            self?.importApp(from: file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn, trying: trying)
+        }) { [weak self] in
+            await self?.openForReview(file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn, trying: trying, id: id)
+        }
+    }
+
+    /// Lamp has looked at setup and the person is through the welcome.
+    private var reviewsCanOpen: Bool {
+        WaitingImport.reviewsCanOpen(after: setupLook.isDone ? setup : nil, welcomeOver: Onboarding.isDone || welcomeFinished)
+    }
+
+    /// Unpacks a shared app and shows its review, as the review `id`'s work. `waitForWelcome` is false for one kept
+    /// during the welcome, which is taken only once that's over (`openWaitingImport`).
+    private func openForReview(_ file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil,
+                               bringingIn: BringIn.Pull? = nil, trying: Bool = false, waitForWelcome: Bool = true, id: UUID) async {
+        if waitForWelcome {
             // A file that launched Lamp arrives before Lamp has looked at setup: the look is waited for, so
             // the same file on the same Mac always goes the same way.
             await setupLook.wait()
+            guard owns(id) else { return }
             guard reviewsCanOpen else {
+                endReview()
                 if waitingImport.keep(file, updating: target, fetched: fetched, following: following) {
                     arrivedImport += 1
                 } else {
@@ -3940,55 +4166,39 @@ final class Store: ObservableObject {
                 }
                 return
             }
-            review(file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn, trying: trying)
         }
-    }
-
-    /// Lamp has looked at setup and the person is through the welcome.
-    private var reviewsCanOpen: Bool {
-        WaitingImport.reviewsCanOpen(after: setupLook.isDone ? setup : nil, welcomeOver: Onboarding.isDone || welcomeFinished)
-    }
-
-    /// Unpacks a shared app and shows its review.
-    private func review(_ file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil,
-                        bringingIn: BringIn.Pull? = nil, trying: Bool = false) {
-        // The newest request wins: a file opened while an earlier one is still unpacking, or a Cancel
-        // meanwhile, makes the earlier result unwanted when it arrives.
-        let request = UUID()
-        importRequest = request
-        if let previous = pendingImport { try? FileManager.default.removeItem(at: previous.package.folder) }
-        pendingImport = nil
-        Task {
-            // Unpacking is a process and some file reads: off the main actor, so Lamp stays responsive.
-            let package: Sharing.Package
-            do {
-                package = try await Task.detached { try Sharing.open(file, fetched: fetched) }.value
-            } catch {
-                guard importRequest == request else { return }
-                importRequest = nil
-                NSAlert(error: error).runModal()
-                openWaitingImport()   // one that can't be opened doesn't hold up the ones kept after it
-                return
-            }
-            guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
-            var pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file), existing: existingCopy(of: package, updating: target))
-            pending.following = following
-            pending.bringingIn = bringingIn
-            pending.trying = trying
-            // Only where the two met: a wish that can't be lined up keeps Update.
-            if Mix.isOn, !trying, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
-               let into = Mix.copy(of: package, among: projects), await Mix.meeting(package, history: history, with: into) != nil {
-                pending.existing = into
-                pending.mixFile = file
-            }
-            if let existing = pending.existing { pending.changedHere = await changedSinceArrival(existing) }
-            guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
-            pendingImport = pending
-            await check(pending)
+        setReviewStage(.unpacking, for: id)
+        // Unpacking is a process and some file reads: off the main actor, so Lamp stays responsive.
+        let package: Sharing.Package
+        do {
+            package = try await Self.offMain { Result { try Sharing.open(file, fetched: fetched) } }.get()
+        } catch {
+            guard owns(id) else { return }
+            let failure = error as? Sharing.ImportError
+            return failReview(id, failure?.message ?? "Lamp couldn't open this app.", detail: failure?.detail ?? (failure == nil ? error.localizedDescription : nil))
         }
+        guard owns(id) else { try? FileManager.default.removeItem(at: package.folder); return }
+        var pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file), existing: existingCopy(of: package, updating: target))
+        pending.following = following
+        pending.bringingIn = bringingIn
+        pending.trying = trying
+        // Only where the two met: a wish that can't be lined up keeps Update.
+        if Mix.isOn, !trying, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
+           let into = Mix.copy(of: package, among: projects), await Mix.meeting(package, history: history, with: into) != nil {
+            pending.existing = into
+            pending.mixFile = file
+        }
+        if let existing = pending.existing { pending.changedHere = await changedSinceArrival(existing) }
+        guard owns(id) else { try? FileManager.default.removeItem(at: package.folder); return }
+        // The newest review wins: one up already (a file opened while this one was fetched) gives way to it.
+        if let previous = pendingImport {
+            try? FileManager.default.removeItem(at: previous.package.folder)
+            pendingImport = nil
+        }
+        reviewWork?.sheet = pending.id
+        pendingImport = pending
+        await inspectAndAsk(pending, id: id)
     }
-
-    private var importRequest: UUID?
 
     private var waitingImport: WaitingImport { WaitingImport(folder: waitingFiles) }
 
@@ -4002,17 +4212,20 @@ final class Store: ObservableObject {
     /// opened: called after Lamp's first look at setup, when the welcome ends, and when a review closes.
     /// Whether a shared app is now being looked at, waiting or not.
     @discardableResult func openWaitingImport() -> Bool {
-        guard pendingImport == nil, importRequest == nil else { return true }
+        guard pendingImport == nil, reviewWork == nil else { return true }
         let file = waitingImport.take(after: setupLook.isDone ? setup : nil, welcomeOver: Onboarding.isDone || welcomeFinished)
         if let file {
-            review(file, updating: WaitingImport.target(beside: file), fetched: WaitingImport.fetched(beside: file),
-                   following: WaitingImport.following(beside: file))
+            let target = WaitingImport.target(beside: file), fetched = WaitingImport.fetched(beside: file), following = WaitingImport.following(beside: file)
+            guard let id = beginReview(wish: target, stage: .unpacking) else { return true }
+            runReview(id, retry: { [weak self] in self?.importApp(from: file, updating: target, fetched: fetched, following: following) }) { [weak self] in
+                await self?.openForReview(file, updating: target, fetched: fetched, following: following, waitForWelcome: false, id: id)
+            }
         }
         return file != nil
     }
 
     func cancelImport() {
-        importRequest = nil
+        endReview()
         if let pending = pendingImport { try? FileManager.default.removeItem(at: pending.package.folder) }
         if let copy = pendingImport?.copy { Task { await discardPreparedCopy(copy, movingQueuedTo: nil) } }
         pendingImport = nil
@@ -4020,7 +4233,6 @@ final class Store: ObservableObject {
 
     func confirmImport() {
         guard let pending = pendingImport else { return }
-        importRequest = nil
         pendingImport = nil
         if pending.copy != nil {
             try? FileManager.default.removeItem(at: pending.package.folder)
@@ -4030,7 +4242,7 @@ final class Store: ObservableObject {
             }
             return
         }
-        finishImport(pending.package, request: pending.request, following: pending.following)
+        finishImport(pending.package, request: pending.request, following: pending.following, readings: pending.readings)
     }
 
     /// Update: the app already here takes the file's code, files, description and icon, in place, so it keeps
@@ -4046,7 +4258,6 @@ final class Store: ObservableObject {
             alert.runModal()
             return
         }
-        importRequest = nil
         pendingImport = nil
         // Someone's suggested change, accepted: a try of it goes now, and not before, so Cancel on the review keeps it.
         if pending.bringingIn?.request != nil { endTrial(of: project) }
@@ -4082,12 +4293,15 @@ final class Store: ObservableObject {
             }
             let changed = pending.prepared != nil ? false : pending.changedHere ? true : await changedSinceArrival(project)
             if changed || pending.following != nil || pending.bringingIn != nil {
-                await mergeUpdate(pending.package, into: project, following: pending.following, bringingIn: pending.bringingIn)
+                await mergeUpdate(pending.package, into: project, following: pending.following, bringingIn: pending.bringingIn, readings: pending.readings)
                 return
             }
             defer { finish(project) }
             let package = pending.package
             defer { try? FileManager.default.removeItem(at: package.folder) }
+            // What each app may reach, as the review read it from this same package; read again off the main actor only
+            // when there's no review's reading to take.
+            let readings = await Self.readings(of: package, reviewed: pending.readings)
             let before = pending.prepared != nil ? "Before update" : "Before updating from a shared file"
             let creditsKept = Credits.load(project)
             var kept = await Versions.head(project) == nil ? await initRepo(project, message: before) : true
@@ -4157,8 +4371,8 @@ final class Store: ObservableObject {
             let newArtwork: Bool
             do {
                 newArtwork = try Sharing.install(package, into: project, replacing: true)
-                SharedNetwork.arrive(package, in: project, arriving: false)
-                let notIn = await installParts(of: package, into: project)
+                SharedNetwork.arrive(package, in: project, arriving: false, reading: readings[SharedNetwork.readingKey("")])
+                let notIn = await installParts(of: package, into: project, readings: readings)
                 guard notIn.isEmpty else { throw Sharing.ImportError("\(notIn.joined(separator: ", ")) couldn't be put in place.") }
                 // The copy's credits name the wish it was copied from; the wish keeps its own, moved on to the update.
                 if let job = pending.prepared {
@@ -4218,10 +4432,13 @@ final class Store: ObservableObject {
     /// pulled in is kept for the next time.
     /// `bringingIn` is what changed in the wish's own repository on GitHub (`BringIn`): measured against the one base
     /// the pull names, credited as a followed copy is, and kept as brought in only once it's saved.
+    /// `readings` is what the package's review read each app may reach (`PendingImport.readings`); without one it's read
+    /// here, off the main actor.
     func mergeUpdate(_ package: Sharing.Package, into project: LampProject, original: Starters.Starter? = nil,
-                     following: Following.Followed? = nil, bringingIn: BringIn.Pull? = nil) async {
+                     following: Following.Followed? = nil, bringingIn: BringIn.Pull? = nil, readings reviewed: [String: NetworkPolicy]? = nil) async {
         let fm = FileManager.default
         defer { try? fm.removeItem(at: package.folder) }
+        let readings = await Self.readings(of: package, reviewed: reviewed)
         let before = "Before bringing in an update"
         var kept = await Versions.head(project) == nil ? await initRepo(project, message: before) : true
         if kept, await Versions.hasUnsavedChanges(project) { kept = await Versions.save(project, message: before) }
@@ -4270,10 +4487,10 @@ final class Store: ObservableObject {
             merged = try await Upstream.merge(package, into: project, from: source, commit: commit, arrival: arrival, ref: ref, accepted: accepted, given: given)
             if let bringingIn { await BringIn.keepBase(bringingIn, mark: merged.baseMark, in: project) }
             // What the reviewed file says each app reaches: the wish's own, and each of its apps merged in its folder.
-            SharedNetwork.arrive(package, in: project, arriving: false)
+            SharedNetwork.arrive(package, in: project, arriving: false, reading: readings[SharedNetwork.readingKey("")])
             for part in package.parts {
                 guard let app = parts(of: project).first(where: { $0.dir.lastPathComponent.lowercased() == part.folder.lowercased() }) else { continue }
-                SharedNetwork.arrive(part.package, in: app, arriving: false)
+                SharedNetwork.arrive(part.package, in: app, arriving: false, reading: readings[SharedNetwork.readingKey(part.folder)])
             }
             if let credits = package.credits { try Credits.add(following == nil && bringingIn == nil ? credits : Mix.creditsTaken(credits), to: project) }
             WishReleases.arrive(package.releases, in: project)
@@ -4293,7 +4510,7 @@ final class Store: ObservableObject {
         if !merged.newParts.isEmpty {
             var arriving = package
             arriving.parts = merged.newParts
-            let notIn = await installParts(of: arriving, into: project, onlyNew: true)
+            let notIn = await installParts(of: arriving, into: project, onlyNew: true, readings: readings)
             if !notIn.isEmpty {
                 log(project, .error, "\(notIn.joined(separator: ", ")) couldn't be put in place.")
                 bringingIn = nil
@@ -4404,13 +4621,15 @@ final class Store: ObservableObject {
     }
 
     /// `following` is the link it was opened by (`takeShared`), which the new wish follows from now on.
-    private func finishImport(_ package: Sharing.Package, request: String? = nil, following: Following.Followed? = nil) {
+    /// `readings` is what its review read each app may reach (`PendingImport.readings`).
+    private func finishImport(_ package: Sharing.Package, request: String? = nil, following: Following.Followed? = nil,
+                              readings: [String: NetworkPolicy]? = nil) {
         let project: LampProject
         do {
             project = try Template.scaffold(name: uniqueName(package.name), platform: package.platform, family: package.family, in: root)
             try Sharing.install(package, into: project)
             // Someone else's: held to what its sheet named, from now on (`SharedNetwork`).
-            SharedNetwork.arrive(package, in: project, arriving: true)
+            SharedNetwork.arrive(package, in: project, arriving: true, reading: readings?[SharedNetwork.readingKey("")])
             // The copy is the same app as the sender's: the next file shared from theirs can update it. A
             // second copy made beside one that's already here (Keep Both), or beside one of another kind, is an
             // app of its own.
@@ -4437,7 +4656,7 @@ final class Store: ObservableObject {
             // this Mac can't build yet stays on the wish's list, with its setup a click away, and is made once it can.
             // A part whose files couldn't be put in place, or kept for later, fails the import as a whole: the wish just
             // made goes, and the file can be opened again, rather than a wish missing an app with no way to get it.
-            let notIn = await installParts(of: package, into: project)
+            let notIn = await installParts(of: package, into: project, readings: readings)
             guard notIn.isEmpty else {
                 await delete(current(project) ?? project)
                 let alert = NSAlert()
@@ -4461,7 +4680,8 @@ final class Store: ObservableObject {
     /// update can put the whole wish back and a fresh import can say so.
     /// `onlyNew` makes only the parts the wish has no folder for, as a merge asks (`Upstream.Merged.newParts`): an
     /// app of the same family already here is never taken for one of them, since its files were merged in place.
-    func installParts(of package: Sharing.Package, into wish: LampProject, onlyNew: Bool = false) async -> [String] {
+    /// `readings` is what the package's review read each app may reach, by folder (`SharedNetwork.readingKey`).
+    func installParts(of package: Sharing.Package, into wish: LampProject, onlyNew: Bool = false, readings: [String: NetworkPolicy]? = nil) async -> [String] {
         var notIn: [String] = []
         // A part of a wish from someone else is held as the wish is (`SharedNetwork`), and one of the person's own isn't.
         let shared = SharedNetwork.isShared(wish, parts: parts(of: wish))
@@ -4510,7 +4730,7 @@ final class Store: ObservableObject {
             }
             do {
                 try Sharing.install(part.package, into: target, replacing: had != nil)
-                SharedNetwork.arrive(part.package, in: target, arriving: shared)
+                SharedNetwork.arrive(part.package, in: target, arriving: shared, reading: readings?[SharedNetwork.readingKey(part.folder)])
             } catch {
                 log(wish, .error, "Lamp couldn't put \(Parts.name(of: kind))'s files in place: \(error.localizedDescription)")
                 failed(kind)

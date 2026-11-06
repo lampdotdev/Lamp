@@ -86,14 +86,23 @@ enum RepoImport {
         let ref = Sandbox.quoted(source.ref ?? "HEAD")
         let command = "git init -q && git remote add origin \(remote) && git fetch -q --depth 1 origin \(ref) && git checkout -q --detach FETCH_HEAD"
         let said = Said()
+        let running = Running()
         // Ten minutes is plenty for a wish; a repository that takes longer isn't one, and is let go: git and whatever it
-        // started with it, not only the shell they run under, which would leave them holding the output open.
-        let status = await Versions.git(command, cwd: tree, env: ["GIT_TERMINAL_PROMPT": "0"], started: { process in
-            Task {
-                try? await Task.sleep(for: .seconds(600))
-                Subprocess.terminateTree(process)
-            }
-        }, onLine: { said.add($0) })
+        // started with it, not only the shell they run under, which would leave them holding the output open. A fetch
+        // whose review is cancelled, replaced or out of time (`Store.ReviewWork`) is let go the same way, at once.
+        let status = await withTaskCancellationHandler {
+            await Versions.git(command, cwd: tree, env: ["GIT_TERMINAL_PROMPT": "0"], started: { process in
+                running.started(process)
+                Task {
+                    try? await Task.sleep(for: .seconds(600))
+                    Subprocess.terminateTree(process)
+                }
+            }, onLine: { said.add($0) })
+        } onCancel: { running.stop() }
+        if Task.isCancelled {
+            try? fm.removeItem(at: folder)
+            throw CancellationError()
+        }
         guard status == 0 else {
             try? fm.removeItem(at: folder)
             if status == Versions.noGit { throw Sharing.ImportError("Lamp needs Apple's tools for this.", detail: "Updating an app from GitHub uses git, which comes with them.") }
@@ -104,6 +113,29 @@ enum RepoImport {
                                         ?? "Check the address and that you're online.")
         }
         return tree
+    }
+
+    /// The fetch's process, to stop when its task is cancelled: before it starts, it's stopped as it does.
+    final class Running: @unchecked Sendable {
+        private let lock = NSLock()
+        private var process: Process?
+        private var stopped = false
+
+        func started(_ process: Process) {
+            let stop = lock.withLock { () -> Bool in
+                self.process = process
+                return stopped
+            }
+            if stop { _ = Subprocess.terminateTree(process) }
+        }
+
+        func stop() {
+            let process = lock.withLock { () -> Process? in
+                stopped = true
+                return self.process
+            }
+            if let process { _ = Subprocess.terminateTree(process) }
+        }
     }
 
     /// What git printed, gathered off the main actor's hands.

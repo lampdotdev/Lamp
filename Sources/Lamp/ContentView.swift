@@ -346,12 +346,19 @@ struct ImportReviewView: View {
                          android: pending.package.platform.target.recipe.language == .kotlin, prepared: pending.prepared != nil,
                          mixWaits: mixing.stage == .mixing,
                          mix: pending.mixFile.map { file in { store.cancelImport(); openWindow(id: "mix"); MixModel.shared.open(file, store: store) } },
-                         trying: pending.trying, tryIt: store.confirmTrial)
+                         trying: pending.trying, tryIt: store.confirmTrial,
+                         progress: work?.failed == false ? work?.line : nil, failure: work?.failed == true ? work?.line : nil,
+                         retry: store.retryReview)
             .task { icon = await Sharing.icon(of: pending.package) }
             .background(WindowFinder { sheet = $0; fit() })
             // The window can be moved with the sheet down, and the Dock can come and go.
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMoveNotification)) { _ in fit() }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in fit() }
+    }
+
+    /// This sheet's review while it's made: its stage, or why it couldn't be.
+    private var work: Store.ReviewWork? {
+        store.reviewWork.flatMap { $0.sheet == pending.id ? $0 : nil }
     }
 
     private func fit() {
@@ -396,6 +403,12 @@ struct ImportReviewCard: View {
     /// the same checks as opening.
     var trying = false
     var tryIt: () -> Void = {}
+    /// While the review is made: the stage it's at (`Store.ReviewWork`).
+    var progress: String? = nil
+    /// The review couldn't be made (it ran out of time, or Lamp couldn't read the code through): said in place of it,
+    /// with Try Again. Nothing is checked, so nothing opens or updates.
+    var failure: String? = nil
+    var retry: () -> Void = {}
 
     /// The heights of what stays put, measured as laid out: the app's name and description at the top, the
     /// review's summary, the line about the copy already here when there is one, and the buttons.
@@ -512,10 +525,17 @@ struct ImportReviewCard: View {
                 }
                 .frame(maxHeight: heights.capabilities)
                 .fixedSize(horizontal: false, vertical: true)   // no taller than its content, up to the limit
+            } else if let failure {
+                Label {
+                    Text(verbatim: failure).fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                }
+                .padding(.vertical, 20)
             } else {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
-                    Text("Checking what this app does…").foregroundStyle(.secondary)
+                    Text(verbatim: progress ?? "Checking what this app does…").foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 20)
             }
@@ -563,7 +583,11 @@ struct ImportReviewCard: View {
             // (`ImportReview.opening`); anything less takes a deliberate click.
             Button("Cancel", role: .cancel, action: cancel)
                 .keyboardShortcut(.cancelAction)
-            if trying {
+            if failure != nil {
+                // Nothing was checked: the one thing to do is check again.
+                Button("Try Again", action: retry)
+                    .keyboardShortcut(.defaultAction)
+            } else if trying {
                 // The copy's code runs as an opened app's does, so it follows the same rule.
                 switch review?.opening {
                 case .byReturn:

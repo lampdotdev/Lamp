@@ -84,9 +84,10 @@ enum TVFiles {
         return WebReach.analyze(code: code, data: models)
     }
 
-    static func detected(in sources: [URL], data: [URL] = []) -> [Sharing.Capability] {
+    /// `reach` is the reading already made of the same files, when there is one.
+    static func detected(in sources: [URL], data: [URL] = [], reach: WebReach.Result? = nil) -> [Sharing.Capability] {
         let everything = sources.compactMap { try? String(contentsOf: $0, encoding: .utf8) }.joined(separator: "\n")
-        let reach = reach(in: sources, data: data)
+        let reach = reach ?? self.reach(in: sources, data: data)
         var found = checks.filter { item in item.patterns.contains { everything.contains($0) } }
         if reach.remoteCode, !found.contains(remoteCode) { found.append(remoteCode) }
         if let connects = connects(reach) { found.insert(connects, at: min(1, found.count)) }

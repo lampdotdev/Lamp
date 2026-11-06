@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import CryptoKit
+import LampRelayKit
 import LampFileLook
 import LampSidebarKit
 import UniformTypeIdentifiers
@@ -1520,6 +1521,13 @@ extension Sharing {
         var detected: [Capability] = []
         /// Code beyond the last request (`batchCount`), which no model reads.
         var truncated = false
+        /// What each app may reach once it's here (`SharedNetwork.reading`), by its folder in the wish ("" for the app at
+        /// the root, `SharedNetwork.readingKey`), from the same reading of its code the list above was made from: an
+        /// update applies these rather than reading the same package again (`Store.confirmUpdate`).
+        var readings: [String: NetworkPolicy] = [:]
+        /// False when the reading stopped before the end (the review was cancelled or ran out of time): nothing it
+        /// found counts as checked, and no review is made of it (`Store.inspectForReview`).
+        var finished = true
         var files: [(name: String, text: String)] { Array(batches.joined()) }
     }
 
@@ -1584,6 +1592,7 @@ extension Sharing {
             var everything = ""
             var sources: [URL] = []
             for file in app.sources {
+                if Task.isCancelled { found.finished = false; return found }
                 guard let text = try? String(contentsOf: file, encoding: .utf8) else { unreadable = true; sources.append(file); continue }
                 if knownLibraries.contains(fingerprint(text)) { continue }
                 sources.append(file)
@@ -1604,13 +1613,17 @@ extension Sharing {
             if !app.capabilities.isEmpty, let json = try? capabilitiesJSON(app.capabilities) {
                 files.append((prefix + Template.Capabilities.file, json))
             }
+            // Where its page's requests go, read once: for the list here and for what it's held to (`SharedNetwork`).
+            let reach = SharedNetwork.applies(to: app.platform) ? TVFiles.reach(in: sources, data: app.webData) : nil
+            if Task.isCancelled { found.finished = false; return found }
+            found.readings[SharedNetwork.readingKey(prefix)] = SharedNetwork.reading(of: app, reach: reach, stock: stockNative)
             if isPage(app.platform) {
                 // A web app's, a screen's or a game's page is read for its reach as a TV app's page is, and the Swift beside
                 // it (Native.swift) as any app's, without its comments: Lamp's scaffold names its blocks there as examples.
                 let swift = sources.filter { $0.pathExtension == "swift" }.compactMap { try? String(contentsOf: $0, encoding: .utf8) }
                     .joined(separator: "\n").split(separator: "\n", omittingEmptySubsequences: false)
                     .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }.joined(separator: "\n")
-                add(TVFiles.detected(in: sources, data: app.webData) + checklist.filter { item in
+                add(TVFiles.detected(in: sources, data: app.webData, reach: reach) + checklist.filter { item in
                     item.patterns.contains { swift.contains($0) }
                 })
                 // The page is held to its sites once it's here (`SharedNetwork`); Swift of the sender's beside it isn't.
@@ -1622,7 +1635,7 @@ extension Sharing {
                     // reach is read off what it asks Android for and what its build brings in (`AndroidFiles.detected`).
                     add(AndroidFiles.detected(in: app))
                 case .web:
-                    add(TVFiles.detected(in: sources, data: app.webData))
+                    add(TVFiles.detected(in: sources, data: app.webData, reach: reach))
                 default:
                     add(checklist.filter { item in
                         item.patterns.contains { everything.contains($0) }
@@ -1672,9 +1685,13 @@ extension Sharing {
     }
 
     static func review(_ package: Package) async -> ImportReview {
-        let found = inspect(package)
+        await review(package, inspection: inspect(package))
+    }
+
+    /// The review of a package already read (`inspect`): the AI's part of it, when AI is set up.
+    static func review(_ package: Package, inspection found: Inspection) async -> ImportReview {
         var review = ImportReview(inspection: found)
-        // A review closed or replaced meanwhile (`Store.reviewing`) is never shown: its AI requests aren't sent.
+        // A review closed or replaced meanwhile (`Store.ReviewWork`) is never shown: its AI requests aren't sent.
         if Task.isCancelled { return review }
         // No AI to ask is an ordinary state for someone who was only sent an app, not a failure: the same
         // words whether nothing can answer at all or the route apps use is OpenRouter without a key.

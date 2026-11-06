@@ -554,6 +554,11 @@ struct DeskDetail: View {
                                   : "Bring in the newer \(project.title). Undo takes it back.")
                     }
                 }
+                // Its update's review, from the click until its sheet is up: the stage it's at, with Cancel, or why it
+                // couldn't be made, with Try Again (`Store.ReviewWork`).
+                if let project, let work = store.deskReview(of: project.id) {
+                    ReviewWorkLine(work: work, retry: store.retryReview, cancel: { store.cancelReview(of: project.id) })
+                }
                 // The copies it follows, the one it started from first: what was last heard of each, with the one button
                 // that checks it again or pulls in what's new (`Following`). Asking checks by itself when the last check is
                 // a day old.
@@ -564,7 +569,8 @@ struct DeskDetail: View {
                 }
                 // Where someone's project it was made from lives on GitHub: what was last heard of its updates, with the
                 // one button that checks or reviews them.
-                else if let project, row.entry?.followsRepository == true, let update = store.updateAvailability(of: project) {
+                else if let project, row.entry?.followsRepository == true, store.deskReview(of: project.id) == nil,
+                        let update = store.updateAvailability(of: project) {
                     HStack(spacing: 8) {
                         Text(update.line).font(.system(size: 13)).foregroundStyle(Paper.muted)
                         Button(update.reviews ? "Review" : "Check Again") {
@@ -724,11 +730,16 @@ struct DeskWishMenu: View {
         // Review Update… brings it in (`AppUpdates`). A starter's copy follows the starter this Lamp ships instead
         // (Update from the Original, above).
         if entry?.followsRepository == true {
-            let reviews = store.updateAvailability(of: project)?.reviews == true
-            Button(Self.updateTitle(reviews: reviews)) {
-                if reviews { store.reviewUpdate(project) } else { store.checkForUpdates(project) }
+            // While its review is fetched or unpacked, the item stops it: what it's doing is said beside the wish.
+            if let work = store.deskReview(of: project.id), !work.failed {
+                Button("Stop Fetching Update") { store.cancelReview(of: project.id) }
+            } else {
+                let reviews = store.updateAvailability(of: project)?.reviews == true
+                Button(Self.updateTitle(reviews: reviews)) {
+                    if reviews { store.reviewUpdate(project) } else { store.checkForUpdates(project) }
+                }
+                .disabled(busy)
             }
-            .disabled(busy)
         }
         // Following someone's copy of it, by the link they shared.
         if project.scaffolded {
@@ -741,6 +752,30 @@ struct DeskWishMenu: View {
 
     /// The one item for a wish's updates: it checks, and once there's one (being prepared, or ready), reviews it.
     static func updateTitle(reviews: Bool) -> String { reviews ? "Review Update…" : "Check for Updates…" }
+}
+
+/// A wish's update review while it's made, beside the wish: the stage it's at with Cancel, or why it couldn't be made
+/// with Try Again. Drawn from plain values, so the gallery shows it.
+struct ReviewWorkLine: View {
+    let work: Store.ReviewWork
+    let retry: () -> Void
+    let cancel: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if work.failed {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).font(.system(size: 12))
+            } else {
+                ProgressView().controlSize(.small)
+            }
+            Text(verbatim: work.line).font(.system(size: 13)).foregroundStyle(work.failed ? Paper.ink : Paper.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            if work.failed {
+                Button("Try Again", action: retry).buttonStyle(PaperButtonStyle(.outline, height: 26))
+            }
+            Button(work.failed ? "Dismiss" : "Cancel", action: cancel).buttonStyle(PaperButtonStyle(.outline, height: 26))
+        }
+    }
 }
 
 /// The changes a starter suggests, as small buttons that put one in the change box.
