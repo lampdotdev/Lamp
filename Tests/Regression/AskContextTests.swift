@@ -64,4 +64,17 @@ final class AskContextTests: XCTestCase {
             XCTAssertTrue(shown(lines).contains(said), "\(shown(lines))")
         }
     }
+
+    /// An engine switched to, or a fresh conversation, is told the card with its lines, as the person read it: the
+    /// choice they made means what the line said, not just the question's words.
+    func testTheLineGoesWithTheCardToAnotherEngine() throws {
+        let ask = try asked(["question": "Enable reminders?", "options": options,
+                             "detail": "A notification ten minutes before Vega rises, even while Orbit is closed."]).get()
+        let note = CatchUp.note([LogLine(kind: .user, text: "Make it nicer"), LogLine(kind: .ask, text: ask.text, ask: ask),
+                                 LogLine(kind: .user, text: "Enable reminders? Add it.")])
+        XCTAssertTrue(note.contains("A notification ten minutes before Vega rises, even while Orbit is closed."), note)
+        // A card whose text was logged without its line is told from the card all the same.
+        let logged = CatchUp.note([LogLine(kind: .ask, text: "Enable reminders?\n- Not now\n- Add it", ask: ask)])
+        XCTAssertTrue(logged.contains("ten minutes before Vega rises"), logged)
+    }
 }
