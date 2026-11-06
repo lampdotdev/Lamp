@@ -1145,6 +1145,13 @@ final class Store: ObservableObject {
     /// What the agent's `look_at_app` tool has done during the current turn.
     struct Look {
         var inProgress = false
+        /// Which look holds `inProgress`: one let go after `lookLimit` may still end later, and mustn't free a newer one.
+        var holder: UUID?
+        /// A look let go after `lookLimit` that's still running: its build or launch would overlap a new look's, so none
+        /// starts until it ends.
+        var straggler: UUID?
+        /// Ends when that look does, for the turn's end to wait on before its own build (`waitForStraggler`).
+        var stragglerEnds: Task<Void, Never>?
         /// Each app the last look at it built and opened, and how that launch went, by app: a wish's apps are looked
         /// at in one turn, and one's crash is no word on another.
         var installed: [String: Bool] = [:]
@@ -5998,6 +6005,7 @@ final class Store: ObservableObject {
             turn.autoApply?.cancel()
             turn.autoApply = nil
             await turn.applying?.value
+            await waitForStraggler(turn)
             // Codex was interrupted to be given the person's messages (`steer`): it goes on in the same
             // conversation with them, unless the turn was stopped or ended meanwhile, or Lamp stopped the model.
             guard let message = turn.codexCut else { break }
@@ -9684,7 +9692,24 @@ final class Store: ObservableObject {
     /// `ownStep`: the build a game's step makes while it's the change being put in (`stepPage`), which doesn't wait for
     /// itself; every other build waits for that change. `phone`: the version of the phone page that step checked, the only
     /// one it publishes.
+    /// Each app's build under way, for the next to wait on: two at once write the same folders and the one `turn.build`
+    /// slot, and a look let go after `lookLimit` can still be building when the turn's end builds again.
+    private var buildsUnderWay: [String: Task<Void, Never>] = [:]
+
+    /// A step's own build (`ownStep`, from `stepPage`) keeps out of it: every other build already waits for the step under
+    /// way (`turn.applying`), and a step waiting here on a build that waits on it would never end.
     private func build(_ project: LampProject, inPlace: Bool = true, ownStep: Bool = false, phone: String? = nil) async -> String? {
+        let (ended, end) = AsyncStream<Void>.makeStream()
+        let mine = Task { for await _ in ended {} }
+        if !ownStep {
+            let earlier = buildsUnderWay[project.id]
+            buildsUnderWay[project.id] = mine
+            await earlier?.value
+        }
+        defer {
+            end.finish()
+            if buildsUnderWay[project.id] == mine { buildsUnderWay[project.id] = nil }
+        }
         // The open app glows while its change is built, until it goes in (`reloadInPlace`) or the install that
         // follows settles otherwise; a build that fails lets it go here.
         let glowing = exists(project) && AppTransition.begin(project)
@@ -9703,7 +9728,11 @@ final class Store: ObservableObject {
         owner?.building = true
         defer { owner?.building = false }
         if let owner, let applying = owner.applying, !owner.reloading, owner.applyingSources != Runtime.fingerprint(project) { applying.cancel() }
-        if !ownStep { await owner?.applying?.value }
+        if !ownStep {
+            await owner?.applying?.value
+            // The step's own build, ending meanwhile, cleared the flag: this one is still building, and a later step waits.
+            owner?.building = true
+        }
         await owner?.warming?.value
         // Not said when the game open on this Mac already shows these sources (a step put them in), nor for a step's own
         // build, which runs beside the agent's work and is said once it's in ("Put into …"): the person waits on neither.
@@ -14926,8 +14955,77 @@ final class Store: ObservableObject {
     /// which the look only speaks of, and which the turn's end delivers to.
     private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false, onDevice: Bool = false,
                       shape: String? = nil, tryOn: String? = nil) async -> (Int, [String: Any]) {
-        withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice, shape: shape, tryOn: tryOn), of: project)
+        // A look waits on the app in many ways (a build, a launch, a window's first frame, a step going in), and one that
+        // never answers held the look, and every later one ("already looking"), until the turn's end, with the chat stuck
+        // on it. So it's given a limit, under the five minutes an engine waits on a tool before giving up on it itself.
+        final class Once { var done = false; var work: Task<Void, Never>? }
+        let once = Once(), began = Date(), turn = turns[project.id]
+        let answer: (Int, [String: Any])? = await withCheckedContinuation { finished in
+            once.work = Task { @MainActor in
+                let answer = await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice, shape: shape, tryOn: tryOn)
+                guard !once.done else { return }
+                once.done = true
+                finished.resume(returning: answer)
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(Self.lookLimit))
+                guard !once.done else { return }
+                once.done = true
+                finished.resume(returning: nil)
+            }
+        }
+        if let answer { return withLateCrash(answer, of: project) }
+        // Only the turn and the look that began this: after Stop, another turn and its look are left as they are.
+        if let turn, let holder = turn.look.holder, turn.look.inProgress {
+            turn.look.inProgress = false
+            turn.look.holder = nil
+            turn.look.straggler = holder
+            turn.look.stragglerEnds = once.work
+            if turns[project.id] === turn {
+                progress[project.id]?.looking = false
+                if !turn.stopped { note(Activity.thinking, for: project) }
+            }
+        }
+        log(project, .detail, "A look gave up after \(Int(Date().timeIntervalSince(began))) seconds without an answer from the app.")
+        return (200, ["text": "The look didn't finish in \(Int(Self.lookLimit / 60)) minutes: the app didn't answer it (a build, a launch or "
+            + "its window may still be under way, or the app may have closed). Lamp let it go; a new look waits until that one ends. "
+            + "Go on with the request, and if a later look can't start or doesn't finish either, finish without one and say in a "
+            + "sentence that you couldn't see the change."])
     }
+
+    /// The turn's end builds and opens the app, which would overlap a look let go that's still building or launching it:
+    /// that look is waited on first, for at most another `lookLimit`. A build of its own still running then is ended, as
+    /// Stop ends one, and the look is given a moment to come back from it; the turn goes on after that whatever it waits on.
+    private func waitForStraggler(_ turn: Turn) async {
+        guard turn.look.straggler != nil, let ends = turn.look.stragglerEnds else { return }
+        await wait(for: ends, atMost: Self.lookLimit)
+        guard turn.look.straggler != nil, let build = turn.build else { return }
+        _ = Subprocess.terminateTree(build)
+        await wait(for: ends, atMost: 15)
+    }
+
+    /// Waits for a task to end, or for the time given, whichever comes first.
+    private func wait(for ends: Task<Void, Never>, atMost seconds: TimeInterval) async {
+        final class Once { var done = false }
+        let once = Once()
+        await withCheckedContinuation { (finished: CheckedContinuation<Void, Never>) in
+            Task { @MainActor in
+                await ends.value
+                guard !once.done else { return }
+                once.done = true
+                finished.resume()
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(seconds))
+                guard !once.done else { return }
+                once.done = true
+                finished.resume()
+            }
+        }
+    }
+
+    /// How long a look waits for the app before letting go.
+    nonisolated static let lookLimit: TimeInterval = 240
 
     /// Every look at a game that has gone on the person's Xbox, whichever way it went (a preview, or only a build for a
     /// game with none), says what the game logged there.
@@ -14948,7 +15046,13 @@ final class Store: ObservableObject {
             return (409, ["error": "Lamp isn't working on this app right now."])
         }
         guard !turn.look.inProgress else { return (200, ["text": "Lamp is already looking at the app. Wait for that result."]) }
+        guard turn.look.straggler == nil else {
+            return (200, ["text": "The look Lamp let go is still waiting on the app, so a new one can't start yet. Go on without it, "
+                + "or finish and say in a sentence that you couldn't see the change."])
+        }
         turn.look.inProgress = true
+        let holder = UUID()
+        turn.look.holder = holder
         progress[project.id]?.looking = true
         // Told at the end how long the look took: a cost the agent has seen is one it allows for, where "takes a
         // while" had it putting looks off.
@@ -14968,9 +15072,14 @@ final class Store: ObservableObject {
         }
         say(TurnProgress.activity(for: ToolCall("look_at_app")))
         defer {
-            turn.look.inProgress = false
-            if turns[project.id] === turn { progress[project.id]?.looking = false }
-            say(Activity.thinking)
+            // A look let go after `lookLimit` ending now leaves a newer one as it is.
+            if turn.look.straggler == holder { turn.look.straggler = nil }
+            if turn.look.holder == holder {
+                turn.look.inProgress = false
+                turn.look.holder = nil
+                if turns[project.id] === turn { progress[project.id]?.looking = false }
+                say(Activity.thinking)
+            }
         }
 
         try? await writeOwnFiles(project, all: false)
