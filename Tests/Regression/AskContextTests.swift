@@ -37,6 +37,17 @@ final class AskContextTests: XCTestCase {
         XCTAssertTrue(trouble.text.hasSuffix(Talk.askNotShown), trouble.text)
     }
 
+    /// A question can be a normal sentence; a paragraph goes back to the agent.
+    func testAQuestionIsASentenceNotAParagraph() throws {
+        let sentence = "Should the reminder come the evening before, or on the morning of the bin day?"
+        XCTAssertNoThrow(try asked(["question": sentence, "options": options, "detail": "Bins go out on Tuesdays."]).get())
+        let paragraph = String(repeating: "word ", count: Talk.Words.question + 1)
+        guard case .failure(let trouble) = asked(["question": paragraph, "options": options, "detail": "A line."]) else {
+            return XCTFail("A \(Talk.Words.question + 1)-word question was taken")
+        }
+        XCTAssertTrue(trouble.text.contains("a question to \(Talk.Words.question) words"), trouble.text)
+    }
+
     /// The tool tells every engine the line is needed and how long it may be.
     func testTheToolOffersTheLine() throws {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
@@ -49,6 +60,8 @@ final class AskContextTests: XCTestCase {
         XCTAssertTrue((item["required"] as? [String])?.contains("detail") == true)
         let detail = try XCTUnwrap((item["properties"] as? [String: Any])?["detail"] as? [String: Any])
         XCTAssertTrue((detail["description"] as? String)?.contains("\(Talk.Words.questionDetail) words") == true)
+        let question = try XCTUnwrap((item["properties"] as? [String: Any])?["question"] as? [String: Any])
+        XCTAssertTrue((question["description"] as? String)?.contains("\(Talk.Words.question) words") == true)
     }
 
     private func shown(_ lines: [LogLine]) -> [String] { LogLine.visible(lines, details: false).map(\.text) }

@@ -82,7 +82,7 @@ public struct AskCardView: View {
                 if index > 0 { Divider() }
                 VStack(alignment: .leading, spacing: 8) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(question.question).font(.headline)
+                        Text(question.question).font(.headline).fixedSize(horizontal: false, vertical: true)
                         if let detail = question.detail {
                             Text(detail)
                                 .foregroundStyle(.secondary)
