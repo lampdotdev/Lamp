@@ -378,6 +378,13 @@ import { DOWNLOAD_URL } from "../../lib/download";
         openIt.addEventListener("click", () => track("idea_sent", { idea: wish.name, place: "shared" }));
         getIt.addEventListener("click", () => {
           track("idea_download", { idea: wish.name, place: "shared" });
+          // The app itself comes only through its link: Lamp's first look at the clipboard takes words as a new app to
+          // make, so a shared file isn't copied, and they're sent back here once Lamp is in.
+          if (wish.file && wish.shared) {
+            $<HTMLElement>("[data-still-get-label]").textContent = "Downloading…";
+            note.textContent = "When Lamp is installed, come back and press Open in Lamp.";
+            return;
+          }
           copyWish(wish.wish).then((copied) => {
             $<HTMLElement>("[data-still-get-label]").textContent = "Downloading…";
             note.textContent = copied === "marked" ? "Open Lamp when it's ready. This app will be there."
