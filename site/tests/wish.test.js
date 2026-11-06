@@ -42,6 +42,7 @@ test("a remix with no words is still copied with its origin, and a wish with non
   assert.equal(await copyWish("  ", { clipboard, Item, origin }), "marked");
   assert.equal((await written[0].forms["text/plain"].text()).trim(), "");
   assert.equal(await written[0].forms["text/html"].text(), wishHTML("", origin));
+  assert.match(wishHTML("", { shared: "KEdCT2V7wU" }), /data-lamp-wish="shared=KEdCT2V7wU"/);
   assert.equal(await copyWish("  ", { clipboard, Item }), "none");
   assert.equal(await copyWish("", { clipboard: { writeText: async () => assert.fail("no words to copy") }, Item: undefined, origin }), "none");
 });

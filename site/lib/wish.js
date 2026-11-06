@@ -16,7 +16,8 @@ const tidy = (text) => String(text ?? "").trim().slice(0, WISH_LIMIT).trim();
 const escapeHTML = (text) => String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
 /**
- * With a remix's origin, the mark's value says what to start from as a link's query would ("starter=newyork"), since the
+ * With a remix's origin, the mark's value says what to start from as a link's query would ("starter=newyork", or
+ * "shared=<id>" for an app shared as a link, which a new Lamp opens itself), since the
  * mark is the attribute browsers are known to keep (`Wish.markedRemix` in Lamp); otherwise it's "1".
  */
 export function wishHTML(text, origin = null) {
@@ -125,6 +126,7 @@ export function remixFrom(search) {
 
 /** A remix's origin as the parameters Lamp reads, in its link and in the mark's value. */
 export function remixParams(origin) {
+  if (origin.shared) return new URLSearchParams({ shared: origin.shared });
   return new URLSearchParams(origin.starter ? { starter: origin.starter } : { repo: origin.repo, ...(origin.commit ? { commit: origin.commit } : {}) });
 }
 
