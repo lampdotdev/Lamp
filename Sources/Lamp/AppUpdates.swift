@@ -490,10 +490,13 @@ extension Store {
                 try job.save(in: copy)
                 guard hold != nil else { throw Sharing.ImportError("The copy was taken.") }
                 try Sharing.install(package, into: copy)
-                // The copy of a wish from someone else is held as the wish is, its other apps too (`installParts`).
-                SharedNetwork.arrive(package, in: copy, arriving: SharedNetwork.isShared(project, parts: parts(of: project)))
+                // The copy of a wish from someone else is held as the wish is, its other apps too (`installParts`): read
+                // off the main actor.
+                let readings = await Self.readings(of: package, reviewed: nil)
+                SharedNetwork.arrive(package, in: copy, arriving: SharedNetwork.isShared(project, parts: parts(of: project)),
+                                     reading: readings[SharedNetwork.readingKey("")])
                 reload()
-                let notIn = await installParts(of: package, into: copy)
+                let notIn = await installParts(of: package, into: copy, readings: readings)
                 guard notIn.isEmpty else { throw Sharing.ImportError("\(notIn.joined(separator: ", ")) couldn't be copied.") }
                 guard !stopped() else { throw CancellationError() }
             } catch is CancellationError {

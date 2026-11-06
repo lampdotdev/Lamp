@@ -641,7 +641,11 @@ enum AppAI {
         var failure: String?
         final class Deadline { var passed = false }
         let deadline = Deadline()
-        let status = await Shell.run(command, cwd: folder, env: env, started: { process in
+        // A caller that's cancelled (a shared app's review closed or out of time) stops the engine with it, rather than
+        // waiting for an engine that may never answer.
+        let running = Subprocess.Running()
+        let status = await withTaskCancellationHandler { await Shell.run(command, cwd: folder, env: env, started: { process in
+            running.started(process)
             guard let timeLimit else { return }
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(timeLimit))
@@ -667,7 +671,8 @@ enum AppAI {
                 default: break
                 }
             }
-        }
+        } } onCancel: { running.stop() }
+        try Task.checkCancellation()
         if deadline.passed { throw Failure(message: "\(engine.title) took too long to answer.") }
         if let failure { throw Failure(message: Provider.friendlyError(failure, from: engine.title)) }
         guard !text.isEmpty else {

@@ -38,7 +38,8 @@ enum WebReach {
     /// files, which three.js would fetch).
     static func analyze(code: [(name: String, text: String)], data: [(name: String, data: Data)] = []) -> Result {
         var reader = Reader()
-        for file in code {
+        // A review closed, cancelled or out of time stops reading here; what it found isn't used (`Sharing.inspect`).
+        for file in code where !Task.isCancelled {
             switch (file.name as NSString).pathExtension.lowercased() {
             case "js", "mjs", "ts", "tsx": reader.addScript(file.text, file: file.name)
             case "html", "htm": reader.addHTML(file.text, file: file.name)
@@ -48,7 +49,7 @@ enum WebReach {
             default: break
             }
         }
-        for file in data {
+        for file in data where !Task.isCancelled {
             let ext = (file.name as NSString).pathExtension.lowercased()
             guard ext == "gltf" || ext == "glb", let json = gltfJSON(file.data, binary: ext == "glb") else { continue }
             reader.addModel(json, file: file.name)

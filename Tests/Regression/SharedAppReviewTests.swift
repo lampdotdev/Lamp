@@ -1,5 +1,6 @@
 import XCTest
 @testable import Lamp
+@testable import LampRelayKit
 
 /// The review of a shared app holds up when the app is written to talk its way past it: what the AI says
 /// counts only when it's a usable answer from a reviewer Lamp vouches for, and the app's own text can't
@@ -375,5 +376,39 @@ final class SharedAppReviewTests: XCTestCase {
         let said = ImportReviewCard.considerations(unanswered)
         XCTAssertEqual(said.map(\.weight), [.caution, .warning])
         XCTAssertEqual(said.last?.detail, "No credit left.")
+    }
+
+    // MARK: What an update applies
+
+    /// An update applies what each app may reach from its review's own reading of the package, rather than reading it
+    /// again on the main actor; that reading has to be the one the app would otherwise be held to. Two of Lamp's own
+    /// starters: one that reaches nothing, and Home HQ, whose page reaches sites and has Swift of its own.
+    func testTheReadingAnUpdateAppliesIsTheOneTheReviewMade() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let stock = try String(contentsOf: root.appendingPathComponent("Resources/GameKit/apple/Native.swift"), encoding: .utf8)
+        let native = Sharing.stockNative
+        defer { Sharing.stockNative = native }
+        Sharing.stockNative = stock
+        for name in ["thelittlehouse", "homehq"] {
+            let package = try RepoImport.open(folder: StarterTrees.tree(name))
+            addTeardownBlock { try? FileManager.default.removeItem(at: package.folder) }
+            let found = Sharing.inspect(package)
+            XCTAssertTrue(found.finished, name)
+            XCTAssertEqual(found.readings, SharedNetwork.readings(of: package), name)
+            XCTAssertEqual(found.readings[SharedNetwork.readingKey("")], SharedNetwork.reading(of: package, stock: stock), name)
+        }
+    }
+
+    /// A review cancelled, replaced or out of time while Lamp reads the code stops reading, and what it read never
+    /// counts as checked.
+    func testAReadingStoppedPartWayIsNeverAReview() async throws {
+        let package = try RepoImport.open(folder: StarterTrees.tree("homehq"))
+        addTeardownBlock { try? FileManager.default.removeItem(at: package.folder) }
+        let found = await Task.detached { () -> Sharing.Inspection in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return Sharing.inspect(package)
+        }.value
+        XCTAssertFalse(found.finished)
+        XCTAssertTrue(found.readings.isEmpty, "nothing of a stopped reading is applied")
     }
 }

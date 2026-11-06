@@ -446,6 +446,15 @@ app of its own, renamed after the wish; Cancel deletes it. Review Update… whil
 review once it's ready. A base that's no longer on GitHub fails the fetch rather than making up a change. File → Open
 from GitHub… on a project that isn't a wish offers Make App, a new wish whose first request is to make it into one.
 
+A shared app's review is one piece of work Lamp owns from the click to the answer (`Store.ReviewWork`): fetching the
+update, unpacking it, reading its code (`Sharing.inspect`, off the main actor) and asking the AI, in one task that Cancel,
+a newer review and the deadline (`Store.reviewDeadline`) all stop, the fetch's git and an engine answering for the AI included (`RepoImport.clone`, `AppAI.viaEngine`); the review never waits for either to exit. A file opened during the welcome waits for it on its own before it takes the review, so files opened together are each kept (`WaitingImport`). A second
+Review Update… on the same wish while it runs is the same review; a stopped review's fetch never opens a sheet (`owns`).
+Its stage shows where it was asked for: beside the wish on the desk ("Fetching update…", with Cancel) until its sheet is
+up, then on the sheet. A reading that didn't finish is never a review: the sheet, or the desk line, says why with Try
+Again, and Update stays off. Out of time while the AI is asked, the sheet shows what Lamp's own reading found and says the
+AI's check didn't finish.
+
 A wish whose chain names where it came from is updated as it was opened
 (Review Update… in the desk's menu, `Store.reviewUpdate`; a starter's copy too, "Desk"): the repository fetched again and opened as any is,
 which lands on Update or Keep Both for that wish (`Store.importRepository(updating:)`, carried through a review that

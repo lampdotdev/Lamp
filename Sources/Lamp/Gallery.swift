@@ -819,6 +819,12 @@ enum Gallery {
     /// width is picked, since it's only ever a sheet over Lamp's window, never in the wand's panel.
     private static let importEntries: [Entry] = [
         review("Checking", nil),
+        review("Reading its code", nil, existing: "Drive Anywhere", progress: "Checking its code…"),
+        review("Asking the AI", nil, existing: "Drive Anywhere", progress: "Asking Lamp's AI about it…"),
+        review("Check didn't finish", nil, existing: "Drive Anywhere", failure: "Lamp couldn't finish checking this in time. Nothing was changed."),
+        updateLine("Fetching an update", Store.ReviewWork(wish: "drive-anywhere", stage: .fetching)),
+        updateLine("Update couldn't be fetched", Store.ReviewWork(wish: "drive-anywhere",
+                                                                   stage: .failed("Lamp couldn't get someone/drive-anywhere from GitHub. Check the address and that you're online."))),
         // Someone's suggested change, before it's tried in a copy (`SuggestionTrial`).
         review("Trying a suggested change", ImportReview(summary: "A cozy little room on a rainy night, with a brighter fire and a Crackle slider.",
                                                          capabilities: ["Plays sounds"], concerns: [], risk: .low,
@@ -890,15 +896,25 @@ enum Gallery {
 
     private static func review(_ name: String, _ review: ImportReview?, app: String = "Drive Anywhere", description: String? = nil,
                                existing: String? = nil, changedHere: Bool = false, android: Bool = false, prepared: Bool = false,
-                               mix: Bool = false, trying: Bool = false) -> Entry {
+                               mix: Bool = false, trying: Bool = false, progress: String? = nil, failure: String? = nil) -> Entry {
         Entry(group: "Shared app", name: name) {
             AnyView(ImportReviewCard(name: app, description: description,
                                      icon: nil, review: review, existing: existing, changedHere: changedHere, cancel: {}, open: {}, update: {}, android: android,
-                                     prepared: prepared, mix: mix ? {} : nil, trying: trying)
+                                     prepared: prepared, mix: mix ? {} : nil, trying: trying, progress: progress, failure: failure)
                 .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
                 .fixedSize())
+        }
+    }
+
+    /// A wish's update review beside it on the desk, before its sheet is up.
+    private static func updateLine(_ name: String, _ work: Store.ReviewWork) -> Entry {
+        Entry(group: "Shared app", name: name) {
+            AnyView(ReviewWorkLine(work: work, retry: {}, cancel: {})
+                .padding(18)
+                .frame(width: 420, alignment: .leading)
+                .background(Paper.card, in: RoundedRectangle(cornerRadius: 16)))
         }
     }
 
