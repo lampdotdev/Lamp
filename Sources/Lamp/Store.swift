@@ -748,9 +748,10 @@ final class Store: ObservableObject {
     private var reviewTask: Task<Void, Never>?
     /// The AI's part of the review (`Sharing.review`), which the deadline can stop on its own: the code is read by then.
     private var askingTask: Task<ImportReview, Never>?
-    /// Hands the AI's part of the review its outcome, once (`settleAsking`): its answer, or nil when it was stopped. The
-    /// review waits on this rather than on `askingTask`, so the deadline settles it even if an engine never exits.
-    private var askingSettle: ((ImportReview?) -> Void)?
+    /// The AI's part of the review, settled for the review that asked and no other: its answer, or nil when it was
+    /// stopped. The review waits on this rather than on `askingTask`, so the deadline settles it even if an engine never
+    /// exits, and a stopped review's late answer can't settle the next one's.
+    private let asking = ReviewSettlement<ImportReview>()
     private var reviewTimer: Task<Void, Never>?
     /// What Try Again does after a review failed: the same request again.
     private var reviewRetry: (() -> Void)?
@@ -808,7 +809,7 @@ final class Store: ObservableObject {
     private func endReview() {
         reviewTask?.cancel()
         askingTask?.cancel()
-        settleAsking(nil)
+        asking.settle(nil, for: reviewWork?.id)
         reviewTimer?.cancel()
         reviewTask = nil
         askingTask = nil
@@ -823,6 +824,7 @@ final class Store: ObservableObject {
         guard reviewWork?.id == id else { return }
         reviewTask?.cancel()
         askingTask?.cancel()
+        asking.settle(nil, for: id)
         reviewTimer?.cancel()
         let work = reviewWork
         if work?.wish == nil, work?.sheet == nil {
@@ -842,7 +844,7 @@ final class Store: ObservableObject {
         if work.stage == .asking {
             reviewWork?.outOfTime = true
             askingTask?.cancel()
-            settleAsking(nil)
+            asking.settle(nil, for: id)
             return
         }
         failReview(id, "Lamp couldn't finish checking this in time.", detail: "Nothing was changed.")
@@ -892,22 +894,21 @@ final class Store: ObservableObject {
         guard owns(id) else { return }
         guard found.finished else { return failReview(id, "Lamp couldn't finish checking this.", detail: "Nothing was changed.") }
         setReviewStage(.asking, for: id)
-        let asking = Task.detached(priority: .userInitiated) { await Sharing.review(package, inspection: found) }
-        askingTask = asking
+        let ai = Task.detached(priority: .userInitiated) { await Sharing.review(package, inspection: found) }
+        askingTask = ai
         // Whichever comes first: the AI's answer, or the review being stopped (Cancel, a newer review, the deadline).
         // Stopping it cancels the AI's requests, which stops an engine's process (`AppAI.viaEngine`), but the review
         // never waits for that to finish.
+        // Every settlement names this review: an answer or a stop that comes late, after another review began, is ignored.
+        Task { [weak self] in
+            let review = await ai.value
+            self?.asking.settle(review, for: id)
+        }
         let answered: ImportReview? = await withTaskCancellationHandler {
-            await withCheckedContinuation { (done: CheckedContinuation<ImportReview?, Never>) in
-                askingSettle = { done.resume(returning: $0) }
-                Task { [weak self] in
-                    let review = await asking.value
-                    self?.settleAsking(review)
-                }
-            }
+            await asking.wait(for: id)
         } onCancel: {
-            asking.cancel()
-            Task { @MainActor [weak self] in self?.settleAsking(nil) }
+            ai.cancel()
+            Task { @MainActor [weak self] in self?.asking.settle(nil, for: id) }
         }
         guard !Task.isCancelled, reviewWork?.id == id, !(reviewWork?.failed ?? true) else { return }
         var review: ImportReview
@@ -930,12 +931,6 @@ final class Store: ObservableObject {
     nonisolated static func readings(of package: Sharing.Package, reviewed: [String: NetworkPolicy]?) async -> [String: NetworkPolicy] {
         if let reviewed { return reviewed }
         return await offMain { SharedNetwork.readings(of: package) }
-    }
-
-    private func settleAsking(_ review: ImportReview?) {
-        let settle = askingSettle
-        askingSettle = nil
-        settle?(review)
     }
 
     /// Runs `work` off the main actor, stopping it (`Task.isCancelled` inside) when the caller is cancelled.
