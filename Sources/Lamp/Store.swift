@@ -5450,7 +5450,7 @@ final class Store: ObservableObject {
     }
 
     /// Whether the app is open on this Mac.
-    private func isRunning(_ project: LampProject) -> Bool { !macCopies(of: project).isEmpty }
+    func isRunning(_ project: LampProject) -> Bool { !macCopies(of: project).isEmpty }
 
     /// Every copy of the app open on this Mac: by its id, and by where Lamp installs it. One found only by its
     /// place has another id: built before the app's id changed, or by Lamp with other settings (after a fresh
@@ -9998,7 +9998,7 @@ final class Store: ObservableObject {
 
     /// A step's own build (`ownStep`, from `stepPage`) keeps out of it: every other build already waits for the step under
     /// way (`turn.applying`), and a step waiting here on a build that waits on it would never end.
-    private func build(_ project: LampProject, inPlace: Bool = true, ownStep: Bool = false, phone: String? = nil) async -> String? {
+    func build(_ project: LampProject, inPlace: Bool = true, ownStep: Bool = false, phone: String? = nil) async -> String? {
         let (ended, end) = AsyncStream<Void>.makeStream()
         let mine = Task { for await _ in ended {} }
         if !ownStep {
@@ -10961,7 +10961,7 @@ final class Store: ObservableObject {
     /// `onDevice`: a look the agent asked to see on the device itself, which a kind with a preview otherwise opens there.
     /// `quiet` is a place Try On doesn't point at, kept current in the background (`updatePlaces`): nothing is opened
     /// that wasn't open, and a copy that is open takes the change as a request's would.
-    private func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false, reload: Bool = false,
+    func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false, reload: Bool = false,
                          early: Bool = false, saysReady: Bool = true, onDevice: Bool = false, quiet: Bool = false) async -> String? {
         markLog(project)
         let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload, early: early, saysReady: saysReady, onDevice: onDevice, quiet: quiet)
@@ -14053,6 +14053,8 @@ final class Store: ObservableObject {
         } catch {
             NSLog("Lamp AI gateway failed to start: \(error)")
         }
+        // The person's own coding agent reaches Lamp through its MCP helper, on a socket of this Lamp's (`OutsideServer`).
+        OutsideServer.shared.start()
     }
 
     /// The gateway answers on the local network only while an app is set to open on the person's own phone or

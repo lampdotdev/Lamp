@@ -345,3 +345,27 @@ A capability given to one engine must be given to all of them that can take it, 
 Before opening a PR that touches any of this, check each engine's `case` in `Agent.run` and its parser,
 and say in the PR description which engines you tried.
 
+
+## The person's own agent through MCP (trial)
+
+Besides the three engines Lamp runs, the person's own coding agent (Claude Code, Codex) can start Lamp as a local MCP
+server and work on a Lamp-format Mac app in a folder of its own (`OutsideServer`, `OutsideWork`). It isn't an engine:
+Lamp starts no process for it and sees none of its commands, so its shell is under its own approvals, not
+`/agent/approve`. What Lamp does for it (building, opening, putting a change in) keeps Lamp's own checks.
+
+- **Reaching Lamp.** The agent runs `lamp-mcp` from Lamp's Helpers over stdio (`claude mcp add lamp -- "<Lamp.app>/Contents/Helpers/lamp-mcp"`).
+  The helper carries each JSON-RPC line to this Lamp's socket and back; Lamp answers `initialize`, `tools/list` and
+  every call. The socket is in a 0700 folder of the Lamp's own named by its bundle id (`OutsideKit`, which `Edition.name`
+  reads), and each connection's peer must be the person's user. The first line each way is a handshake with
+  `OutsideKit.protocolVersion`. Lamp not running is started from the helper's own bundle; a call under way when Lamp
+  ends is answered `interrupted`.
+- **The folder and the workspace.** The folder stays the source and its git is the person's: Lamp never writes in it.
+  What builds and runs is a project in Lamp's apps folder made once by `open_project` (scaffold and `Sharing.install`,
+  as an import), so LiveReload's live copy, libraries and runtime folder stay where they always are. Each apply captures
+  the folder as the import reads one (`RepoImport.open`), checks the bytes copied against the folder before and after,
+  writes into the workspace only what differs (`OutsideWork.sync`), then builds and installs as a look does, holding
+  the project as Lamp's own work does (`Store.begin`). Folders are known by real path, device and inode
+  (`Outside/adopted.json`); a folder put in another's place is refused until `open_project` takes it on.
+- **One at a time.** Every call on a folder waits for the one before it, whatever connection sent it
+  (`outsideSerially`). An apply answers stale when the folder changed while it built. `operation_id` replays an apply
+  that ran, for as long as Lamp runs; after Lamp starts again an apply waits for a `look_at_app` first.
