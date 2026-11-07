@@ -239,7 +239,7 @@ The log on a device says every ten seconds how many frames a second it gets ther
 ### Checking it
 
 `look_at_app` shows the game in its window on this Mac, where the person is in it, opening it when it's closed;
-`use_app` plays it there with Lamp's own controller (`stick`, `button`, `wait`), from wherever it is, a picture at the
+`use_app` plays it there with Lamp's own controller (`stick`, `button`, `wait`, and a `click` on what its screen shows), from wherever it is, a picture at the
 end (the game skill, "Playtesting"). When the person asks you to try, play or test it, play it as they would: start
 it, jump, die, win, pause, change a setting and come back to find it kept. Once it looks or plays right there,
 `look_at_app` with `on_device` looks at it in the preview of where Try On points (the iPhone or iPad simulator); the

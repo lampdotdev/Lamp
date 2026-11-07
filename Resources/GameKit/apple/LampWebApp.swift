@@ -41,28 +41,23 @@ struct LampWebApp: SwiftUI.App {
 
 struct LampWebAppView: View {
     var body: some View {
-        GeometryReader { space in
-            ZStack {
-                Color.black
-                LampWebAppSurface(size: space.size)
-            }
+        ZStack {
+            Color.black
+            LampWebAppSurface()
         }
     }
 }
 
 #if os(macOS)
 struct LampWebAppSurface: NSViewRepresentable {
-    let size: CGSize
-    func makeNSView(context: Context) -> WKWebView { LampWebAppPage.make() }
-    func updateNSView(_ view: WKWebView, context: Context) {
-        LampPageView.fit(view, in: size, canvas: LampWebAppPage.canvas)
-        DispatchQueue.main.async { if view.window?.firstResponder !== view { view.window?.makeFirstResponder(view) } }
+    func makeNSView(context: Context) -> LampPageHolder { LampPageHolder(holding: LampWebAppPage.make(), canvas: LampWebAppPage.canvas) }
+    func updateNSView(_ holder: LampPageHolder, context: Context) {
+        DispatchQueue.main.async { if holder.window?.firstResponder !== holder.page { holder.window?.makeFirstResponder(holder.page) } }
     }
 }
 #else
 struct LampWebAppSurface: UIViewRepresentable {
-    let size: CGSize
-    func makeUIView(context: Context) -> WKWebView { LampWebAppPage.make() }
-    func updateUIView(_ view: WKWebView, context: Context) { LampPageView.fit(view, in: size, canvas: LampWebAppPage.canvas) }
+    func makeUIView(context: Context) -> LampPageHolder { LampPageHolder(holding: LampWebAppPage.make(), canvas: LampWebAppPage.canvas) }
+    func updateUIView(_ holder: LampPageHolder, context: Context) {}
 }
 #endif
