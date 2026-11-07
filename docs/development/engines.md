@@ -376,3 +376,16 @@ Lamp starts no process for it and sees none of its commands, so its shell is und
 - **One at a time.** Every call on a folder waits for the one before it, whatever connection sent it
   (`outsideSerially`). An apply answers stale when the folder changed while it built. `operation_id` replays an apply
   that ran, for as long as Lamp runs; after Lamp starts again an apply waits for a `look_at_app` first.
+- **What the agent is told.** The server's `instructions` say how to work with Lamp; `open_project` adds, for the app's
+  kind, the same skills index Lamp's own engines get (`Skills.index`), the skills whose rules every change keeps
+  (`Skills.named`) and those the code already uses (`Skills.applying`). `read_skill` is the one from `lamp-tools.json`,
+  answered by `Skills.read`. Library choices stay in the skills; nothing here names one. The agent's own instruction
+  files in the folder are never written. The agent can't use the app (`use_app` isn't offered): it's told to ask the
+  person to try what needs a hand.
+- **Sharing.** Both tools share only a known snapshot: the folder must read as it did at the last apply that went
+  in, which wrote the workspace from that reading, or they refuse and ask for an apply. `export_app` makes the shared file as
+  Share… does (`Sharing.askToShare`, then `Store.sharedFile`, with every check of `Sharing.export`) and answers its
+  path in Lamp's own folder. `publish_link` opens the Share Link card (`WishLinkCards`) for the person and waits on it,
+  holding the app so nothing is applied meanwhile. The card makes the link before the app's file goes up, so a failure
+  after that is answered as a link that exists without this release, never as success or as nothing shared. The link's
+  secret stays where Lamp keeps every link's, and changing or taking a link down stays on the card.

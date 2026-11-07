@@ -51,11 +51,16 @@ enum OutsideWork {
     }
 
     static let instructions = """
-    Lamp builds and runs the Mac app in a folder you work on, and puts each change you make into the open app while it \
-    runs. Call open_project once with the folder's absolute path. After editing, call apply_change: it builds what the \
-    folder holds now and answers how the change reached the app (live, reopened, opened, held, unchanged, not_built or \
-    crashed), with pictures of its windows. look_at_app shows the open app as it is and never applies anything. Lamp \
-    never writes in your folder; its git is yours.
+    Lamp builds and runs the Mac app in a folder you work on, puts each change you make into the open app while it \
+    runs, and shares what you made. Call open_project once with the folder's absolute path: the person reviews the app \
+    in Lamp first, and the answer lists Lamp's skills for this kind of app. Read the ones that fit with read_skill \
+    before changing what they cover; they say which of Lamp's building blocks to use and how. Sources/LampSupport.swift, \
+    build.sh and Package.swift are Lamp's: read them, never edit them (Lamp writes its own at every build). After \
+    editing, call apply_change: it builds what the folder holds now and answers how the change reached the app, with \
+    pictures of its windows. look_at_app shows the open app as it is and never applies anything; you can't click or \
+    type in the app, so ask the person to try what needs a hand. export_app makes the app's shared file and \
+    publish_link opens Lamp's Share Link card for the person; both share only what's built from the folder as it is. \
+    Lamp never writes in your folder; its git is yours.
     """
 
     static var tools: [[String: Any]] {
@@ -74,7 +79,25 @@ enum OutsideWork {
             ["name": "look_at_app",
              "description": "Pictures of the open app's windows and what it printed. Applies nothing: it says when the folder has changes not put in yet.",
              "inputSchema": ["type": "object", "properties": ["path": path], "required": ["path"]]],
-        ]
+            ["name": "export_app",
+             "description": "Makes the app's shared file (.lampapp), which anyone with Lamp can open: its code and files, never its data or anything of yours. Only once the app is built from the folder as it is (apply first). Lamp checks the credits, licenses and secrets first, and asks the person when something in it came with no license. Answers the file's path, in Lamp's own folder: copy it where it's wanted.",
+             "inputSchema": ["type": "object", "properties": ["path": path], "required": ["path"]]],
+            ["name": "publish_link",
+             "description": "Opens Lamp's Share Link card for the app, where the person shares it on lamp.dev, or releases what's new on a link it has, and waits for them. Only once the app is built from the folder as it is (apply first); nothing is applied until the card is done. Answers the link, or that the person closed the card, or what failed: a link can exist while its app file didn't finish going up, and the answer says so. Changing or taking a link down stays on the card.",
+             "inputSchema": ["type": "object", "properties": ["path": path], "required": ["path"]]],
+        ] + Store.mcpTools.filter { $0["name"] as? String == "read_skill" }
+    }
+
+    /// What open_project tells the agent about working on this kind of app: the skills Lamp offers it (the same index
+    /// and words as Lamp's own engines get, `Skills.index`), those its code already shows it uses, and whose files
+    /// are Lamp's. The skills are the one place that says which building blocks to use and how.
+    @MainActor static func guidance(for project: LampProject) -> String {
+        let named = Skills.named(project.platform)
+        var text = "Working on it: Sources/LampSupport.swift, build.sh and Package.swift are Lamp's and rewritten at every build, so edits to them never go in; read LampSupport.swift for what Lamp gives the app.\n"
+        if !named.isEmpty { text += "Read these with read_skill before changing the app, and keep to them: \(named.joined(separator: ", ")).\n" }
+        let applying = Skills.applying(to: project)
+        if !applying.isEmpty { text += "Its code already uses: " + applying.map { "\($0.name) (\($0.because))" }.joined(separator: "; ") + ".\n" }
+        return text + Skills.index(Skills.offered(project.platform))
     }
 
     // MARK: Folders taken on
@@ -291,6 +314,12 @@ extension Store {
     }
 
     func outsideCall(_ name: String, _ payload: OutsideWork.Payload, connection: Int) async -> OutsideWork.Answer {
+        // The same skills, by the same means, as Lamp's own engines read them.
+        if name == "read_skill" {
+            let (status, answer) = Skills.read(payload.values)
+            return status == 200 ? OutsideWork.Answer(outcome: "skill", text: answer["text"] as? String ?? "")
+                : .refused(answer["error"] as? String ?? "No such skill.")
+        }
         guard let path = payload.string("path"), path.hasPrefix("/") else { return .refused("Give the folder's absolute path as `path`.") }
         let key = OutsideWork.identity(of: path)?.real ?? path
         return await outsideSerially(key) {
@@ -311,6 +340,8 @@ extension Store {
                 if let id, !["refused", "cancelled"].contains(answer.outcome) { OutsideState.shared.answers[id] = answer }
                 return answer
             case "look_at_app": return await outsideLook(path)
+            case "export_app": return await outsideExport(path)
+            case "publish_link": return await outsidePublish(path)
             default: return .refused("Lamp has no tool \(name).")
             }
         }
@@ -354,6 +385,9 @@ extension Store {
             state.save()
             var answer = await outsideApply(now.real, reopen: false)
             if moved { answer.text = "Lamp had this folder at another path; it's known here now.\n\n" + answer.text }
+            if let project = projects.first(where: { $0.id == state.adopted[index].project }) {
+                answer.text += "\n\n" + OutsideWork.guidance(for: project)
+            }
             return answer
         }
         // A folder put where one Lamp knew was: that one is let go (its workspace stays on the desk), and this one is new.
@@ -383,6 +417,7 @@ extension Store {
         // review was up would otherwise go in unreviewed. Such an edit is pending, for the next apply.
         var answer = await outsideApply(now.real, reopen: false, reviewed: before)
         answer.text = "Lamp took on \(now.real) as “\(project.name)”.\n\n" + answer.text
+            + "\n\n" + OutsideWork.guidance(for: current(project) ?? project)
         return answer
     }
 
@@ -502,5 +537,81 @@ extension Store {
         answer.pictures = Self.pictureData(Self.agentPictures(await Runtime.screenshots(of: project, since: asked, waiting: 3), in: project), in: project)
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { answer.text += "\n\nWhat it printed:\n\(tail)" }
         return answer
+    }
+
+    // MARK: Sharing
+
+    /// The folder's app, when what's built is the folder as it is now: sharing goes out only from a known snapshot,
+    /// never from a workspace a step behind (or ahead of) the folder the agent sees.
+    private func outsideSnapshot(_ path: String) async -> (OutsideWork.Adopted, LampProject, String)? {
+        guard let (entry, project) = outsideFolder(path), let applied = entry.applied else { return nil }
+        let now = await Self.offMain { OutsideWork.hashes(of: URL(fileURLWithPath: entry.repo)) }
+        // The last apply that went in wrote the workspace from this very reading. The whole build that follows a live
+        // change may still be running; sharing packs the files, not the build, so it doesn't wait for it.
+        guard OutsideWork.fingerprint(now) == applied else { return nil }
+        return (entry, project, applied)
+    }
+
+    private func notSnapshot(_ path: String) -> OutsideWork.Answer {
+        guard outsideFolder(path) != nil else { return outsideRefusal(path) }
+        return .refused("What's built isn't the folder as it is now. Call apply_change, and share once it answers live, reopened, opened or unchanged.")
+    }
+
+    private func outsideExport(_ path: String) async -> OutsideWork.Answer {
+        guard let (_, project, snapshot) = await outsideSnapshot(path) else { return notSnapshot(path) }
+        guard begin(project) != nil else { return .refused("Lamp is busy with this app. Try again in a moment.") }
+        defer { finish(current(project) ?? project) }
+        // Work that came with no license is the person's to pass on or not: asked as Share… asks.
+        guard Sharing.askToShare(project) else { return .refused("The person chose not to share it: some of its work came with no license.") }
+        do {
+            let file = try await Self.offMain { Result { try Store.sharedFile(of: project) } }.get()
+            return OutsideWork.Answer(outcome: "exported", text: "Lamp made \(project.name)'s shared file at \(file.path). It holds the app's code and files, never its data or anything of the person's. Copy it where it's wanted; Lamp makes it again at the next export.",
+                                      facts: ["file": file.path, "snapshot": snapshot])
+        } catch {
+            let failure = error as? Sharing.ImportError
+            return .refused((failure?.message ?? error.localizedDescription) + (failure?.detail.map { " " + $0 } ?? ""))
+        }
+    }
+
+    /// The Share Link card, for the person: the agent's call waits while it's open, holding the app so nothing is
+    /// applied under it. Lamp keeps the link's secret, as for any link, so changing it or taking it down stays there.
+    private func outsidePublish(_ path: String) async -> OutsideWork.Answer {
+        guard let (_, project, snapshot) = await outsideSnapshot(path) else { return notSnapshot(path) }
+        guard begin(project) != nil else { return .refused("Lamp is busy with this app. Try again in a moment.") }
+        defer { finish(current(project) ?? project) }
+        let cards = WishLinkCards.shared
+        cards.open(project)
+        NSApp.activate()
+        var sent = false
+        let began = Date()
+        while Date().timeIntervalSince(began) < 30 * 60 {
+            if Task.isCancelled { return OutsideWork.Answer(outcome: "cancelled", text: "Stopped waiting; the card is still open for the person.") }
+            guard let card = cards.card(for: project) else {
+                return sent ? OutsideWork.Answer(outcome: "closed", text: "The person closed the card after trying to share; nothing more is known of it.")
+                    : OutsideWork.Answer(outcome: "closed", text: "The person closed the card without sharing.")
+            }
+            if card.stage == .sending { sent = true }
+            if sent, card.stage != .sending {
+                let link = card.shared?.url.absoluteString
+                var facts: [String: Any] = ["snapshot": snapshot]
+                if let link { facts["link"] = link }
+                if case .failed(let why) = card.stage {
+                    // A link is made before the app's file goes up: a failure after that leaves a link that exists without
+                    // this release, which is said as it is.
+                    if card.released, let link {
+                        return OutsideWork.Answer(outcome: "published_with_problem", text: "\(link) is shared, but: \(why)", facts: facts)
+                    }
+                    if let link {
+                        return OutsideWork.Answer(outcome: "partial", text: "The link \(link) exists, but this release didn't finish: \(why) It may show the earlier version or no app file. The person can try again on the card.", isError: true, facts: facts)
+                    }
+                    return OutsideWork.Answer(outcome: "failed", text: "Nothing was shared: \(why)", isError: true, facts: facts)
+                }
+                if card.released, let link {
+                    return OutsideWork.Answer(outcome: "published", text: "Shared at \(link). Lamp copied the link for the person.", facts: facts)
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        return OutsideWork.Answer(outcome: "timed_out", text: "The card was open for 30 minutes without being shared; it's still open for the person.")
     }
 }

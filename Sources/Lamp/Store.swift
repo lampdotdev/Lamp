@@ -8694,7 +8694,7 @@ final class Store: ObservableObject {
     private nonisolated static let toolsTemplate: String? = Bundle.main.resourceURL
         .flatMap { try? String(contentsOf: $0.appendingPathComponent("lamp-tools.json"), encoding: .utf8) }
     // `label` is pi's: MCP clients see name, description and inputSchema.
-    static var mcpTools: [[String: Any]] {
+    nonisolated static var mcpTools: [[String: Any]] {
         ((try? JSONSerialization.jsonObject(with: toolsJSON)) as? [[String: Any]] ?? []).map { tool in tool.filter { $0.key != "label" } }
     }
     /// `toolsJSON` as pi's extension reads it, in Lamp's own pi folder: written again as each pi starts, so it has the
