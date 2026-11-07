@@ -814,16 +814,17 @@ enum LampPageGuard {
         for case let view as WKWebView in watchers.keyEnumerator().allObjects { view.reload() }
     }
 
-    /// Lets the page reach `site` from now on, on this device, and opens the page again with it.
-    @MainActor static func allow(_ site: String, in view: WKWebView) {
+    /// Lets the page reach `site` from now on, on this device, and opens every page of the app again with it: a page's
+    /// rules came with its files, so one in another window would go on refusing the site until it opens again.
+    @MainActor static func allow(_ site: String) {
         UserDefaults.standard.set(Array(Set(allowed + [site])).sorted(), forKey: allowedKey)
-        view.reload()
+        retirePages()
     }
 
-    /// Lets the page reach every site, for good.
-    @MainActor static func allowEverySite(in view: WKWebView) {
+    /// Lets the page reach every site, for good, and opens every page of the app again under that.
+    @MainActor static func allowEverySite() {
         UserDefaults.standard.set(true, forKey: everyKey)
-        view.reload()
+        retirePages()
     }
 
     /// Asks the person, over the page, and calls `then` with their answer.
@@ -937,7 +938,8 @@ enum LampPageGuard {
         }
     }
 
-    /// Another window's bar went: this page's goes too if its site is now closed or allowed, and the next waiting has its turn.
+    /// Another window's bar went: this page's goes too if its site is now closed, or allowed (the allowing opened every page
+    /// again under the new rules, this one too, so the site is reached here as well), and the next waiting has its turn.
     private func settle() {
         let (dropped, next) = bars.settle(blocked: Self.blocked)
         guard dropped else { return }
@@ -1034,7 +1036,7 @@ struct LampPageBlocked: View {
             LampPageGuard.ask("Let \(name) reach this site?", site, button: "Allow", over: view) { yes in
                 guard yes else { return }
                 // Allowed before the bar goes, so the next site's turn is decided under what the person just chose.
-                LampPageGuard.allow(site, in: view)
+                LampPageGuard.allow(site)
                 remove(closed: false)
             }
         }, allowAll: {
@@ -1042,7 +1044,7 @@ struct LampPageBlocked: View {
                               button: "Allow All", over: view) { yes in
                 guard yes else { return }
                 // Every site is let in first: no other site's bar follows this one.
-                LampPageGuard.allowEverySite(in: view)
+                LampPageGuard.allowEverySite()
                 remove(closed: false)
             }
         }, close: { remove(closed: true) })

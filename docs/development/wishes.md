@@ -233,7 +233,9 @@ room of its own that `LampPageHolder` lays the page out below, so the page's own
 the person can allow that site, once they've seen it whole, or every site for good, on that device. Closing a site's
 bar keeps it blocked and its bar away for the rest of that launch, in every page and window (`LampPageRefusals`), since
 a page often asks for the same site again and again; a bar another window shows at that moment goes too when its site
-is the one closed or allowed, or when every site was allowed (`LampPageRefused.settle`). A game's own controllers relay is the one way out the app adds: the rules name
+is the one closed or allowed, or when every site was allowed (`LampPageRefused.settle`). Allowing a site, or every site,
+opens every page of the app again under the new rules (`LampPageGuard.retirePages`), since a page's rules came with
+its files and one in another window would otherwise go on refusing what was allowed. A game's own controllers relay is the one way out the app adds: the rules name
 it at `ws://127.0.0.1:<port>` for connecting only, for that launch, never kept with the sites or taken from the page
 (`ControllerRuntime.pageSites`, "Lamp's player" in the devices guide). Lamp's previews serve the same rules (`StagedFiles.policy`), with Lamp's own relay open to a TV game's page in its preview (the TV guide). A copy of the wish
 (a remix, an update's copy) is held as the wish is (`SharedNetwork.carry`, `arrive`). What an update or Keep as Separate App records is the reading its review made of exactly that package (`Sharing.Inspection.readings`, kept as `PendingImport.readings`), not a second reading on the main actor; an update with no review (an original, a pull-in, an update's copy) reads it off the main actor (`Store.readings(of:reviewed:)`). A phone's controller page reads it

@@ -506,7 +506,7 @@ under the same signed batch, Stop and report as any Mac app's use (`LampDriver`,
 `stick`, `button` and `wait` into the driver's actions (`GameKit.controls`, each held at most 10 s), and passes a
 `click`, `double_click` or `type` on what the game's page shows (a menu's button, a mode switch, a field) marked `page`,
 which the driver carries out in the page (`LampPageItems.act`) and never on what's around it, reporting it as sent, not
-as taken, and only to an open copy whose driver knows `page` (`Store.gamePageMarker`, read from its binary; an older one
+as taken, and only to an open copy whose driver knows `page` (`Store.gamePageMarker`, read from the running copy's own executable; an older one
 is asked to be rebuilt first, since it would click and type natively wherever the point fell); `key` is refused with what does a key's work (a `button` or a `stick`), since the runtime's keyboard never
 reads a key a script made and a real key would be taken for the person's play. The driver hands each
 hold to the page (`LampPageItems.hold`, LampPage.swift, `window.__lampDrive`) and reports the page's answer, held or
