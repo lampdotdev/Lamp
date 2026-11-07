@@ -1,4 +1,5 @@
 import XCTest
+@testable import Lamp
 
 /// Which blocked site a shared page shows a bar for (`LampPageRefusals` in LampPage.swift), compiled from its own source
 /// and run: one bar at a time, each site once; a site whose bar the person closed brings no bar back for the rest of the
@@ -116,5 +117,81 @@ final class BlockedSiteBarTests: XCTestCase {
             """)
         XCTAssertEqual(said, ["https://tiles.example", "https://tiles.example", "https://feed.example", "-", "dropped -", "kept -",
                               "https://x.example", "https://x.example", "-", "-", "dropped https://y.example", "-", "dropped -"])
+    }
+
+    /// Allowing a site opens every page again so the new rules reach it (`LampPageGuard.retirePages`), and each opens as
+    /// Lamp's Reload opens it (`LampPageView.reopen`, cut from LampPage.swift and run in a real web view): a page that
+    /// keeps its place over a reload the way a game's runtime does (`__lampReloadNow`) comes back where it was, and one
+    /// without opens again from its files. A bare reload of the same page loses the place, which is what this guards.
+    func testAPageOpenedAgainForNewRulesKeepsItsPlace() throws {
+        let page = try String(contentsOf: root.appendingPathComponent("Resources/GameKit/apple/LampPage.swift"), encoding: .utf8)
+        let start = try XCTUnwrap(page.range(of: "    // begin LampPageView.reopen"))
+        let end = try XCTUnwrap(page.range(of: "    // end LampPageView.reopen", range: start.upperBound..<page.endIndex))
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("reopen-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let main = """
+            import AppKit
+            import WebKit
+            @MainActor enum LampPageView {
+            \(page[start.upperBound..<end.lowerBound])
+            }
+            // A game's page in miniature: where the player is lives in the page, and its own reload saves it for the session.
+            let game = \"\"\"
+              <script>
+              var opened = Number(sessionStorage.getItem('opened') || 0) + 1; sessionStorage.setItem('opened', opened);
+              var place = sessionStorage.getItem('kept') || 'start'; sessionStorage.removeItem('kept');
+              window.__lampReloadNow = function () { sessionStorage.setItem('kept', place); location.reload(); return true; };
+              </script>
+              \"\"\"
+            let plain = "<script>var opened = Number(sessionStorage.getItem('opened') || 0) + 1; sessionStorage.setItem('opened', opened); var place = 'start';</script>"
+            final class Files: NSObject, WKURLSchemeHandler {
+                func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
+                    let html = task.request.url?.path == "/game.html" ? game : plain
+                    task.didReceive(URLResponse(url: task.request.url!, mimeType: "text/html", expectedContentLength: -1, textEncodingName: "utf-8"))
+                    task.didReceive(Data(html.utf8))
+                    task.didFinish()
+                }
+                func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
+            }
+            final class Loads: NSObject, WKNavigationDelegate {
+                var count = 0
+                func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { count += 1 }
+            }
+            @MainActor func wait(_ done: () -> Bool) {
+                let limit = Date().addingTimeInterval(10)
+                while !done(), Date() < limit { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+            }
+            @MainActor func ask(_ view: WKWebView, _ script: String) -> String {
+                var said: String?
+                view.evaluateJavaScript(script, in: nil, in: .page) { said = (try? $0.get()).map { "\\($0)" } ?? "error" }
+                wait { said != nil }
+                return said ?? "no answer"
+            }
+            @MainActor func run(_ file: String, reopen: (WKWebView) -> Void) -> String {
+                let configuration = WKWebViewConfiguration()
+                configuration.setURLSchemeHandler(Files(), forURLScheme: "test-page")
+                let view = WKWebView(frame: CGRect(x: 0, y: 0, width: 200, height: 200), configuration: configuration)
+                let loads = Loads()
+                view.navigationDelegate = loads
+                view.load(URLRequest(url: URL(string: "test-page://app/\\(file)")!))
+                wait { loads.count == 1 }
+                _ = ask(view, "place = 'level 3'")
+                reopen(view)
+                wait { loads.count == 2 }
+                return ask(view, "place + ' ' + opened")
+            }
+            MainActor.assumeIsolated {
+                _ = NSApplication.shared
+                print(run("game.html") { LampPageView.reopen($0) })
+                print(run("plain.html") { LampPageView.reopen($0) })
+                print(run("game.html") { $0.reload() })
+            }
+            """
+        try main.write(to: dir.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
+        let built = TestShell.run(Shell.compatibleSDK + "xcrun swiftc -o reopen main.swift 2>&1", in: dir)
+        XCTAssertEqual(built.status, 0, built.output)
+        let ran = TestShell.run("./reopen", in: dir)
+        XCTAssertEqual(ran.output.split(separator: "\n").map(String.init), ["level 3 2", "start 2", "start 2"], ran.output)
     }
 }

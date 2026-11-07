@@ -809,9 +809,10 @@ enum LampPageGuard {
         view.uiDelegate = watcher
     }
 
-    /// Every page opened again, for rules that have changed under them: what it runs goes with it, its workers too.
+    /// Every page opened again, for rules that have changed under them: what it runs goes with it, its workers too. Each
+    /// opens again as Lamp's Reload opens it (`LampPageView.reopen`), so a game in any window keeps where the player was.
     @MainActor static func retirePages() {
-        for case let view as WKWebView in watchers.keyEnumerator().allObjects { view.reload() }
+        for case let view as WKWebView in watchers.keyEnumerator().allObjects { LampPageView.reopen(view) }
     }
 
     /// Lets the page reach `site` from now on, on this device, and opens every page of the app again with it: a page's
@@ -1180,13 +1181,21 @@ typealias LampPageHolderBase = UIView
         // The app menu's Reload, when Lamp has no change waiting: the page of the window in front opens again, a game
         // where the player was. The pages are the reader's (`LampPageReader.page`), so a closed window's isn't chosen.
         LampReload.page = {
-            LampPageReader.page(in: NSApp.keyWindow ?? NSApp.mainWindow)?
-                .evaluateJavaScript("window.__lampReloadNow ? window.__lampReloadNow() : location.reload()", in: nil, in: .page) { _ in }
+            LampPageReader.page(in: NSApp.keyWindow ?? NSApp.mainWindow).map(reopen)
         }
         #endif
         view.load(URLRequest(url: URL(string: "\(files.scheme)://app/index.html")!))
         return view
     }
+
+    // begin LampPageView.reopen
+    /// Opens the page again from its files, its document and workers made afresh (so it's served under the rules as they
+    /// are now), the way Lamp's Reload does: a game keeps where the player was (`__lampReloadNow` in lamp-game.js saves it
+    /// for this session first, and the game takes it back as it opens); any other page opens again as a browser reloads.
+    static func reopen(_ view: WKWebView) {
+        view.evaluateJavaScript("window.__lampReloadNow ? window.__lampReloadNow() : location.reload()", in: nil, in: .page) { _ in }
+    }
+    // end LampPageView.reopen
 
     /// A page laid out at a fixed size of its own (`canvas`), zoomed to the space it has; nil leaves it at the window's.
     static func fit(_ view: WKWebView, in size: CGSize, canvas: CGSize?) {
