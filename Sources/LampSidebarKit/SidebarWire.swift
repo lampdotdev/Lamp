@@ -7,8 +7,9 @@ import Foundation
 public enum SidebarWire {
     /// What this side reads and writes; see `SidebarCommand.hello`. 12: Put on GitHub's card (gone since: Release Update
     /// puts a wish on GitHub) showed the wish's picture and its box. 13: the GitHub cards fold the lines of sources only
-    /// credited under their own terms (`SidebarContribute.terms`).
-    public static let version = 13
+    /// credited under their own terms (`SidebarContribute.terms`). 14: Send Changes Back's card says why it's blocked and
+    /// offers what settles it (`ContributeCard.Stage.blocked`, `SidebarContributeCommand.settle`).
+    public static let version = 14
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -770,6 +771,8 @@ public struct SidebarContribute: Codable, Equatable {
 
 public enum SidebarContributeCommand: Codable, Equatable {
     case open, send, fix, openRequest, copy, close
+    /// A blocked card's first button: Review Update…, Check Update History or Try Again (`ContributeBlock.Reason`).
+    case settle
 }
 
 /// Put on GitHub's card's commands, as a chat of an earlier Lamp sends them (`SidebarCommand.repo`).

@@ -12,7 +12,8 @@ import LampSidebarKit
 /// version it arrived as) to the version the card was made from, each side as a shared file carries it, so Lamp's own
 /// files, written afresh by each Lamp, are never part of it (`Upstream.filteredTree`). Git then replays that change on
 /// the repository's latest commit three ways (`replay`): a file the wish didn't touch stays as its owner has it, and a
-/// file both changed in the same place stops the request, which Check for Updates… settles first. The manifest keeps
+/// file both changed in the same place stops the request (`Blocked`, for the reason Lamp can establish: their update,
+/// an update history it can't verify, or changes that don't combine with an unmoved repository). The manifest keeps
 /// the repository's identity and dates and takes only what the change says (`manifest`), credits.json keeps its chain
 /// and takes only work the change newly uses, and a shared file an older Lamp put beside the code is taken away
 /// (`removeSharedFile`). Everything is worked out before the card offers to send, as one commit in a
@@ -21,6 +22,35 @@ enum Contribute {
     struct Failure: LocalizedError {
         let message: String
         var errorDescription: String? { message }
+    }
+
+    /// Nothing can go until something is settled, for the reason Lamp could establish (`ContributeBlock`): the
+    /// repository moved since the commit the version's credits name and changed the same parts (`theyChanged`, which
+    /// reviewing the update settles); nothing says which version of theirs the changes are measured from
+    /// (`unverified`, which `recover` may settle); or the repository is still at that commit and the changes don't
+    /// combine with it (`couldNotCombine`).
+    struct Blocked: LocalizedError, Equatable {
+        let block: ContributeBlock
+        /// The repository's latest commit, when it's known: an update to review.
+        var tip: String? = nil
+        var errorDescription: String? { block.text }
+    }
+
+    /// The commit of the repository a version's credits say it's on top of: what its last accepted update brought, or
+    /// what it arrived as.
+    static func namedCommit(of project: LampProject, at version: String) async -> String? {
+        let named = await Upstream.run("git show \(version):\(Credits.file)", in: project)
+        guard named.status == 0 else { return nil }
+        return Credits.validCommit(Credits.decoded(Data(named.output.utf8))?.origin(own: GitHubRepo.kept(for: project)?.url)?.commit)
+    }
+
+    /// Why the change doesn't go on `tip`, from what Lamp can establish: the commit the version names (nil when it
+    /// names none) against the repository's latest.
+    static func blocked(_ files: [String], named: String?, tip: String) -> Blocked {
+        guard let named = named?.lowercased() else { return Blocked(block: ContributeBlock(.unverified)) }
+        let latest = tip.lowercased()
+        guard latest.hasPrefix(named) || named.hasPrefix(latest) else { return Blocked(block: ContributeBlock(.theyChanged, files: files), tip: tip) }
+        return Blocked(block: ContributeBlock(.couldNotCombine))
     }
 
     /// Where the changes would go. Nil for a wish that didn't come from a repository on GitHub. The commit its credits
@@ -136,11 +166,7 @@ enum Contribute {
             throw Failure(message: "\(project.name) has no changes of its own to send since it last took anything from \(source.owner)/\(source.name).")
         }
 
-        func stopped(_ files: [String]) -> Failure {
-            let named = files.prefix(3).joined(separator: ", ") + (files.count > 3 ? " and \(files.count - 3) more" : "")
-            return Failure(message: "\(source.owner)/\(source.name) changed the same parts of \(named) since \(project.name) last took anything from it. "
-                           + "Check for Updates… to bring their changes in, then send yours.")
-        }
+        func stopped(_ files: [String]) -> Blocked { blocked(files, named: change.namedCommit, tip: tip) }
         let replayed = try await replay(change, in: clone, tip: tip, git: git)
         guard replayed.conflicts.isEmpty else { throw stopped(replayed.conflicts) }
         _ = try must(await run(["read-tree", "--reset", "-u", replayed.tree]))
@@ -227,6 +253,40 @@ enum Contribute {
         return Request(url: url, branch: branch, fork: fork)
     }
 
+    // MARK: Recovering the update history
+
+    /// Check Update History: whether Lamp can tell what the saved version's changes are measured from (`base`), and when
+    /// it can't, that put right from the repository itself: the commit the version's credits name, fetched with the
+    /// person's sign-in and staged as the import would install it, kept as that commit's snapshot (`Upstream.snapshot`),
+    /// which is what an update taken in leaves. False when there's no saved version, its credits name no commit, or the
+    /// repository won't give that commit.
+    static func recover(_ project: LampProject, from source: RepoImport.Source, gh: String) async -> Bool {
+        let upstream = "\(source.owner)/\(source.name)"
+        return await recover(project, remote: "https://github.com/\(upstream).git", git: GitHubRepo.git, access: GitHubRepo.signedIn(gh: gh))
+    }
+
+    /// The same from any remote, with `access` the options git fetches it with: what tests give a repository on disk.
+    static func recover(_ project: LampProject, remote: String, git: String, access: [String]) async -> Bool {
+        guard let version = await Task.detached(operation: { Versions.savedVersion(of: project.dir) }).value else { return false }
+        guard let named = await namedCommit(of: project, at: version) else { return false }
+        if await base(of: project, at: version) != nil { return true }
+        let fm = FileManager.default
+        let folder = Sharing.workFolder.appendingPathComponent("lamp-contribute-history-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: folder) }
+        let clone = folder.appendingPathComponent("clone"), unpacked = folder.appendingPathComponent("named")
+        guard (try? fm.createDirectory(at: clone, withIntermediateDirectories: true)) != nil,
+              (try? fm.createDirectory(at: unpacked, withIntermediateDirectories: true)) != nil else { return false }
+        func run(_ arguments: [String], timeout: TimeInterval = 120) async -> Bool {
+            await Subprocess.run(git, ["-c", "core.hooksPath=/dev/null"] + arguments, cwd: clone, mergeErrors: false, timeout: timeout).ok
+        }
+        guard await run(["init", "-q"]), await run(["remote", "add", "upstream", remote]),
+              await run(access + ["fetch", "-q", "--depth", "1", "upstream", named], timeout: 600),
+              await Subprocess.run("/bin/sh", ["-c", "\(Sandbox.quoted(git)) archive --format=tar \(Sandbox.quoted(named)) | /usr/bin/tar -x -C \(Sandbox.quoted(unpacked.path))"],
+                                   cwd: clone, mergeErrors: false, timeout: 300).ok else { return false }
+        guard await Upstream.keepSnapshot(of: unpacked, commit: named, in: project) else { return false }
+        return await base(of: project, at: version) != nil
+    }
+
     // MARK: The wish's own change
 
     /// The version of the wish's own history its change is measured from, given the version being sent: the snapshot of
@@ -287,9 +347,7 @@ enum Contribute {
         try? fm.removeItem(at: indexes)
         try fm.createDirectory(at: indexes, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: indexes) }
-        guard let base = await base(of: project, at: version) else {
-            throw Failure(message: "Lamp can't tell which changes in \(project.name) are yours. Open it from GitHub again to send changes back.")
-        }
+        guard let base = await base(of: project, at: version) else { throw Blocked(block: ContributeBlock(.unverified)) }
         let baseTree = try await Upstream.filteredTree(of: base, in: project, indexes: indexes)
         let oursTree = try await Upstream.filteredTree(of: version, in: project, indexes: indexes)
         let listed = await Upstream.run("git diff-tree -r -z --no-renames --name-status \(baseTree) \(oursTree)", in: project)
@@ -392,8 +450,7 @@ enum Contribute {
         change.credits = Credits(upstream: ours.upstream.filter { source in !theirs.upstream.contains { $0.sameWork(as: source) } },
                                  generated: ours.generated.filter { added.contains($0.file) })
         change.manifest = await baseManifest(of: project, base: base)
-        let named = await Upstream.run("git show \(version):\(Credits.file)", in: project)
-        change.namedCommit = Credits.validCommit(Credits.decoded(Data(named.output.utf8))?.origin(own: GitHubRepo.kept(for: project)?.url)?.commit)
+        change.namedCommit = await namedCommit(of: project, at: version)
         return change
     }
 
@@ -649,6 +706,9 @@ enum Contribute {
             guard login.lowercased() != source.owner.lowercased() else {
                 return set(project, .refused("github.com/\(source.owner)/\(source.name) is your own repository: Release Update on its link puts your changes there."))
             }
+            cards[project.id]?.gh = gh
+            cards[project.id]?.login = login
+            cards[project.id]?.source = source
             let fork = await Contribute.fork(of: source, login: login, gh: gh)
             do {
                 let prepared = try await Contribute.prepare(project, from: source, gh: gh, login: login)
@@ -662,10 +722,59 @@ enum Contribute {
                 cards[project.id]?.fork = fork
                 cards[project.id]?.prepared = prepared
                 cards[project.id]?.stage = .ready
+            } catch let blocked as Contribute.Blocked {
+                // Their update is known now: the menu and the card both say Review Update…, and it reviews that one.
+                if let tip = blocked.tip { Store.shared.knowUpdate(of: project, tip: tip) }
+                set(project, .blocked(blocked.block))
             } catch {
                 set(project, .refused(((error as? LocalizedError)?.recoverySuggestion).map { "\(error.localizedDescription) \($0)" } ?? error.localizedDescription))
             }
         }
+    }
+
+    static let checkingHistory = "Checking the update history…"
+
+    /// Wishes whose card was put aside to review their update: once it's applied, the card is prepared again for them.
+    private var waitingForUpdate: Set<String> = []
+
+    /// A blocked card's first button. Review Update… puts the card aside and reviews the update; once it's in, the card
+    /// is prepared again (`updateApplied`). Check Update History checks what the changes are measured from, puts it right
+    /// when it can, and prepares the card again. Try Again prepares it again. Nothing is ever sent from here.
+    func settle(_ project: LampProject) {
+        guard case .blocked(let block) = cards[project.id]?.stage else { return }
+        switch block.reason {
+        case .theyChanged:
+            close(project)
+            waitingForUpdate.insert(project.id)
+            // Their repository's changes, even for a starter's copy, whose updates otherwise follow the starter this Lamp
+            // ships: those may never have what blocked the send.
+            Store.shared.reviewUpdate(project, ofRepository: true)
+        case .unverified, .notRecovered:
+            guard let source = cards[project.id]?.source ?? Contribute.origin(of: project) else { return set(project, .blocked(ContributeBlock(.notRecovered))) }
+            set(project, .working(Self.checkingHistory))
+            Task {
+                let recovered: Bool
+                if let gh = await Publish.gh() { recovered = await Contribute.recover(project, from: source, gh: gh) } else { recovered = false }
+                guard cards[project.id] != nil else { return }
+                if recovered { prepare(project) } else { set(project, .blocked(ContributeBlock(.notRecovered))) }
+            }
+        case .couldNotCombine:
+            prepare(project)
+        }
+    }
+
+    /// An update is in the wish: a card put aside for it comes back, prepared afresh. It isn't sent.
+    func updateApplied(_ project: LampProject) {
+        guard waitingForUpdate.remove(project.id) != nil else { return }
+        open(project)
+    }
+
+    /// Whether the card is still working out what would go: the desk says so beside the wish.
+    func isPreparing(_ project: LampProject) -> Bool {
+        guard let stage = cards[project.id]?.stage else { return false }
+        if case .preparing = stage { return true }
+        if case .working(Self.checkingHistory) = stage { return true }
+        return false
     }
 
     private func set(_ project: LampProject, _ stage: ContributeCard.Stage) { cards[project.id]?.stage = stage }
@@ -713,6 +822,7 @@ enum Contribute {
     func close(_ project: LampProject) {
         if let prepared = cards[project.id]?.prepared { try? FileManager.default.removeItem(at: prepared.folder) }
         cards[project.id] = nil
+        waitingForUpdate.remove(project.id)
     }
 
     /// The card as the chat draws it.

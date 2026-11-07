@@ -86,6 +86,26 @@ final class AppUpdatesTests: XCTestCase {
         XCTAssertNotNil(AppUpdates.route(for: Credits(upstream: [slop]), own: nil))
     }
 
+    /// Beside the wish on the desk, each stage of its update and of the changes it sends back, with the button that goes to
+    /// the right chat: the copy's while the update is prepared there, the wish's otherwise.
+    func testTheDeskSaysWhereTheUpdateIsAndGoesToItsChat() {
+        func line(sending: Bool = false, settingUp: Bool = false, copy: AppUpdates.CopyState? = nil, outcome: AppUpdates.Outcome? = nil) -> AppUpdates.DeskLine? {
+            AppUpdates.deskLine(wish: "wish", sending: sending, settingUp: settingUp, copy: copy, outcome: outcome)
+        }
+        XCTAssertEqual(line(settingUp: true), .init(text: "Updating…", button: "Show Chat", go: .chat("wish")))
+        XCTAssertEqual(line(copy: .init(id: "copy", ready: false, working: true, asking: false)),
+                       .init(text: "Updating…", button: "Show Chat", go: .chat("copy")))
+        XCTAssertEqual(line(copy: .init(id: "copy", ready: false, working: true, asking: true)),
+                       .init(text: "Your update needs a decision.", button: "Continue in Chat", go: .chat("copy")))
+        XCTAssertEqual(line(outcome: .applied), .init(text: "Update applied.", button: "Show Chat", go: .chat("wish")))
+        XCTAssertEqual(line(outcome: .separate("kept")), .init(text: "Separate app added.", button: "Show Separate App", go: .app("kept")))
+        XCTAssertEqual(line(sending: true, outcome: .applied), .init(text: "Preparing your changes…", button: "Show Chat", go: .chat("wish")))
+        // A copy that stopped, or is ready for review, leaves it to the line of what was last heard (Review).
+        XCTAssertNil(line(copy: .init(id: "copy", ready: false, working: false, asking: false)))
+        XCTAssertNil(line(copy: .init(id: "copy", ready: true, working: false, asking: false)))
+        XCTAssertNil(line())
+    }
+
     func testNothingThePersonReadsNamesWhereTheUpdateComesFrom() {
         let said = [AppUpdates.request] + [AppUpdates.Availability.checking, .upToDate, .available, .failed, .preparing, .ready].map(\.line)
         for line in said {
@@ -329,6 +349,37 @@ final class AppUpdateBoundaryTests: XCTestCase {
         XCTAssertThrowsError(try store.forwarded([QueuedMessage(text: "Use this", attachments: [gone])], from: update)) { error in
             XCTAssertTrue(error.localizedDescription.contains("gone.txt"), error.localizedDescription)
         }
+    }
+
+    /// An update merged with conflicts is in only once the agent's turn that settles them finishes well: a turn about
+    /// something else leaves it waiting, a question keeps it waiting with its answer counted, and a failed turn lets it go.
+    @MainActor
+    func testAConflictedUpdateIsAppliedOnceTheAgentSettlesIt() throws {
+        let apps = root.appendingPathComponent("Apps")
+        try FileManager.default.createDirectory(at: apps, withIntermediateDirectories: true)
+        let wish = try Template.draft(name: "New York", in: apps)
+        let store = Store(testingAt: apps)
+        let app = try XCTUnwrap(store.current(wish))
+        let request = "Bring in what's new in New York, keeping my changes."
+        store.mergingUpdates[app.id] = AppUpdates.MergePending(request: request)
+
+        store.settleMergedUpdate(app, messages: [QueuedMessage(text: "Make the sky pink")], end: .changed, asked: false)
+        XCTAssertNil(store.updateOutcomes[app.id])
+        XCTAssertNotNil(store.mergingUpdates[app.id])
+
+        store.settleMergedUpdate(app, messages: [QueuedMessage(text: request)], end: .replied, asked: true)
+        XCTAssertNil(store.updateOutcomes[app.id], "a question is still open")
+        let answer = UUID()
+        store.mergingUpdates[app.id]?.cards.append(answer.uuidString)
+        store.settleMergedUpdate(app, messages: [QueuedMessage(text: "Keep mine", card: answer)], end: .changed, asked: false)
+        XCTAssertEqual(store.updateOutcomes[app.id], .applied)
+        XCTAssertNil(store.mergingUpdates[app.id])
+
+        store.updateOutcomes[app.id] = nil
+        store.mergingUpdates[app.id] = AppUpdates.MergePending(request: request)
+        store.settleMergedUpdate(app, messages: [QueuedMessage(text: request)], end: .failed, asked: false)
+        XCTAssertNil(store.updateOutcomes[app.id])
+        XCTAssertNil(store.mergingUpdates[app.id])
     }
 
     /// A message sent to a copy while Update deletes it goes to the app the copy went into, however long deleting takes.

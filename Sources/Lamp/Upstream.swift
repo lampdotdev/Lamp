@@ -297,6 +297,40 @@ enum Upstream {
         return mark
     }
 
+    /// The repository's files at `commit`, unpacked in `folder`, kept as that commit's snapshot (`snapshot`) as an update
+    /// taken in keeps one: staged as the import would install them, with the manifest and credits they came with beside
+    /// them. What Check Update History puts back when nothing says what a wish's changes are measured from
+    /// (`Contribute.recover`). False when they can't be read as a wish or git couldn't keep them.
+    static func keepSnapshot(of folder: URL, commit: String, in project: LampProject) async -> Bool {
+        guard let commit = Credits.validCommit(commit), let package = try? RepoImport.open(folder: folder) else { return false }
+        let fm = FileManager.default
+        defer { try? fm.removeItem(at: package.folder) }
+        // Indexes of its own, never the merge's (`.lamp/merge`): nothing holds the wish meanwhile, so an update may be
+        // merging at the same time, and neither may clear the other's.
+        let indexes = project.dir.appendingPathComponent(".lamp/recover-\(UUID().uuidString)")
+        let work = Sharing.workFolder.appendingPathComponent("lamp-upstream-\(UUID().uuidString)")
+        defer {
+            try? fm.removeItem(at: work)
+            try? fm.removeItem(at: indexes)
+        }
+        do {
+            try fm.createDirectory(at: indexes, withIntermediateDirectories: true)
+            let staged = work.appendingPathComponent("named")
+            try stage(package, for: project, into: staged)
+            let kept = ["lamp-app.json", Credits.file].filter { fm.fileExists(atPath: package.folder.appendingPathComponent($0).path) }
+            for name in kept {
+                try? fm.removeItem(at: staged.appendingPathComponent(name))
+                try fm.copyItem(at: package.folder.appendingPathComponent(name), to: staged.appendingPathComponent(name))
+            }
+            let tree = try await tree(of: staged, in: project, indexes: indexes)
+            let made = await run("git -c user.name=Lamp -c user.email=lamp@localhost commit-tree \(tree) -m 'Upstream as Lamp read it, recovered'", in: project)
+            guard made.status == 0, let mark = Credits.validCommit(made.output) else { return false }
+            return await run("git update-ref \(snapshot(commit)) \(mark)", in: project).status == 0
+        } catch {
+            return false
+        }
+    }
+
     /// The repository's commit as the import would install it: its tree read as a repository is (`RepoImport.open`)
     /// and staged (`stage`), so the base and the new code are laid out alike, whatever the kind of app does on the
     /// way in. Nil for a tree Lamp can't read as a wish (one put up before lamp-app.json), which the arrival stands

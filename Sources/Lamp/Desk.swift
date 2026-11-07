@@ -139,6 +139,12 @@ struct WishDesk: View {
         .task { starters = await Task.detached { Starters.bundled.map(DeskList.Fresh.read) }.value }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in lookForDevices() }
         .onChange(of: store.deskFocusRequest) { barFocused = true }
+        // Show Separate App beside a wish: the app it was kept as, picked.
+        .onChange(of: store.deskPickRequest) {
+            guard let id = store.deskPickRequest else { return }
+            picked = id
+            store.deskPickRequest = nil
+        }
         .onDisappear {
             dictation.cancel()
             DeskPick.shared.wish = nil
@@ -1444,11 +1450,12 @@ extension Store {
         }
     }
 
-    /// Send Changes Back… from the desk: the wish's chat, with the card that sends them (`ContributeCards`), as the
-    /// chat's Share menu opens it.
+    /// Send Changes Back… from the desk: the wish's chat in front, wherever it is now, with the card that sends them
+    /// (`ContributeCards`) in the chat's place, as the chat's Share menu opens it. A card already open comes to the front
+    /// as it is.
     func sendChangesBack(_ project: LampProject) {
-        open(fromDesk: project)
         ContributeCards.shared.open(project)
+        showChat(project.id)
     }
 
     /// Change… on a wish: its chat beside it in its own window, opening it when it's closed, for a Mac app with

@@ -441,9 +441,13 @@ finished with no error (`Store.settleUpdate`) the copy takes the update's commit
 (`Store.openPreparedReview`: `Sharing.review` of the copy as exported, `PendingImport.prepared`). Update puts the copy's
 files in place of the wish's through the ordinary update path, never `mergeUpdate`, since the copy already has the
 wish's changes; the wish keeps its own credits with the commit moved on, and the copy is deleted. If the wish changed
-since the copy was made (`AppUpdates.isStale`), Update offers to prepare it again instead. Keep Both keeps the copy as an
-app of its own, renamed after the wish; Cancel deletes it. Review Update… while a copy exists shows its chat, or its
-review once it's ready. A base that's no longer on GitHub fails the fetch rather than making up a change. File → Open
+since the copy was made (`AppUpdates.isStale`), Update This App offers to prepare it again instead. Keep as Separate App
+keeps the copy as an app of its own, renamed after the wish; Cancel deletes it. Review Update… while a copy exists shows
+its chat, or its review once it's ready. Beside the wish, the desk says how it's going with one button to the right chat
+(`AppUpdates.deskLine`): Updating… and Your update needs a decision. go to the copy's chat, Update applied. and
+Preparing your changes… (a Send Changes Back card working out what goes) to the wish's, and Separate app added. picks
+the app it was kept as. What came of the update (`Store.updateOutcomes`) lasts until the wish is checked or reviewed
+again, and isn't kept across launches. A base that's no longer on GitHub fails the fetch rather than making up a change. File → Open
 from GitHub… on a project that isn't a wish offers Make App, a new wish whose first request is to make it into one.
 
 A shared app's review is one piece of work Lamp owns from the click to the answer (`Store.ReviewWork`): fetching the
@@ -457,9 +461,9 @@ AI's check didn't finish.
 
 A wish whose chain names where it came from is updated as it was opened
 (Review Update… in the desk's menu, `Store.reviewUpdate`; a starter's copy too, "Desk"): the repository fetched again and opened as any is,
-which lands on Update or Keep Both for that wish (`Store.importRepository(updating:)`, carried through a review that
+which lands on Update or Keep as Separate App for that wish (`Store.importRepository(updating:)`, carried through a review that
 waits for the welcome, `Store.copy(of:among:updating:)`: whatever identity the repository's file carries, so a starter's
-copy or a second copy made with Keep Both is the one updated). A wish unchanged since it arrived
+copy or a second copy made with Keep as Separate App is the one updated). A wish unchanged since it arrived
 (`Store.changedSinceArrival`: its files are the last version Lamp saved as an arrival, and nothing is unsaved; looked
 at again once the update owns the wish, since a turn may have run while the review waited) takes the new code in
 place. One changed here is merged by git (`Upstream.merge`, from `Store.mergeUpdate`), never replaced: the wish's own
@@ -511,8 +515,18 @@ changed (`Contribute.change`). A plain site's paths go back to its repository's 
 at the root, Lamp's files in `.lamp-wish/`). The repository's latest commit is fetched into a folder of Lamp's with the person's
 sign-in, and git replays the change on it three ways (`Contribute.replay`, `git merge-tree` on commits made of each
 side, which a git from before merge-tree took trees needs): files the wish didn't
-touch stay as the owner has them, and a file both changed in the same place stops it, asking for Check for Updates…
-first. An Android app's touched files go back to the repository's package (its build file's namespace): their paths,
+touch stay as the owner has them, and a file both changed in the same place stops it (`Contribute.Blocked`). The card
+then says the reason Lamp can establish from the commit the version's credits name against the repository's latest
+(`ContributeBlock`): the repository moved since, so Review Update… (the latest is then known, `Store.knowUpdate`, so the
+menu says Review Update… too) puts the card aside and reviews the repository's update (a starter's copy too, rather
+than the starter this Lamp ships, `reviewUpdate(ofRepository:)`), and once an update is in the wish
+(`Store.updateApplied`: put in place, merged cleanly, or merged with conflicts once the agent's turn settling them
+finishes well, `Store.settleMergedUpdate`) the card is prepared again, never sent; the credits name no commit, or nothing says what the
+change is measured from, so Check Update History (`Contribute.recover`) fetches the commit the credits name with the
+person's sign-in, keeps it as that commit's snapshot as an update taken in would (`Upstream.keepSnapshot`, in indexes of its own so an
+update merging meanwhile keeps its own) and prepares
+the card again, or says it couldn't; or the repository is still at that commit and the change doesn't combine with it,
+with Try Again. A sidebar from before these cards gets the reason as a refusal with Done. An Android app's touched files go back to the repository's package (its build file's namespace): their paths,
 the package in them, and the build file without the id Lamp set for this Mac. The manifest keeps the repository's
 identity, name and date and takes the line, kind, device and apps wherever the wish changed them since its base
 (`Contribute.manifest`): measured from the manifest kept with the last update's snapshot or the one the wish last

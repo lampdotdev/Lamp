@@ -829,6 +829,11 @@ enum Gallery {
         updateLine("Fetching an update", Store.ReviewWork(wish: "drive-anywhere", stage: .fetching)),
         updateLine("Update couldn't be fetched", Store.ReviewWork(wish: "drive-anywhere",
                                                                    stage: .failed("Lamp couldn't get someone/drive-anywhere from GitHub. Check the address and that you're online."))),
+        deskLine("Updating", AppUpdates.DeskLine(text: "Updating…", button: "Show Chat", go: .chat(""))),
+        deskLine("Update needs a decision", AppUpdates.DeskLine(text: "Your update needs a decision.", button: "Continue in Chat", go: .chat(""))),
+        deskLine("Update applied", AppUpdates.DeskLine(text: "Update applied.", button: "Show Chat", go: .chat(""))),
+        deskLine("Separate app added", AppUpdates.DeskLine(text: "Separate app added.", button: "Show Separate App", go: .app(""))),
+        deskLine("Preparing changes to send back", AppUpdates.DeskLine(text: "Preparing your changes…", button: "Show Chat", go: .chat(""))),
         // Someone's suggested change, before it's tried in a copy (`SuggestionTrial`).
         review("Trying a suggested change", ImportReview(summary: "A cozy little room on a rainy night, with a brighter fire and a Crackle slider.",
                                                          capabilities: ["Plays sounds"], concerns: [], risk: .low,
@@ -909,6 +914,16 @@ enum Gallery {
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
                 .fixedSize())
+        }
+    }
+
+    /// A wish's update, or the changes it sends back, under way or just done, beside it on the desk.
+    private static func deskLine(_ name: String, _ line: AppUpdates.DeskLine) -> Entry {
+        Entry(group: "Shared app", name: name) {
+            AnyView(DeskUpdateLineView(line: line, go: {})
+                .padding(18)
+                .frame(width: 420, alignment: .leading)
+                .background(Paper.card, in: RoundedRectangle(cornerRadius: 16)))
         }
     }
 
@@ -1073,6 +1088,11 @@ enum Gallery {
         contribute("Ready, many sources", stage: .ready, notes: [unlicensedData], terms: manySources),
         contributeScreen("Ready, many sources, in the chat", stage: .ready),
         contributeScreen("Couldn't send, many sources, in the chat", stage: .failed(longFailure)),
+        contribute("Their changes overlap", stage: .blocked(ContributeBlock(.theyChanged, files: ["Sources/Streets.swift", "Sources/Map.swift"]))),
+        contribute("Can't verify the last update", stage: .blocked(ContributeBlock(.unverified))),
+        contribute("Checking the update history", stage: .working(ContributeCards.checkingHistory)),
+        contribute("Couldn't recover the history", stage: .blocked(ContributeBlock(.notRecovered))),
+        contribute("Couldn't combine", stage: .blocked(ContributeBlock(.couldNotCombine))),
         contribute("Working", stage: .working("Opening the pull request…")),
         contribute("Couldn't send", stage: .failed("GitHub didn't take it: the connection was lost.")),
         contribute("Nothing to send", stage: .failed("someone/new-york already has everything this app has: there's nothing to send.")),
@@ -1085,7 +1105,7 @@ enum Gallery {
                                    copied: Bool = false, width: CGFloat? = nil) -> Entry {
         Entry(group: "GitHub", name: "Send back: " + name) {
             let folder = Starters.folder?.appendingPathComponent("newyork")
-            let ready = stage != .preparing
+            let ready = stage != .preparing && { if case .blocked = stage { false } else { true } }()
             let card = ContributeCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) }, name: "New York",
                                       stage: stage, upstream: ready ? "someone/new-york" : nil, fork: ready && fork ? "else/new-york" : nil,
                                       credit: "Based on Slop New York by Mr.doob", notes: notes, terms: terms, size: ready ? "38 files · 1.2 MB" : nil, copied: copied,
@@ -1106,7 +1126,7 @@ enum Gallery {
         "Park Benches", "River Gauge", "Snow Routes",
     ].map { "\($0) is used under its own terms (LicenseRef-City-Open-Data)." }
     private static let unlicensedData = "River Sampling by the State, Live Bus Positions by the Transit Authority, and Road Closures by the City came with no license. Make sure you're comfortable sharing them."
-    private static let longFailure = "GitHub didn't take it: the branch couldn't be pushed to else/new-york because the fork is behind someone/new-york and was changed since it was checked. Check for Updates… brings their changes in first, then Send Changes Back tries again."
+    private static let longFailure = "GitHub didn't take it: the branch couldn't be pushed to else/new-york because the fork is behind someone/new-york and was changed since it was checked. Review Update… brings their changes in first, then Send Changes Back tries again."
 
     /// The card in the chat's place, in a chat too short for all of it: its words scroll and its buttons stay.
     private static func contributeScreen(_ name: String, stage: ContributeCard.Stage) -> Entry {

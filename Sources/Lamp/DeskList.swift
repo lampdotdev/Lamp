@@ -508,6 +508,9 @@ struct DeskListRow: View {
 /// Duplicate…. A starter not on the desk yet shows the same, and is copied as it opens or its remix is sent.
 struct DeskDetail: View {
     @EnvironmentObject private var store: Store
+    /// The Send Changes Back cards publish on their own: the line beside the wish follows them as they're prepared and
+    /// closed (`AppUpdates.DeskLine`).
+    @ObservedObject private var contributeCards = ContributeCards.shared
     let item: DeskList.Item
     var kept = false
     let remixes: [LampProject]
@@ -559,10 +562,15 @@ struct DeskDetail: View {
                 if let project, let work = store.deskReview(of: project.id) {
                     ReviewWorkLine(work: work, retry: store.retryReview, cancel: { store.cancelReview(of: project.id) })
                 }
+                // Its update, or the changes it sends back, while under way or just done: said in a few words, with the
+                // one button that goes to it (`AppUpdates.DeskLine`).
+                if let project, store.deskReview(of: project.id) == nil, let line = store.deskUpdateLine(of: project) {
+                    DeskUpdateLineView(line: line) { store.go(to: line) }
+                }
                 // The copies it follows, the one it started from first: what was last heard of each, with the one button
                 // that checks it again or pulls in what's new (`Following`). Asking checks by itself when the last check is
                 // a day old.
-                if let project, !kept, !store.followingRows(of: project).isEmpty {
+                else if let project, !kept, !store.followingRows(of: project).isEmpty {
                     FollowingList(rows: store.followingRows(of: project), busy: store.busy.contains(project.id),
                                   pullIn: { store.pullIn($0, into: project) }, check: { store.checkFollowing($0, of: project) },
                                   unfollow: { store.unfollow($0, for: project) })
@@ -752,6 +760,20 @@ struct DeskWishMenu: View {
 
     /// The one item for a wish's updates: it checks, and once there's one (being prepared, or ready), reviews it.
     static func updateTitle(reviews: Bool) -> String { reviews ? "Review Update…" : "Check for Updates…" }
+}
+
+/// A wish's update, or the changes it sends back, while under way or just done, beside the wish: what's going on, with
+/// the one button that goes to it (`AppUpdates.DeskLine`). Drawn from plain values, so the gallery shows it.
+struct DeskUpdateLineView: View {
+    let line: AppUpdates.DeskLine
+    let go: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(line.text).font(.system(size: 13)).foregroundStyle(Paper.muted)
+            Button(line.button, action: go).buttonStyle(PaperButtonStyle(.outline, height: 26))
+        }
+    }
 }
 
 /// A wish's update review while it's made, beside the wish: the stage it's at with Cancel, or why it couldn't be made

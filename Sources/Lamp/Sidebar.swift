@@ -1341,6 +1341,7 @@ final class SidebarServer {
             case .open: cards.open(project)
             case .send: cards.send(project)
             case .fix: cards.fix(project)
+            case .settle: cards.settle(project)
             case .openRequest: cards.openRequest(project)
             case .copy: cards.copy(project)
             case .close: cards.close(project)
@@ -1531,6 +1532,12 @@ final class SidebarServer {
             // gets them among the notes, where it showed them.
             if version < 13 {
                 if var card = state.contribute, let terms = card.terms { card.notes = terms + card.notes; card.terms = nil; state.contribute = card }
+            }
+            // Nor one from before a blocked card could say why and offer what settles it, which would drop the whole
+            // chat: it gets why, with Done.
+            if version < 14, var card = state.contribute, case .blocked(let block) = card.stage {
+                card.stage = .refused(block.text)
+                state.contribute = card
             }
             // A sidebar from before the summary line can't read one, and would drop the whole chat.
             if version < 2 { state.lines.removeAll { $0.kind == .summary } }
