@@ -1373,14 +1373,21 @@ enum Shell {
     /// Put this before a build command. The macOS 27 SDK makes `@State` a macro, and its compiler plugin
     /// only ships with full Xcode. With just the Command Line Tools, this builds against the newest
     /// installed SDK that doesn't need the plugin. The same lines are in Lamp's own build.sh.
+    /// An `SDKROOT` Lamp was started with is kept unless it's one of those SDKs: a launch from a shell can hand
+    /// Lamp one it never chose (Apple's /usr/bin/python3 sets it to the tools' newest SDK), and a build against it
+    /// can't compile `@State`. One that isn't there is kept too, so setup says it's Lamp's setting (`SetupCheck`).
     static let compatibleSDK = #"""
     dev="${DEVELOPER_DIR:-$(/usr/bin/xcode-select -p 2>/dev/null)}"
-    if [ -z "${SDKROOT:-}" ] && [ -d "$dev/SDKs" ] && [ ! -e "$dev/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]; then
-      for sdk in "$dev"/SDKs/MacOSX*.sdk(/NnOn); do
-        if ! /usr/bin/grep -qs StateMacro /dev/null "$sdk"/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/*-macos.swiftinterface(N); then
-          export SDKROOT="$sdk"; break
-        fi
-      done
+    if [ -d "$dev/SDKs" ] && [ ! -e "$dev/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]; then
+      lamp_sdk="${SDKROOT:-}"
+      case "$lamp_sdk" in ""|/*) ;; *) lamp_sdk="$(/usr/bin/xcrun --sdk "$lamp_sdk" --show-sdk-path 2>/dev/null)" ;; esac
+      if [ -z "${SDKROOT:-}" ] || /usr/bin/grep -qs StateMacro /dev/null "$lamp_sdk"/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/*-macos.swiftinterface(N); then
+        for sdk in "$dev"/SDKs/MacOSX*.sdk(/NnOn); do
+          if ! /usr/bin/grep -qs StateMacro /dev/null "$sdk"/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/*-macos.swiftinterface(N); then
+            export SDKROOT="$sdk"; break
+          fi
+        done
+      fi
     fi
 
     """#

@@ -45,6 +45,23 @@ final class MacSDKCheckTests: XCTestCase {
         XCTAssertEqual(SetupCheck.macSDKRepair(env: ["SDKROOT": root.appendingPathComponent("MacOSX.sdk").path]), .sdkSetting)
     }
 
+    /// Lamp opened from a shell that set `SDKROOT` to the Command Line Tools' newest SDK (Apple's /usr/bin/python3
+    /// does): an app's build still takes an SDK whose `@State` needs no plugin those tools lack, and compiles.
+    func testAnInheritedSDKThatNeedsTheMissingPluginIsNotBuiltAgainst() throws {
+        let tools = SetupCheck.commandLineTools
+        let fm = FileManager.default
+        try XCTSkipUnless(fm.fileExists(atPath: tools + "/usr/bin/swiftc")
+                          && !fm.fileExists(atPath: tools + "/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib"),
+                          "These Command Line Tools have the plugin, or aren't here.")
+        let needsPlugin = TestShell.run("/usr/bin/grep -qs StateMacro /dev/null \(tools)/SDKs/MacOSX.sdk/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/*-macos.swiftinterface(N)")
+        try XCTSkipUnless(needsPlugin.status == 0, "The tools' newest SDK doesn't make @State a macro.")
+        try "import SwiftUI\nstruct Counter: View { @State var count = 0; var body: some View { Text(\"\\(count)\") } }\n"
+            .write(to: root.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
+        let built = TestShell.run(Shell.compatibleSDK + "/usr/bin/xcrun swiftc -typecheck main.swift 2>&1", in: root,
+                                  env: ["DEVELOPER_DIR": tools, "SDKROOT": tools + "/SDKs/MacOSX.sdk"])
+        XCTAssertEqual(built.status, 0, built.output)
+    }
+
     /// The SDK this Mac's tools find by themselves.
     private func realSDK() -> String? {
         let found = Subprocess.runBlocking("/usr/bin/env", ["-u", "SDKROOT", "/usr/bin/xcrun", "--no-cache", "--sdk", "macosx", "--show-sdk-path"],
