@@ -359,12 +359,19 @@ Lamp starts no process for it and sees none of its commands, so its shell is und
   reads), and each connection's peer must be the person's user. The first line each way is a handshake with
   `OutsideKit.protocolVersion`. Lamp not running is started from the helper's own bundle; a call under way when Lamp
   ends is answered `interrupted`.
+- **Taking a folder on.** `open_project` goes through the same import review as any app that comes to Lamp
+  (`Store.importApp` with an `OutsideImport`): the fixed checks, the AI's check when AI is set up, and the person's
+  Build & Open, always as a new app and with no chat opened beside it. The call waits for that answer. The app's first
+  build is what the review installed, never the folder read again; an edit made while the review was up is pending
+  for the next apply. Later applies are the agent's own work, as a chat's turns are, and aren't reviewed again.
 - **The folder and the workspace.** The folder stays the source and its git is the person's: Lamp never writes in it.
-  What builds and runs is a project in Lamp's apps folder made once by `open_project` (scaffold and `Sharing.install`,
-  as an import), so LiveReload's live copy, libraries and runtime folder stay where they always are. Each apply captures
+  What builds and runs is the project in Lamp's apps folder the review made, so LiveReload's live copy, libraries and
+  runtime folder stay where they always are. Each apply captures
   the folder as the import reads one (`RepoImport.open`), checks the bytes copied against the folder before and after,
   writes into the workspace only what differs (`OutsideWork.sync`), then builds and installs as a look does, holding
-  the project as Lamp's own work does (`Store.begin`). Folders are known by real path, device and inode
+  the project as Lamp's own work does (`Store.begin`). That hold is a `Turn` with no request and no agent, and what
+  became of the change is read from its `outcomes`, as a look reads it; pulling the apply and its checks out of
+  `Turn` into something of their own is still to do. Folders are known by real path, device and inode
   (`Outside/adopted.json`); a folder put in another's place is refused until `open_project` takes it on.
 - **One at a time.** Every call on a folder waits for the one before it, whatever connection sent it
   (`outsideSerially`). An apply answers stale when the folder changed while it built. `operation_id` replays an apply

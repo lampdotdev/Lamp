@@ -62,7 +62,7 @@ enum OutsideWork {
         let path: [String: Any] = ["type": "string", "description": "The folder's absolute path."]
         return [
             ["name": "open_project",
-             "description": "Has Lamp take on a Lamp-format Mac app in a folder (lamp-app.json and its code at the top), build it and open it. Lamp asks the person first. Call again if Lamp says the folder moved or is missing.",
+             "description": "Has Lamp take on a Lamp-format Mac app in a folder (lamp-app.json and its code at the top), build it and open it. Lamp shows the person its review of the code first, as for any app that comes to it, and builds it only if they choose Build & Open. Call again if Lamp says the folder moved or is missing.",
              "inputSchema": ["type": "object", "properties": ["path": path], "required": ["path"]]],
             ["name": "apply_change",
              "description": "Builds what the folder holds now and puts it into the open app. Answers the outcome: live (went into the running app, window as it was), reopened (closed and opened again for it), opened (it wasn't open), held (waits for the person's Reload), unchanged (nothing new), not_built (compiler errors follow), crashed (the app quit; its log follows), stale (the folder changed while Lamp built it: apply again), cancelled. Retrying with the same operation_id gets the first answer.",
@@ -118,11 +118,14 @@ enum OutsideWork {
     struct Capture {
         let package: Sharing.Package
         let hashes: [String: String]
-        var fingerprint: String {
-            var hasher = SHA256()
-            for (path, hash) in hashes.sorted(by: { $0.key < $1.key }) { hasher.update(data: Data((path + "\0" + hash + "\n").utf8)) }
-            return hasher.finalize().map { String(format: "%02x", $0) }.joined()
-        }
+        var fingerprint: String { OutsideWork.fingerprint(hashes) }
+    }
+
+    /// One digest of a folder's reading, to tell whether what's in the app is what the folder holds.
+    static func fingerprint(_ hashes: [String: String]) -> String {
+        var hasher = SHA256()
+        for (path, hash) in hashes.sorted(by: { $0.key < $1.key }) { hasher.update(data: Data((path + "\0" + hash + "\n").utf8)) }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     struct CaptureProblem: Error { let text: String }
@@ -229,6 +232,26 @@ enum OutsideWork {
             changed.append(path)
         }
         return changed.sorted()
+    }
+}
+
+/// A folder waiting on Lamp's import review for `open_project` (`Store.importApp`): told once, with the app made or
+/// why there's none, whichever way the review ends.
+@MainActor final class OutsideImport {
+    let repo: String
+    /// Build & Open was chosen: the review closing after that isn't a no.
+    var confirmed = false
+    private var done: ((LampProject?, String?) -> Void)?
+
+    init(repo: String, done: @escaping (LampProject?, String?) -> Void) {
+        self.repo = repo
+        self.done = done
+    }
+
+    func finish(_ project: LampProject?, _ why: String?) {
+        let done = self.done
+        self.done = nil
+        done?(project, why)
     }
 }
 
@@ -342,41 +365,32 @@ extension Store {
         do { capture = try await Self.offMain { Result { try OutsideWork.capture(repo) } }.get() } catch {
             return .refused((error as? OutsideWork.CaptureProblem)?.text ?? error.localizedDescription)
         }
-        defer { try? FileManager.default.removeItem(at: capture.package.folder) }
         let package = capture.package
+        try? FileManager.default.removeItem(at: package.folder)
         guard package.platform == .mac, package.parts.isEmpty else {
             return .refused("For now Lamp takes on only a Mac app on its own; this is \(package.platform.target.identity.name)\(package.parts.isEmpty ? "" : " with other apps").")
         }
-        // The person agrees before code from a folder is built and run, as they do for any app that comes to Lamp.
-        let alert = NSAlert()
-        alert.messageText = "Build “\(package.name)” from a folder?"
-        alert.informativeText = "Your coding agent asked \(Edition.name) to build and open the app in \(now.real). \(Edition.name) won't change anything in that folder."
-        alert.addButton(withTitle: "Build It")
-        alert.addButton(withTitle: "Don't Build")
-        NSApp.activate()
-        guard alert.runModal() == .alertFirstButtonReturn else { return .refused("The person chose not to build it.") }
-        let project: LampProject
-        do {
-            project = try Template.scaffold(name: uniqueName(package.name), platform: package.platform, family: package.family, in: root)
-            try Sharing.install(package, into: project)
-            if let identity = package.identity, !projects.contains(where: { Sharing.identity(of: $0, create: false) == identity }) {
-                Sharing.setIdentity(identity, of: project)
-            }
-        } catch {
-            return .refused("Lamp couldn't set up its copy: \(error.localizedDescription)")
+        // The same review as any app that comes to Lamp: its fixed checks, the AI's check when AI is set up, and the
+        // person's Build & Open. The agent's call waits for that answer.
+        let before = await Self.offMain { OutsideWork.hashes(of: repo) }
+        let made: (LampProject?, String?) = await withCheckedContinuation { answered in
+            importApp(from: repo, outside: OutsideImport(repo: now.real) { answered.resume(returning: ($0, $1)) })
         }
-        reload()
-        _ = await initRepo(project, message: "Taken on from \(now.real)")
+        guard let project = made.0 else { return .refused(made.1 ?? "Lamp didn't take the folder on.") }
         state.adopted.append(OutsideWork.Adopted(repo: now.real, device: now.device, inode: now.inode, project: project.id, applied: nil))
         state.save()
-        var answer = await outsideApply(now.real, reopen: false)
+        // Its first build is what the review read and installed, never the folder read again: an edit made while the
+        // review was up would otherwise go in unreviewed. Such an edit is pending, for the next apply.
+        var answer = await outsideApply(now.real, reopen: false, reviewed: before)
         answer.text = "Lamp took on \(now.real) as “\(project.name)”.\n\n" + answer.text
         return answer
     }
 
     // MARK: apply_change
 
-    private func outsideApply(_ path: String, reopen: Bool) async -> OutsideWork.Answer {
+    /// `reviewed`: the app's first build after its review, from what the review installed; the folder as read just before
+    /// the review began, so what went in is known to be the folder's only when the folder still reads the same.
+    private func outsideApply(_ path: String, reopen: Bool, reviewed: [String: String]? = nil) async -> OutsideWork.Answer {
         guard let found = outsideFolder(path) else { return outsideRefusal(path) }
         var entry = found.0
         let project = found.1
@@ -392,14 +406,20 @@ extension Store {
         let began = Date()
 
         return await withTaskCancellationHandler {
-            let capture: OutsideWork.Capture
-            do { capture = try await Self.offMain { Result { try OutsideWork.capture(repo) } }.get() } catch {
-                return .refused((error as? OutsideWork.CaptureProblem)?.text ?? error.localizedDescription)
-            }
-            defer { try? FileManager.default.removeItem(at: capture.package.folder) }
-            let written: [String]
-            do { written = try OutsideWork.sync(capture, into: project) } catch {
-                return .refused("Lamp couldn't copy the folder's files into its build: \(error.localizedDescription)")
+            let read: [String: String]
+            var written: [String] = []
+            if let reviewed {
+                read = reviewed
+            } else {
+                let capture: OutsideWork.Capture
+                do { capture = try await Self.offMain { Result { try OutsideWork.capture(repo) } }.get() } catch {
+                    return .refused((error as? OutsideWork.CaptureProblem)?.text ?? error.localizedDescription)
+                }
+                defer { try? FileManager.default.removeItem(at: capture.package.folder) }
+                do { written = try OutsideWork.sync(capture, into: project) } catch {
+                    return .refused("Lamp couldn't copy the folder's files into its build: \(error.localizedDescription)")
+                }
+                read = capture.hashes
             }
             if Task.isCancelled { return OutsideWork.Answer(outcome: "cancelled", text: "Cancelled before building. Lamp's copy has the folder's files; the app is as it was.") }
 
@@ -446,14 +466,14 @@ extension Store {
             if Privacy.sharesLog, let tail = Runtime.logTail(project) { answer.text += "\n\nWhat it printed:\n\(tail)" }
             // Built from what the folder held at the capture: an edit made since isn't in it, and is said.
             let now = await Self.offMain { OutsideWork.hashes(of: repo) }
-            let since = OutsideWork.changes(from: capture.hashes, to: now)
+            let since = OutsideWork.changes(from: read, to: now)
             answer.facts["stale"] = !since.isEmpty
             answer.facts["written"] = written
             if !since.isEmpty {
-                answer.text = "Stale: the folder changed while Lamp built it (\(since.prefix(5).joined(separator: ", "))). What's in the app is the folder as it was before; apply again.\n\n" + answer.text
+                answer.text = "Stale: the folder changed \(reviewed == nil ? "while Lamp built it" : "since Lamp's review read it") (\(since.prefix(5).joined(separator: ", "))). What's in the app is the folder as it was before; apply again.\n\n" + answer.text
             }
             if ["live", "reopened", "opened", "held", "unchanged"].contains(answer.outcome) {
-                entry.applied = capture.fingerprint
+                entry.applied = OutsideWork.fingerprint(read)
                 if let index = state.adopted.firstIndex(where: { $0.repo == entry.repo }) { state.adopted[index] = entry; state.save() }
             }
             log(project, .detail, "Your coding agent applied a change: \(answer.outcome).")
@@ -470,12 +490,7 @@ extension Store {
         OutsideState.shared.fromBefore.remove(entry.repo)
         let repo = URL(fileURLWithPath: entry.repo)
         let now = await Self.offMain { OutsideWork.hashes(of: repo) }
-        var fingerprint: String {
-            var hasher = SHA256()
-            for (path, hash) in now.sorted(by: { $0.key < $1.key }) { hasher.update(data: Data((path + "\0" + hash + "\n").utf8)) }
-            return hasher.finalize().map { String(format: "%02x", $0) }.joined()
-        }
-        let pending = entry.applied != fingerprint
+        let pending = entry.applied != OutsideWork.fingerprint(now)
         guard isRunning(project) else {
             return OutsideWork.Answer(outcome: "not_open", text: "The app isn't open. apply_change opens it." + (pending ? " The folder has changes not put in yet." : ""),
                                       facts: ["pending": pending])

@@ -716,6 +716,10 @@ final class Store: ObservableObject {
         didSet {
             // Its check goes with it: a review closed, or replaced by another, is never shown.
             if let old = oldValue, pendingImport?.id != old.id, reviewWork?.sheet == old.id { endReview() }
+            // A folder the person's own agent asked Lamp to take on: its review closed without Build & Open is a no.
+            if let old = oldValue, pendingImport?.id != old.id, let job = old.outside, !job.confirmed {
+                job.finish(nil, "The person chose not to build it.")
+            }
             if pendingImport == nil, oldValue != nil { openWaitingImport() }
         }
     }
@@ -836,6 +840,7 @@ final class Store: ObservableObject {
         reviewTimer?.cancel()
         let work = reviewWork
         if work?.wish == nil, work?.sheet == nil {
+            if let outside = outsideReview { outside.finish(nil, detail.map { "\(why) \($0)" } ?? why) }
             endReview()
             let alert = NSAlert()
             alert.messageText = why
@@ -1440,6 +1445,9 @@ final class Store: ObservableObject {
     nonisolated static let installDir = Edition.appsFolder
 
     let root: URL
+
+    /// The folder taken on for the person's own agent whose review is being made, until its sheet is up (`importApp`).
+    var outsideReview: OutsideImport?
 
     /// A turn in progress on an app, for tests of what a tool call does under one.
     func beginTurnForTest(_ turn: Turn, on project: LampProject) { turns[project.id] = turn }
@@ -4138,6 +4146,8 @@ final class Store: ObservableObject {
         /// What each of its apps may reach, from the reading its review made of exactly this package
         /// (`Sharing.Inspection.readings`): Update and Keep as Separate App apply these, rather than reading it again.
         var readings: [String: NetworkPolicy]? = nil
+        /// A folder the person's own coding agent asked Lamp to take on (`OutsideWork`): told what came of the review.
+        var outside: OutsideImport? = nil
     }
 
     /// Whether the wish's files differ from the version that arrived last (a shared file opened, or updated from): any
@@ -4173,20 +4183,31 @@ final class Store: ObservableObject {
     /// AI's check being a part of it only when AI is set up (`Sharing.review`), and building it always takes a click on
     /// that review (`ImportReview.opening`). During the welcome the file is kept and the welcome gives way to it
     /// (`OnboardingView.arrive`); its review opens as the welcome ends.
+    /// `outside`: a folder the person's own coding agent asked Lamp to take on (`OutsideWork`). It gets the same review as
+    /// any app that comes to Lamp, always as a new app, and is told what came of it: the app made, or why there's none.
     func importApp(from file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil,
-                   bringingIn: BringIn.Pull? = nil, trying: Bool = false) {
+                   bringingIn: BringIn.Pull? = nil, trying: Bool = false, outside: OutsideImport? = nil) {
         NSApp.activate()
         Task {
             // Each file waits for Lamp's first look at setup on its own, before it takes the one review there is: files
             // opened together at launch, during the welcome, are each kept for it, in the order they came.
             await setupLook.wait()
+            if let outside {
+                guard reviewsCanOpen else { return outside.finish(nil, "Lamp's welcome isn't finished yet. Ask the person to finish it, then call open_project again.") }
+            }
             guard reviewsCanOpen else { return keepForWelcome(file, updating: target, fetched: fetched, following: following) }
-            guard let id = beginReview(wish: target, stage: .unpacking) else { return }
+            guard let id = beginReview(wish: target, stage: .unpacking) else {
+                outside?.finish(nil, "Lamp is already reviewing an app. Try again once that's done.")
+                return
+            }
+            outsideReview = outside
             runReview(id, retry: { [weak self] in
-                self?.importApp(from: file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn, trying: trying)
+                self?.importApp(from: file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn, trying: trying, outside: outside)
             }) { [weak self] in
                 await self?.openForReview(file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn, trying: trying,
-                                          waitForWelcome: false, id: id)
+                                          waitForWelcome: false, id: id, outside: outside)
+                // A review that ended before its sheet came up (it failed, or another took its place) is a no.
+                if let outside, self?.pendingImport?.outside !== outside { outside.finish(nil, "Lamp's review of it stopped before it could be shown.") }
             }
         }
     }
@@ -4211,7 +4232,8 @@ final class Store: ObservableObject {
     /// Unpacks a shared app and shows its review, as the review `id`'s work. `waitForWelcome` is false for one that has
     /// waited already (`importApp`) and for one kept during the welcome, taken only once that's over (`openWaitingImport`).
     private func openForReview(_ file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil,
-                               bringingIn: BringIn.Pull? = nil, trying: Bool = false, waitForWelcome: Bool = true, id: UUID) async {
+                               bringingIn: BringIn.Pull? = nil, trying: Bool = false, waitForWelcome: Bool = true, id: UUID,
+                               outside: OutsideImport? = nil) async {
         if waitForWelcome {
             // A file that launched Lamp arrives before Lamp has looked at setup: the look is waited for, so
             // the same file on the same Mac always goes the same way.
@@ -4233,12 +4255,15 @@ final class Store: ObservableObject {
             return failReview(id, failure?.message ?? "Lamp couldn't open this app.", detail: failure?.detail ?? (failure == nil ? error.localizedDescription : nil))
         }
         guard owns(id) else { try? FileManager.default.removeItem(at: package.folder); return }
-        var pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file), existing: existingCopy(of: package, updating: target))
+        // A folder taken on by the person's agent is always an app of its own: its workspace is what Lamp builds the folder in.
+        var pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file),
+                                    existing: outside == nil ? existingCopy(of: package, updating: target) : nil)
         pending.following = following
         pending.bringingIn = bringingIn
         pending.trying = trying
+        pending.outside = outside
         // Only where the two met: a wish that can't be lined up keeps Update.
-        if Mix.isOn, !trying, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
+        if Mix.isOn, !trying, outside == nil, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
            let into = Mix.copy(of: package, among: projects), await Mix.meeting(package, history: history, with: into) != nil {
             pending.existing = into
             pending.mixFile = file
@@ -4288,6 +4313,8 @@ final class Store: ObservableObject {
 
     func confirmImport() {
         guard let pending = pendingImport else { return }
+        // Marked before the review closes, which would otherwise tell the agent's folder the person said no.
+        pending.outside?.confirmed = true
         pendingImport = nil
         if pending.copy != nil {
             try? FileManager.default.removeItem(at: pending.package.folder)
@@ -4298,7 +4325,7 @@ final class Store: ObservableObject {
             return
         }
         finishImport(pending.package, request: pending.request, following: pending.following, readings: pending.readings,
-                     separateFrom: pending.existing?.id)
+                     separateFrom: pending.existing?.id, outside: pending.outside)
     }
 
     /// Update: the app already here takes the file's code, files, description and icon, in place, so it keeps
@@ -4683,8 +4710,10 @@ final class Store: ObservableObject {
     /// `following` is the link it was opened by (`takeShared`), which the new wish follows from now on.
     /// `readings` is what its review read each app may reach (`PendingImport.readings`).
     /// `separateFrom` is the wish it's a second copy of (Keep as Separate App), whose desk line then says so.
+    /// `outside`: a folder the person's own agent asked Lamp to take on. Its app is made as any other, then handed to
+    /// `OutsideWork`, which builds and opens it from the folder; no chat is opened beside it, since the agent is the chat.
     private func finishImport(_ package: Sharing.Package, request: String? = nil, following: Following.Followed? = nil,
-                              readings: [String: NetworkPolicy]? = nil, separateFrom: String? = nil) {
+                              readings: [String: NetworkPolicy]? = nil, separateFrom: String? = nil, outside: OutsideImport? = nil) {
         let project: LampProject
         do {
             project = try Template.scaffold(name: uniqueName(package.name), platform: package.platform, family: package.family, in: root)
@@ -4700,6 +4729,7 @@ final class Store: ObservableObject {
             }
         } catch {
             try? FileManager.default.removeItem(at: package.folder)
+            outside?.finish(nil, "Lamp couldn't make the app: \(error.localizedDescription)")
             NSAlert(error: error).runModal()
             return
         }
@@ -4707,11 +4737,11 @@ final class Store: ObservableObject {
         if let following, let version = following.pulling { Following.brought(version, from: following, into: project) }
         reload()
         if let separateFrom { updateOutcomes[separateFrom] = .separate(project.id) }
-        showChat(project.id)
+        if outside == nil { showChat(project.id) }
         // A request that came with the wish's link (an app's remix panel, `RemixLink`, through `take(exact:)`) is in the
         // box, ready to send once the wish is built.
         if let request { updateDraft(Draft(text: request), for: project) }
-        log(project, .status, "Imported from a shared file. Building it now…")
+        log(project, .status, outside == nil ? "Imported from a shared file. Building it now…" : "Your coding agent is working on this from \(outside?.repo ?? "a folder").")
         Task {
             defer { try? FileManager.default.removeItem(at: package.folder) }
             // The wish's other apps, each made in its folder as `make_app_for` makes one and given the file's code. One
@@ -4720,6 +4750,7 @@ final class Store: ObservableObject {
             // made goes, and the file can be opened again, rather than a wish missing an app with no way to get it.
             let notIn = await installParts(of: package, into: project, readings: readings)
             guard notIn.isEmpty else {
+                outside?.finish(nil, "\(notIn.joined(separator: ", ")) couldn't be put in place.")
                 await delete(current(project) ?? project)
                 let alert = NSAlert()
                 alert.messageText = "Lamp couldn't open “\(package.name)”"
@@ -4728,6 +4759,7 @@ final class Store: ObservableObject {
                 return
             }
             _ = await initRepo(project, message: "Imported from a shared file")
+            if let outside { return outside.finish(current(project) ?? project, nil) }
             await run(project)
             await rebuildParts(of: current(project) ?? project)
         }
