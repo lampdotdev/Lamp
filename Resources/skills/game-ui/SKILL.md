@@ -236,7 +236,7 @@ Play the journey, don't only look at it:
 - long text, a small window and a wide one;
 - mute and reduced motion;
 - how it looks: the opening, play and results read as one game; the HUD stays readable at the smallest window; focus,
-  pressed and disabled look different; nothing shows a browser's default look;
+  pressed and disabled look different; nothing shows a browser's default look by accident;
 - joining, a failed join and reconnecting, where the game takes phones, and a gesture interrupted partway (the
   phone-pages skill).
 
