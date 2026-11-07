@@ -4007,7 +4007,7 @@ final class Store: ObservableObject {
                 return
             }
             if let request { try request.write(to: folder.appendingPathComponent(Self.requestFile), atomically: true, encoding: .utf8) }
-            await openForReview(tree, updating: target, fetched: fetched, following: following, fileStays: false, id: id)
+            await openForReview(tree, updating: target, fetched: fetched, following: following, id: id)
         } catch {
             guard owns(id) else { return }
             let failure = error as? Sharing.ImportError
@@ -4139,9 +4139,10 @@ final class Store: ObservableObject {
         var copy: String? = nil
         /// The copy's version when its review was made: a copy changed since isn't what was reviewed.
         var copyHead: String? = nil
-        /// With mixing on, the file itself when it can be mixed into a wish here (`Mix.copy`): it carries its versions.
-        /// That wish is then `existing`, and the choice is Mix… or Keep as Separate App.
-        var mixFile: URL? = nil
+        /// With mixing on, whether the package can be mixed into a wish here (`Mix.copy`): it carries its versions.
+        /// That wish is then `existing`, and the choice is Mix… or Keep as Separate App. Mix… hands the package itself to
+        /// the mix (`mixPendingImport`), so nothing needs the file it came from once the review is up.
+        var mixable = false
         /// Another copy `existing` follows, pulled in (`Following`): Update always merges it, since it's someone else's
         /// copy rather than a newer one of where the wish came from.
         var following: Following.Followed? = nil
@@ -4225,10 +4226,8 @@ final class Store: ObservableObject {
 
     /// Unpacks a shared app and shows its review, as the review `id`'s work. `waitForWelcome` is false for one that has
     /// waited already (`importApp`) and for one kept during the welcome, taken only once that's over (`openWaitingImport`).
-    /// `fileStays` is false for a repository's clone, removed once this returns: Mix, which opens the file again later,
-    /// isn't offered for it.
     private func openForReview(_ file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil,
-                               bringingIn: BringIn.Pull? = nil, trying: Bool = false, waitForWelcome: Bool = true, fileStays: Bool = true, id: UUID) async {
+                               bringingIn: BringIn.Pull? = nil, trying: Bool = false, waitForWelcome: Bool = true, id: UUID) async {
         if waitForWelcome {
             // A file that launched Lamp arrives before Lamp has looked at setup: the look is waited for, so
             // the same file on the same Mac always goes the same way.
@@ -4255,10 +4254,10 @@ final class Store: ObservableObject {
         pending.bringingIn = bringingIn
         pending.trying = trying
         // Only where the two met: a wish that can't be lined up keeps Update.
-        if Mix.isOn, fileStays, !trying, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
+        if Mix.isOn, !trying, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
            let into = Mix.copy(of: package, among: projects), await Mix.meeting(package, history: history, with: into) != nil {
             pending.existing = into
-            pending.mixFile = file
+            pending.mixable = true
         }
         if let existing = pending.existing { pending.changedHere = await changedSinceArrival(existing) }
         guard owns(id) else { try? FileManager.default.removeItem(at: package.folder); return }
@@ -4294,6 +4293,17 @@ final class Store: ObservableObject {
             }
         }
         return file != nil
+    }
+
+    /// Mix… on the review: the mix takes the review's package, then the review closes without removing it, since the
+    /// mix window owns it from here (`MixModel.reset` removes it). False, with the review left up, while a mix is
+    /// being saved.
+    @discardableResult func mixPendingImport() -> Bool {
+        guard let pending = pendingImport, pending.mixable, MixModel.shared.adopt(pending.package, store: self) else { return false }
+        endReview()
+        if let copy = pending.copy { Task { await discardPreparedCopy(copy, movingQueuedTo: nil) } }
+        pendingImport = nil
+        return true
     }
 
     func cancelImport() {
