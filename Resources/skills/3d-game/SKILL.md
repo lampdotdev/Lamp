@@ -112,6 +112,9 @@ device) or tell the person why 3D in a page can't run there.
   MeshLambertMaterial or MeshBasicMaterial cost less.
 - Make every mesh, material and texture once in `init` and reuse it; many copies of one shape are one
   `THREE.InstancedMesh`.
+- Compose the view, within the same budget: a camera framing what the player needs to see ahead, things at one
+  consistent scale, light that separates the player and hazards from the ground, and contact cues (a blob shadow, a
+  dust puff) that put things on the ground instead of floating.
 
 ## Physics
 
