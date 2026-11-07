@@ -376,6 +376,8 @@ Lamp starts no process for it and sees none of its commands, so its shell is und
 - **One at a time.** Every call on a folder waits for the one before it, whatever connection sent it
   (`outsideSerially`). An apply answers stale when the folder changed while it built. `operation_id` replays an apply
   that ran, for as long as Lamp runs; after Lamp starts again an apply waits for a `look_at_app` first.
+  Files an apply wrote into the workspace are marked owed on disk until the change goes in (`Adopted.owed`), so the
+  next apply puts them in, never answering unchanged, even after a cancel or Lamp starting again.
 - **What the agent is told.** The server's `instructions` say how to work with Lamp; `open_project` adds, for the app's
   kind, the skills index Lamp's own engines get (`Skills.index`), less the skills about a Lamp tool it doesn't have
   (`OutsideWork.offeredOutside`: their description names `make_app_for`, `make_art`, `lampify` and the like), the skills whose rules every change keeps

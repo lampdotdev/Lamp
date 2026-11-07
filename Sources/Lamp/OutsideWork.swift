@@ -129,6 +129,10 @@ enum OutsideWork {
         var project: String
         /// What the folder held at the last apply that went in (`Capture.fingerprint`).
         var applied: String?
+        /// The workspace holds files the open app may not run yet: written by an apply that hadn't put them in when it
+        /// ended (cancelled once built, or Lamp quitting midway). Kept on disk, so the next apply puts them in even
+        /// after Lamp starts again, though nothing is left to build. Nil in records from before it was kept.
+        var owed: Bool?
     }
 
     static var registryURL: URL { Edition.supportFolder.appendingPathComponent("Outside/adopted.json") }
@@ -307,9 +311,12 @@ enum OutsideWork {
     var tails: [String: Task<Void, Never>] = [:]
     var answers: [String: OutsideWork.Answer] = [:]
     var ended: Set<Int> = []
-    /// Apps built by an apply that was cancelled before the change went in: the next apply puts it in, though nothing
-    /// is left to build.
-    var builtNotIn: Set<String> = []
+    /// Records whether a folder's workspace holds files the open app may not run yet (`Adopted.owed`).
+    func setOwed(_ owed: Bool, repo: String) {
+        guard let index = adopted.firstIndex(where: { $0.repo == repo }), (adopted[index].owed ?? false) != owed else { return }
+        adopted[index].owed = owed
+        save()
+    }
 
     init() { fromBefore = Set(adopted.map(\.repo)) }
 
@@ -451,7 +458,7 @@ extension Store {
     /// the review began, so what went in is known to be the folder's only when the folder still reads the same.
     private func outsideApply(_ path: String, reopen: Bool, reviewed: [String: String]? = nil) async -> OutsideWork.Answer {
         guard let found = outsideFolder(path) else { return outsideRefusal(path) }
-        var entry = found.0
+        let entry = found.0
         let project = found.1
         let state = OutsideState.shared
         if state.fromBefore.contains(entry.repo) {
@@ -480,12 +487,14 @@ extension Store {
                 }
                 read = capture.hashes
             }
+            // Owed from here until the change goes in, on disk before anything is built.
+            if !written.isEmpty { state.setOwed(true, repo: entry.repo) }
             if Task.isCancelled { return OutsideWork.Answer(outcome: "cancelled", text: "Cancelled before building. Lamp's copy has the folder's files; the app is as it was.") }
 
             let wasOpen = isRunning(project)
             let changed = Runtime.sourcesChanged(project)
             var answer: OutsideWork.Answer
-            let owed = state.builtNotIn.contains(project.id)
+            let owed = state.adopted.first(where: { $0.repo == entry.repo })?.owed ?? false
             if !changed, wasOpen, !reopen, !owed {
                 answer = OutsideWork.Answer(outcome: "unchanged", text: "Nothing changed since the app was built; it's open as it was.")
             } else if changed, let errors = await build(project, inPlace: !reopen) {
@@ -494,11 +503,10 @@ extension Store {
                     : OutsideWork.Answer(outcome: "not_built", text: "The app doesn't build. Fix these compiler errors and apply again:\n\n\(errors)", isError: true)
             } else if Task.isCancelled || hold.stopped {
                 // Cancelled once built: nothing goes into the app, which stays as it was until the next apply.
-                state.builtNotIn.insert(project.id)
                 answer = OutsideWork.Answer(outcome: "cancelled", text: "Cancelled after the build; nothing went into the app, which is as it was.")
             } else {
-                state.builtNotIn.remove(project.id)
                 let crash = await install(project, inFront: false, fresh: reopen, reload: reopen, early: true)
+                state.setOwed(false, repo: entry.repo)
                 let outcome: String
                 switch hold.outcomes.last {
                 case .live?: outcome = "live"
@@ -538,8 +546,11 @@ extension Store {
                 answer.text = "Stale: the folder changed \(reviewed == nil ? "while Lamp built it" : "since Lamp's review read it") (\(since.prefix(5).joined(separator: ", "))). What's in the app is the folder as it was before; apply again.\n\n" + answer.text
             }
             if ["live", "reopened", "opened", "held", "unchanged"].contains(answer.outcome) {
-                entry.applied = OutsideWork.fingerprint(read)
-                if let index = state.adopted.firstIndex(where: { $0.repo == entry.repo }) { state.adopted[index] = entry; state.save() }
+                // Only what was applied: the record's other fields (`owed`) were kept up to date as the apply went.
+                if let index = state.adopted.firstIndex(where: { $0.repo == entry.repo }) {
+                    state.adopted[index].applied = OutsideWork.fingerprint(read)
+                    state.save()
+                }
             }
             log(project, .detail, "Your coding agent applied a change: \(answer.outcome).")
             return answer

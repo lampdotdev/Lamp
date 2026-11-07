@@ -2,7 +2,13 @@
 
 One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the repository: it has the rules every change follows and the list of guides; a section named in quotes may be in another guide on that list.
 
-A capability given to one engine must be given to all of them that can take it, in the same change:
+A capability given to one engine must be given to all of them that can take it, in the same change. The person's own
+coding agent driving Lamp over MCP isn't one of them ("The person's own agent through MCP" in the engines guide):
+Lamp starts no process for it and sees none of its commands, so its shell and its edits to its own folder are under
+its own approvals. What Lamp does for it keeps Lamp's checks: a folder is taken on only through the import review,
+Lamp's builds of it run in the sandbox as any app's, it never writes in that folder, and sharing goes through Share…'s
+checks and the Share Link card.
+
 
 - **Approvals and privacy**: shell commands go through `/agent/approve` for every engine (pi's extension,
   Claude Code's hooks, Codex's hooks); file access outside the app's folder is checked the same way.
