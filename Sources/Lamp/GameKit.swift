@@ -1105,10 +1105,12 @@ enum GameKit {
                                             "menu": 1 << 6, "view": 1 << 7, "up": 1 << 8, "down": 1 << 9, "left": 1 << 10,
                                             "right": 1 << 11, "ls": 1 << 12, "rs": 1 << 13]
 
-    /// `use_app`'s controller moves for a game in its window on this Mac, as the actions Lamp's driver in the app carries
-    /// out (`LampDriver`, with the game's page holding the controller: LampPage.swift, lamp-game.js's "Lamp's hands on
-    /// the controller"): each `stick` or `button` held for its seconds, at most ten as a Mac app's key is, and let go
-    /// before the next; `wait`. Or why they can't be. Each move's words say what it did.
+    /// `use_app`'s actions for a game in its window on this Mac, as the actions Lamp's driver in the app carries out
+    /// (`LampDriver`, with the game's page holding the controller: LampPage.swift, lamp-game.js's "Lamp's hands on the
+    /// controller"): each `stick` or `button` held for its seconds, at most ten as a Mac app's key is, and let go before
+    /// the next; `wait`; and a click, double-click or typing on what the game's page shows (a menu's button, a mode
+    /// switch, a name field), marked `page` so the driver carries it out in the page and nowhere else. Or why they can't
+    /// be. Each move's words say what it did.
     static func controls(for actions: [[String: Any]]) -> (actions: [[String: Any]], problem: String?) {
         var moves: [[String: Any]] = []
         for action in actions {
@@ -1122,6 +1124,15 @@ enum GameKit {
             }
             var words: String
             switch kind {
+            case "click", "double_click", "type":
+                moves.append(action.merging(["page": true]) { $1 })
+                continue
+            case "key":
+                // A key made by Lamp reaches the page as a script's, which the runtime's keyboard (the first player's
+                // controller) never reads, and a real key would be taken for the person's own play.
+                return (moves, "A game's keys are its controller's here: hold `button` (\((buttons.keys.sorted() + ["lt", "rt"]).joined(separator: ", "))) "
+                    + "or move a `stick` for what a key does in play. A button on the game's screen (a menu, a mode switch) is clicked by its id "
+                    + "from the screen as text.")
             case "wait":
                 moves.append(["action": "wait", "amount": seconds])
                 continue
@@ -1144,7 +1155,7 @@ enum GameKit {
                 guard press(key) else { return (moves, "\(key) isn't a button: \((buttons.keys.sorted() + ["lt", "rt"]).joined(separator: ", ")).") }
                 words = "held \(key.uppercased()) for \(seconds.formatted()) s"
             default:
-                return (moves, "A game takes `stick`, `button` and `wait`.")
+                return (moves, "A game takes `stick`, `button` and `wait`, and `click`, `double_click` and `type` on what its screen shows.")
             }
             moves.append(["action": kind, "amount": seconds, "controller": pad, "text": words])
         }
@@ -1582,7 +1593,10 @@ extension Agent.Rules {
     `use_app` plays the game in its window on this Mac with Lamp's own controller, in plain sight: `stick` (`target` \
     left or right, `x` and `y` -1 to 1, `amount` seconds, optionally `key` held at the same time), `button` (`key` a, \
     b, x, y, lb, rb, lt, rt, menu, view, up, down, left, right, ls, rs; `amount` seconds held, a tap by default) and \
-    `wait`, each at most 10 seconds, with a picture at the end. It plays from wherever the game is (a menu, a pause \
+    `wait`, each at most 10 seconds, with a picture at the end. A button or field on the game's screen (a menu, a mode \
+    switch, a name to type) is used with `click`, `double_click` or `type` by its id from the screen as text; `key` \
+    isn't taken, so what a key does in play is a `button` or a `stick`. A click is only sent: the picture and the log \
+    say whether the game took it. It plays from wherever the game is (a menu, a pause \
     screen, the middle of a level), not its start: read the picture first and get to what you mean to check. The \
     person's own press takes the game back at once, and use_app is off until their next message. `look_at_app` with \
     `on_device` builds the game for where Try On points and looks at it in that place's preview: the game's window on \

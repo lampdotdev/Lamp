@@ -9234,6 +9234,9 @@ enum Template {
             /// A game's controller as `stick` and `button` hold it (lx, ly, rx, ry -1 to 1, lt and rt 0 to 1, `down` the
             /// buttons' bits), for `amount` seconds; `text` says it in words. Held in the game's page (LampPage.swift).
             var controller: [String: Double]?
+            /// A game's click, double-click or typing: carried out in the game's page only (`LampPageItems.act`), never
+            /// on what's around it.
+            var page: Bool?
         }
 
         // begin LampDriver.Handover
@@ -9689,6 +9692,11 @@ enum Template {
             if let act = LampPageItems.act, !(window is NSSavePanel), ["click", "double_click", "type", "key"].contains(action.action),
                let did = act(action, action.x != nil && action.y != nil ? point : nil, window) {
                 return (what.map { "\(action.action) \($0): " } ?? "\(action.action): ") + did
+            }
+            // A game's own: what isn't on its page (the window's edge, a dialog in front) is left alone.
+            if action.page == true {
+                if action.action != "type", action.x == nil || action.y == nil { return "\(action.action): needs a target, or x and y" }
+                return (what.map { "\(action.action) \($0): " } ?? "\(action.action): ") + "that isn't on the game's page, so nothing was done"
             }
             if isBarPanel(window), action.action == "key", action.key?.lowercased() == "escape" {
                 releaseBarPanel()

@@ -65,16 +65,8 @@ struct LampGameSurface: NSViewRepresentable {
 /// reads its keys without cancelling most of them, so each would reach the window, which beeps for a key nothing took.
 /// A shortcut with ⌘ goes to the menus first: the web view says it took every one, before the page has even seen it,
 /// so macOS looks no further and ⌘Q, ⌘W and ⌘H would do nothing while the game has the keyboard.
-final class LampKeyCatcher: NSView {
-    let page: WKWebView
-
-    init(holding page: WKWebView) {
-        self.page = page
-        super.init(frame: .zero)
-        page.frame = bounds
-        page.autoresizingMask = [.width, .height]
-        addSubview(page)
-    }
+final class LampKeyCatcher: LampPageHolder {
+    init(holding page: WKWebView) { super.init(holding: page) }
 
     required init?(coder: NSCoder) { nil }
 
@@ -89,7 +81,7 @@ final class LampKeyCatcher: NSView {
 }
 #else
 struct LampGameSurface: UIViewRepresentable {
-    func makeUIView(context: Context) -> WKWebView { LampGamePage.make() }
-    func updateUIView(_ view: WKWebView, context: Context) {}
+    func makeUIView(context: Context) -> LampPageHolder { LampPageHolder(holding: LampGamePage.make()) }
+    func updateUIView(_ holder: LampPageHolder, context: Context) {}
 }
 #endif

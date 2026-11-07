@@ -213,8 +213,24 @@ final class GameInWindowTests: XCTestCase {
         XCTAssertEqual(moves.actions[0]["controller"] as? [String: Double], ["rx": -1, "ry": 0.5, "rt": 1])
         XCTAssertEqual(moves.actions[1]["controller"] as? [String: Double], ["down": 64])
         XCTAssertEqual(moves.actions[2]["amount"] as? Double, 10, "a hold is at most ten seconds, as a Mac app's key is")
-        XCTAssertNotNil(GameKit.controls(for: [["action": "click", "x": 3.0, "y": 4.0]]).problem)
         XCTAssertNotNil(GameKit.controls(for: [["action": "button", "key": "start"]]).problem)
+    }
+
+    /// A button on the game's screen (a mode switch, a menu) is clicked, and a field typed into, in the game's page and
+    /// nowhere else (`page`, which the driver keeps to `LampPageItems.act`), beside the controller's moves in one batch.
+    /// A key isn't taken: the runtime's keyboard never reads one Lamp makes, so the refusal names what does the key's work.
+    func testAGamesScreenIsClickedInItsPage() throws {
+        let moves = GameKit.controls(for: [["action": "click", "target": "b2"], ["action": "stick", "target": "left", "x": 0.0, "y": 1.0, "key": "rt"],
+                                           ["action": "double_click", "x": 3.0, "y": 4.0], ["action": "type", "target": "f1", "text": "Ann"]])
+        XCTAssertNil(moves.problem)
+        XCTAssertEqual(moves.actions.map { $0["action"] as? String }, ["click", "stick", "double_click", "type"])
+        XCTAssertEqual(moves.actions.map { $0["page"] as? Bool }, [true, nil, true, true])
+        XCTAssertEqual(moves.actions[0]["target"] as? String, "b2")
+        XCTAssertEqual(moves.actions[3]["text"] as? String, "Ann")
+
+        let key = try XCTUnwrap(GameKit.controls(for: [["action": "key", "key": "f"]]).problem)
+        XCTAssertTrue(key.contains("`button`") && key.contains("`stick`") && key.contains("clicked"), key)
+        XCTAssertNotNil(GameKit.controls(for: [["action": "scroll", "amount": 100.0]]).problem)
     }
 
     // MARK: A fresh start

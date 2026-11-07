@@ -503,7 +503,11 @@ app, and that Reload's launch is the fresh start. An ordinary Reload keeps the p
 
 `use_app` on a game in its window holds Lamp's own controller in the game's page, carried out by the app's own driver
 under the same signed batch, Stop and report as any Mac app's use (`LampDriver`, `LampDriver.Handover`): Lamp turns
-`stick`, `button` and `wait` into the driver's actions (`GameKit.controls`, each held at most 10 s), the driver hands each
+`stick`, `button` and `wait` into the driver's actions (`GameKit.controls`, each held at most 10 s), and passes a
+`click`, `double_click` or `type` on what the game's page shows (a menu's button, a mode switch, a field) marked `page`,
+which the driver carries out in the page (`LampPageItems.act`) and never on what's around it, reporting it as sent, not
+as taken; `key` is refused with what does a key's work (a `button` or a `stick`), since the runtime's keyboard never
+reads a key a script made and a real key would be taken for the person's play. The driver hands each
 hold to the page (`LampPageItems.hold`, LampPage.swift, `window.__lampDrive`) and reports the page's answer, held or
 why not (no Lamp runtime running in it, the page failing), never "held" before the page took it; it lets the hold go when
 it's due, when the batch stops or a newer one begins (`Handover.hold(for:release:)`). A batch with controller moves has

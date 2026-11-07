@@ -897,14 +897,10 @@ enum LampPageGuard {
 }
 
 /// What the page was refused, from Lamp's own world in it: into the app's log, and, for a page whose review said it may
-/// connect elsewhere, shown over it with a way to allow the site.
+/// connect elsewhere, shown above it with a way to allow the site.
 @MainActor final class LampPageRefused: NSObject, WKScriptMessageHandler {
     private let scheme: String
-    /// Sites shown or waiting their turn on this page, the one shown now, and those waiting: one bar at a time, and
-    /// each site's in turn.
-    private var shown: Set<String> = []
-    private var showing: String?
-    private var waiting: [String] = []
+    private var bars = LampPageRefusals()
     init(scheme: String) { self.scheme = scheme }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -913,26 +909,59 @@ enum LampPageGuard {
         let site = NetworkPolicy.origin(address)
         FileHandle.standardError.write(Data("Lamp blocked this shared app's request to \(site ?? String(address.prefix(200))) (\(said["what"] as? String ?? ""))\n".utf8))
         // The game's own relay is never offered: an allowance is kept, and that port is this launch's.
-        guard policy.mayConnect, let site, !shown.contains(site), !LampControllers.pageSites.contains(site) else { return }
-        shown.insert(site)
-        waiting.append(site)
-        showNext(over: view)
+        guard policy.mayConnect, let site, !LampControllers.pageSites.contains(site) else { return }
+        show(bars.heard(site, blocked: Self.blocked), over: view)
     }
 
-    private func showNext(over view: WKWebView) {
-        guard showing == nil, !waiting.isEmpty else { return }
-        let site = waiting.removeFirst()
-        showing = site
-        LampPageBlocked.show(site, over: view) { [weak self, weak view] in
+    private func show(_ site: String?, over view: WKWebView) {
+        guard let site else { return }
+        LampPageBlocked.show(site, over: view) { [weak self, weak view] closed in
             guard let self else { return }
-            self.showing = nil
-            self.shown.remove(site)
-            if let view { self.showNext(over: view) }
+            let next = self.bars.gone(closed: closed, blocked: Self.blocked)
+            if let view { self.show(next, over: view) }
         }
+    }
+
+    /// Whether the page is still kept from `site`: the person may have allowed it, or every site, meanwhile.
+    private static func blocked(_ site: String) -> Bool { LampPageGuard.current.map { !$0.origins.contains(site) } ?? false }
+}
+
+/// Which site's bar a page shows and which wait their turn: one bar at a time, each site once. A site whose bar the
+/// person closed stays quiet for the rest of this launch, in every page and window, though it's still blocked: a page
+/// that asks for it again and again (a map's tiles, a feed polled each second) would otherwise bring the bar straight
+/// back. Quitting the app forgets it. A waiting site the person has allowed meanwhile isn't shown.
+@MainActor struct LampPageRefusals {
+    private static var closed: Set<String> = []
+    private(set) var showing: String?
+    private var waiting: [String] = []
+
+    /// The page was refused `site`: the site whose bar to show now, if any.
+    mutating func heard(_ site: String, blocked: (String) -> Bool) -> String? {
+        guard !Self.closed.contains(site), showing != site, !waiting.contains(site) else { return nil }
+        waiting.append(site)
+        return next(blocked)
+    }
+
+    /// The bar shown went, `closed` by the person or its site allowed: the next site whose bar to show, if any.
+    mutating func gone(closed: Bool, blocked: (String) -> Bool) -> String? {
+        if closed, let showing { Self.closed.insert(showing) }
+        showing = nil
+        return next(blocked)
+    }
+
+    private mutating func next(_ blocked: (String) -> Bool) -> String? {
+        guard showing == nil else { return nil }
+        while !waiting.isEmpty {
+            let site = waiting.removeFirst()
+            guard !Self.closed.contains(site), blocked(site) else { continue }
+            showing = site
+            return site
+        }
+        return nil
     }
 }
 
-/// The bar over a page that says what was blocked: allow that site, every site, or let it be.
+/// The bar above a page that says what was blocked: allow that site, every site, or let it be.
 struct LampPageBlocked: View {
     let site: String
     let allow: () -> Void
@@ -954,39 +983,38 @@ struct LampPageBlocked: View {
         .padding(10)
     }
 
-    private static let bars = NSMapTable<WKWebView, LampPageBlockedHost>.weakToStrongObjects()
-
-    /// Shows the bar for `site` at the top of the page; `gone` once it's closed.
-    @MainActor static func show(_ site: String, over view: WKWebView, gone: @escaping @MainActor () -> Void) {
-        bars.object(forKey: view)?.view.removeFromSuperview()
-        let host = LampPageBlockedHost()
-        func remove() { host.view.removeFromSuperview(); bars.removeObject(forKey: view); gone() }
+    /// Shows the bar for `site` above the page, in room of its own (`LampPageHolder`); `gone` once it's closed by the
+    /// person (true) or its site allowed (false). A question the person cancels leaves the bar as it was.
+    @MainActor static func show(_ site: String, over view: WKWebView, gone: @escaping @MainActor (_ closed: Bool) -> Void) {
+        guard let holder = LampPageHolder.of(view) else { return }
+        var shown: LampPageHolder.Platform?
+        func remove(closed: Bool) {
+            guard let bar = shown else { return }
+            shown = nil
+            holder.hide(bar)
+            gone(closed)
+        }
         let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "This app"
         let bar = LampPageBlocked(site: site, allow: {
             // The page chose what was blocked, and when: the person sees the whole site before it's let in.
             LampPageGuard.ask("Let \(name) reach this site?", site, button: "Allow", over: view) { yes in
                 guard yes else { return }
-                remove()
+                // Allowed before the bar goes, so the next site's turn is decided under what the person just chose.
                 LampPageGuard.allow(site, in: view)
+                remove(closed: false)
             }
         }, allowAll: {
             LampPageGuard.ask("Let \(name) reach any site?", "It can then send what it has anywhere. This stays until you remove the app.",
                               button: "Allow All", over: view) { yes in
                 guard yes else { return }
-                remove()
+                // Every site is let in first: no other site's bar follows this one.
                 LampPageGuard.allowEverySite(in: view)
+                remove(closed: false)
             }
-        }, close: { remove() })
-        host.view = Self.hosting(bar)
-        bars.setObject(host, forKey: view)
-        let shown = host.view
-        shown.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(shown)
-        NSLayoutConstraint.activate([
-            shown.topAnchor.constraint(equalTo: view.topAnchor),
-            shown.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            shown.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor),
-        ])
+        }, close: { remove(closed: true) })
+        let hosted = Self.hosting(bar)
+        shown = hosted
+        holder.show(hosted)
     }
 
     #if os(macOS)
@@ -1000,11 +1028,80 @@ struct LampPageBlocked: View {
     #endif
 }
 
-final class LampPageBlockedHost: NSObject {
+#if os(macOS)
+typealias LampPageHolderBase = NSView
+#else
+typealias LampPageHolderBase = UIView
+#endif
+
+/// Where a page sits in its window: the page fills it, but for a bar at its top (`LampPageBlocked`), which has room of
+/// its own while it's shown, inside the window's safe area (below a title bar, clear of a notch), with the page laid
+/// out below it. The page is never covered: a control fixed at its top stays where it can be seen and clicked, and
+/// clicks by point find it where it is. A page laid out at a fixed size of its own (`canvas`) is zoomed to the room it has.
+@MainActor class LampPageHolder: LampPageHolderBase {
+    typealias Platform = LampPageHolderBase
+
+    let page: WKWebView
+    let canvas: CGSize?
+    private var bar: Platform?
+    private var pageTop: NSLayoutConstraint
+
+    init(holding page: WKWebView, canvas: CGSize? = nil) {
+        self.page = page
+        self.canvas = canvas
+        page.translatesAutoresizingMaskIntoConstraints = false
+        pageTop = NSLayoutConstraint()
+        super.init(frame: .zero)
+        addSubview(page)
+        pageTop = page.topAnchor.constraint(equalTo: topAnchor)
+        NSLayoutConstraint.activate([
+            pageTop, page.leadingAnchor.constraint(equalTo: leadingAnchor), page.trailingAnchor.constraint(equalTo: trailingAnchor),
+            page.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    /// The holder of a page, if it has one.
+    static func of(_ page: WKWebView) -> LampPageHolder? {
+        sequence(first: page.superview, next: { $0?.superview }).lazy.compactMap { $0 as? LampPageHolder }.first
+    }
+
+    /// Puts `bar` at the top, in place of any shown, and the page below it.
+    func show(_ shown: Platform) {
+        bar?.removeFromSuperview()
+        bar = shown
+        shown.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(shown)
+        let room = safeAreaLayoutGuide
+        pageTop.isActive = false
+        pageTop = page.topAnchor.constraint(equalTo: shown.bottomAnchor)
+        NSLayoutConstraint.activate([
+            shown.topAnchor.constraint(equalTo: room.topAnchor), shown.centerXAnchor.constraint(equalTo: room.centerXAnchor),
+            shown.widthAnchor.constraint(lessThanOrEqualTo: room.widthAnchor), pageTop,
+        ])
+    }
+
+    /// Takes `shown` away, if it's the bar shown, and gives the page its whole room again.
+    func hide(_ shown: Platform) {
+        guard bar === shown else { return }
+        shown.removeFromSuperview()
+        bar = nil
+        pageTop.isActive = false
+        pageTop = page.topAnchor.constraint(equalTo: topAnchor)
+        pageTop.isActive = true
+    }
+
     #if os(macOS)
-    var view = NSView()
+    override func layout() {
+        super.layout()
+        LampPageView.fit(page, in: page.bounds.size, canvas: canvas)
+    }
     #else
-    var view = UIView()
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        LampPageView.fit(page, in: page.bounds.size, canvas: canvas)
+    }
     #endif
 }
 
@@ -1184,6 +1281,8 @@ final class LampPageBlockedHost: NSObject {
                 for (var i = 0; i < \(clicks); i++) if (focusable.click) focusable.click();
                 if (\(clicks) === 2) focusable.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
                 """)
+            // Sent, not proof: a game takes a click in its own time, and may not take it at all.
+            if action.page == true { return (clicks == 1 ? "clicked" : "double-clicked") + " in the game's page; the picture shows whether the game took it" }
             return clicks == 1 ? "clicked in the page" : "double-clicked in the page"
         case "type":
             let text = action.text ?? ""
@@ -1195,6 +1294,7 @@ final class LampPageBlockedHost: NSObject {
                 el.dispatchEvent(new Event('input', { bubbles: true }));
                 el.dispatchEvent(new Event('change', { bubbles: true }));
                 """)
+            if action.page == true { return (text.isEmpty ? "cleared it" : "typed \"\(text)\"") + " in the game's page; the picture shows whether the game took it" }
             return text.isEmpty ? "cleared it" : "typed \"\(text)\" in the page"
         case "key":
             let name = (action.key ?? "").lowercased()
