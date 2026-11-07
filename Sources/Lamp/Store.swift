@@ -3985,6 +3985,10 @@ final class Store: ObservableObject {
 
     private func fetchForReview(_ source: RepoImport.Source, request: String?, updating target: String?, following: Following.Followed?, id: UUID) async {
         let folder = RepoImport.cloneFolder()
+        // The clone is done with once its review is up or kept for setup: the review works from its own copy, the request
+        // beside the clone is read into it (`PendingImport.request`), a wait for setup copies the tree and request
+        // (`WaitingImport.keep`), and Try Again fetches afresh.
+        defer { try? FileManager.default.removeItem(at: folder) }
         do {
             // With no git on this Mac, GitHub's archive of the commit, for anything but an update: that's a merge, which
             // takes git in any case.
@@ -3992,21 +3996,19 @@ final class Store: ObservableObject {
             let tree: URL
             if let fetched { tree = fetched.tree } else { tree = try await RepoImport.clone(source, into: folder) }
             // Cancelled, replaced or out of time meanwhile: what was fetched never opens a review.
-            guard owns(id) else { try? FileManager.default.removeItem(at: folder); return }
+            guard owns(id) else { return }
             // Someone's own project, not a wish: the agent can make it into one, which then gets its updates as
             // any wish does (`AppUpdates`). A wish's own update that finds no wish there is an error as before.
             if target == nil, !RepoImport.holdsWish(tree) {
                 // The commit fetched, so the app is made from exactly the version the person opened.
                 let commit = fetched?.commit ?? RepoImport.repository(of: tree)?.commit
-                try? FileManager.default.removeItem(at: folder)
                 endReview()
                 offerToAdapt(source, commit: commit)
                 return
             }
             if let request { try request.write(to: folder.appendingPathComponent(Self.requestFile), atomically: true, encoding: .utf8) }
-            await openForReview(tree, updating: target, fetched: fetched, following: following, id: id)
+            await openForReview(tree, updating: target, fetched: fetched, following: following, fileStays: false, id: id)
         } catch {
-            try? FileManager.default.removeItem(at: folder)
             guard owns(id) else { return }
             let failure = error as? Sharing.ImportError
             failReview(id, failure?.message ?? "Lamp couldn't fetch the update.", detail: failure?.detail ?? (failure == nil ? error.localizedDescription : nil))
@@ -4223,8 +4225,10 @@ final class Store: ObservableObject {
 
     /// Unpacks a shared app and shows its review, as the review `id`'s work. `waitForWelcome` is false for one that has
     /// waited already (`importApp`) and for one kept during the welcome, taken only once that's over (`openWaitingImport`).
+    /// `fileStays` is false for a repository's clone, removed once this returns: Mix, which opens the file again later,
+    /// isn't offered for it.
     private func openForReview(_ file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil,
-                               bringingIn: BringIn.Pull? = nil, trying: Bool = false, waitForWelcome: Bool = true, id: UUID) async {
+                               bringingIn: BringIn.Pull? = nil, trying: Bool = false, waitForWelcome: Bool = true, fileStays: Bool = true, id: UUID) async {
         if waitForWelcome {
             // A file that launched Lamp arrives before Lamp has looked at setup: the look is waited for, so
             // the same file on the same Mac always goes the same way.
@@ -4251,7 +4255,7 @@ final class Store: ObservableObject {
         pending.bringingIn = bringingIn
         pending.trying = trying
         // Only where the two met: a wish that can't be lined up keeps Update.
-        if Mix.isOn, !trying, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
+        if Mix.isOn, fileStays, !trying, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
            let into = Mix.copy(of: package, among: projects), await Mix.meeting(package, history: history, with: into) != nil {
             pending.existing = into
             pending.mixFile = file
