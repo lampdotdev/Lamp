@@ -898,7 +898,7 @@ final class SidebarServer {
                     out.append(card)
                 case .needsBuilder:
                     let offered = BuilderLine.engines(in: line.text)
-                    var card = SidebarLine(id: line.id, kind: .offer, text: BuilderLine.title, gap: gap)
+                    var card = SidebarLine(id: line.id, kind: .offer, text: BuilderLine.missing(in: line.text) ?? BuilderLine.title, gap: gap)
                     card.symbol = "sparkles"
                     card.status = BuilderLine.status(offered)
                     card.choices = offered.map { SidebarChoice(id: $0.rawValue, title: BuilderLine.choice($0)) }
