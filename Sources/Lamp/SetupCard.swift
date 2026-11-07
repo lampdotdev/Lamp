@@ -471,11 +471,28 @@ enum BuilderLine {
         order.filter { installed($0) && signedIn($0) }
     }
 
-    static func text(_ offered: [Engine]) -> String { offered.map(\.rawValue).joined(separator: " ") }
+    /// The line's saved text: the engines offered, and on a line of its own what the chosen engine still needs.
+    static func text(_ offered: [Engine], missing: String? = nil) -> String {
+        offered.map(\.rawValue).joined(separator: " ") + (missing.map { "\n" + $0 } ?? "")
+    }
 
     static func engines(in text: String) -> [Engine] {
-        let saved = text.split(separator: " ").compactMap { Engine(rawValue: String($0)) }
+        let saved = (text.split(separator: "\n", omittingEmptySubsequences: false).first ?? "")
+            .split(separator: " ").compactMap { Engine(rawValue: String($0)) }
         return order.filter(saved.contains)
+    }
+
+    /// What the line says in place of `title`, when what builds was chosen and only one thing keeps it from building:
+    /// its sign-in, its download, or Lamp's own builder gone missing. pi still waiting for a key or a model is a choice
+    /// yet to be made, which the title asks for.
+    static func missing(engine: Engine, problem: String?) -> String? {
+        guard let problem, engine != .pi || problem == Builder.piMissing else { return nil }
+        return problem
+    }
+
+    static func missing(in text: String) -> String? {
+        let parts = text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+        return parts.count > 1 && !parts[1].isEmpty ? String(parts[1]) : nil
     }
 
     /// Asked for while nothing builds and a request waits for it. In the gallery it has no wish, and shows.

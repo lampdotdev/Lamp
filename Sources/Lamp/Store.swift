@@ -2731,10 +2731,22 @@ final class Store: ObservableObject {
     /// Asks for what builds, where the request was made: wishes run without it, so the first request is when it's
     /// needed. One line in the chat (`BuilderLine`), the latest request's, under which that request waits. Claude Code or
     /// Codex already signed in on this Mac is offered there, never chosen for the person: it's their plan and their code.
+    ///
+    /// What's known of setup is from the last look, which can be behind: a sign-in made since, or a check that couldn't
+    /// answer then. So setup is looked at again first (`recheckSetup`), and the line goes up only if what was chosen still
+    /// can't build. The look itself starts the waiting request once it can, the one way a waiting request starts.
     func askForSetup(_ project: LampProject) {
-        logs[project.id]?.removeAll { $0.kind == .needsBuilder }
-        log(project, .needsBuilder, "")
-        Task { await offerSignedInEngines() }
+        Task {
+            await recheckSetup()
+            guard !(setup.hasBuilder && setup.hasAgent) else { return }
+            let engine = Builder.engine
+            let signedIn = EngineSignIn.known[engine].map { $0 ? "yes" : "no" } ?? "unknown"
+            NSLog("Lamp held a request for setup: engine %@, builder %@, agent %@, signed in %@", engine.rawValue,
+                  setup.builderProblem ?? "ready", setup.hasAgent ? "present" : "missing", engine == .pi ? "n/a" : signedIn)
+            logs[project.id]?.removeAll { $0.kind == .needsBuilder }
+            log(project, .needsBuilder, "")
+            await offerSignedInEngines()
+        }
     }
 
     /// What the lines asking for what builds offer, as of now: looked at again with each look at setup, so a request
@@ -2743,7 +2755,8 @@ final class Store: ObservableObject {
         guard logs.values.contains(where: { $0.contains { $0.kind == .needsBuilder } }) else { return }
         if !EngineInstall.hasLooked { await EngineInstall.lookForPersonsCopies() }
         await EngineSignIn.refresh(olderThan: 5)
-        let offered = BuilderLine.text(BuilderLine.offers(installed: { EngineInstall.path(for: $0) != nil }, signedIn: { EngineSignIn.known[$0] == true }))
+        let offered = BuilderLine.text(BuilderLine.offers(installed: { EngineInstall.path(for: $0) != nil }, signedIn: { EngineSignIn.known[$0] == true }),
+                                       missing: BuilderLine.missing(engine: Builder.engine, problem: setup.builderProblem))
         for project in projects {
             guard let index = logs[project.id]?.firstIndex(where: { $0.kind == .needsBuilder }),
                   logs[project.id]?[index].text != offered else { continue }

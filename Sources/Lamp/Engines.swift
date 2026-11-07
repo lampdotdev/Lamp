@@ -134,11 +134,13 @@ enum Builder {
         return Provider.defaultModel
     }
 
+    static let piMissing = "Lamp's AI builder is missing from the app. Download Lamp again."
+
     /// Whether the current choice can build right now, and if not, why.
     static func problem() -> String? {
         switch engine {
         case .pi:
-            if Agent.executable == nil { return "Lamp's AI builder is missing from the app. Download Lamp again." }
+            if Agent.executable == nil { return piMissing }
             switch piProvider {
             case localProvider:
                 let installed = LocalModels.scan()
@@ -796,14 +798,24 @@ enum EngineSignIn {
     private static func ask(_ engine: Engine) async -> Bool? {
         guard let tool = EngineInstall.path(for: engine) else { return nil }
         switch engine {
+        case .claude: return verdict(engine, await result(engine, tool, ["auth", "status"], timeout: 20))
+        case .codex: return verdict(engine, await result(engine, tool, ["login", "status"], timeout: 20))
+        default: return nil
+        }
+    }
+
+    /// What a status command's answer says of the sign-in. nil when it didn't answer: it ran out of time or couldn't
+    /// start (a Mac busy at launch, a copy mid-update). That is "couldn't check", never "signed out", which would hold
+    /// back the person's request for a sign-in they have.
+    static func verdict(_ engine: Engine, _ answer: Subprocess.Result) -> Bool? {
+        guard !answer.timedOut, answer.status != -1 else { return nil }
+        switch engine {
         case .claude:
-            let (status, output) = await run(engine, tool, ["auth", "status"], timeout: 20)
-            guard status == 0, let info = try? JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any]
-            else { return status == 0 ? nil : false }
-            return info["loggedIn"] as? Bool
+            guard answer.status == 0 else { return false }
+            let info = try? JSONSerialization.jsonObject(with: Data(answer.output.utf8)) as? [String: Any]
+            return info?["loggedIn"] as? Bool
         case .codex:
-            let (status, output) = await run(engine, tool, ["login", "status"], timeout: 20)
-            return status == 0 && output.localizedCaseInsensitiveContains("logged in")
+            return answer.status == 0 && answer.output.localizedCaseInsensitiveContains("logged in")
         default:
             return nil
         }
@@ -818,7 +830,7 @@ enum EngineSignIn {
         }, login: { started in
             guard let tool = EngineInstall.path(for: engine) else { return 1 }
             let arguments = engine == .claude ? ["auth", "login"] : ["login"]
-            return await run(engine, tool, arguments, timeout: 600, started: started).status
+            return await result(engine, tool, arguments, timeout: 600, started: started).status
         }, settle: {
             _ = await isSignedIn(engine)
             // Setup counts the sign-in (`SetupCheck.run`), so requests waiting for it start wherever it was made from.
@@ -867,10 +879,9 @@ enum EngineSignIn {
     nonisolated(unsafe) private static var signIns: [Engine: [UUID: (process: Process?, cancelled: Bool)]] = [:]
     private static let lock = NSLock()
 
-    private static func run(_ engine: Engine, _ tool: String, _ arguments: [String], timeout: TimeInterval,
-                            started: (@Sendable (Process) -> Void)? = nil) async -> (status: Int32, output: String) {
+    private static func result(_ engine: Engine, _ tool: String, _ arguments: [String], timeout: TimeInterval,
+                               started: (@Sendable (Process) -> Void)? = nil) async -> Subprocess.Result {
         let env = EngineInstall.environment(for: engine).merging(["PATH": ToolLocator.userPath]) { $1 }
-        let result = await Subprocess.run(tool, arguments, env: env, timeout: timeout, started: started)
-        return (result.status, result.output)
+        return await Subprocess.run(tool, arguments, env: env, timeout: timeout, started: started)
     }
 }

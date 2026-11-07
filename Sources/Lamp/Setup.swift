@@ -69,6 +69,10 @@ struct SetupCheck {
     /// How long Apple's installer may take to appear after it's asked for.
     static let installerPatience: TimeInterval = 15
 
+    /// Whether the program that runs the chosen engine's turns is there. Only pi's is inside Lamp; Claude Code's and
+    /// Codex's are their own copies, which `Builder.problem` asks after, so a Lamp missing pi still builds with them.
+    static func hasAgent(for engine: Engine, bundledPi: URL?) -> Bool { engine != .pi || bundledPi != nil }
+
     var hasBuilder: Bool { builderProblem == nil }
     var ready: Bool { hasBuildTools && hasBuilder && hasAgent }
 
@@ -84,7 +88,7 @@ struct SetupCheck {
         let repair = installed ? macSDKRepair() : nil
         var check = SetupCheck(checked: true, hasBuildTools: installed && repair == nil,
                                builderProblem: Builder.problem() ?? (signedOut ? "Sign in to \(engine.title) to build." : nil),
-                               hasAgent: Agent.executable != nil)
+                               hasAgent: hasAgent(for: engine, bundledPi: Agent.executable))
         check.repair = repair
         check.installerOpen = installerIsOpen()
         return check.keeping(previous)
@@ -333,7 +337,7 @@ struct SetupView: View {
                 .foregroundStyle(.secondary)
 
             if !store.setup.hasAgent {
-                Label("Lamp's AI builder is missing from the app. Download Lamp again.",
+                Label(Builder.piMissing,
                       systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
             }

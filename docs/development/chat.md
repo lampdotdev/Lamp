@@ -160,7 +160,11 @@ with Set Up…, and its keys, downloads and sign-ins, and Image Playground for a
 (`SetupSheet`), over Lamp's panel when the chat is there and in front on its own when it's beside the app. The same goes
 for what builds, asked for when a request finds nothing does (`BuilderLine`): the line is in the chat, with a button for
 each of Claude Code and Codex that's on this Mac and signed in (`SidebarLine.choices`), which only a click takes since it
-spends the person's plan, and the key or sign-in in the sheet (`SetupView`). There, choosing Claude Code or Codex shows how far it has got under
+spends the person's plan, and the key or sign-in in the sheet (`SetupView`). The line goes up only after setup is looked
+at again (`Store.askForSetup` runs `recheckSetup` first), so a sign-in made elsewhere since the last look lets the request
+go instead; with Claude Code or Codex already chosen, it names what that engine lacks (`BuilderLine.missing`) rather than
+asking again what builds. A sign-in check that timed out or couldn't start is "couldn't tell", never "signed out"
+(`EngineSignIn.verdict`). There, choosing Claude Code or Codex shows how far it has got under
 the choice (`EngineUseRow`: its download, what failed with Try Again, its sign-in), and Try Again goes the whole way
 through (`EngineUse`); the request stays waiting until that's done. A device's
 step opens its setup window, and an iPhone or Android setup line its kind's setup. A new wish's empty chat shows its
