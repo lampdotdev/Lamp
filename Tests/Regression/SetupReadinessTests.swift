@@ -30,7 +30,7 @@ final class SetupReadinessTests: XCTestCase {
 
     /// With Claude Code chosen, the line names what it lacks rather than asking again what builds.
     func testTheLineNamesWhatTheChosenEngineLacks() {
-        let signIn = "Sign in to Claude Code to build."
+        let signIn = "Sign in to \(Engine.claude.title) to build."
         XCTAssertEqual(BuilderLine.missing(engine: .claude, problem: signIn), signIn)
         XCTAssertNil(BuilderLine.missing(engine: .pi, problem: "Add your OpenRouter key."), "pi without a key is still to be chosen")
         XCTAssertEqual(BuilderLine.missing(engine: .pi, problem: Builder.piMissing), Builder.piMissing)

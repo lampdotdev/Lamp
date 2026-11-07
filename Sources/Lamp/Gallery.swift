@@ -215,7 +215,7 @@ enum Gallery {
         ]),
         screen("A request waiting for the chosen builder's sign-in", group: "Chat screen", [
             LogLine(kind: .user, text: "Make it a snowy winter night"),
-            LogLine(kind: .needsBuilder, text: BuilderLine.text([.codex], missing: "Sign in to Claude Code to build.")),
+            LogLine(kind: .needsBuilder, text: BuilderLine.text([.codex], missing: "Sign in to \(Engine.claude.title) to build.")),
         ]),
         screen("A request waiting, with a sign-in to use", group: "Chat screen", [
             LogLine(kind: .user, text: "Make it a snowy winter night"),
