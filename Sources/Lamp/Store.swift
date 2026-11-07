@@ -858,10 +858,18 @@ final class Store: ObservableObject {
         failReview(id, "Lamp couldn't finish checking this in time.", detail: "Nothing was changed.")
     }
 
-    /// Try Again, after a review failed: the same request again (its sheet, when it was up, stays up for it).
+    /// Try Again, after a review failed. One that failed on its sheet reads the package on that sheet again (`check`),
+    /// so the retry's progress and any failure of it stay on the sheet; fetching it anew would start a review with no
+    /// sheet, whose failure the sheet never shows. One that failed before its sheet was up asks for the same again.
     func retryReview() {
-        guard reviewWork?.failed == true, let retry = reviewRetry else { return }
+        guard let work = reviewWork, work.failed, let retry = reviewRetry else { return }
         endReview()
+        if let sheet = work.sheet, let pending = pendingImport, pending.id == sheet {
+            // The sheet's whole review as it is now, a prepared update's copy included. A Cancel before this runs closes
+            // the sheet, and `check` then does nothing.
+            Task { await check(pending) }
+            return
+        }
         retry()
     }
 
@@ -893,12 +901,15 @@ final class Store: ObservableObject {
         await reviewTask?.value
     }
 
+    /// How a review reads a package's code: `Sharing.inspect`, which tests replace with a reading that doesn't finish.
+    nonisolated(unsafe) static var inspectForReview: (Sharing.Package) -> Sharing.Inspection = Sharing.inspect
+
     /// The safety check of a review whose sheet is up: Lamp's own reading of the code, off the main actor, then the
     /// AI's. A reading that didn't finish is never a review: the sheet says so, and its buttons stay off.
     private func inspectAndAsk(_ pending: PendingImport, id: UUID) async {
         setReviewStage(.inspecting, for: id)
         let package = pending.package
-        let found = await Self.offMain { Sharing.inspect(package) }
+        let found = await Self.offMain { Self.inspectForReview(package) }
         guard owns(id) else { return }
         guard found.finished else { return failReview(id, "Lamp couldn't finish checking this.", detail: "Nothing was changed.") }
         setReviewStage(.asking, for: id)
@@ -1444,6 +1455,8 @@ final class Store: ObservableObject {
     /// A turn in progress on an app, for tests of what a tool call does under one.
     func beginTurnForTest(_ turn: Turn, on project: LampProject) { turns[project.id] = turn }
     func turnForTest(on project: LampProject) -> Turn? { turns[project.id] }
+    /// Lamp has looked at setup, for tests of a review: reviews wait for that look before their sheet opens.
+    func lookedAtSetupForTest() { setupLook.done() }
 
     /// A Store over the wishes in `root` alone, for tests: none of Lamp's launch work (migration, keys, starters) runs.
     init(testingAt root: URL) {

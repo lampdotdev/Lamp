@@ -456,7 +456,8 @@ a newer review and the deadline (`Store.reviewDeadline`) all stop, the fetch's g
 Review Update… on the same wish while it runs is the same review; a stopped review's fetch never opens a sheet (`owns`).
 Its stage shows where it was asked for: beside the wish on the desk ("Fetching update…", with Cancel) until its sheet is
 up, then on the sheet. A reading that didn't finish is never a review: the sheet, or the desk line, says why with Try
-Again, and Update stays off. Out of time while the AI is asked, the sheet shows what Lamp's own reading found and says the
+Again, and Update stays off. Try Again on the sheet reads the same package again there (`Store.retryReview`), rather than
+fetching it anew, so its progress and any second failure stay on the sheet. Out of time while the AI is asked, the sheet shows what Lamp's own reading found and says the
 AI's check didn't finish.
 
 A wish whose chain names where it came from is updated as it was opened
