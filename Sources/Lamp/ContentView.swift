@@ -335,7 +335,8 @@ struct ImportReviewView: View {
     /// The app's own icon, once drawn from the file; the plain app icon until then, and for a file without one.
     @State private var icon: NSImage?
     /// How tall the sheet may be where it hangs: from its top down to the bottom of the screen's usable area
-    /// (above the Dock). Unlimited until the sheet is on screen.
+    /// (above the Dock), and no taller than Lamp's window, which cuts off whatever of a sheet goes past it.
+    /// Unlimited until the sheet is on screen.
     @State private var room = CGFloat.infinity
     @State private var sheet: NSWindow?
 
@@ -351,8 +352,9 @@ struct ImportReviewView: View {
                          retry: store.retryReview)
             .task { icon = await Sharing.icon(of: pending.package) }
             .background(WindowFinder { sheet = $0; fit() })
-            // The window can be moved with the sheet down, and the Dock can come and go.
+            // The window can be moved or resized with the sheet down, and the Dock can come and go.
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMoveNotification)) { _ in fit() }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { _ in fit() }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in fit() }
     }
 
@@ -363,13 +365,15 @@ struct ImportReviewView: View {
 
     private func fit() {
         guard let window = sheet?.sheetParent, let screen = window.screen else { return }
-        room = Self.room(below: window.frame.minY + window.contentLayoutRect.maxY, on: screen.visibleFrame)
+        room = Self.room(below: window.frame.minY + window.contentLayoutRect.maxY, on: screen.visibleFrame,
+                         inside: window.contentLayoutRect.height)
     }
 
     /// The height a sheet can take when its top edge sits at `top` (screen coordinates, y up) on a screen
-    /// whose usable area is `visible`: down to the bottom of that area, less a margin.
-    nonisolated static func room(below top: CGFloat, on visible: CGRect) -> CGFloat {
-        (top - visible.minY - 12).rounded(.down)
+    /// whose usable area is `visible`, hanging in a window whose content is `inside` tall: down to the bottom of
+    /// that area or of the window, whichever comes first, less a margin.
+    nonisolated static func room(below top: CGFloat, on visible: CGRect, inside window: CGFloat = .infinity) -> CGFloat {
+        (min(top - visible.minY, window) - 12).rounded(.down)
     }
 }
 
@@ -419,7 +423,8 @@ struct ImportReviewCard: View {
     /// The height of the features under What it does as laid out in full; nil when the reviewer named none.
     @State private var featuring: CGFloat?
     private var heights: Heights {
-        Self.heights(room: room, fixed: Array(fixed.values), considering: considering, featuring: featuring)
+        Self.heights(room: room, fixed: fixed.filter { $0.key != .buttons }.map(\.value), buttons: fixed[.buttons] ?? 0,
+                     considering: considering, featuring: featuring)
     }
 
     /// How tall each part that scrolls may be.
@@ -427,6 +432,10 @@ struct ImportReviewCard: View {
         var considering: CGFloat
         var featuring: CGFloat
         var capabilities: CGFloat
+        /// The window is too short for each list to scroll on its own: everything above the buttons scrolls as
+        /// one, up to `whole`, and the buttons stay under it.
+        var compact = false
+        var whole = CGFloat.infinity
     }
 
     /// What the scrolling parts share: the room under the sheet's top less the fixed parts, the sheet's padding (48)
@@ -435,11 +444,16 @@ struct ImportReviewCard: View {
     /// otherwise scrolls, leaving the rest a few rows, or half when there isn't room for that; the features then
     /// take what they need of that the same way, and what the app can do the rest. A long list of concerns or
     /// features never pushes the buttons off the screen, and Lamp's verdict, its first lines, is what stays in view.
-    /// Below 48 points nothing could be read, so that's the floor.
-    static func heights(room: CGFloat, fixed: [CGFloat], considering: CGFloat?, featuring: CGFloat?) -> Heights {
+    /// Below 48 points nothing could be read, so that's the floor. In a window too short to leave the lists a few
+    /// rows between them (120 points), the fixed parts and the lists scroll together instead, and only the buttons
+    /// (`buttons` tall) stay put.
+    static func heights(room: CGFloat, fixed: [CGFloat], buttons: CGFloat, considering: CGFloat?, featuring: CGFloat?) -> Heights {
         let scrolling = 1 + (considering == nil ? 0 : 1) + (featuring == nil ? 0 : 1)
-        let budget = room - fixed.reduce(0, +) - 48 - 16 * CGFloat(fixed.count + scrolling - 1) + (featuring == nil ? 0 : 8)
-        let shared = max(48, budget)
+        let budget = room - fixed.reduce(0, +) - buttons - 48 - 16 * CGFloat(fixed.count + scrolling) + (featuring == nil ? 0 : 8)
+        if budget < 120 {
+            return Heights(considering: 0, featuring: 0, capabilities: 0, compact: true, whole: max(48, room - buttons - 48 - 16))
+        }
+        let shared = budget
         func part(_ height: CGFloat?, of room: CGFloat) -> CGFloat { min(height ?? 0, max(room - 120, room / 2)) }
         let consider = part(considering, of: shared)
         let feature = part(featuring, of: shared - consider)
@@ -448,6 +462,35 @@ struct ImportReviewCard: View {
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if heights.compact {
+                ScrollView { parts.frame(maxWidth: .infinity, alignment: .leading) }
+                    .frame(maxHeight: heights.whole)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                parts
+            }
+            buttons
+                .cardButtons()
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.buttons] = $0 }
+        }
+        .padding(24)
+        .frame(width: 500)
+    }
+
+    /// A list that scrolls on its own up to `limit`, or, in a compact sheet, laid out whole in the one scroll.
+    @ViewBuilder private func list<Content: View>(_ limit: CGFloat, @ViewBuilder _ content: () -> Content) -> some View {
+        if heights.compact {
+            content()
+        } else {
+            ScrollView { content() }
+                .frame(maxHeight: limit)
+                .fixedSize(horizontal: false, vertical: true)   // no taller than its content, up to the limit
+        }
+    }
+
+    /// Everything above the buttons.
+    private var parts: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 14) {
                 // Lamp's icons carry their own margin, so one fills a larger frame to sit like the plain icon
@@ -478,8 +521,9 @@ struct ImportReviewCard: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.name] = $0 }
 
             if let review {
-                // What it does and the start of what to weigh stay in view, however short the screen, so Lamp's
-                // verdict is never scrolled away beside the button that opens the app.
+                // What it does and the start of what to weigh stay in view on any screen with room for a few rows
+                // of the lists, so Lamp's verdict is never scrolled away beside the button that opens the app.
+                // A window shorter than that scrolls it all together (`Heights.compact`), but keeps the buttons.
                 if !review.summary.isEmpty {
                     section("What it does") {
                         // The reviewer is asked for a sentence or two: a few lines here, the whole of it on hover.
@@ -490,7 +534,7 @@ struct ImportReviewCard: View {
                 if !review.capabilities.isEmpty {
                     // What the reviewer saw it do for the person: features, said with what the app is, not as
                     // permissions beside what Lamp's own checks found in the code. Up to eight, so they scroll.
-                    ScrollView {
+                    list(heights.featuring) {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(review.capabilities, id: \.self) { feature in
                                 Label {
@@ -505,13 +549,11 @@ struct ImportReviewCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { featuring = $0 }
                     }
-                    .frame(maxHeight: heights.featuring)
-                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, review.summary.isEmpty ? 0 : -8)
                 }
                 let considerations = Self.considerations(review, prepared: prepared)
                 if !considerations.isEmpty {
-                    ScrollView {
+                    list(heights.considering) {
                         section("Things to consider") {
                             VStack(alignment: .leading, spacing: 8) {
                                 ForEach(considerations) { consideration($0) }
@@ -520,16 +562,12 @@ struct ImportReviewCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { considering = $0 }
                     }
-                    .frame(maxHeight: heights.considering)
-                    .fixedSize(horizontal: false, vertical: true)
                 }
-                ScrollView {
+                list(heights.capabilities) {
                     // An Android app runs on the emulator or the person's phone, never on the Mac itself.
                     section(android ? "What it can do" : "What it can do on your Mac") { capabilities(review) }
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: heights.capabilities)
-                .fixedSize(horizontal: false, vertical: true)   // no taller than its content, up to the limit
             } else if let failure {
                 Label {
                     Text(verbatim: failure).fixedSize(horizontal: false, vertical: true)
@@ -567,13 +605,7 @@ struct ImportReviewCard: View {
                 }
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.existing] = $0 }
             }
-
-            buttons
-                .cardButtons()
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.buttons] = $0 }
         }
-        .padding(24)
-        .frame(width: 500)
     }
 
     /// The sheet's title: an update of the app already here says so, and one prepared in a copy says it's ready.
