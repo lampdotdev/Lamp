@@ -364,12 +364,17 @@ Lamp starts no process for it and sees none of its commands, so its shell is und
   Build & Open, always as a new app and with no chat opened beside it. The call waits for that answer. The app's first
   build is what the review installed, never the folder read again; an edit made while the review was up is pending
   for the next apply. Later applies are the agent's own work, as a chat's turns are, and aren't reviewed again.
+- **An app with no icon.** Its icon is designed right after the review, before the first build, as a new app's is
+  while its first request builds: designed after it, the icon is a change the open app can't take, and the next
+  change of any kind would reopen the app.
 - **The folder and the workspace.** The folder stays the source and its git is the person's: Lamp never writes in it.
   What builds and runs is the project in Lamp's apps folder the review made, so LiveReload's live copy, libraries and
   runtime folder stay where they always are. Each apply captures
   the folder as the import reads one (`RepoImport.open`), checks the bytes copied against the folder before and after,
   writes into the workspace only what differs (`OutsideWork.sync`: the code, its files, and its metadata by the
-  import's own writers, `syncMetadata`: capabilities, description, credits and their licenses, the icon), then builds and installs as a look does, holding
+  import's own writers, `syncMetadata`: capabilities, description, credits and their licenses, the icon, put in only when the folder's
+  own metadata changed since the last apply, `Adopted.metadata`, so Lamp's own work on its copy's icon isn't written
+  over, and the app reopened, at every apply), then builds and installs as a look does, holding
   the project as Lamp's own work does (`Store.begin`). That hold is a `Turn` with no request and no agent, and what
   became of the change is read from its `outcomes`, as a look reads it; pulling the apply and its checks out of
   `Turn` into something of their own is still to do. Folders are known by real path, device and inode

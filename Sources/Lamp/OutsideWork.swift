@@ -133,6 +133,10 @@ enum OutsideWork {
         /// ended (cancelled once built, or Lamp quitting midway). Kept on disk, so the next apply puts them in even
         /// after Lamp starts again, though nothing is left to build. Nil in records from before it was kept.
         var owed: Bool?
+        /// The folder's own metadata as last put in (`metadataDigest`): an apply puts it in again only when the folder's
+        /// changed. Lamp works on the icon of its copy by itself (designing one, painting its artwork), and writing the
+        /// folder's over that at every apply changed the icon each time, which reopens the app for every change.
+        var metadata: String?
     }
 
     static var registryURL: URL { Edition.supportFolder.appendingPathComponent("Outside/adopted.json") }
@@ -231,7 +235,14 @@ enum OutsideWork {
     /// Puts what was captured into the workspace, writing only what differs, so a file that didn't change keeps its
     /// date and LiveReload sees only the change. Lamp's own files in the workspace are left to Lamp
     /// (`Template.writeOwnedFiles`), whatever copy of them the folder has.
-    static func sync(_ capture: Capture, into project: LampProject) throws -> [String] {
+    /// The folder's files that are the app's metadata rather than its code or its own files: what `syncMetadata` reads.
+    static func metadataDigest(_ hashes: [String: String]) -> String {
+        let code = ["Sources/", Template.widgetFolder + "/", Template.watchFolder + "/", Template.shareFolder + "/", Sharing.Assets.folder + "/"]
+        return fingerprint(hashes.filter { path, _ in path != "APP.md" && !code.contains { path.hasPrefix($0) } })
+    }
+
+    /// `metadata`: put the app's metadata in too (`syncMetadata`), which is only when the folder's changed.
+    static func sync(_ capture: Capture, into project: LampProject, metadata: Bool) throws -> [String] {
         let fm = FileManager.default
         let package = capture.package
         let codeFolders = ["Sources/", Template.widgetFolder + "/", Template.watchFolder + "/", Template.shareFolder + "/"]
@@ -276,7 +287,7 @@ enum OutsideWork {
             try data.write(to: target, options: .atomic)
             changed.append(path)
         }
-        return (changed + (try syncMetadata(package, into: project))).sorted()
+        return (changed + (metadata ? try syncMetadata(package, into: project) : [])).sorted()
     }
 
     /// The app's own metadata, put in as the import puts it in (`Sharing.install`), from the same checked package: its
@@ -474,8 +485,16 @@ extension Store {
             importApp(from: repo, outside: OutsideImport(repo: now.real) { answered.resume(returning: ($0, $1)) })
         }
         guard let project = made.0 else { return .refused(made.1 ?? "Lamp didn't take the folder on.") }
-        state.adopted.append(OutsideWork.Adopted(repo: now.real, device: now.device, inode: now.inode, project: project.id, applied: nil))
+        // The review installed the folder's metadata as it read just before the review began.
+        state.adopted.append(OutsideWork.Adopted(repo: now.real, device: now.device, inode: now.inode, project: project.id, applied: nil,
+                                                 metadata: OutsideWork.metadataDigest(before)))
         state.save()
+        // An app that came with no icon gets its design now, before its first build, as a new app's is designed while its
+        // first request builds: designed after it, the icon is a change the open app can't take, and the next change of
+        // any kind reopens the app for it.
+        if Icons.load(project) == nil, let made = current(project) {
+            Icons.save(await Icons.design(for: made), for: made)
+        }
         // Its first build is what the review read and installed, never the folder read again: an edit made while the
         // review was up would otherwise go in unreviewed. Such an edit is pending, for the next apply.
         var answer = await outsideApply(now.real, reopen: false, reviewed: before)
@@ -514,8 +533,14 @@ extension Store {
                     return .refused((error as? OutsideWork.CaptureProblem)?.text ?? error.localizedDescription)
                 }
                 defer { try? FileManager.default.removeItem(at: capture.package.folder) }
-                do { written = try OutsideWork.sync(capture, into: project) } catch {
+                let metadata = OutsideWork.metadataDigest(capture.hashes)
+                let metadataChanged = state.adopted.first(where: { $0.repo == entry.repo })?.metadata != metadata
+                do { written = try OutsideWork.sync(capture, into: project, metadata: metadataChanged) } catch {
                     return .refused("Lamp couldn't copy the folder's files into its build: \(error.localizedDescription)")
+                }
+                if metadataChanged, let index = state.adopted.firstIndex(where: { $0.repo == entry.repo }) {
+                    state.adopted[index].metadata = metadata
+                    state.save()
                 }
                 read = capture.hashes
             }
