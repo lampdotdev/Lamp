@@ -276,7 +276,39 @@ enum OutsideWork {
             try data.write(to: target, options: .atomic)
             changed.append(path)
         }
-        return changed.sorted()
+        return (changed + (try syncMetadata(package, into: project))).sorted()
+    }
+
+    /// The app's own metadata, put in as the import puts it in (`Sharing.install`), from the same checked package: its
+    /// capabilities (a file that declares none takes them away), description, credits and the license files they name,
+    /// and its icon's design and artwork. Each is written by the import's own writer; what's answered as written is
+    /// only what came out different, so a folder whose metadata didn't change still answers unchanged.
+    static func syncMetadata(_ package: Sharing.Package, into project: LampProject) throws -> [String] {
+        let fm = FileManager.default
+        let licences = package.licences.map { Sharing.relativePath(of: $0, in: package.folder) }.filter { !$0.contains("..") }
+        let watched = [Template.Capabilities.file, AppDescription.file, Credits.file, Credits.arrivedPath] + licences
+        func read() -> [String: Data] {
+            Dictionary(uniqueKeysWithValues: watched.compactMap { path in
+                (try? Data(contentsOf: project.dir.appendingPathComponent(path))).map { (path, $0) }
+            })
+        }
+        let before = read()
+        let iconBefore = (try? Data(contentsOf: Icons.specURL(project)))
+        try package.capabilities.save(for: project)
+        try AppDescription.write(package.description, for: project)
+        try Credits.arrive(package.credits, in: project)
+        for (file, path) in zip(package.licences.filter { !Sharing.relativePath(of: $0, in: package.folder).contains("..") }, licences) {
+            let target = project.dir.appendingPathComponent(path)
+            if (try? Data(contentsOf: target)) == (try? Data(contentsOf: file)) { continue }
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fm.removeItem(at: target)
+            try fm.copyItem(at: file, to: target)
+        }
+        let newArt = try Sharing.installIcon(package, into: project)
+        let after = read()
+        var changed = Set(before.keys).union(after.keys).filter { before[$0] != after[$0] }
+        if newArt || (try? Data(contentsOf: Icons.specURL(project))) != iconBefore { changed.insert("icon.json") }
+        return Array(changed)
     }
 }
 
@@ -587,7 +619,9 @@ extension Store {
     /// The folder's app, when what's built is the folder as it is now: sharing goes out only from a known snapshot,
     /// never from a workspace a step behind (or ahead of) the folder the agent sees.
     private func outsideSnapshot(_ path: String) async -> (OutsideWork.Adopted, LampProject, String)? {
-        guard let (entry, project) = outsideFolder(path), let applied = entry.applied else { return nil }
+        // Nothing owed either: a later apply that wrote the workspace without going in (it didn't build, or was
+        // cancelled) leaves files there that the folder may no longer hold, which sharing would pack.
+        guard let (entry, project) = outsideFolder(path), let applied = entry.applied, entry.owed != true else { return nil }
         let now = await Self.offMain { OutsideWork.hashes(of: URL(fileURLWithPath: entry.repo)) }
         // The last apply that went in wrote the workspace from this very reading. The whole build that follows a live
         // change may still be running; sharing packs the files, not the build, so it doesn't wait for it.

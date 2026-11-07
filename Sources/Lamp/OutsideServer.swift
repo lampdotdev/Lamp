@@ -149,7 +149,10 @@ final class OutsideServer: @unchecked Sendable {
                 handle(object, connection: connection, writer: writer)
             }
         }
-        close(fd)
+        // Closed under the writer's lock: an answer still being worked out for this connection is never written to the
+        // descriptor once it's free, where a later connection or file could have it. A finished apply's answer is still
+        // kept for a retry with its operation_id (`OutsideState.answers`).
+        writer.close()
         // The connection's calls that haven't begun are dropped; one already running finishes, its answer kept for a retry.
         lock.lock()
         alive.remove(connection)
@@ -164,14 +167,25 @@ final class OutsideServer: @unchecked Sendable {
         return alive.contains(connection)
     }
 
+    /// The one owner of a connection's descriptor: writing and closing take the same lock, and nothing is written once
+    /// it's closed.
     final class Writer: @unchecked Sendable {
         let fd: Int32
         private let lock = NSLock()
+        private var closed = false
         init(fd: Int32) { self.fd = fd }
+        func close() {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !closed else { return }
+            closed = true
+            Darwin.close(fd)
+        }
         func send(_ object: [String: Any]) {
             guard let data = try? JSONSerialization.data(withJSONObject: object) else { return }
             lock.lock()
             defer { lock.unlock() }
+            guard !closed else { return }
             let line = data + Data("\n".utf8)
             line.withUnsafeBytes { raw in
                 var offset = 0

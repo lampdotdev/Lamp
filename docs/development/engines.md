@@ -368,7 +368,8 @@ Lamp starts no process for it and sees none of its commands, so its shell is und
   What builds and runs is the project in Lamp's apps folder the review made, so LiveReload's live copy, libraries and
   runtime folder stay where they always are. Each apply captures
   the folder as the import reads one (`RepoImport.open`), checks the bytes copied against the folder before and after,
-  writes into the workspace only what differs (`OutsideWork.sync`), then builds and installs as a look does, holding
+  writes into the workspace only what differs (`OutsideWork.sync`: the code, its files, and its metadata by the
+  import's own writers, `syncMetadata`: capabilities, description, credits and their licenses, the icon), then builds and installs as a look does, holding
   the project as Lamp's own work does (`Store.begin`). That hold is a `Turn` with no request and no agent, and what
   became of the change is read from its `outcomes`, as a look reads it; pulling the apply and its checks out of
   `Turn` into something of their own is still to do. Folders are known by real path, device and inode
@@ -387,7 +388,8 @@ Lamp starts no process for it and sees none of its commands, so its shell is und
   (`ImportReviewCard.ownFolder`). The agent can't use the app (`use_app` isn't offered): it's told to ask the
   person to try what needs a hand.
 - **Sharing.** Both tools share only a known snapshot: the folder must read as it did at the last apply that went
-  in, which wrote the workspace from that reading, or they refuse and ask for an apply. `export_app` makes the shared file as
+  in, which wrote the workspace from that reading, and nothing written since may be owed (an apply that didn't build
+  or was cancelled leaves files in the workspace the folder may no longer hold), or they refuse and ask for an apply. `export_app` makes the shared file as
   Share… does (`Sharing.askToShare`, then `Store.sharedFile`, with every check of `Sharing.export`) and answers its
   path in Lamp's own folder. `publish_link` opens the Share Link card (`WishLinkCards`) for the person and waits on it,
   holding the app so nothing is applied meanwhile. The card makes the link before the app's file goes up, so a failure
