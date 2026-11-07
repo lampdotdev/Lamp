@@ -382,7 +382,7 @@ final class SkillsTests: XCTestCase {
             }
             XCTAssertFalse(skill.body.contains("{{sections}}"), name)
         }
-        XCTAssertEqual(viewed, 23)
+        XCTAssertEqual(viewed, 24)
         let feel = try XCTUnwrap(raw["game-feel"]).body
         XCTAssertTrue(feel.contains("## Fun\n\nA game is for fun"))
         // A web game at home on the Mac is played and judged only when the person asks: what the skills it's written

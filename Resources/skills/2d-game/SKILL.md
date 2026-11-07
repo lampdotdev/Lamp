@@ -177,6 +177,11 @@ Nothing is loaded from the network, ever: the art is in Web/ or made in code.
   it runs) instead of frames that wouldn't match. Make it once and scale it in the game (`setDisplaySize`).
 - A file the person gave (Attachments/) is copied into Web/ the same way.
 
+Whichever way it's drawn, make it read at a glance: characters and objects with recognizable silhouettes, one sprite
+scale and one outline style throughout, a quieter background behind the action, hazards and rewards that never look
+alike, and animation that shows each action (a wind-up, a landing, a hit). Simple geometric art chosen for the game is
+fine.
+
 ### Sound and saves
 
 The game skill's: look in the `assets` tool first for an effect for each thing the player does or meets and for the

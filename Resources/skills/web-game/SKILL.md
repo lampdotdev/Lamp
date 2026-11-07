@@ -74,7 +74,7 @@ Changes go into the running game, and these rules keep the player's place throug
 
 ## How it looks
 
-Decide before drawing: its world, one material its screens are made of, four to eight colors, one signature motion. Compose each screen for this game, not a centered stack of pills, emoji art or soft cards on a gradient. Every action answers at once in sight and sound, each with a short effect from the `assets` tool.
+Decide before drawing: its world, one material its screens are made of, four to eight colors, one signature motion. Compose each screen for this game, not a centered stack of pills, emoji art or soft cards on a gradient. Every action answers at once in sight and sound, each with a short effect from the `assets` tool. The finished look in game-feel is the bar every screen meets. The HTML above shows how screens layer over the canvas and follow the state, not a finished design: style it for this game, keeping the fixed stage and the black around it.
 
 ## What's checked, and when
 

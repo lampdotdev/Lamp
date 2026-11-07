@@ -1,7 +1,7 @@
 ---
 name: game-feel
-description: What makes a web game at home on the Mac good to play, beside the web-game guide's runtime rules - fun and feedback, sound, saves that never lose progress, a flow that starts and restarts cleanly, and teaching in play. Playing it, checking it and judging it are the game-playtest skill's, when the person asks. Lamp hands it over with the guide when the game is made; open it in a later conversation before changing how the game plays, teaches or looks.
-sections: game#Fun; game#Sound; game#Saves; game-ui#What every flow keeps; game-ui#Teaching and input; game-ui#Feedback and layout
+description: What makes a web game at home on the Mac good to play, beside the web-game guide's runtime rules - fun and feedback, sound, saves that never lose progress, a flow that starts and restarts cleanly, a finished look, and teaching in play. Playing it, checking it and judging it are the game-playtest skill's, when the person asks. Lamp hands it over with the guide when the game is made; open it in a later conversation before changing how the game plays, teaches or looks.
+sections: game#Fun; game#Sound; game#Saves; game-ui#What every flow keeps; game-ui#A finished look; game-ui#Teaching and input; game-ui#Feedback and layout
 ---
 
 # What makes the game good to play
