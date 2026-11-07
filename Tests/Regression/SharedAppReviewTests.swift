@@ -261,19 +261,41 @@ final class SharedAppReviewTests: XCTestCase {
     /// On a short screen the scrolling parts share what the fixed ones leave, eight features of two lines and an
     /// update's note among them, so the sheet stays within its room and the buttons in view.
     func testTheSheetsListsFitAShortScreen() {
-        let fixed: [CGFloat] = [92, 130, 54, 28]   // name, a five-line summary, an update's note, the buttons
-        // From where the fixed parts leave the scrolling ones their 48-point floor (488 here) upward.
+        let fixed: [CGFloat] = [92, 130, 54], buttons: CGFloat = 28   // name, a five-line summary, an update's note
         for room: CGFloat in [488, 520, 560, 640, 900] {
-            let heights = ImportReviewCard.heights(room: room, fixed: fixed, considering: 110, featuring: 8 * 40 + 7 * 8)
-            let used = fixed.reduce(0, +) + 48 + 16 * 6 - 8 + heights.considering + heights.featuring + heights.capabilities
+            let heights = ImportReviewCard.heights(room: room, fixed: fixed, buttons: buttons, considering: 110, featuring: 8 * 40 + 7 * 8)
+            if heights.compact {
+                // Too short for the lists to scroll apart: everything above the buttons scrolls as one.
+                XCTAssertLessThan(room, 560, "\(room)")
+                XCTAssertLessThanOrEqual(heights.whole + buttons + 48 + 16, room, "\(room)")
+                continue
+            }
+            let used = fixed.reduce(0, +) + buttons + 48 + 16 * 6 - 8 + heights.considering + heights.featuring + heights.capabilities
             XCTAssertLessThanOrEqual(used, room, "\(room)")
             XCTAssertGreaterThan(heights.capabilities, 0, "\(room)")
             XCTAssertGreaterThan(heights.featuring, 0, "\(room)")
         }
         // With room to spare, each is shown whole.
-        let tall = ImportReviewCard.heights(room: 1400, fixed: fixed, considering: 110, featuring: 200)
+        let tall = ImportReviewCard.heights(room: 1400, fixed: fixed, buttons: buttons, considering: 110, featuring: 200)
         XCTAssertEqual(tall.considering, 110)
         XCTAssertEqual(tall.featuring, 200)
+    }
+
+    /// A sheet can't hang below Lamp's window: in a short window on a tall screen its room is the window's.
+    func testTheSheetIsNoTallerThanLampsWindow() {
+        let screen = CGRect(x: 0, y: 70, width: 1440, height: 805)   // the usable area, above the Dock
+        XCTAssertEqual(ImportReviewView.room(below: 700, on: screen, inside: 480), 468)
+        // A tall window still stops at the Dock.
+        XCTAssertEqual(ImportReviewView.room(below: 700, on: screen, inside: 900), 618)
+    }
+
+    /// The parts that never scroll can fill a short window by themselves (an update's lead, the sender's
+    /// description, a long summary): the sheet still fits its room, so the buttons stay on it.
+    func testTheButtonsStayInAShortWindow() {
+        let fixed: [CGFloat] = [150, 100, 36], buttons: CGFloat = 28   // title with lead and description, summary, the separate-app line
+        let heights = ImportReviewCard.heights(room: 468, fixed: fixed, buttons: buttons, considering: 80, featuring: 5 * 20 + 4 * 8)
+        XCTAssertTrue(heights.compact)
+        XCTAssertLessThanOrEqual(heights.whole + buttons + 48 + 16, 468)
     }
 
     /// A model on this Mac gets the parts one at a time (each request starts its server, and a second start alongside

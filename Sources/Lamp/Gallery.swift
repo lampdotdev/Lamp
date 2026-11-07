@@ -897,6 +897,16 @@ enum Gallery {
                                                + [Sharing.Capability(label: "Builds in code from outside Lamp (retrofit)", icon: "shippingbox",
                                                                      level: .powerful, patterns: [])]),
                app: "Tap Count", android: true),
+        // Lamp's window as short as it goes: a long update review scrolls as one, above buttons that stay.
+        review("Update in a short window", ImportReview(
+            summary: "Tracks time per client with a menu bar timer and a weekly list, then turns a month's entries into an invoice you can save as a PDF or print. An optional button rewrites the invoice lines with AI.",
+            capabilities: ["Keeps a timer running in the menu bar", "Saves your clients, hourly rates and time entries",
+                           "Stores your name, address and payment details for invoices", "Saves invoices as PDF files you choose",
+                           "Rewrites invoice lines with AI when you ask"],
+            concerns: ["Sends your work notes to the AI if you tap Tidy Line Items"], risk: .low,
+            reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true, detected: found("Connects to the internet")),
+               app: "Hours", description: "Tracks the hours you work for each client and turns them into an invoice.",
+               existing: "Hours", changedHere: true, room: 468),
     ]
 
     private static func found(_ labels: String...) -> [Sharing.Capability] {
@@ -905,10 +915,11 @@ enum Gallery {
 
     private static func review(_ name: String, _ review: ImportReview?, app: String = "Drive Anywhere", description: String? = nil,
                                existing: String? = nil, changedHere: Bool = false, android: Bool = false, prepared: Bool = false,
-                               mix: Bool = false, trying: Bool = false, progress: String? = nil, failure: String? = nil) -> Entry {
+                               mix: Bool = false, trying: Bool = false, progress: String? = nil, failure: String? = nil,
+                               room: CGFloat = .infinity) -> Entry {
         Entry(group: "Shared app", name: name) {
             AnyView(ImportReviewCard(name: app, description: description,
-                                     icon: nil, review: review, existing: existing, changedHere: changedHere, cancel: {}, open: {}, update: {}, android: android,
+                                     icon: nil, review: review, existing: existing, changedHere: changedHere, room: room, cancel: {}, open: {}, update: {}, android: android,
                                      prepared: prepared, mix: mix ? {} : nil, trying: trying, progress: progress, failure: failure)
                 .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
