@@ -6042,8 +6042,11 @@ final class Store: ObservableObject {
     /// `sendsRequest`: this run carries the turn's own request, not a repair Lamp asks for after it (a build's
     /// errors, a crash), which an engine switched to meanwhile needs the turn's messages for (`CatchUp`).
     /// `afresh`: this run is the one try again in a fresh conversation after the last couldn't be sent.
-    private func runAgent(_ prompt: String, files: [String] = [], sendsRequest: Bool = false, afresh: Bool = false,
+    private func runAgent(_ request: String, files: [String] = [], sendsRequest: Bool = false, afresh: Bool = false,
                           on project: LampProject) async -> Bool {
+        var prompt = request
+        // Apps this run tells the agent to write again, done once it ends well (`DeviceApps.finishRewrite`).
+        var rewriting: [LampProject] = []
         // A turn started at launch (one waiting from before) may come before the look for the person's own
         // Claude Code or Codex has finished: it waits for it rather than finding no copy.
         if Builder.engine != .pi, EngineInstall.path(for: Builder.engine) == nil, !EngineInstall.hasLooked {
@@ -6094,6 +6097,17 @@ final class Store: ObservableObject {
         // Every app of the wish: the agent may read or change any of them.
         try? await writeOwnFiles(project, all: false)
         for part in parts(of: project) { try? await writeOwnFiles(part, all: false) }
+        // A device app whose code is built with packages has them installed before the agent reads or writes it, and one
+        // made the way its kind was made before gets the scaffold its kind has now, to be written again in.
+        for app in [project] + parts(of: project) where app.platform == .device {
+            if sendsRequest, let rewrite = DeviceApps.startRewrite(app) {
+                prompt += rewrite
+                rewriting.append(app)
+            }
+            if let problem = await DeviceApps.prepare(app, starting: { self.log(project, .status, "Getting what the app is built with…") }) {
+                log(project, .status, "Lamp couldn't install what the app is built with yet:\n" + problem)
+            }
+        }
         // What the agent is told about the app's AI follows the sign-ins as they are. Checking them can take a
         // while, and Stop pressed meanwhile has no agent to end yet: if the turn was stopped or replaced, or the
         // app deleted, during the wait, the agent isn't started.
@@ -6378,6 +6392,7 @@ final class Store: ObservableObject {
         }
         // Ended by Lamp on the agent's own questions: the engine's exit says nothing went wrong.
         if turn.endedOnQuestions { return true }
+        if status == 0, failure == nil { rewriting.forEach(DeviceApps.finishRewrite) }
         // Stopped by Lamp: stuck repeating a step (a stronger model may not be), or paused at the step limit, where the work
         // so far is kept and the person's "keep going" carries it on.
         if stoppedByLamp, let failure {
@@ -6394,7 +6409,8 @@ final class Store: ObservableObject {
            lower.contains("auto"), lower.contains("mode") || lower.contains("permission") {
             CommandApproval.claudeAutoUnavailable = true
             log(project, .status, "Claude's auto mode isn't available, so Lamp will ask before every command.")
-            return await runAgent(prompt, files: files, sendsRequest: sendsRequest, on: project)
+            // The request as it came: the run adds what it adds to it (a rewrite's note) again.
+            return await runAgent(request, files: files, sendsRequest: sendsRequest, on: project)
         }
         // A request too big to send, which the engine couldn't shrink (pi's extension drops pictures and tries once
         // more before this is reached), or a connection cut while sending a conversation that large: every later request
@@ -6412,8 +6428,8 @@ final class Store: ObservableObject {
                 let taken = (logs[project.id] ?? []).filter { turn.midTurn.contains($0.id) }
                 let words = taken.map(\.text).filter { !$0.trimmed.isEmpty }.joined(separator: "\n\n")
                 let names = taken.flatMap { $0.attachments ?? [] }
-                let again = taken.isEmpty ? prompt
-                    : prompt + "\n\n---\nThe person then sent this while you worked, oldest first:\n\n"
+                let again = taken.isEmpty ? request
+                    : request + "\n\n---\nThe person then sent this while you worked, oldest first:\n\n"
                         + (words.isEmpty ? Self.onlyFiles(names.count) : words)
                         + taken.compactMap(\.sideReply).map(SideAnswer.receipt).joined()
                         + Attachments.note(for: names, inlined: false) + PointedAt.note(for: taken.compactMap(\.pointed))
