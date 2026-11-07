@@ -6819,6 +6819,9 @@ final class Store: ObservableObject {
     /// Lamp's own request to carry on after the held change is in (`Agent.afterReload`), first in line.
     private func queueCarryOn(_ project: LampProject) {
         let project = Self.requestOwner(of: project, among: projects)
+        // A folder the person's own coding agent works on (`OutsideWork`): there's no request of Lamp's to carry on, and
+        // Lamp's own agent never starts on it by itself.
+        if OutsideState.shared.isOutside(project.id) { return }
         guard !(queued[project.id] ?? []).contains(where: \.afterReload) else { return }
         // Messages queued before it keep copies of their files too, now that the line outlives a relaunch.
         queued[project.id] = [QueuedMessage(text: Agent.afterReload, byLamp: true, afterReload: true)]
@@ -12683,6 +12686,9 @@ final class Store: ObservableObject {
         guard let crashed = current(project) else { return true }
         // A part's crash is fixed by its wish's turn, which knows the part as one of its own.
         let project = Self.requestOwner(of: crashed, among: projects)
+        // A folder the person's own coding agent works on: the crash is in that agent's answer (`OutsideWork`), and it's
+        // the one that fixes it; Lamp's own agent never starts on it by itself.
+        if OutsideState.shared.isOutside(project.id) { return true }
         let report = Runtime.newestCrash(of: crashed)?.date
         if let report, crashesAnswered[project.id] == report { return true }
         // While a turn runs or a request waits, the agent hears of the crash with it.

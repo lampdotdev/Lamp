@@ -97,7 +97,25 @@ enum OutsideWork {
         if !named.isEmpty { text += "Read these with read_skill before changing the app, and keep to them: \(named.joined(separator: ", ")).\n" }
         let applying = Skills.applying(to: project)
         if !applying.isEmpty { text += "Its code already uses: " + applying.map { "\($0.name) (\($0.because))" }.joined(separator: "; ") + ".\n" }
-        return text + Skills.index(Skills.offered(project.platform))
+        return text + Skills.index(offeredOutside(project.platform))
+    }
+
+    /// The kind's skills an agent outside Lamp can use: those whose description names one of Lamp's tools it doesn't
+    /// have are left out, since they're about that tool (`make_app_for`, `make_art`, `device_integration`, `lampify`, the
+    /// `assets` index). A tool is taken as named when it's written as code, or as a whole word that isn't an ordinary
+    /// one (it has an underscore, or the spell checker doesn't know it: "lampify"), so a skill that only uses the word
+    /// ("progress", "plan") stays. The skills themselves, and what Lamp's own engines are offered, don't change.
+    @MainActor static func offeredOutside(_ platform: Platform) -> [String] {
+        let own = Set(tools.compactMap { $0["name"] as? String })
+        let missing = Store.mcpTools.compactMap { $0["name"] as? String }.filter { !own.contains($0) }
+        return Skills.offered(platform).filter { name in
+            guard let description = Skills.all[name]?.description else { return false }
+            return !missing.contains { tool in
+                if description.contains("`\(tool)`") { return true }
+                guard description.range(of: "\\b\(tool)\\b", options: .regularExpression) != nil else { return false }
+                return tool.contains("_") || NSSpellChecker.shared.checkSpelling(of: tool, startingAt: 0).location != NSNotFound
+            }
+        }
     }
 
     // MARK: Folders taken on
@@ -289,10 +307,16 @@ enum OutsideWork {
     var tails: [String: Task<Void, Never>] = [:]
     var answers: [String: OutsideWork.Answer] = [:]
     var ended: Set<Int> = []
+    /// Apps built by an apply that was cancelled before the change went in: the next apply puts it in, though nothing
+    /// is left to build.
+    var builtNotIn: Set<String> = []
 
     init() { fromBefore = Set(adopted.map(\.repo)) }
 
     func save() { OutsideWork.saveRegistry(adopted) }
+
+    /// A workspace the person's own agent works on: Lamp's own agent never starts on it by itself.
+    func isOutside(_ projectID: String) -> Bool { adopted.contains { $0.project == projectID } }
 }
 
 extension Store {
@@ -461,13 +485,19 @@ extension Store {
             let wasOpen = isRunning(project)
             let changed = Runtime.sourcesChanged(project)
             var answer: OutsideWork.Answer
-            if !changed, wasOpen, !reopen {
+            let owed = state.builtNotIn.contains(project.id)
+            if !changed, wasOpen, !reopen, !owed {
                 answer = OutsideWork.Answer(outcome: "unchanged", text: "Nothing changed since the app was built; it's open as it was.")
             } else if changed, let errors = await build(project, inPlace: !reopen) {
                 answer = Task.isCancelled || hold.stopped
                     ? OutsideWork.Answer(outcome: "cancelled", text: "Cancelled during the build; the app is as it was.")
                     : OutsideWork.Answer(outcome: "not_built", text: "The app doesn't build. Fix these compiler errors and apply again:\n\n\(errors)", isError: true)
+            } else if Task.isCancelled || hold.stopped {
+                // Cancelled once built: nothing goes into the app, which stays as it was until the next apply.
+                state.builtNotIn.insert(project.id)
+                answer = OutsideWork.Answer(outcome: "cancelled", text: "Cancelled after the build; nothing went into the app, which is as it was.")
             } else {
+                state.builtNotIn.remove(project.id)
                 let crash = await install(project, inFront: false, fresh: reopen, reload: reopen, early: true)
                 let outcome: String
                 switch hold.outcomes.last {
@@ -514,7 +544,9 @@ extension Store {
             log(project, .detail, "Your coding agent applied a change: \(answer.outcome).")
             return answer
         } onCancel: {
-            Task { @MainActor in _ = hold.cancel() }
+            // Nothing is ended under way: a build or a change going in that's stopped midway leaves the app waiting for
+            // Reload, and Lamp would carry the change on by itself. The apply stops at its next step instead (before
+            // the build, or once built, before the change goes in).
         }
     }
 
