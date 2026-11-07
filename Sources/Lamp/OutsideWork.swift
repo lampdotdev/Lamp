@@ -1,0 +1,719 @@
+import AppKit
+import CryptoKit
+import Foundation
+
+/// A Lamp project worked on by the person's own coding agent (Claude Code, Codex) in a folder of theirs, through Lamp's
+/// MCP server (`OutsideServer`). The folder is a normal repository laid out as Lamp lays a wish out on GitHub
+/// (`RepoImport.open`): it stays the source of truth for the code and its git is the person's. Lamp never writes in it.
+///
+/// What Lamp builds and runs is a project of its own in its apps folder, the workspace: made once, when the folder is
+/// opened, and kept from then on, with its live copy, the libraries a change goes in as, the baselines those are
+/// compiled against and the app's runtime folder (`LiveReload`, `Runtime`). Each apply captures the folder's code and
+/// files, checks that what was copied is what the folder held throughout, writes into the workspace only what differs,
+/// and builds and puts that in as a look does (`Store.build`, `Store.install`). So changes go into the open app as
+/// Lamp's own do, with nothing of LiveReload's told about a second folder.
+///
+/// Every operation on a folder runs one at a time, whichever agent or connection asks (`Store.outsideSerially`), and
+/// holds the project as any of Lamp's own work does (`Store.begin`), so Lamp's chat and a build of its own never run
+/// beside it.
+enum OutsideWork {
+    struct Payload: @unchecked Sendable {
+        let values: [String: Any]
+        init(_ values: [String: Any]) { self.values = values }
+        func string(_ key: String) -> String? { (values[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        func bool(_ key: String) -> Bool { values[key] as? Bool ?? false }
+    }
+
+    /// What a tool answers: its words (led by the outcome, the only part some agents read closely), the app's pictures,
+    /// and the same facts as data.
+    struct Answer {
+        var outcome: String
+        var text: String
+        var pictures: [[String: String]] = []
+        var isError = false
+        var facts: [String: Any] = [:]
+
+        /// The facts go in the words, as one line of JSON under the outcome, and not as structured content: an agent
+        /// given both may show the agent only the structured part (Claude Code does), and the words carry what matters
+        /// most (a compiler's errors, what the app printed).
+        var mcp: [String: Any] {
+            var structured = facts
+            structured["outcome"] = outcome
+            let line = (try? JSONSerialization.data(withJSONObject: structured, options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? ""
+            var content: [[String: Any]] = [["type": "text", "text": "Outcome: \(outcome).\n" + line + "\n\n" + text]]
+            for picture in pictures {
+                content.append(["type": "image", "data": picture["data"] ?? "", "mimeType": picture["mimeType"] ?? "image/png"])
+            }
+            return ["content": content, "isError": isError]
+        }
+
+        static func refused(_ text: String) -> Answer { Answer(outcome: "refused", text: text, isError: true) }
+    }
+
+    static let instructions = """
+    Lamp builds and runs the Mac app in a folder you work on, puts each change you make into the open app while it \
+    runs, and shares what you made. Call open_project once with the folder's absolute path: the person reviews the app \
+    in Lamp first, and the answer lists Lamp's skills for this kind of app. Read the ones that fit with read_skill \
+    before changing what they cover; they say which of Lamp's building blocks to use and how. Sources/LampSupport.swift, \
+    build.sh and Package.swift are Lamp's: read them, never edit them (Lamp writes its own at every build). After \
+    editing, call apply_change: it builds what the folder holds now and answers how the change reached the app, with \
+    pictures of its windows. look_at_app shows the open app as it is and never applies anything; you can't click or \
+    type in the app, so ask the person to try what needs a hand. export_app makes the app's shared file and \
+    publish_link opens Lamp's Share Link card for the person; both share only what's built from the folder as it is. \
+    Lamp never writes in your folder; its git is yours.
+    """
+
+    static var tools: [[String: Any]] {
+        let path: [String: Any] = ["type": "string", "description": "The folder's absolute path."]
+        return [
+            ["name": "open_project",
+             "description": "Has Lamp take on a Lamp-format Mac app in a folder (lamp-app.json and its code at the top), build it and open it. Lamp shows the person its review of the code first, as for any app that comes to it, and builds it only if they choose Build & Open. Call again if Lamp says the folder moved or is missing.",
+             "inputSchema": ["type": "object", "properties": ["path": path], "required": ["path"]]],
+            ["name": "apply_change",
+             "description": "Builds what the folder holds now and puts it into the open app. Answers the outcome: live (went into the running app, window as it was), reopened (closed and opened again for it), opened (it wasn't open), held (waits for the person's Reload), unchanged (nothing new), not_built (compiler errors follow), crashed (the app quit; its log follows), stale (the folder changed while Lamp built it: apply again), cancelled. Retrying with the same operation_id gets the first answer.",
+             "inputSchema": ["type": "object", "properties": [
+                "path": path,
+                "operation_id": ["type": "string", "description": "Any id of yours for this apply, to retry it safely."],
+                "reopen": ["type": "boolean", "description": "Close the app and open a fresh copy, for what only a launch shows."],
+             ], "required": ["path"]]],
+            ["name": "look_at_app",
+             "description": "Pictures of the open app's windows and what it printed. Applies nothing: it says when the folder has changes not put in yet.",
+             "inputSchema": ["type": "object", "properties": ["path": path], "required": ["path"]]],
+            ["name": "export_app",
+             "description": "Makes the app's shared file (.lampapp), which anyone with Lamp can open: its code and files, never its data or anything of yours. Only once the app is built from the folder as it is (apply first). Lamp checks the credits, licenses and secrets first, and asks the person when something in it came with no license. Answers the file's path, in Lamp's own folder: copy it where it's wanted.",
+             "inputSchema": ["type": "object", "properties": ["path": path], "required": ["path"]]],
+            ["name": "publish_link",
+             "description": "Opens Lamp's Share Link card for the app, where the person shares it on lamp.dev, or releases what's new on a link it has, and waits for them. Only once the app is built from the folder as it is (apply first); nothing is applied until the card is done. Answers the link, or that the person closed the card, or what failed: a link can exist while its app file didn't finish going up, and the answer says so. Changing or taking a link down stays on the card.",
+             "inputSchema": ["type": "object", "properties": ["path": path], "required": ["path"]]],
+        ] + Store.mcpTools.filter { $0["name"] as? String == "read_skill" }
+    }
+
+    /// What open_project tells the agent about working on this kind of app: the skills Lamp offers it (the same index
+    /// and words as Lamp's own engines get, `Skills.index`), those its code already shows it uses, and whose files
+    /// are Lamp's. The skills are the one place that says which building blocks to use and how.
+    @MainActor static func guidance(for project: LampProject) -> String {
+        let named = Skills.named(project.platform)
+        var text = "Working on it: Sources/LampSupport.swift, build.sh and Package.swift are Lamp's and rewritten at every build, so edits to them never go in; read LampSupport.swift for what Lamp gives the app.\n"
+        if !named.isEmpty { text += "Read these with read_skill before changing the app, and keep to them: \(named.joined(separator: ", ")).\n" }
+        let applying = Skills.applying(to: project)
+        if !applying.isEmpty { text += "Its code already uses: " + applying.map { "\($0.name) (\($0.because))" }.joined(separator: "; ") + ".\n" }
+        return text + Skills.index(offeredOutside(project.platform))
+    }
+
+    /// The kind's skills an agent outside Lamp can use: those whose description names one of Lamp's tools it doesn't
+    /// have are left out, since they're about that tool (`make_app_for`, `make_art`, `device_integration`, `lampify`, the
+    /// `assets` index). A tool is taken as named when it's written as code, or as a whole word that isn't an ordinary
+    /// one (it has an underscore, or the spell checker doesn't know it: "lampify"), so a skill that only uses the word
+    /// ("progress", "plan") stays. The skills themselves, and what Lamp's own engines are offered, don't change.
+    @MainActor static func offeredOutside(_ platform: Platform) -> [String] {
+        let own = Set(tools.compactMap { $0["name"] as? String })
+        let missing = Store.mcpTools.compactMap { $0["name"] as? String }.filter { !own.contains($0) }
+        return Skills.offered(platform).filter { name in
+            guard let description = Skills.all[name]?.description else { return false }
+            return !missing.contains { tool in
+                if description.contains("`\(tool)`") { return true }
+                guard description.range(of: "\\b\(tool)\\b", options: .regularExpression) != nil else { return false }
+                return tool.contains("_") || NSSpellChecker.shared.checkSpelling(of: tool, startingAt: 0).location != NSNotFound
+            }
+        }
+    }
+
+    // MARK: Folders taken on
+
+    /// A folder Lamp has taken on, and the workspace that builds it. Known by its real path and, so a folder put in its
+    /// place is never taken for it, by its device and inode.
+    struct Adopted: Codable, Equatable {
+        var repo: String
+        var device: Int64
+        var inode: UInt64
+        var project: String
+        /// What the folder held at the last apply that went in (`Capture.fingerprint`).
+        var applied: String?
+        /// The workspace holds files the open app may not run yet: written by an apply that hadn't put them in when it
+        /// ended (cancelled once built, or Lamp quitting midway). Kept on disk, so the next apply puts them in even
+        /// after Lamp starts again, though nothing is left to build. Nil in records from before it was kept.
+        var owed: Bool?
+        /// The folder's own metadata as last put in (`metadataDigest`): an apply puts it in again only when the folder's
+        /// changed. Lamp works on the icon of its copy by itself (designing one, painting its artwork), and writing the
+        /// folder's over that at every apply changed the icon each time, which reopens the app for every change.
+        var metadata: String?
+    }
+
+    static var registryURL: URL { Edition.supportFolder.appendingPathComponent("Outside/adopted.json") }
+
+    static func loadRegistry() -> [Adopted] {
+        guard let data = try? Data(contentsOf: registryURL) else { return [] }
+        return (try? JSONDecoder().decode([Adopted].self, from: data)) ?? []
+    }
+
+    static func saveRegistry(_ list: [Adopted]) {
+        try? FileManager.default.createDirectory(at: registryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(list) { try? data.write(to: registryURL, options: .atomic) }
+    }
+
+    /// A folder's identity now, or why it has none: it must be a real folder (a link to one is followed once, here,
+    /// to its real path, and the real path is what's kept).
+    static func identity(of path: String) -> (real: String, device: Int64, inode: UInt64)? {
+        let real = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+        var info = stat()
+        guard lstat(real, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return nil }
+        return (real, Int64(info.st_dev), UInt64(info.st_ino))
+    }
+
+    // MARK: Capturing a folder
+
+    /// What a folder held when Lamp read it: the package the import reads (`RepoImport.open`, held to the same limits
+    /// and the same manifest), and every file's hash, so what was copied is checked against what the folder held.
+    struct Capture {
+        let package: Sharing.Package
+        let hashes: [String: String]
+        var fingerprint: String { OutsideWork.fingerprint(hashes) }
+    }
+
+    /// One digest of a folder's reading, to tell whether what's in the app is what the folder holds.
+    static func fingerprint(_ hashes: [String: String]) -> String {
+        var hasher = SHA256()
+        for (path, hash) in hashes.sorted(by: { $0.key < $1.key }) { hasher.update(data: Data((path + "\0" + hash + "\n").utf8)) }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    struct CaptureProblem: Error { let text: String }
+
+    static func sha(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+
+    /// Every regular file the import would take, by its path in the folder, and its hash. The same folders are left out
+    /// as the import leaves out (`RepoImport.copyTree`), and links are never followed.
+    static func hashes(of folder: URL) -> [String: String] {
+        let skipped: Set<String> = [".git", ".build", "build", ".lamp", "node_modules"]
+        let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .isDirectoryKey]
+        var found: [String: String] = [:]
+        guard let items = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: keys) else { return [:] }
+        for case let item as URL in items {
+            let values = try? item.resourceValues(forKeys: Set(keys))
+            if values?.isSymbolicLink == true { items.skipDescendants(); continue }
+            if values?.isDirectory == true, skipped.contains(item.lastPathComponent) { items.skipDescendants(); continue }
+            guard values?.isRegularFile == true, item.pathExtension != "lampapp", let data = try? Data(contentsOf: item) else { continue }
+            found[Sharing.relativePath(of: item, in: folder)] = sha(data)
+        }
+        return found
+    }
+
+    /// Reads the folder as the import does, then checks it: every file the package took must have the bytes the folder
+    /// held before the copy began, and the folder must hold the same after it. A folder still being written is read
+    /// again, a few times, and then refused, never built from a mix of two moments.
+    static func capture(_ repo: URL) throws -> Capture {
+        var last = ""
+        for _ in 0..<3 {
+            let before = hashes(of: repo)
+            let package: Sharing.Package
+            do { package = try RepoImport.open(folder: repo) } catch {
+                let failure = error as? Sharing.ImportError
+                throw CaptureProblem(text: (failure?.message ?? error.localizedDescription) + (failure?.detail.map { " " + $0 } ?? ""))
+            }
+            var differs: [String] = []
+            let taken = package.sources + package.attachments + [package.folder.appendingPathComponent("APP.md")]
+            for file in taken {
+                guard let data = try? Data(contentsOf: file) else { continue }
+                let path = Sharing.relativePath(of: file, in: package.folder)
+                if before[path] != sha(data) { differs.append(path) }
+            }
+            let after = hashes(of: repo)
+            if differs.isEmpty, before == after { return Capture(package: package, hashes: before) }
+            try? FileManager.default.removeItem(at: package.folder)
+            last = (differs.isEmpty ? Set(after.keys).symmetricDifference(before.keys).union(after.keys.filter { after[$0] != before[$0] }).sorted() : differs)
+                .prefix(5).joined(separator: ", ")
+            Thread.sleep(forTimeInterval: 0.4)
+        }
+        throw CaptureProblem(text: "The folder kept changing while Lamp read it (\(last)). Apply again once your edits are written.")
+    }
+
+    /// The paths that differ between two readings of a folder.
+    static func changes(from old: [String: String], to new: [String: String]) -> [String] {
+        Set(old.keys).union(new.keys).filter { old[$0] != new[$0] }.sorted()
+    }
+
+    /// Puts what was captured into the workspace, writing only what differs, so a file that didn't change keeps its
+    /// date and LiveReload sees only the change. Lamp's own files in the workspace are left to Lamp
+    /// (`Template.writeOwnedFiles`), whatever copy of them the folder has.
+    /// The folder's files that are the app's metadata rather than its code or its own files: what `syncMetadata` reads.
+    static func metadataDigest(_ hashes: [String: String]) -> String {
+        let code = ["Sources/", Template.widgetFolder + "/", Template.watchFolder + "/", Template.shareFolder + "/", Sharing.Assets.folder + "/"]
+        return fingerprint(hashes.filter { path, _ in path != "APP.md" && !code.contains { path.hasPrefix($0) } })
+    }
+
+    /// `metadata`: put the app's metadata in too (`syncMetadata`), which is only when the folder's changed.
+    static func sync(_ capture: Capture, into project: LampProject, metadata: Bool) throws -> [String] {
+        let fm = FileManager.default
+        let package = capture.package
+        let codeFolders = ["Sources/", Template.widgetFolder + "/", Template.watchFolder + "/", Template.shareFolder + "/"]
+        let lampsOwn: Set<String> = ["LampSupport.swift", Template.sceneSupportFile, Template.widgetSupportFile, Template.shareSupportFile]
+        func ownedByLamp(_ path: String) -> Bool {
+            lampsOwn.contains((path as NSString).lastPathComponent) || Template.watchSupportPaths.contains(path)
+        }
+        var wanted: [String: URL] = [:]
+        for file in package.sources {
+            let path = package.path(of: file)
+            guard !path.contains(".."), codeFolders.contains(where: { path.hasPrefix($0) }), !ownedByLamp(path) else { continue }
+            wanted[path] = file
+        }
+        for file in package.attachments {
+            let path = Sharing.Assets.folder + "/" + package.assetPath(of: file)
+            guard !path.contains("..") else { continue }
+            wanted[path] = file
+        }
+        let appMd = package.folder.appendingPathComponent("APP.md")
+        if fm.fileExists(atPath: appMd.path) { wanted["APP.md"] = appMd }
+
+        var changed: [String] = []
+        // What's in the workspace now under the same folders, Lamp's own files aside.
+        var have: [String] = []
+        for folder in codeFolders + [Sharing.Assets.folder + "/"] {
+            let root = project.dir.appendingPathComponent(folder)
+            for case let item as URL in fm.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) ?? FileManager.DirectoryEnumerator() {
+                guard (try? item.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
+                let path = Sharing.relativePath(of: item, in: project.dir)
+                if !ownedByLamp(path) { have.append(path) }
+            }
+        }
+        for path in have where wanted[path] == nil {
+            try fm.removeItem(at: project.dir.appendingPathComponent(path))
+            changed.append(path)
+        }
+        for (path, source) in wanted {
+            let data = try Data(contentsOf: source)
+            let target = project.dir.appendingPathComponent(path)
+            if (try? Data(contentsOf: target)) == data { continue }
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: target, options: .atomic)
+            changed.append(path)
+        }
+        return (changed + (metadata ? try syncMetadata(package, into: project) : [])).sorted()
+    }
+
+    /// The app's own metadata, put in as the import puts it in (`Sharing.install`), from the same checked package: its
+    /// capabilities (a file that declares none takes them away), description, credits and the license files they name,
+    /// and its icon's design and artwork. Each is written by the import's own writer; what's answered as written is
+    /// only what came out different, so a folder whose metadata didn't change still answers unchanged.
+    static func syncMetadata(_ package: Sharing.Package, into project: LampProject) throws -> [String] {
+        let fm = FileManager.default
+        let licences = package.licences.map { Sharing.relativePath(of: $0, in: package.folder) }.filter { !$0.contains("..") }
+        let watched = [Template.Capabilities.file, AppDescription.file, Credits.file, Credits.arrivedPath] + licences
+        func read() -> [String: Data] {
+            Dictionary(uniqueKeysWithValues: watched.compactMap { path in
+                (try? Data(contentsOf: project.dir.appendingPathComponent(path))).map { (path, $0) }
+            })
+        }
+        let before = read()
+        let iconBefore = (try? Data(contentsOf: Icons.specURL(project)))
+        try package.capabilities.save(for: project)
+        try AppDescription.write(package.description, for: project)
+        try Credits.arrive(package.credits, in: project)
+        for (file, path) in zip(package.licences.filter { !Sharing.relativePath(of: $0, in: package.folder).contains("..") }, licences) {
+            let target = project.dir.appendingPathComponent(path)
+            if (try? Data(contentsOf: target)) == (try? Data(contentsOf: file)) { continue }
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fm.removeItem(at: target)
+            try fm.copyItem(at: file, to: target)
+        }
+        let newArt = try Sharing.installIcon(package, into: project)
+        let after = read()
+        var changed = Set(before.keys).union(after.keys).filter { before[$0] != after[$0] }
+        if newArt || (try? Data(contentsOf: Icons.specURL(project))) != iconBefore { changed.insert("icon.json") }
+        return Array(changed)
+    }
+}
+
+/// A folder waiting on Lamp's import review for `open_project` (`Store.importApp`): told once, with the app made or
+/// why there's none, whichever way the review ends.
+@MainActor final class OutsideImport {
+    let repo: String
+    /// Build & Open was chosen: the review closing after that isn't a no.
+    var confirmed = false
+    private var done: ((LampProject?, String?) -> Void)?
+
+    init(repo: String, done: @escaping (LampProject?, String?) -> Void) {
+        self.repo = repo
+        self.done = done
+    }
+
+    func finish(_ project: LampProject?, _ why: String?) {
+        let done = self.done
+        self.done = nil
+        done?(project, why)
+    }
+}
+
+/// What the MCP server keeps while Lamp runs: the folders taken on, each folder's queue, the answers kept for a retry
+/// (for this run of Lamp only), and which folders have been looked at since Lamp started.
+@MainActor final class OutsideState {
+    static let shared = OutsideState()
+    var adopted: [OutsideWork.Adopted] = OutsideWork.loadRegistry()
+    /// Folders taken on before Lamp last started: an apply waits for a look first, since whatever was under way when
+    /// Lamp ended is unknown to the agent.
+    var fromBefore: Set<String>
+    var tails: [String: Task<Void, Never>] = [:]
+    var answers: [String: OutsideWork.Answer] = [:]
+    var ended: Set<Int> = []
+    /// Records whether a folder's workspace holds files the open app may not run yet (`Adopted.owed`).
+    func setOwed(_ owed: Bool, repo: String) {
+        guard let index = adopted.firstIndex(where: { $0.repo == repo }), (adopted[index].owed ?? false) != owed else { return }
+        adopted[index].owed = owed
+        save()
+    }
+
+    init() { fromBefore = Set(adopted.map(\.repo)) }
+
+    func save() { OutsideWork.saveRegistry(adopted) }
+
+    /// A workspace the person's own agent works on: Lamp's own agent never starts on it by itself.
+    func isOutside(_ projectID: String) -> Bool { adopted.contains { $0.project == projectID } }
+}
+
+extension Store {
+    func outsideConnectionEnded(_ connection: Int) { OutsideState.shared.ended.insert(connection) }
+
+    /// One operation at a time for each key (a folder's real path), in the order asked, across every connection.
+    func outsideSerially(_ key: String, _ work: () async -> OutsideWork.Answer) async -> OutsideWork.Answer {
+        let state = OutsideState.shared
+        let previous = state.tails[key]
+        let (ended, end) = AsyncStream<Void>.makeStream()
+        let mine = Task { for await _ in ended {} }
+        state.tails[key] = mine
+        defer {
+            end.finish()
+            if state.tails[key] == mine { state.tails[key] = nil }
+        }
+        await previous?.value
+        return await work()
+    }
+
+    func outsideCall(_ name: String, _ payload: OutsideWork.Payload, connection: Int) async -> OutsideWork.Answer {
+        // The same skills, by the same means, as Lamp's own engines read them.
+        if name == "read_skill" {
+            let (status, answer) = Skills.read(payload.values)
+            return status == 200 ? OutsideWork.Answer(outcome: "skill", text: answer["text"] as? String ?? "")
+                : .refused(answer["error"] as? String ?? "No such skill.")
+        }
+        guard let path = payload.string("path"), path.hasPrefix("/") else { return .refused("Give the folder's absolute path as `path`.") }
+        let key = OutsideWork.identity(of: path)?.real ?? path
+        return await outsideSerially(key) {
+            // Asked by a connection that has ended while it waited its turn: nobody is there for the answer.
+            if OutsideState.shared.ended.contains(connection) { return .refused("The connection ended before this began.") }
+            if Task.isCancelled { return OutsideWork.Answer(outcome: "cancelled", text: "Cancelled before it began; nothing changed.") }
+            switch name {
+            case "open_project": return await outsideOpen(path)
+            case "apply_change":
+                let id = payload.string("operation_id").map { key + "\n" + $0 }
+                if let id, var kept = OutsideState.shared.answers[id] {
+                    kept.text = "This operation_id was applied already; this is its first answer, and nothing ran again.\n\n" + kept.text
+                    return kept
+                }
+                let answer = await outsideApply(path, reopen: payload.bool("reopen"))
+                // Only an apply that ran is kept for a retry: one refused or cancelled before it began changed nothing,
+                // so the same id tried again (after the look a refusal asked for) runs.
+                if let id, !["refused", "cancelled"].contains(answer.outcome) { OutsideState.shared.answers[id] = answer }
+                return answer
+            case "look_at_app": return await outsideLook(path)
+            case "export_app": return await outsideExport(path)
+            case "publish_link": return await outsidePublish(path)
+            default: return .refused("Lamp has no tool \(name).")
+            }
+        }
+    }
+
+    /// The folder a call names, as taken on, and its workspace; or why it can't be used.
+    private func outsideFolder(_ path: String) -> (OutsideWork.Adopted, LampProject)? {
+        guard let now = OutsideWork.identity(of: path),
+              let entry = OutsideState.shared.adopted.first(where: { $0.repo == now.real }),
+              entry.device == now.device, entry.inode == now.inode,
+              let project = projects.first(where: { $0.id == entry.project }) else { return nil }
+        return (entry, project)
+    }
+
+    private func outsideRefusal(_ path: String) -> OutsideWork.Answer {
+        guard let now = OutsideWork.identity(of: path) else {
+            return .refused("There's no folder at \(path) now. If it moved, call open_project with where it is.")
+        }
+        guard let entry = OutsideState.shared.adopted.first(where: { $0.repo == now.real }) else {
+            return .refused("Lamp hasn't taken on \(now.real). Call open_project first.")
+        }
+        if entry.device != now.device || entry.inode != now.inode {
+            return .refused("The folder at \(now.real) isn't the one Lamp took on: another was put in its place. Call open_project to take this one on.")
+        }
+        return .refused("Lamp's copy of this app is gone. Call open_project again.")
+    }
+
+    // MARK: open_project
+
+    private func outsideOpen(_ path: String) async -> OutsideWork.Answer {
+        guard let now = OutsideWork.identity(of: path) else { return .refused("There's no folder at \(path).") }
+        let state = OutsideState.shared
+        let repo = URL(fileURLWithPath: now.real)
+        // Taken on already, here or (moved) elsewhere: the same workspace goes on.
+        if let index = state.adopted.firstIndex(where: { ($0.repo == now.real || ($0.device == now.device && $0.inode == now.inode)) }),
+           projects.contains(where: { $0.id == state.adopted[index].project }),
+           state.adopted[index].device == now.device, state.adopted[index].inode == now.inode {
+            let moved = state.adopted[index].repo != now.real
+            state.fromBefore.remove(state.adopted[index].repo)
+            state.adopted[index].repo = now.real
+            state.save()
+            var answer = await outsideApply(now.real, reopen: false)
+            if moved { answer.text = "Lamp had this folder at another path; it's known here now.\n\n" + answer.text }
+            if let project = projects.first(where: { $0.id == state.adopted[index].project }) {
+                answer.text += "\n\n" + OutsideWork.guidance(for: project)
+            }
+            return answer
+        }
+        // A folder put where one Lamp knew was: that one is let go (its workspace stays on the desk), and this one is new.
+        state.adopted.removeAll { $0.repo == now.real }
+        guard FileManager.default.fileExists(atPath: repo.appendingPathComponent("lamp-app.json").path) else {
+            return .refused("\(now.real) isn't a Lamp-format project: it needs lamp-app.json and its code at the top, as Lamp puts a wish on GitHub.")
+        }
+        let capture: OutsideWork.Capture
+        do { capture = try await Self.offMain { Result { try OutsideWork.capture(repo) } }.get() } catch {
+            return .refused((error as? OutsideWork.CaptureProblem)?.text ?? error.localizedDescription)
+        }
+        let package = capture.package
+        try? FileManager.default.removeItem(at: package.folder)
+        guard package.platform == .mac, package.parts.isEmpty else {
+            return .refused("For now Lamp takes on only a Mac app on its own; this is \(package.platform.target.identity.name)\(package.parts.isEmpty ? "" : " with other apps").")
+        }
+        // The same review as any app that comes to Lamp: its fixed checks, the AI's check when AI is set up, and the
+        // person's Build & Open. The agent's call waits for that answer.
+        let before = await Self.offMain { OutsideWork.hashes(of: repo) }
+        let made: (LampProject?, String?) = await withCheckedContinuation { answered in
+            importApp(from: repo, outside: OutsideImport(repo: now.real) { answered.resume(returning: ($0, $1)) })
+        }
+        guard let project = made.0 else { return .refused(made.1 ?? "Lamp didn't take the folder on.") }
+        // The review installed the folder's metadata as it read just before the review began.
+        state.adopted.append(OutsideWork.Adopted(repo: now.real, device: now.device, inode: now.inode, project: project.id, applied: nil,
+                                                 metadata: OutsideWork.metadataDigest(before)))
+        state.save()
+        // An app that came with no icon gets its design now, before its first build, as a new app's is designed while its
+        // first request builds: designed after it, the icon is a change the open app can't take, and the next change of
+        // any kind reopens the app for it.
+        if Icons.load(project) == nil, let made = current(project) {
+            Icons.save(await Icons.design(for: made), for: made)
+        }
+        // Its first build is what the review read and installed, never the folder read again: an edit made while the
+        // review was up would otherwise go in unreviewed. Such an edit is pending, for the next apply.
+        var answer = await outsideApply(now.real, reopen: false, reviewed: before)
+        answer.text = "Lamp took on \(now.real) as “\(project.name)”.\n\n" + answer.text
+            + "\n\n" + OutsideWork.guidance(for: current(project) ?? project)
+        return answer
+    }
+
+    // MARK: apply_change
+
+    /// `reviewed`: the app's first build after its review, from what the review installed; the folder as read just before
+    /// the review began, so what went in is known to be the folder's only when the folder still reads the same.
+    private func outsideApply(_ path: String, reopen: Bool, reviewed: [String: String]? = nil) async -> OutsideWork.Answer {
+        guard let found = outsideFolder(path) else { return outsideRefusal(path) }
+        let entry = found.0
+        let project = found.1
+        let state = OutsideState.shared
+        if state.fromBefore.contains(entry.repo) {
+            return .refused("Lamp started again since this folder was last applied, and what was under way then didn't finish for you. Call look_at_app to see the app as it is, then apply again.")
+        }
+        guard let hold = begin(project) else {
+            return .refused("Lamp is busy with this app (its own chat or a build). Try again in a moment.")
+        }
+        defer { finish(current(project) ?? project) }
+        let repo = URL(fileURLWithPath: entry.repo)
+        let began = Date()
+
+        return await withTaskCancellationHandler {
+            let read: [String: String]
+            var written: [String] = []
+            if let reviewed {
+                read = reviewed
+            } else {
+                let capture: OutsideWork.Capture
+                do { capture = try await Self.offMain { Result { try OutsideWork.capture(repo) } }.get() } catch {
+                    return .refused((error as? OutsideWork.CaptureProblem)?.text ?? error.localizedDescription)
+                }
+                defer { try? FileManager.default.removeItem(at: capture.package.folder) }
+                let metadata = OutsideWork.metadataDigest(capture.hashes)
+                let metadataChanged = state.adopted.first(where: { $0.repo == entry.repo })?.metadata != metadata
+                do { written = try OutsideWork.sync(capture, into: project, metadata: metadataChanged) } catch {
+                    return .refused("Lamp couldn't copy the folder's files into its build: \(error.localizedDescription)")
+                }
+                if metadataChanged, let index = state.adopted.firstIndex(where: { $0.repo == entry.repo }) {
+                    state.adopted[index].metadata = metadata
+                    state.save()
+                }
+                read = capture.hashes
+            }
+            // Owed from here until the change goes in, on disk before anything is built.
+            if !written.isEmpty { state.setOwed(true, repo: entry.repo) }
+            if Task.isCancelled { return OutsideWork.Answer(outcome: "cancelled", text: "Cancelled before building. Lamp's copy has the folder's files; the app is as it was.") }
+
+            let wasOpen = isRunning(project)
+            let changed = Runtime.sourcesChanged(project)
+            var answer: OutsideWork.Answer
+            let owed = state.adopted.first(where: { $0.repo == entry.repo })?.owed ?? false
+            if !changed, wasOpen, !reopen, !owed {
+                answer = OutsideWork.Answer(outcome: "unchanged", text: "Nothing changed since the app was built; it's open as it was.")
+            } else if changed, let errors = await build(project, inPlace: !reopen) {
+                answer = Task.isCancelled || hold.stopped
+                    ? OutsideWork.Answer(outcome: "cancelled", text: "Cancelled during the build; the app is as it was.")
+                    : OutsideWork.Answer(outcome: "not_built", text: "The app doesn't build. Fix these compiler errors and apply again:\n\n\(errors)", isError: true)
+            } else if Task.isCancelled || hold.stopped {
+                // Cancelled once built: nothing goes into the app, which stays as it was until the next apply.
+                answer = OutsideWork.Answer(outcome: "cancelled", text: "Cancelled after the build; nothing went into the app, which is as it was.")
+            } else {
+                let crash = await install(project, inFront: false, fresh: reopen, reload: reopen, early: true)
+                state.setOwed(false, repo: entry.repo)
+                let outcome: String
+                switch hold.outcomes.last {
+                case .live?: outcome = "live"
+                case .held?: outcome = "held"
+                case .reopened?: outcome = "reopened"
+                case .opened?: outcome = "opened"
+                case nil: outcome = isRunning(project) ? (wasOpen ? "reopened" : "opened") : "not_opened"
+                }
+                // A change that went in can still bring the app down a moment later.
+                if crash == nil, isRunning(project) { try? await Task.sleep(for: .milliseconds(1500)) }
+                if let crash {
+                    answer = OutsideWork.Answer(outcome: "crashed", text: "The app quit.\n\n\(crash)", isError: true)
+                } else if !isRunning(project), outcome != "held" {
+                    answer = OutsideWork.Answer(outcome: "crashed", text: "The app isn't running after the change: it quit as it went in or right after it opened.", isError: true)
+                } else {
+                    let words = [
+                        "live": "The change went into the open app without reopening it; the window is as the person left it.",
+                        "reopened": "The app couldn't take this change as it ran, so it was closed and opened again with it.",
+                        "opened": "The app wasn't open, so it was opened with the change.",
+                        "held": "The person kept the app open; the change waits for them to press Reload.",
+                    ]
+                    answer = OutsideWork.Answer(outcome: outcome, text: words[outcome] ?? "The app is built.")
+                    if outcome == "live" {
+                        try? await Task.sleep(for: .milliseconds(300))
+                        Runtime.requestScreenshots(of: project)
+                    }
+                    answer.pictures = Self.pictureData(Self.agentPictures(await Runtime.screenshots(of: project, since: began), in: project), in: project)
+                }
+            }
+            if Privacy.sharesLog, let tail = Runtime.logTail(project) { answer.text += "\n\nWhat it printed:\n\(tail)" }
+            // Built from what the folder held at the capture: an edit made since isn't in it, and is said.
+            let now = await Self.offMain { OutsideWork.hashes(of: repo) }
+            let since = OutsideWork.changes(from: read, to: now)
+            answer.facts["stale"] = !since.isEmpty
+            answer.facts["written"] = written
+            if !since.isEmpty {
+                answer.text = "Stale: the folder changed \(reviewed == nil ? "while Lamp built it" : "since Lamp's review read it") (\(since.prefix(5).joined(separator: ", "))). What's in the app is the folder as it was before; apply again.\n\n" + answer.text
+            }
+            if ["live", "reopened", "opened", "held", "unchanged"].contains(answer.outcome) {
+                // Only what was applied: the record's other fields (`owed`) were kept up to date as the apply went.
+                if let index = state.adopted.firstIndex(where: { $0.repo == entry.repo }) {
+                    state.adopted[index].applied = OutsideWork.fingerprint(read)
+                    state.save()
+                }
+            }
+            log(project, .detail, "Your coding agent applied a change: \(answer.outcome).")
+            return answer
+        } onCancel: {
+            // Nothing is ended under way: a build or a change going in that's stopped midway leaves the app waiting for
+            // Reload, and Lamp would carry the change on by itself. The apply stops at its next step instead (before
+            // the build, or once built, before the change goes in).
+        }
+    }
+
+    // MARK: look_at_app
+
+    private func outsideLook(_ path: String) async -> OutsideWork.Answer {
+        guard let (entry, project) = outsideFolder(path) else { return outsideRefusal(path) }
+        OutsideState.shared.fromBefore.remove(entry.repo)
+        let repo = URL(fileURLWithPath: entry.repo)
+        let now = await Self.offMain { OutsideWork.hashes(of: repo) }
+        let pending = entry.applied != OutsideWork.fingerprint(now)
+        guard isRunning(project) else {
+            return OutsideWork.Answer(outcome: "not_open", text: "The app isn't open. apply_change opens it." + (pending ? " The folder has changes not put in yet." : ""),
+                                      facts: ["pending": pending])
+        }
+        let asked = Date()
+        Runtime.requestScreenshots(of: project)
+        var answer = OutsideWork.Answer(outcome: "open", text: (pending ? "The folder has changes not put in yet; apply_change puts them in. " : "The app runs what the folder holds. ")
+                                        + "Pictures of its windows follow, frontmost first.", facts: ["pending": pending])
+        answer.pictures = Self.pictureData(Self.agentPictures(await Runtime.screenshots(of: project, since: asked, waiting: 3), in: project), in: project)
+        if Privacy.sharesLog, let tail = Runtime.logTail(project) { answer.text += "\n\nWhat it printed:\n\(tail)" }
+        return answer
+    }
+
+    // MARK: Sharing
+
+    /// The folder's app, when what's built is the folder as it is now: sharing goes out only from a known snapshot,
+    /// never from a workspace a step behind (or ahead of) the folder the agent sees.
+    private func outsideSnapshot(_ path: String) async -> (OutsideWork.Adopted, LampProject, String)? {
+        // Nothing owed either: a later apply that wrote the workspace without going in (it didn't build, or was
+        // cancelled) leaves files there that the folder may no longer hold, which sharing would pack.
+        guard let (entry, project) = outsideFolder(path), let applied = entry.applied, entry.owed != true else { return nil }
+        let now = await Self.offMain { OutsideWork.hashes(of: URL(fileURLWithPath: entry.repo)) }
+        // The last apply that went in wrote the workspace from this very reading. The whole build that follows a live
+        // change may still be running; sharing packs the files, not the build, so it doesn't wait for it.
+        guard OutsideWork.fingerprint(now) == applied else { return nil }
+        return (entry, project, applied)
+    }
+
+    private func notSnapshot(_ path: String) -> OutsideWork.Answer {
+        guard outsideFolder(path) != nil else { return outsideRefusal(path) }
+        return .refused("What's built isn't the folder as it is now. Call apply_change, and share once it answers live, reopened, opened or unchanged.")
+    }
+
+    private func outsideExport(_ path: String) async -> OutsideWork.Answer {
+        guard let (_, project, snapshot) = await outsideSnapshot(path) else { return notSnapshot(path) }
+        guard begin(project) != nil else { return .refused("Lamp is busy with this app. Try again in a moment.") }
+        defer { finish(current(project) ?? project) }
+        // Work that came with no license is the person's to pass on or not: asked as Share… asks.
+        guard Sharing.askToShare(project) else { return .refused("The person chose not to share it: some of its work came with no license.") }
+        do {
+            let file = try await Self.offMain { Result { try Store.sharedFile(of: project) } }.get()
+            return OutsideWork.Answer(outcome: "exported", text: "Lamp made \(project.name)'s shared file at \(file.path). It holds the app's code and files, never its data or anything of the person's. Copy it where it's wanted; Lamp makes it again at the next export.",
+                                      facts: ["file": file.path, "snapshot": snapshot])
+        } catch {
+            let failure = error as? Sharing.ImportError
+            return .refused((failure?.message ?? error.localizedDescription) + (failure?.detail.map { " " + $0 } ?? ""))
+        }
+    }
+
+    /// The Share Link card, for the person: the agent's call waits while it's open, holding the app so nothing is
+    /// applied under it. Lamp keeps the link's secret, as for any link, so changing it or taking it down stays there.
+    private func outsidePublish(_ path: String) async -> OutsideWork.Answer {
+        guard let (_, project, snapshot) = await outsideSnapshot(path) else { return notSnapshot(path) }
+        guard begin(project) != nil else { return .refused("Lamp is busy with this app. Try again in a moment.") }
+        defer { finish(current(project) ?? project) }
+        let cards = WishLinkCards.shared
+        cards.open(project)
+        NSApp.activate()
+        var sent = false
+        let began = Date()
+        while Date().timeIntervalSince(began) < 30 * 60 {
+            if Task.isCancelled { return OutsideWork.Answer(outcome: "cancelled", text: "Stopped waiting; the card is still open for the person.") }
+            guard let card = cards.card(for: project) else {
+                return sent ? OutsideWork.Answer(outcome: "closed", text: "The person closed the card after trying to share; nothing more is known of it.")
+                    : OutsideWork.Answer(outcome: "closed", text: "The person closed the card without sharing.")
+            }
+            if card.stage == .sending { sent = true }
+            if sent, card.stage != .sending {
+                let link = card.shared?.url.absoluteString
+                var facts: [String: Any] = ["snapshot": snapshot]
+                if let link { facts["link"] = link }
+                if case .failed(let why) = card.stage {
+                    // A link is made before the app's file goes up: a failure after that leaves a link that exists without
+                    // this release, which is said as it is.
+                    if card.released, let link {
+                        return OutsideWork.Answer(outcome: "published_with_problem", text: "\(link) is shared, but: \(why)", facts: facts)
+                    }
+                    if let link {
+                        return OutsideWork.Answer(outcome: "partial", text: "The link \(link) exists, but this release didn't finish: \(why) It may show the earlier version or no app file. The person can try again on the card.", isError: true, facts: facts)
+                    }
+                    return OutsideWork.Answer(outcome: "failed", text: "Nothing was shared: \(why)", isError: true, facts: facts)
+                }
+                if card.released, let link {
+                    return OutsideWork.Answer(outcome: "published", text: "Shared at \(link). Lamp copied the link for the person.", facts: facts)
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        return OutsideWork.Answer(outcome: "timed_out", text: "The card was open for 30 minutes without being shared; it's still open for the person.")
+    }
+}

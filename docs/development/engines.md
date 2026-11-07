@@ -345,3 +345,58 @@ A capability given to one engine must be given to all of them that can take it, 
 Before opening a PR that touches any of this, check each engine's `case` in `Agent.run` and its parser,
 and say in the PR description which engines you tried.
 
+
+## The person's own agent through MCP (trial)
+
+Besides the three engines Lamp runs, the person's own coding agent (Claude Code, Codex) can start Lamp as a local MCP
+server and work on a Lamp-format Mac app in a folder of its own (`OutsideServer`, `OutsideWork`). It isn't an engine:
+Lamp starts no process for it and sees none of its commands, so its shell is under its own approvals, not
+`/agent/approve`. What Lamp does for it (building, opening, putting a change in) keeps Lamp's own checks.
+
+- **Reaching Lamp.** The agent runs `lamp-mcp` from Lamp's Helpers over stdio (`claude mcp add lamp -- "<Lamp.app>/Contents/Helpers/lamp-mcp"`).
+  The helper carries each JSON-RPC line to this Lamp's socket and back; Lamp answers `initialize`, `tools/list` and
+  every call. The socket is in a 0700 folder of the Lamp's own named by its bundle id (`OutsideKit`, which `Edition.name`
+  reads), and each connection's peer must be the person's user. The first line each way is a handshake with
+  `OutsideKit.protocolVersion`. Lamp not running is started from the helper's own bundle; a call under way when Lamp
+  ends is answered `interrupted`.
+- **Taking a folder on.** `open_project` goes through the same import review as any app that comes to Lamp
+  (`Store.importApp` with an `OutsideImport`): the fixed checks, the AI's check when AI is set up, and the person's
+  Build & Open, always as a new app and with no chat opened beside it. The call waits for that answer. The app's first
+  build is what the review installed, never the folder read again; an edit made while the review was up is pending
+  for the next apply. Later applies are the agent's own work, as a chat's turns are, and aren't reviewed again.
+- **An app with no icon.** Its icon is designed right after the review, before the first build, as a new app's is
+  while its first request builds: designed after it, the icon is a change the open app can't take, and the next
+  change of any kind would reopen the app.
+- **The folder and the workspace.** The folder stays the source and its git is the person's: Lamp never writes in it.
+  What builds and runs is the project in Lamp's apps folder the review made, so LiveReload's live copy, libraries and
+  runtime folder stay where they always are. Each apply captures
+  the folder as the import reads one (`RepoImport.open`), checks the bytes copied against the folder before and after,
+  writes into the workspace only what differs (`OutsideWork.sync`: the code, its files, and its metadata by the
+  import's own writers, `syncMetadata`: capabilities, description, credits and their licenses, the icon, put in only when the folder's
+  own metadata changed since the last apply, `Adopted.metadata`, so Lamp's own work on its copy's icon isn't written
+  over, and the app reopened, at every apply), then builds and installs as a look does, holding
+  the project as Lamp's own work does (`Store.begin`). That hold is a `Turn` with no request and no agent, and what
+  became of the change is read from its `outcomes`, as a look reads it; pulling the apply and its checks out of
+  `Turn` into something of their own is still to do. Folders are known by real path, device and inode
+  (`Outside/adopted.json`); a folder put in another's place is refused until `open_project` takes it on.
+- **One at a time.** Every call on a folder waits for the one before it, whatever connection sent it
+  (`outsideSerially`). An apply answers stale when the folder changed while it built. `operation_id` replays an apply
+  that ran, for as long as Lamp runs; after Lamp starts again an apply waits for a `look_at_app` first.
+  Files an apply wrote into the workspace are marked owed on disk until the change goes in (`Adopted.owed`), so the
+  next apply puts them in, never answering unchanged, even after a cancel or Lamp starting again.
+- **What the agent is told.** The server's `instructions` say how to work with Lamp; `open_project` adds, for the app's
+  kind, the skills index Lamp's own engines get (`Skills.index`), less the skills about a Lamp tool it doesn't have
+  (`OutsideWork.offeredOutside`: their description names `make_app_for`, `make_art`, `lampify` and the like), the skills whose rules every change keeps
+  (`Skills.named`) and those the code already uses (`Skills.applying`). `read_skill` is the one from `lamp-tools.json`,
+  answered by `Skills.read`. Library choices stay in the skills; nothing here names one. The agent's own instruction
+  files in the folder are never written. Lamp's import review calls such a folder's description its own, not a sender's
+  (`ImportReviewCard.ownFolder`). The agent can't use the app (`use_app` isn't offered): it's told to ask the
+  person to try what needs a hand.
+- **Sharing.** Both tools share only a known snapshot: the folder must read as it did at the last apply that went
+  in, which wrote the workspace from that reading, and nothing written since may be owed (an apply that didn't build
+  or was cancelled leaves files in the workspace the folder may no longer hold), or they refuse and ask for an apply. `export_app` makes the shared file as
+  Share… does (`Sharing.askToShare`, then `Store.sharedFile`, with every check of `Sharing.export`) and answers its
+  path in Lamp's own folder. `publish_link` opens the Share Link card (`WishLinkCards`) for the person and waits on it,
+  holding the app so nothing is applied meanwhile. The card makes the link before the app's file goes up, so a failure
+  after that is answered as a link that exists without this release, never as success or as nothing shared. The link's
+  secret stays where Lamp keeps every link's, and changing or taking a link down stays on the card.

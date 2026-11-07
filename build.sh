@@ -154,6 +154,9 @@ fi
 # never pass through Lamp's.
 mkdir -p "$APP/Contents/Helpers"
 cp "$(dirname "$BIN")/LampRelay" "$APP/Contents/Helpers/LampRelay"
+# Lamp's MCP server as the person's own coding agent starts it, over stdio (OutsideServer): it only carries messages to
+# this Lamp's socket, so it's found by its path inside this bundle and reaches no other Lamp.
+cp "$(dirname "$BIN")/LampMCP" "$APP/Contents/Helpers/lamp-mcp"
 # Quick Look for shared .lampapp files: the app's icon as their thumbnail, and its picture when Space is pressed.
 # macOS shows Quick Look only from sandboxed extensions in an app it knows, so they live in Lamp's PlugIns.
 for EXT in LampThumbnail:thumbnail LampPreview:preview; do
@@ -356,6 +359,7 @@ sign "$SPARKLE/Autoupdate"
 sign "$SPARKLE/Updater.app"
 sign "$APP/Contents/Frameworks/Sparkle.framework"
 sign "$APP/Contents/Helpers/LampRelay"
+sign "$APP/Contents/Helpers/lamp-mcp"
 sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/LampThumbnail.appex"
 sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/LampPreview.appex"
 # Lamp's player (GameKit.playerSources, Resources/GameKit/apple/LampPlayer.swift): the Mac app around a game's or a

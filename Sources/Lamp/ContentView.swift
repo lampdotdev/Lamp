@@ -347,7 +347,7 @@ struct ImportReviewView: View {
                          android: pending.package.platform.target.recipe.language == .kotlin, prepared: pending.prepared != nil,
                          mixWaits: mixing.stage == .mixing,
                          mix: pending.mixFile.map { file in { store.cancelImport(); openWindow(id: "mix"); MixModel.shared.open(file, store: store) } },
-                         trying: pending.trying, tryIt: store.confirmTrial,
+                         trying: pending.trying, tryIt: store.confirmTrial, ownFolder: pending.outside != nil,
                          progress: work?.failed == false ? work?.line : nil, failure: work?.failed == true ? work?.line : nil,
                          retry: store.retryReview)
             .task { icon = await Sharing.icon(of: pending.package) }
@@ -407,6 +407,8 @@ struct ImportReviewCard: View {
     /// the same checks as opening.
     var trying = false
     var tryIt: () -> Void = {}
+    /// A folder of the person's own that their coding agent asked Lamp to build: nobody shared it with them.
+    var ownFolder = false
     /// While the review is made: the stage it's at (`Store.ReviewWork`).
     var progress: String? = nil
     /// The review couldn't be made (it ran out of time, or Lamp couldn't read the code through): said in place of it,
@@ -512,7 +514,7 @@ struct ImportReviewCard: View {
                     }
                     // The sender's words, said to be theirs.
                     if let description, !prepared, !trying {
-                        Text(verbatim: "Described by the person who shared it with you as: \(description)")
+                        Text(verbatim: ownFolder ? "Its description: \(description)" : "Described by the person who shared it with you as: \(description)")
                             .font(.callout).foregroundStyle(.secondary).lineLimit(5)
                             .fixedSize(horizontal: false, vertical: true)
                     }
