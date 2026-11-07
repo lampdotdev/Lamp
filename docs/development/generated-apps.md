@@ -518,10 +518,13 @@ side, which a git from before merge-tree took trees needs): files the wish didn'
 touch stay as the owner has them, and a file both changed in the same place stops it (`Contribute.Blocked`). The card
 then says the reason Lamp can establish from the commit the version's credits name against the repository's latest
 (`ContributeBlock`): the repository moved since, so Review Update… (the latest is then known, `Store.knowUpdate`, so the
-menu says Review Update… too) puts the card aside and reviews the update, and once an update is in the wish
-(`Store.updateApplied`) the card is prepared again, never sent; the credits name no commit, or nothing says what the
+menu says Review Update… too) puts the card aside and reviews the repository's update (a starter's copy too, rather
+than the starter this Lamp ships, `reviewUpdate(ofRepository:)`), and once an update is in the wish
+(`Store.updateApplied`: put in place, merged cleanly, or merged with conflicts once the agent's turn settling them
+finishes well, `Store.settleMergedUpdate`) the card is prepared again, never sent; the credits name no commit, or nothing says what the
 change is measured from, so Check Update History (`Contribute.recover`) fetches the commit the credits name with the
-person's sign-in, keeps it as that commit's snapshot as an update taken in would (`Upstream.keepSnapshot`) and prepares
+person's sign-in, keeps it as that commit's snapshot as an update taken in would (`Upstream.keepSnapshot`, in indexes of its own so an
+update merging meanwhile keeps its own) and prepares
 the card again, or says it couldn't; or the repository is still at that commit and the change doesn't combine with it,
 with Try Again. A sidebar from before these cards gets the reason as a refusal with Done. An Android app's touched files go back to the repository's package (its build file's namespace): their paths,
 the package in them, and the build file without the id Lamp set for this Mac. The manifest keeps the repository's

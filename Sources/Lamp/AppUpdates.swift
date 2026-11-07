@@ -134,6 +134,19 @@ enum AppUpdates {
         }
     }
 
+    /// An update merged into a wish with conflicts the agent settles in a turn of its own: the request that turn answers,
+    /// and the agent's questions asked in it, whose answers are the update's too. Once that work finishes well, the
+    /// update is in (`Store.settleMergedUpdate`).
+    struct MergePending: Equatable {
+        var request: String
+        var cards: [String] = []
+
+        func isItsTurn(_ messages: [QueuedMessage]) -> Bool {
+            let cards = Set(cards)
+            return messages.contains { $0.text == request || $0.card.map { cards.contains($0.uuidString) } == true }
+        }
+    }
+
     /// What a wish's Credits say of its updates.
     enum Availability: Equatable {
         case checking, upToDate, available, failed, preparing, ready
@@ -450,6 +463,27 @@ extension Store {
         }
     }
 
+    /// After a turn in a wish whose update was merged with conflicts (`mergingUpdates`): once the turn that settles them
+    /// (or answers its questions) finishes well, the update is in. One that failed is let go; a question still open
+    /// keeps it waiting, with its card's answers counted as the update's.
+    func settleMergedUpdate(_ project: LampProject, messages: [QueuedMessage], end: TurnEnd, asked: Bool) {
+        guard var pending = mergingUpdates[project.id], pending.isItsTurn(messages) else { return }
+        let turnLines = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }
+        let asking = asked || Talk.open(in: logs[project.id] ?? []) != nil || (queued[project.id] ?? []).contains { $0.card != nil }
+        switch AppUpdates.settle(end: end, errors: turnLines.contains { $0.kind == .error }, asking: asking) {
+        case .waiting:
+            let cards = [Talk.open(in: logs[project.id] ?? [])?.id].compactMap { $0 } + (queued[project.id] ?? []).compactMap(\.card)
+            pending.cards = Array(Set(pending.cards + cards.map(\.uuidString)))
+            mergingUpdates[project.id] = pending
+            return
+        case .ready:
+            mergingUpdates[project.id] = nil
+            updateApplied(project)
+        case .failed:
+            mergingUpdates[project.id] = nil
+        }
+    }
+
     /// An update to the wish is in: the desk says so, and a Send Changes Back card put aside for it comes back.
     func updateApplied(_ project: LampProject) {
         updateOutcomes[project.id] = .applied
@@ -458,8 +492,10 @@ extension Store {
 
     /// The latest commit of where the wish comes from, learned other than by a check (preparing changes to send back
     /// fetched it): the menu and the desk then offer Review Update…, which reviews that one.
+    /// A starter's copy keeps it too: its menu follows the starter Lamp ships, but Review Update… from a blocked send
+    /// reviews the repository's latest (`reviewUpdate(ofRepository:)`).
     func knowUpdate(of project: LampProject, tip: String) {
-        guard let route = AppUpdates.route(of: project), !Self.followsShippedStarter(project) else { return }
+        guard let route = AppUpdates.route(of: project) else { return }
         updateChecks[AppUpdates.key(route.url)] = AppUpdates.Check(tip: tip, at: Date())
     }
 
@@ -480,12 +516,14 @@ extension Store {
     /// Review Update…: a wish in a repository is fetched and reviewed as when it was opened; a wish made from someone's
     /// project has its update prepared by the agent in a copy of its own, once the person has agreed to what that costs,
     /// and reviewed from there. An update already being prepared is shown where it is: its copy's chat, or its review.
-    func reviewUpdate(_ project: LampProject) {
+    /// `ofRepository` is Review Update… from a Send Changes Back card blocked by the repository's newer changes: a
+    /// starter's copy then reviews those, not the starter this Lamp pins, which may not have them.
+    func reviewUpdate(_ project: LampProject, ofRepository: Bool = false) {
         updateOutcomes[project.id] = nil
         // The copy itself: its chat is where its update is.
         if AppUpdates.Job.load(project) != nil { return showChat(project.id) }
         // A starter's copy takes the starter this Lamp pins.
-        if Self.followsShippedStarter(project) { return updateFromOriginal(project, opening: false) }
+        if !ofRepository, Self.followsShippedStarter(project) { return updateFromOriginal(project, opening: false) }
         // Being set up: one copy at a time.
         if preparingUpdates.contains(project.id) { return }
         if let prepared = updateCopy(of: project) {

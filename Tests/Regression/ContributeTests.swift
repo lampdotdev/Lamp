@@ -225,8 +225,15 @@ final class ContributeTests: XCTestCase {
         let stop = await blocked(project, from: repo)
         XCTAssertEqual(stop?.block, ContributeBlock(.unverified))
 
+        // An update merging at the same time keeps its indexes: recovery stages in a folder of its own.
+        let merging = project.dir.appendingPathComponent(".lamp/merge/own")
+        try FileManager.default.createDirectory(at: merging.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "index".write(to: merging, atomically: true, encoding: .utf8)
         let recovered = await Contribute.recover(project, remote: "file://" + repo.path, git: "/usr/bin/git", access: [])
         XCTAssertTrue(recovered)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: merging.path), "an update's merge indexes were cleared")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: project.dir.appendingPathComponent(".lamp").path)
+            .filter { $0.hasPrefix("recover-") }, [], "recovery's own indexes are left behind")
         let snapshot = await Upstream.run("git rev-parse --verify -q \(Upstream.snapshot(named))", in: project)
         XCTAssertEqual(snapshot.status, 0)
         let prepared = try await prepare(project, from: repo)

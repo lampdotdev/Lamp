@@ -508,6 +508,9 @@ struct DeskListRow: View {
 /// Duplicate…. A starter not on the desk yet shows the same, and is copied as it opens or its remix is sent.
 struct DeskDetail: View {
     @EnvironmentObject private var store: Store
+    /// The Send Changes Back cards publish on their own: the line beside the wish follows them as they're prepared and
+    /// closed (`AppUpdates.DeskLine`).
+    @ObservedObject private var contributeCards = ContributeCards.shared
     let item: DeskList.Item
     var kept = false
     let remixes: [LampProject]

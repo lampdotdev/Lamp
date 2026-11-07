@@ -305,9 +305,10 @@ enum Upstream {
         guard let commit = Credits.validCommit(commit), let package = try? RepoImport.open(folder: folder) else { return false }
         let fm = FileManager.default
         defer { try? fm.removeItem(at: package.folder) }
-        let indexes = project.dir.appendingPathComponent(".lamp/merge")
+        // Indexes of its own, never the merge's (`.lamp/merge`): nothing holds the wish meanwhile, so an update may be
+        // merging at the same time, and neither may clear the other's.
+        let indexes = project.dir.appendingPathComponent(".lamp/recover-\(UUID().uuidString)")
         let work = Sharing.workFolder.appendingPathComponent("lamp-upstream-\(UUID().uuidString)")
-        try? fm.removeItem(at: indexes)
         defer {
             try? fm.removeItem(at: work)
             try? fm.removeItem(at: indexes)

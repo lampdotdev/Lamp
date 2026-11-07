@@ -746,7 +746,9 @@ enum Contribute {
         case .theyChanged:
             close(project)
             waitingForUpdate.insert(project.id)
-            Store.shared.reviewUpdate(project)
+            // Their repository's changes, even for a starter's copy, whose updates otherwise follow the starter this Lamp
+            // ships: those may never have what blocked the send.
+            Store.shared.reviewUpdate(project, ofRepository: true)
         case .unverified, .notRecovered:
             guard let source = cards[project.id]?.source ?? Contribute.origin(of: project) else { return set(project, .blocked(ContributeBlock(.notRecovered))) }
             set(project, .working(Self.checkingHistory))

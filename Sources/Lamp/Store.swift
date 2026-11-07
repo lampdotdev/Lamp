@@ -638,6 +638,9 @@ final class Store: ObservableObject {
     /// What last came of each wish's update, said beside it on the desk until it's checked or reviewed again
     /// (`AppUpdates.Outcome`, `deskUpdateLine`). Not kept across launches.
     @Published var updateOutcomes: [String: AppUpdates.Outcome] = [:]
+    /// Updates merged with conflicts the agent is settling, by wish (`settleMergedUpdate`). Not kept across launches,
+    /// as the outcome it leads to isn't.
+    var mergingUpdates: [String: AppUpdates.MergePending] = [:]
     /// A wish the desk is asked to pick, as Show Separate App asks for the copy it kept.
     @Published var deskPickRequest: String?
     @Published var queued: [String: [QueuedMessage]] = [:]
@@ -4563,6 +4566,8 @@ final class Store: ObservableObject {
             // A followed copy's pull-in counts once the agent has settled it (`settlePull`).
             if let following, let pulled { Following.setPending(Following.Pending(followed: following, version: pulled, request: request), for: project) }
             if let bringingIn { BringIn.setPending(BringIn.Pending(pull: bringingIn, request: request), for: project) }
+            // An update from where the wish came from is in once the agent has settled it.
+            if following == nil, bringingIn == nil, original == nil { mergingUpdates[project.id] = AppUpdates.MergePending(request: request) }
             finish(project)
             send(request, to: project)
             return
@@ -5315,6 +5320,7 @@ final class Store: ObservableObject {
             await settleUpdate(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
             await settlePull(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
             await settleBringIn(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
+            settleMergedUpdate(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
             // A request the agent was asked to bring in: its review, once the wish is free (`suggested_changes`).
             bringInSuggestionAfterTurn(wish(of: current(project) ?? project))
             await refreshSuggestionHolds(wish(of: current(project) ?? project))

@@ -351,6 +351,37 @@ final class AppUpdateBoundaryTests: XCTestCase {
         }
     }
 
+    /// An update merged with conflicts is in only once the agent's turn that settles them finishes well: a turn about
+    /// something else leaves it waiting, a question keeps it waiting with its answer counted, and a failed turn lets it go.
+    @MainActor
+    func testAConflictedUpdateIsAppliedOnceTheAgentSettlesIt() throws {
+        let apps = root.appendingPathComponent("Apps")
+        try FileManager.default.createDirectory(at: apps, withIntermediateDirectories: true)
+        let wish = try Template.draft(name: "New York", in: apps)
+        let store = Store(testingAt: apps)
+        let app = try XCTUnwrap(store.current(wish))
+        let request = "Bring in what's new in New York, keeping my changes."
+        store.mergingUpdates[app.id] = AppUpdates.MergePending(request: request)
+
+        store.settleMergedUpdate(app, messages: [QueuedMessage(text: "Make the sky pink")], end: .changed, asked: false)
+        XCTAssertNil(store.updateOutcomes[app.id])
+        XCTAssertNotNil(store.mergingUpdates[app.id])
+
+        store.settleMergedUpdate(app, messages: [QueuedMessage(text: request)], end: .replied, asked: true)
+        XCTAssertNil(store.updateOutcomes[app.id], "a question is still open")
+        let answer = UUID()
+        store.mergingUpdates[app.id]?.cards.append(answer.uuidString)
+        store.settleMergedUpdate(app, messages: [QueuedMessage(text: "Keep mine", card: answer)], end: .changed, asked: false)
+        XCTAssertEqual(store.updateOutcomes[app.id], .applied)
+        XCTAssertNil(store.mergingUpdates[app.id])
+
+        store.updateOutcomes[app.id] = nil
+        store.mergingUpdates[app.id] = AppUpdates.MergePending(request: request)
+        store.settleMergedUpdate(app, messages: [QueuedMessage(text: request)], end: .failed, asked: false)
+        XCTAssertNil(store.updateOutcomes[app.id])
+        XCTAssertNil(store.mergingUpdates[app.id])
+    }
+
     /// A message sent to a copy while Update deletes it goes to the app the copy went into, however long deleting takes.
     @MainActor
     func testAMessageToACopyBeingDeletedGoesToTheApp() throws {
