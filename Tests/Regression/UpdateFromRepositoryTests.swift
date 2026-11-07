@@ -1,7 +1,7 @@
 import XCTest
 @testable import Lamp
 
-/// A repository opened twice with Keep Both leaves two wishes: the first takes the repository's identity, the second
+/// A repository opened twice with Keep as Separate App leaves two wishes: the first takes the repository's identity, the second
 /// gets none of its own. Updating the second one must offer to update that wish, never the
 /// first, which is the one the fetched repository's identity names.
 final class UpdateFromRepositoryTests: XCTestCase {

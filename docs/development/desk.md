@@ -358,7 +358,7 @@ names the wish being mixed into and how a click works, and Choose Another… sta
 A wish file dropped on the desk opens as one opened from the Finder (`Store.importApp`). With the switch on, a file
 that carries its versions and finds a wish here it met at a version both have (`Mix.copy`, `Mix.meeting`) gets Mix…
 in place of Update on its review, waiting while another mix is saved
-(`PendingImport.mixFile`), beside Keep Both: Mix… closes the review and opens the window on that file
+(`PendingImport.mixFile`), beside Keep as Separate App: Mix… closes the review and opens the window on that file
 (`MixModel.shared`).
 
 - **What travels.** With the switch on, a shared file carries History/ (`MixHistory`): the sender's versions since

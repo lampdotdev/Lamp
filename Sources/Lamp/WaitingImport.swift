@@ -88,7 +88,7 @@ struct WaitingImport {
     func keep(_ file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil) -> Bool {
         let fm = FileManager.default
         let kept = paths
-        // The same file again counts as the same only when it's for the same wish: two copies (Keep Both) updated from
+        // The same file again counts as the same only when it's for the same wish: two copies (Keep as Separate App) updated from
         // one repository fetch the same thing, and each still gets its own review. And only as the same fetch: a fork
         // with the same files is another repository, to be credited as that.
         if let same = kept.first(where: { URL(fileURLWithPath: $0).lastPathComponent == file.lastPathComponent

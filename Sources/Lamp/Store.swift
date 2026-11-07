@@ -635,6 +635,11 @@ final class Store: ObservableObject {
     }
     /// Wishes whose update is being set up (saved, copied, fetched), before its copy holds the job (`AppUpdates`).
     @Published var preparingUpdates: Set<String> = []
+    /// What last came of each wish's update, said beside it on the desk until it's checked or reviewed again
+    /// (`AppUpdates.Outcome`, `deskUpdateLine`). Not kept across launches.
+    @Published var updateOutcomes: [String: AppUpdates.Outcome] = [:]
+    /// A wish the desk is asked to pick, as Show Separate App asks for the copy it kept.
+    @Published var deskPickRequest: String?
     @Published var queued: [String: [QueuedMessage]] = [:]
     /// The answers being made beside running turns, by wish (`SideAnswer`).
     private var sideRuns: [String: SideAnswer.Run] = [:]
@@ -3659,7 +3664,7 @@ final class Store: ObservableObject {
     /// under. Then builds it and, with `change`, asks for that change in the copy's chat. The original stays as it was.
     func remix(_ project: LampProject, change: String? = nil) async {
         guard AppUpdates.mayRemix(project) else {
-            log(project, .status, "This update can be kept with Keep Both once you've reviewed it.")
+            log(project, .status, "This update can be kept with Keep as Separate App once you've reviewed it.")
             return
         }
         guard project.scaffolded, !project.untitled, begin(project) != nil else { return }
@@ -4091,20 +4096,20 @@ final class Store: ObservableObject {
         /// The request a link brought with this file (`take(exact:)`), for the wish's box; nil for a file opened by hand.
         var request: String? = nil
         var review: ImportReview?
-        /// The app already here that this file is another version of, if any: the choice is then Update or Keep Both.
+        /// The app already here that this file is another version of, if any: the choice is then Update or Keep as Separate App.
         var existing: LampProject?
         /// That app was changed here since it arrived: Update then merges the new code into those changes with git, the
         /// agent settling only what conflicts (`mergeUpdate`), rather than putting it in their place.
         var changedHere = false
         /// An update the agent prepared in a copy of `existing` (`AppUpdates`): Update puts the copy's files in place of
-        /// the wish's, since the copy already has the wish's changes, rather than merging again; Keep Both keeps the copy
+        /// the wish's, since the copy already has the wish's changes, rather than merging again; Keep as Separate App keeps the copy
         /// itself, and Cancel throws it away.
         var prepared: AppUpdates.Job? = nil
         var copy: String? = nil
         /// The copy's version when its review was made: a copy changed since isn't what was reviewed.
         var copyHead: String? = nil
         /// With mixing on, the file itself when it can be mixed into a wish here (`Mix.copy`): it carries its versions.
-        /// That wish is then `existing`, and the choice is Mix… or Keep Both.
+        /// That wish is then `existing`, and the choice is Mix… or Keep as Separate App.
         var mixFile: URL? = nil
         /// Another copy `existing` follows, pulled in (`Following`): Update always merges it, since it's someone else's
         /// copy rather than a newer one of where the wish came from.
@@ -4115,7 +4120,7 @@ final class Store: ObservableObject {
         /// wish itself is left alone.
         var trying = false
         /// What each of its apps may reach, from the reading its review made of exactly this package
-        /// (`Sharing.Inspection.readings`): Update and Keep Both apply these, rather than reading it again.
+        /// (`Sharing.Inspection.readings`): Update and Keep as Separate App apply these, rather than reading it again.
         var readings: [String: NetworkPolicy]? = nil
     }
 
@@ -4135,7 +4140,7 @@ final class Store: ObservableObject {
         Self.copy(of: package, among: projects, updating: target)
     }
 
-    /// Asked from a wish's own Update from GitHub… (`target`), it's that wish: a second copy made with Keep Both has no
+    /// Asked from a wish's own Update from GitHub… (`target`), it's that wish: a second copy made with Keep as Separate App has no
     /// identity of its own (`finishImport`), so the repository's identity would find the first copy instead.
     nonisolated static func copy(of package: Sharing.Package, among projects: [LampProject], updating target: String? = nil) -> LampProject? {
         if let target {
@@ -4276,7 +4281,8 @@ final class Store: ObservableObject {
             }
             return
         }
-        finishImport(pending.package, request: pending.request, following: pending.following, readings: pending.readings)
+        finishImport(pending.package, request: pending.request, following: pending.following, readings: pending.readings,
+                     separateFrom: pending.existing?.id)
     }
 
     /// Update: the app already here takes the file's code, files, description and icon, in place, so it keeps
@@ -4288,7 +4294,7 @@ final class Store: ObservableObject {
               begin(project) != nil else {
             let alert = NSAlert()
             alert.messageText = "“\(pending.existing?.name ?? pending.package.name)” is busy right now"
-            alert.informativeText = "Try again when it's done, or keep both."
+            alert.informativeText = "Try again when it's done, or keep it as a separate app."
             alert.runModal()
             return
         }
@@ -4441,6 +4447,7 @@ final class Store: ObservableObject {
                 updateChecks[AppUpdates.key(job.url)]?.tip = job.target
                 if let copy = pending.copy { await discardPreparedCopy(copy, movingQueuedTo: project) }
             }
+            updateApplied(project)
             // The same code with a new icon picture still gets built, which is what draws and installs the icon.
             log(project, .status, pending.prepared != nil ? "Your app is updated. Building it now…" : "Updated from a shared file. Building it now…")
             if await build(project) == nil {
@@ -4588,6 +4595,7 @@ final class Store: ObservableObject {
             }
             if let bringingIn { await BringIn.accept(bringingIn, in: project) }
         }
+        if following == nil, bringingIn == nil, original == nil { updateApplied(project) }
         log(project, .status, "Brought in what's new from \(place), keeping your changes. Building it now…")
         if await build(project) == nil {
             await installReportingCrash(project)
@@ -4656,8 +4664,9 @@ final class Store: ObservableObject {
 
     /// `following` is the link it was opened by (`takeShared`), which the new wish follows from now on.
     /// `readings` is what its review read each app may reach (`PendingImport.readings`).
+    /// `separateFrom` is the wish it's a second copy of (Keep as Separate App), whose desk line then says so.
     private func finishImport(_ package: Sharing.Package, request: String? = nil, following: Following.Followed? = nil,
-                              readings: [String: NetworkPolicy]? = nil) {
+                              readings: [String: NetworkPolicy]? = nil, separateFrom: String? = nil) {
         let project: LampProject
         do {
             project = try Template.scaffold(name: uniqueName(package.name), platform: package.platform, family: package.family, in: root)
@@ -4665,7 +4674,7 @@ final class Store: ObservableObject {
             // Someone else's: held to what its sheet named, from now on (`SharedNetwork`).
             SharedNetwork.arrive(package, in: project, arriving: true, reading: readings?[SharedNetwork.readingKey("")])
             // The copy is the same app as the sender's: the next file shared from theirs can update it. A
-            // second copy made beside one that's already here (Keep Both), or beside one of another kind, is an
+            // second copy made beside one that's already here (Keep as Separate App), or beside one of another kind, is an
             // app of its own.
             if let identity = package.identity,
                !projects.contains(where: { $0.id != project.id && Sharing.identity(of: $0, create: false) == identity }) {
@@ -4679,6 +4688,7 @@ final class Store: ObservableObject {
 
         if let following, let version = following.pulling { Following.brought(version, from: following, into: project) }
         reload()
+        if let separateFrom { updateOutcomes[separateFrom] = .separate(project.id) }
         showChat(project.id)
         // A request that came with the wish's link (an app's remix panel, `RemixLink`, through `take(exact:)`) is in the
         // box, ready to send once the wish is built.

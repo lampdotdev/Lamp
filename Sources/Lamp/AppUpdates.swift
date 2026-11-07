@@ -5,7 +5,7 @@ import Foundation
 /// available", and Lamp knows where to look and how to bring it in.
 ///
 /// A wish opened from a repository that holds a Lamp wish (a starter's copy, a wish put on GitHub) is updated as it was
-/// opened (`Store.importRepository`): fetched again, reviewed, then Update or Keep Both. A wish the agent made from
+/// opened (`Store.importRepository`): fetched again, reviewed, then Update or Keep as Separate App. A wish the agent made from
 /// someone's own project on GitHub (a game, a tool: anything not laid out as a wish) can't be fetched that way, since its
 /// code was rewritten into the wish's; its update is prepared by the agent instead (`Store.prepareUpdate`): Lamp fetches
 /// the project at the commit the wish was made from and at its latest, gives the agent every change between the two,
@@ -82,6 +82,56 @@ enum AppUpdates {
         var tip: String?
         var at: Date
         var checking = false
+    }
+
+    /// What last came of a wish's update: it's in the wish, or the incoming version was kept as an app of its own
+    /// (by its id).
+    enum Outcome: Equatable {
+        case applied
+        case separate(String)
+    }
+
+    /// What the desk says beside a wish while its update, or the changes it sends back, are under way or just done, with
+    /// the one button that goes to it. Nil when none of that is going on: what was last heard of its updates is said
+    /// instead (`Availability`).
+    struct DeskLine: Equatable {
+        enum Go: Equatable {
+            /// The chat of this wish, or of the copy its update is prepared in.
+            case chat(String)
+            /// The app the update was kept as, picked on the desk.
+            case app(String)
+        }
+
+        var text: String
+        var button: String
+        var go: Go
+    }
+
+    /// The copy an update is being prepared in, as the desk needs it: whether it's done, working or waiting on the
+    /// person's answer.
+    struct CopyState: Equatable {
+        var id: String
+        var ready: Bool
+        var working: Bool
+        var asking: Bool
+    }
+
+    /// `sending` is whether the wish's Send Changes Back card is working out what would go; `settingUp` whether its update's
+    /// copy is being made. A copy that stopped or failed says nothing here: Review, beside what was last heard of its
+    /// updates, tries it again.
+    static func deskLine(wish: String, sending: Bool, settingUp: Bool, copy: CopyState?, outcome: Outcome?) -> DeskLine? {
+        if sending { return DeskLine(text: "Preparing your changes…", button: "Show Chat", go: .chat(wish)) }
+        if settingUp { return DeskLine(text: "Updating…", button: "Show Chat", go: .chat(wish)) }
+        if let copy, !copy.ready {
+            if copy.asking { return DeskLine(text: "Your update needs a decision.", button: "Continue in Chat", go: .chat(copy.id)) }
+            if copy.working { return DeskLine(text: "Updating…", button: "Show Chat", go: .chat(copy.id)) }
+            return nil
+        }
+        switch outcome {
+        case .applied?: return DeskLine(text: "Update applied.", button: "Show Chat", go: .chat(wish))
+        case .separate(let id)?: return DeskLine(text: "Separate app added.", button: "Show Separate App", go: .app(id))
+        case nil: return nil
+        }
     }
 
     /// What a wish's Credits say of its updates.
@@ -168,7 +218,7 @@ enum AppUpdates {
         var wish: String? = nil
         /// The wish's version when the copy was made of it: a wish changed since then has changes the copy doesn't.
         var head: String? = nil
-        /// The copy's turn finished well, and it waits for the person's Update, Keep Both or Cancel.
+        /// The copy's turn finished well, and it waits for the person's Update, Keep as Separate App or Cancel.
         var ready: Bool? = nil
         /// The agent's questions asked in the update's own turns, by their cards' ids: answers to these are the update's.
         var cards: [String]? = nil
@@ -259,7 +309,7 @@ enum AppUpdates {
     }
 
     /// Whether an app may be remixed: not a copy waiting for its review, whose remix would be an app of its own
-    /// with no review to pass. Keep Both is how such a copy is kept.
+    /// with no review to pass. Keep as Separate App is how such a copy is kept.
     static func mayRemix(_ project: LampProject) -> Bool { mayOpen(project) }
 
     /// The request that makes someone's project into an app, at the version the person opened: the branch, tag or
@@ -379,8 +429,43 @@ extension Store {
         return AppUpdates.availability(of: route, check: check)
     }
 
+    /// What the desk says beside the wish while its update or the changes it sends back are under way, or just done.
+    func deskUpdateLine(of project: LampProject) -> AppUpdates.DeskLine? {
+        let copy = updateCopy(of: project).map { prepared in
+            let id = prepared.copy.id
+            return AppUpdates.CopyState(id: id, ready: prepared.job.ready == true, working: busy.contains(id) || !(queued[id] ?? []).isEmpty,
+                                        asking: Talk.open(in: logs[id] ?? []) != nil)
+        }
+        var outcome = updateOutcomes[project.id]
+        if case .separate(let id)? = outcome, !projects.contains(where: { $0.id == id }) { outcome = nil }
+        return AppUpdates.deskLine(wish: project.id, sending: ContributeCards.shared.isPreparing(project),
+                                   settingUp: preparingUpdates.contains(project.id), copy: copy, outcome: outcome)
+    }
+
+    /// The desk line's button.
+    func go(to line: AppUpdates.DeskLine) {
+        switch line.go {
+        case .chat(let id): showChat(id)
+        case .app(let id): deskPickRequest = id
+        }
+    }
+
+    /// An update to the wish is in: the desk says so, and a Send Changes Back card put aside for it comes back.
+    func updateApplied(_ project: LampProject) {
+        updateOutcomes[project.id] = .applied
+        ContributeCards.shared.updateApplied(project)
+    }
+
+    /// The latest commit of where the wish comes from, learned other than by a check (preparing changes to send back
+    /// fetched it): the menu and the desk then offer Review Update…, which reviews that one.
+    func knowUpdate(of project: LampProject, tip: String) {
+        guard let route = AppUpdates.route(of: project), !Self.followsShippedStarter(project) else { return }
+        updateChecks[AppUpdates.key(route.url)] = AppUpdates.Check(tip: tip, at: Date())
+    }
+
     /// Asks GitHub for the latest commit of where the wish comes from, once for every wish that follows it.
     func checkForUpdates(_ project: LampProject) {
+        updateOutcomes[project.id] = nil
         guard !Self.followsShippedStarter(project), let route = AppUpdates.route(of: project), let source = route.repository else { return }
         let key = AppUpdates.key(route.url)
         guard updateChecks[key]?.checking != true else { return }
@@ -396,6 +481,7 @@ extension Store {
     /// project has its update prepared by the agent in a copy of its own, once the person has agreed to what that costs,
     /// and reviewed from there. An update already being prepared is shown where it is: its copy's chat, or its review.
     func reviewUpdate(_ project: LampProject) {
+        updateOutcomes[project.id] = nil
         // The copy itself: its chat is where its update is.
         if AppUpdates.Job.load(project) != nil { return showChat(project.id) }
         // A starter's copy takes the starter this Lamp pins.
@@ -424,7 +510,7 @@ extension Store {
             guard !busy.contains(project.id), (queued[project.id] ?? []).isEmpty else { return tellBusy(project) }
             let alert = NSAlert()
             alert.messageText = "Lamp will prepare this update and keep your changes"
-            alert.informativeText = "It's prepared in a separate copy, and your app doesn't change until you review the result and choose Update. "
+            alert.informativeText = "It's prepared in a separate copy, and your app doesn't change until you review the result and choose Update This App. "
                 + "\(Builder.engine.title) brings the update in, using your plan or credits: preparing it may cost money even if you don't keep it."
             alert.addButton(withTitle: "Prepare Update")
             alert.addButton(withTitle: "Not Now")
@@ -618,7 +704,7 @@ extension Store {
     }
 
     /// The review of a prepared copy, as any shared app is reviewed (`Sharing.review` of exactly what would go in), with
-    /// Update, Keep Both and Cancel for the wish it's an update of. A review already open waits for this one: Review
+    /// Update, Keep as Separate App and Cancel for the wish it's an update of. A review already open waits for this one: Review
     /// Update… opens it later.
     /// A copy with work going on or waiting isn't reviewed yet: the turn that ends it reviews it then. The version it's
     /// at is kept with the review, so a copy that changes after isn't taken for what was reviewed.
@@ -643,7 +729,7 @@ extension Store {
         }
     }
 
-    /// The copy a review was made of, held for Update or Keep Both from the check until it's put in place, kept or
+    /// The copy a review was made of, held for Update or Keep as Separate App from the check until it's put in place, kept or
     /// deleted, so nothing changes it in between: a request sent to it meanwhile waits, and goes to whichever app is
     /// left. Nil, after saying so (and reviewing it again when it's still), when the copy is working, has work waiting,
     /// or isn't what was reviewed.
@@ -683,14 +769,15 @@ extension Store {
         prepareUpdate(project, job: AppUpdates.Job(url: job.url, base: job.base, target: job.target, wish: project.id))
     }
 
-    /// Keep Both on a prepared update, under the copy's hold: the copy is kept as an app of its own, named as the wish
+    /// Keep as Separate App on a prepared update, under the copy's hold: the copy is kept as an app of its own, named as the wish
     /// with a number, with the update's commit in its credits, and opened now it's been reviewed. The wish and its
     /// credits are left as they were. A request sent to the copy meanwhile goes on there once it's let go.
     func keepPreparedCopy(_ copy: LampProject, hold: Turn) async {
-        let name = AppUpdates.Job.load(copy)?.wish.flatMap { wish in projects.first { $0.id == wish }?.name }
+        let wish = AppUpdates.Job.load(copy)?.wish.flatMap { wish in projects.first { $0.id == wish } }
         AppUpdates.Job.clear(copy)
         var renamed = copy
-        if let name { renamed = await performRename(copy, to: uniqueName(name)) }
+        if let name = wish?.name { renamed = await performRename(copy, to: uniqueName(name)) }
+        if let wish { updateOutcomes[wish.id] = .separate(renamed.id) }
         showChat(renamed.id)
         guard holds(hold, renamed.id) else { return }
         finish(renamed)

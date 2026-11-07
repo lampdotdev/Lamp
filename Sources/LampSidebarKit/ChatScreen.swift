@@ -171,6 +171,7 @@ private struct Chat: View {
                 ContributeCard(icon: card.icon.flatMap(NSImage.init(data:)), name: card.name, stage: card.stage, upstream: card.upstream, fork: card.fork,
                                credit: card.credit, notes: card.notes, terms: card.terms ?? [], size: card.size, copied: card.copied, canSend: card.canSend,
                                send: { link.send(.contribute(.send)) }, fix: { link.send(.contribute(.fix)) },
+                               settle: { link.send(.contribute(.settle)) },
                                openRequest: { link.send(.contribute(.openRequest)) }, copy: { link.send(.contribute(.copy)) },
                                close: { link.send(.contribute(.close)) }, width: nil, scrolls: true)
             } else {

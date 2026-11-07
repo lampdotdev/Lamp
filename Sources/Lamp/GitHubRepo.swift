@@ -931,7 +931,7 @@ enum GitHubRepo {
         let head = await Subprocess.run(git, signedIn(gh: gh) + ["ls-remote", "https://github.com/\(repo).git", "HEAD"], mergeErrors: false, timeout: 60)
         let now = head.output.split(whereSeparator: \.isWhitespace).first.map(String.init)
         let behind = head.ok && now != nil && now != origin.commit
-            ? "\(repo) has changes on GitHub that \(project.name) doesn't have yet. Check for Updates… first, then try again." : nil
+            ? "\(repo) has changes on GitHub that \(project.name) doesn't have yet. Review Update… first, then try again." : nil
         return (repo, isPublic, origin.commit, behind)
     }
 

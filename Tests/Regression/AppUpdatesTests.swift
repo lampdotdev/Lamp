@@ -86,6 +86,26 @@ final class AppUpdatesTests: XCTestCase {
         XCTAssertNotNil(AppUpdates.route(for: Credits(upstream: [slop]), own: nil))
     }
 
+    /// Beside the wish on the desk, each stage of its update and of the changes it sends back, with the button that goes to
+    /// the right chat: the copy's while the update is prepared there, the wish's otherwise.
+    func testTheDeskSaysWhereTheUpdateIsAndGoesToItsChat() {
+        func line(sending: Bool = false, settingUp: Bool = false, copy: AppUpdates.CopyState? = nil, outcome: AppUpdates.Outcome? = nil) -> AppUpdates.DeskLine? {
+            AppUpdates.deskLine(wish: "wish", sending: sending, settingUp: settingUp, copy: copy, outcome: outcome)
+        }
+        XCTAssertEqual(line(settingUp: true), .init(text: "Updating…", button: "Show Chat", go: .chat("wish")))
+        XCTAssertEqual(line(copy: .init(id: "copy", ready: false, working: true, asking: false)),
+                       .init(text: "Updating…", button: "Show Chat", go: .chat("copy")))
+        XCTAssertEqual(line(copy: .init(id: "copy", ready: false, working: true, asking: true)),
+                       .init(text: "Your update needs a decision.", button: "Continue in Chat", go: .chat("copy")))
+        XCTAssertEqual(line(outcome: .applied), .init(text: "Update applied.", button: "Show Chat", go: .chat("wish")))
+        XCTAssertEqual(line(outcome: .separate("kept")), .init(text: "Separate app added.", button: "Show Separate App", go: .app("kept")))
+        XCTAssertEqual(line(sending: true, outcome: .applied), .init(text: "Preparing your changes…", button: "Show Chat", go: .chat("wish")))
+        // A copy that stopped, or is ready for review, leaves it to the line of what was last heard (Review).
+        XCTAssertNil(line(copy: .init(id: "copy", ready: false, working: false, asking: false)))
+        XCTAssertNil(line(copy: .init(id: "copy", ready: true, working: false, asking: false)))
+        XCTAssertNil(line())
+    }
+
     func testNothingThePersonReadsNamesWhereTheUpdateComesFrom() {
         let said = [AppUpdates.request] + [AppUpdates.Availability.checking, .upToDate, .available, .failed, .preparing, .ready].map(\.line)
         for line in said {

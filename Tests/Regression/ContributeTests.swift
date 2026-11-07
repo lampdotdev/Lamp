@@ -1,5 +1,6 @@
 import XCTest
 @testable import Lamp
+import LampSidebarKit
 
 /// Send Changes Back sends only what the remix changed, on top of where the repository is now: measured from what the
 /// remix last took in, never from the commit its credits name, with Lamp's own files and the manifest's marks left
@@ -70,7 +71,8 @@ final class ContributeTests: XCTestCase {
 
     /// A remix of the repository as it was at `files`: the shared file's code with this Lamp's own files beside it, and
     /// credits naming the repository at `commit`, saved as the version it arrived as.
-    private func remix(of files: [String: String], commit: String) async throws -> (project: LampProject, arrival: String) {
+    private func remix(of files: [String: String], commit: String, arrivedAs message: String = "Imported from a shared file") async throws
+        -> (project: LampProject, arrival: String) {
         let app = try escape.app()
         let project = app.project
         try FileManager.default.removeItem(at: project.dir.appendingPathComponent("Sources/App.swift"))
@@ -79,7 +81,7 @@ final class ContributeTests: XCTestCase {
                    Credits.file: #"{"remixOf":[{"name":"Drive","url":"https://github.com/maker/drive","commit":"\#(commit)"}],"upstream":[]}"#,
                    AppDescription.file: #"{"description":"A drive"}"#],
                   in: project.dir)
-        let saved = await Versions.save(project, message: "Imported from a shared file")
+        let saved = await Versions.save(project, message: message)
         XCTAssertTrue(saved)
         let head = await Versions.head(project)
         return (project, try XCTUnwrap(head))
@@ -175,19 +177,70 @@ final class ContributeTests: XCTestCase {
         }
     }
 
-    /// Both changed the same line: nothing goes, and the person is told to bring the repository's changes in first.
+    /// What `prepare` stopped at, when it was blocked.
+    private func blocked(_ project: LampProject, from repo: URL) async -> Contribute.Blocked? {
+        do {
+            _ = try await prepare(project, from: repo)
+            XCTFail("nothing should be prepared")
+            return nil
+        } catch {
+            XCTAssertTrue(error is Contribute.Blocked, error.localizedDescription)
+            return error as? Contribute.Blocked
+        }
+    }
+
+    /// Both changed the same line after the update the remix last took in: nothing goes, the card names the file, and
+    /// the repository's latest is the update to review.
     func testTheSameLineChangedOnBothSidesStops() async throws {
         let repo = try repository(["Sources/App.swift": "a\nb\nc\n"])
         let (project, _) = try await remix(of: ["Sources/App.swift": "a\nb\nc\n"], commit: try git("git rev-parse HEAD", in: repo))
         try await change(project, ["Sources/App.swift": "A\nb\nc\n"], "Mine")
-        try commit(repo, ["Sources/App.swift": "X\nb\nc\n"], "Theirs")
-        do {
-            _ = try await prepare(project, from: repo)
-            XCTFail("nothing should be prepared")
-        } catch {
-            XCTAssertTrue(error.localizedDescription.contains("Sources/App.swift") && error.localizedDescription.contains("Check for Updates"),
-                          error.localizedDescription)
-        }
+        let theirs = try commit(repo, ["Sources/App.swift": "X\nb\nc\n"], "Theirs")
+        let stop = await blocked(project, from: repo)
+        XCTAssertEqual(stop?.block, ContributeBlock(.theyChanged, files: ["Sources/App.swift"]))
+        XCTAssertEqual(stop?.tip, theirs)
+        XCTAssertEqual(stop?.block.text, "Their repository has newer changes that overlap with yours in Sources/App.swift. "
+                       + "Review the update, then try sending your changes again.")
+    }
+
+    /// The repository is still at the commit the remix's credits name, yet the change doesn't go on it (the remix
+    /// arrived with that line already different): Lamp says it couldn't combine them, not that they changed anything.
+    func testChangesThatDoNotCombineWithAnUnmovedRepositoryStop() async throws {
+        let repo = try repository(["Sources/App.swift": "a\nb\nc\n"])
+        let (project, _) = try await remix(of: ["Sources/App.swift": "x\nb\nc\n"], commit: try git("git rev-parse HEAD", in: repo))
+        try await change(project, ["Sources/App.swift": "y\nb\nc\n"], "Mine")
+        let stop = await blocked(project, from: repo)
+        XCTAssertEqual(stop?.block, ContributeBlock(.couldNotCombine))
+        XCTAssertNil(stop?.tip)
+    }
+
+    /// Nothing says what the remix arrived as: Lamp can't verify the update history, so nothing goes. Check Update
+    /// History keeps the commit its credits name as that update's snapshot, and then only the remix's change goes.
+    func testAnUnverifiedHistoryIsRecoveredFromTheNamedCommit() async throws {
+        let files = ["Sources/App.swift": "a\nb\nc\n"]
+        let repo = try repository(files)
+        let named = try git("git rev-parse HEAD", in: repo)
+        let (project, _) = try await remix(of: files, commit: named, arrivedAs: "Saved by hand")
+        try await change(project, ["Sources/App.swift": "a\nb\nC\n"], "Mine")
+        let stop = await blocked(project, from: repo)
+        XCTAssertEqual(stop?.block, ContributeBlock(.unverified))
+
+        let recovered = await Contribute.recover(project, remote: "file://" + repo.path, git: "/usr/bin/git", access: [])
+        XCTAssertTrue(recovered)
+        let snapshot = await Upstream.run("git rev-parse --verify -q \(Upstream.snapshot(named))", in: project)
+        XCTAssertEqual(snapshot.status, 0)
+        let prepared = try await prepare(project, from: repo)
+        XCTAssertTrue(prepared.changed.contains("Sources/App.swift"), "\(prepared.changed)")
+        XCTAssertEqual(file("Sources/App.swift", at: prepared.commit, in: prepared.clone), "a\nb\nC\n")
+    }
+
+    /// A remix whose credits name no commit can't have its history put right: nothing is recovered.
+    func testAHistoryWithNoNamedCommitIsNotRecovered() async throws {
+        let repo = try repository(["Sources/App.swift": "a\nb\nc\n"])
+        let (project, _) = try await remix(of: ["Sources/App.swift": "a\nb\nc\n"], commit: "not-a-commit", arrivedAs: "Saved by hand")
+        try await change(project, ["Sources/App.swift": "a\nb\nC\n"], "Mine")
+        let recovered = await Contribute.recover(project, remote: "file://" + repo.path, git: "/usr/bin/git", access: [])
+        XCTAssertFalse(recovered)
     }
 
     /// A file taken out and one renamed go as that, in the code and in the shared file.

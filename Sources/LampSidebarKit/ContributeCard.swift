@@ -19,6 +19,9 @@ public struct ContributeCard: View {
         /// The pull request is open, at this address.
         case done(String)
         case failed(String)
+        /// Nothing can go until something is settled, for the reason Lamp could establish, with the one thing that
+        /// settles it.
+        case blocked(ContributeBlock)
     }
 
     let icon: NSImage?
@@ -38,6 +41,9 @@ public struct ContributeCard: View {
     let canSend: Bool
     let send: () -> Void
     let fix: () -> Void
+    /// What a blocked card's first button does (`ContributeBlock.Reason`): review the update, check the update
+    /// history, or prepare the changes again.
+    let settle: () -> Void
     let openRequest: () -> Void
     let copy: () -> Void
     let close: () -> Void
@@ -47,7 +53,8 @@ public struct ContributeCard: View {
     @State private var termsOpen = false
 
     public init(icon: NSImage?, name: String, stage: Stage, upstream: String?, fork: String?, credit: String?, notes: [String], terms: [String] = [],
-                size: String?, copied: Bool, canSend: Bool, send: @escaping () -> Void, fix: @escaping () -> Void, openRequest: @escaping () -> Void,
+                size: String?, copied: Bool, canSend: Bool, send: @escaping () -> Void, fix: @escaping () -> Void,
+                settle: @escaping () -> Void = {}, openRequest: @escaping () -> Void,
                 copy: @escaping () -> Void, close: @escaping () -> Void, width: CGFloat? = 480, scrolls: Bool = false) {
         self.icon = icon
         self.name = name
@@ -62,6 +69,7 @@ public struct ContributeCard: View {
         self.canSend = canSend
         self.send = send
         self.fix = fix
+        self.settle = settle
         self.openRequest = openRequest
         self.copy = copy
         self.close = close
@@ -78,9 +86,13 @@ public struct ContributeCard: View {
 
     private var isBlocked: Bool {
         switch stage {
-        case .needsGitHub, .refused: true
+        case .needsGitHub, .refused, .blocked: true
         default: false
         }
+    }
+
+    private var block: ContributeBlock? {
+        if case .blocked(let block) = stage { block } else { nil }
     }
 
     public var body: some View {
@@ -91,11 +103,18 @@ public struct ContributeCard: View {
                     .padding(.top, -4)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Send \(name)'s changes back").font(.title3.bold())
-                    // What the person accepts: what goes, and where.
-                    Text("Your changes go to the repository this app came from, as a pull request its owner can take: what a shared app file holds, on your own GitHub account first. Never your chat or the app's data.")
-                        .font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if let block {
+                        // Why nothing went, as far as Lamp could tell, in the card's own words.
+                        Text(block.title).font(.title3.bold())
+                        Text(block.text).font(.callout).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("Send \(name)'s changes back").font(.title3.bold())
+                        // What the person accepts: what goes, and where.
+                        Text("Your changes go to the repository this app came from, as a pull request its owner can take: what a shared app file holds, on your own GitHub account first. Never your chat or the app's data.")
+                            .font(.callout).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             if stage != .preparing, !isBlocked {
@@ -140,7 +159,7 @@ public struct ContributeCard: View {
         case .done:
             Label(copied ? "The pull request is open. Link copied." : "The pull request is open.", systemImage: "checkmark.circle.fill")
                 .font(.callout).foregroundStyle(.secondary)
-        case .ready:
+        case .ready, .blocked:
             EmptyView()
         }
     }
@@ -173,11 +192,71 @@ public struct ContributeCard: View {
             Button(need == .install ? "Get GitHub CLI…" : "Sign In to GitHub…", action: fix).keyboardShortcut(.defaultAction)
         case .refused:
             Button("Done", action: close).keyboardShortcut(.defaultAction)
+        case .blocked(let block):
+            switch block.reason {
+            case .theyChanged:
+                Button("Not Now", role: .cancel, action: close).keyboardShortcut(.cancelAction)
+                Button("Review Update…", action: settle).keyboardShortcut(.defaultAction)
+            case .unverified, .notRecovered:
+                Button("Not Now", role: .cancel, action: close).keyboardShortcut(.cancelAction)
+                Button("Check Update History", action: settle).keyboardShortcut(.defaultAction)
+            case .couldNotCombine:
+                Button("Try Again", action: settle)
+                Button("Done", action: close).keyboardShortcut(.defaultAction)
+            }
         default:
             Button("Cancel", role: .cancel, action: close).keyboardShortcut(.cancelAction).disabled(busy && stage != .preparing)
             Button("Send Changes Back", action: send)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canSend)
         }
+    }
+}
+
+/// Why a Send Changes Back card can't go on, as far as Lamp could establish it (`Contribute.Blocked`): the repository
+/// changed the same parts since the last update the app took in; Lamp can't tell which version of theirs the app is
+/// based on (or couldn't put that right); or the repository hasn't moved and the changes still don't combine with it.
+public struct ContributeBlock: Codable, Equatable {
+    public enum Reason: String, Codable, Equatable {
+        case theyChanged, unverified, notRecovered, couldNotCombine
+    }
+
+    public var reason: Reason
+    /// The files both changed, by their paths in the repository, when that's the reason.
+    public var files: [String]
+
+    public init(_ reason: Reason, files: [String] = []) {
+        self.reason = reason
+        self.files = files
+    }
+
+    public var title: String {
+        switch reason {
+        case .theyChanged: "Review their changes first"
+        case .unverified, .notRecovered: "Lamp couldn't verify your last update"
+        case .couldNotCombine: "Lamp couldn't prepare your changes"
+        }
+    }
+
+    public var text: String {
+        switch reason {
+        case .theyChanged:
+            "Their repository has newer changes that overlap with yours in \(Self.list(files)). Review the update, then try sending your changes again."
+        case .unverified:
+            "Lamp can't tell which version of their app your changes are based on. Nothing was sent. Check the update history before trying again."
+        case .notRecovered:
+            "Lamp couldn't recover the update history. Nothing was sent."
+        case .couldNotCombine:
+            "Their repository hasn't changed since your last update, but Lamp couldn't combine your changes with it. Nothing was sent."
+        }
+    }
+
+    /// The files, three at most by name: "a", "a and b", "a, b and c", "a, b, c and 2 more".
+    static func list(_ files: [String]) -> String {
+        let named = Array(files.prefix(3))
+        let more = files.count - named.count
+        if more > 0 { return named.joined(separator: ", ") + " and \(more) more" }
+        guard named.count > 1 else { return named.first ?? "" }
+        return named.dropLast().joined(separator: ", ") + " and " + named.last!
     }
 }

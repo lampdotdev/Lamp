@@ -460,8 +460,13 @@ struct ImportReviewCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     // The name is the sender's: shown as written, never as formatting, and on one line whose
                     // end (the closing quote and the question mark) stays in view however long it is.
-                    Text(verbatim: prepared ? "Your update is ready" : trying ? "Try these changes to “\(name)”?" : "Open “\(name)”?").font(.title2.bold())
+                    Text(verbatim: title).font(.title2.bold())
                         .lineLimit(1).truncationMode(.middle)
+                    // What Update This App does to the app already here, before what the review found.
+                    if let lead {
+                        Text(verbatim: lead).font(.callout).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     // The sender's words, said to be theirs.
                     if let description, !prepared, !trying {
                         Text(verbatim: "Described by the person who shared it with you as: \(description)")
@@ -549,17 +554,12 @@ struct ImportReviewCard: View {
                     Image(systemName: "square.on.square").foregroundStyle(.secondary)
                 }
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.existing] = $0 }
-            } else if let existing {
-                // The buttons say what each does; this is what someone would worry about before choosing Update.
+            } else if let existing, mix != nil || !prepared {
+                // What the other choice does: the update's own lead is under the title. A prepared update says both there.
                 Label {
                     Text(verbatim: mix != nil
-                         ? "You already have this app\(existing == name ? "" : ", as “\(existing)”"). Mix lets you pick which of its changes to bring into yours. Keep Both keeps it as a separate app."
-                         : prepared
-                         ? "Update puts it in place of “\(existing)” and keeps your data, and you can go back if you change your mind. Keep Both keeps it as a separate app."
-                         : "You already have this app\(existing == name ? "" : ", as “\(existing)”")"
-                         + (changedHere ? ", and you've changed it since. Updating brings in what's new and keeps your changes; Lamp asks you about anything it can't settle itself"
-                                        : ". Updating keeps your data")
-                         + ", and you can go back if you change your mind.")
+                         ? "You already have this app\(existing == name ? "" : ", as “\(existing)”"). Mix lets you pick which of its changes to bring into yours. \(Self.separateLine)"
+                         : Self.separateLine)
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } icon: {
@@ -575,6 +575,28 @@ struct ImportReviewCard: View {
         .padding(24)
         .frame(width: 500)
     }
+
+    /// The sheet's title: an update of the app already here says so, and one prepared in a copy says it's ready.
+    private var title: String {
+        if prepared { return "Your update to “\(existing ?? name)” is ready" }
+        if trying { return "Try these changes to “\(name)”?" }
+        if let existing, mix == nil { return "Update “\(existing)”?" }
+        return "Open “\(name)”?"
+    }
+
+    /// What updating does to the app already here, under the title.
+    private var lead: String? {
+        guard existing != nil, mix == nil, !trying else { return nil }
+        if prepared {
+            return "This copy includes the update and your changes. Update This App replaces your current app's code and keeps its saved data. "
+                + "Keep as Separate App keeps the prepared copy alongside your current app."
+        }
+        return changedHere
+            ? "Bring in the update and keep your changes. Lamp will ask you about conflicts it can't resolve. Your saved data stays, and you can undo the update."
+            : "Replace this app's code with the update. Your saved data stays, and you can undo the update."
+    }
+
+    static let separateLine = "Keep as Separate App adds the incoming version to your library and leaves your current app unchanged."
 
     private var buttons: some View {
         HStack {
@@ -601,8 +623,8 @@ struct ImportReviewCard: View {
                 }
             } else if existing != nil, let mix {
                 switch review?.opening {
-                case .anyway: Button("Keep Both Anyway", role: .destructive, action: open)
-                case .byReturn, .byClick, nil: Button("Keep Both", action: open).disabled(review == nil)
+                case .anyway: Button("Keep Separate App Anyway", role: .destructive, action: open)
+                case .byReturn, .byClick, nil: Button("Keep as Separate App", action: open).disabled(review == nil)
                 }
                 Button("Mix…", action: mix)
                     .keyboardShortcut(.defaultAction)
@@ -610,19 +632,19 @@ struct ImportReviewCard: View {
             } else if existing != nil {
                 // The app is already here: the file either becomes its next version or a second app.
                 // Either way its code runs, so both follow the same rule as opening does. Return is
-                // only ever Update: keeping both is the choice someone makes on purpose.
+                // only ever Update This App: a separate app is the choice someone makes on purpose.
                 switch review?.opening {
                 case .byReturn:
-                    Button("Keep Both", action: open)
-                    Button("Update", action: update)
+                    Button("Keep as Separate App", action: open)
+                    Button("Update This App", action: update)
                         .keyboardShortcut(.defaultAction)
                 case .anyway:
-                    Button("Keep Both Anyway", role: .destructive, action: open)
+                    Button("Keep Separate App Anyway", role: .destructive, action: open)
                     Button("Update Anyway", role: .destructive, action: update)
                 case .byClick, nil:
-                    Button("Keep Both", action: open)
+                    Button("Keep as Separate App", action: open)
                         .disabled(review == nil)
-                    Button("Update", action: update)
+                    Button("Update This App", action: update)
                         .disabled(review == nil)
                 }
             } else {
