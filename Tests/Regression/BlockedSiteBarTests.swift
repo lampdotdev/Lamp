@@ -89,4 +89,32 @@ final class BlockedSiteBarTests: XCTestCase {
             """)
         XCTAssertEqual(said, ["https://a.example", "-", "-", "https://c.example", "-", "https://d.example", "-"])
     }
+
+    /// Two windows already showing bars: closing a site's bar in one takes the same site's bar away in the other, Allow
+    /// All in one takes every other window's bar away, and allowing a site lets the other window's next site have its
+    /// turn. A bar for a site nothing was decided about stays.
+    func testWhatThePersonDoesInOneWindowSettlesTheOthers() throws {
+        let said = try run("""
+            func says(_ s: (dropped: Bool, next: String?)) { print((s.dropped ? "dropped " : "kept ") + (s.next ?? "-")) }
+            var one = LampPageRefusals(), two = LampPageRefusals(), three = LampPageRefusals()
+            say(one.heard("https://tiles.example", blocked: blocked))
+            say(two.heard("https://tiles.example", blocked: blocked))
+            say(three.heard("https://feed.example", blocked: blocked))
+            say(one.gone(closed: true, blocked: blocked))
+            says(two.settle(blocked: blocked))
+            says(three.settle(blocked: blocked))
+            var four = LampPageRefusals(), five = LampPageRefusals()
+            say(four.heard("https://x.example", blocked: blocked))
+            say(five.heard("https://x.example", blocked: blocked))
+            say(five.heard("https://y.example", blocked: blocked))
+            allowed.insert("https://x.example")
+            say(four.gone(closed: false, blocked: blocked))
+            says(five.settle(blocked: blocked))
+            every = true
+            say(five.gone(closed: false, blocked: blocked))
+            says(three.settle(blocked: blocked))
+            """)
+        XCTAssertEqual(said, ["https://tiles.example", "https://tiles.example", "https://feed.example", "-", "dropped -", "kept -",
+                              "https://x.example", "https://x.example", "-", "-", "dropped https://y.example", "-", "dropped -"])
+    }
 }

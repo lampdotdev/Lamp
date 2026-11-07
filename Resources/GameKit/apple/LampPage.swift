@@ -901,7 +901,19 @@ enum LampPageGuard {
 @MainActor final class LampPageRefused: NSObject, WKScriptMessageHandler {
     private let scheme: String
     private var bars = LampPageRefusals()
-    init(scheme: String) { self.scheme = scheme }
+    /// The page whose bar this is.
+    private weak var page: WKWebView?
+    /// Takes this page's bar away without a word, when what the person did in another window settled it.
+    private var takeAway: (@MainActor () -> Void)?
+    /// Every page's refusals, so what the person does in one window (closes a site's bar, allows it, allows every site)
+    /// reaches the bars other windows show at that moment.
+    private static let all = NSHashTable<LampPageRefused>.weakObjects()
+
+    init(scheme: String) {
+        self.scheme = scheme
+        super.init()
+        Self.all.add(self)
+    }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let said = message.body as? [String: Any], let address = said["url"] as? String,
@@ -910,16 +922,28 @@ enum LampPageGuard {
         FileHandle.standardError.write(Data("Lamp blocked this shared app's request to \(site ?? String(address.prefix(200))) (\(said["what"] as? String ?? ""))\n".utf8))
         // The game's own relay is never offered: an allowance is kept, and that port is this launch's.
         guard policy.mayConnect, let site, !LampControllers.pageSites.contains(site) else { return }
+        page = view
         show(bars.heard(site, blocked: Self.blocked), over: view)
     }
 
     private func show(_ site: String?, over view: WKWebView) {
         guard let site else { return }
-        LampPageBlocked.show(site, over: view) { [weak self, weak view] closed in
+        takeAway = LampPageBlocked.show(site, over: view) { [weak self, weak view] closed in
             guard let self else { return }
+            self.takeAway = nil
             let next = self.bars.gone(closed: closed, blocked: Self.blocked)
             if let view { self.show(next, over: view) }
+            for other in Self.all.allObjects where other !== self { other.settle() }
         }
+    }
+
+    /// Another window's bar went: this page's goes too if its site is now closed or allowed, and the next waiting has its turn.
+    private func settle() {
+        let (dropped, next) = bars.settle(blocked: Self.blocked)
+        guard dropped else { return }
+        takeAway?()
+        takeAway = nil
+        if let page { show(next, over: page) }
     }
 
     /// Whether the page is still kept from `site`: the person may have allowed it, or every site, meanwhile.
@@ -947,6 +971,14 @@ enum LampPageGuard {
         if closed, let showing { Self.closed.insert(showing) }
         showing = nil
         return next(blocked)
+    }
+
+    /// What the person did elsewhere (closed a site's bar in another window, allowed a site or every site) may settle
+    /// the bar shown here: whether it goes, and the next site whose bar to show then, if any.
+    mutating func settle(blocked: (String) -> Bool) -> (dropped: Bool, next: String?) {
+        guard let site = showing, Self.closed.contains(site) || !blocked(site) else { return (false, nil) }
+        showing = nil
+        return (true, next(blocked))
     }
 
     private mutating func next(_ blocked: (String) -> Bool) -> String? {
@@ -985,8 +1017,10 @@ struct LampPageBlocked: View {
 
     /// Shows the bar for `site` above the page, in room of its own (`LampPageHolder`); `gone` once it's closed by the
     /// person (true) or its site allowed (false). A question the person cancels leaves the bar as it was.
-    @MainActor static func show(_ site: String, over view: WKWebView, gone: @escaping @MainActor (_ closed: Bool) -> Void) {
-        guard let holder = LampPageHolder.of(view) else { return }
+    /// What it gives back takes the bar away without calling `gone`, for a bar another window's choice settled.
+    @discardableResult
+    @MainActor static func show(_ site: String, over view: WKWebView, gone: @escaping @MainActor (_ closed: Bool) -> Void) -> (@MainActor () -> Void)? {
+        guard let holder = LampPageHolder.of(view) else { return nil }
         var shown: LampPageHolder.Platform?
         func remove(closed: Bool) {
             guard let bar = shown else { return }
@@ -1015,6 +1049,11 @@ struct LampPageBlocked: View {
         let hosted = Self.hosting(bar)
         shown = hosted
         holder.show(hosted)
+        return {
+            guard let bar = shown else { return }
+            shown = nil
+            holder.hide(bar)
+        }
     }
 
     #if os(macOS)

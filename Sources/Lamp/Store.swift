@@ -7446,6 +7446,11 @@ final class Store: ObservableObject {
               !inWindow || Self.binary(of: project, contains: "lampDriveTakenOver") else {
             return (200, ["text": "The open app was built before use_app could do this. Call look_at_app to rebuild it, then try again."])
         }
+        // A click on a game's page is kept to the page only by a driver that knows `page`: an older one would click and type
+        // natively wherever the point fell. The open copy is what's asked, whatever was last built.
+        if inWindow, actions.contains(where: { $0["page"] as? Bool == true }), !Self.binary(of: project, contains: Self.gamePageMarker) {
+            return (200, ["text": "The open game was built before use_app could click its screen. Call look_at_app to rebuild it, then try again."])
+        }
         let readsScreen = Self.binary(of: project, contains: Self.screenTextMarker)
         if !readsScreen, actions.contains(where: { ($0["target"] as? String)?.isEmpty == false }) {
             return (200, ["text": "The open app was built before use_app could act on things by name. Call look_at_app to rebuild it, then try again."])
@@ -7602,6 +7607,8 @@ final class Store: ObservableObject {
 
     /// A line every app that writes its screen as text (`LampScreen` in LampSupport.swift) has in its binary.
     private static let screenTextMarker = "The screen as text, in reading order"
+    /// Words only a driver that keeps a game's clicks to its page has (`LampDriver.run`, the `page` refusal).
+    static let gamePageMarker = "that isn't on the game's page, so nothing was done"
 
     /// `use_app` for an iPhone app: Lamp drives the simulator through the Mac's accessibility system
     /// (Simulator.Driver), then a fresh picture of the screen follows the report.

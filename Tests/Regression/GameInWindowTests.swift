@@ -233,6 +233,52 @@ final class GameInWindowTests: XCTestCase {
         XCTAssertNotNil(GameKit.controls(for: [["action": "scroll", "amount": 100.0]]).problem)
     }
 
+    /// The driver gives the game's controller to Lamp for a whole batch that clicks the game's page, as for one that moves
+    /// its sticks, so the person's own play on a controller or a phone stops the clicks still to come (the batch is as
+    /// `GameKit.controls` sends it). The driver's own Swift, cut out of the template and run.
+    func testAPageOnlyBatchHasTheController() throws {
+        let support = Template.lampSupportSwift
+        func block(_ name: String) throws -> Substring {
+            let start = try XCTUnwrap(support.range(of: "// begin LampDriver.\(name)"))
+            let end = try XCTUnwrap(support.range(of: "// end LampDriver.\(name)", range: start.upperBound..<support.endIndex))
+            return support[start.upperBound..<end.lowerBound]
+        }
+        func batch(_ actions: [[String: Any]]) throws -> String {
+            let moves = GameKit.controls(for: actions)
+            XCTAssertNil(moves.problem)
+            return String(decoding: try JSONSerialization.data(withJSONObject: moves.actions), as: UTF8.self)
+        }
+        let batches = [
+            try batch([["action": "click", "target": "Start"], ["action": "wait", "amount": 10.0], ["action": "click", "target": "Night"]]),
+            try batch([["action": "type", "target": "f1", "text": "Ann"]]),
+            try batch([["action": "stick", "target": "left", "x": 0.0, "y": 1.0]]),
+            try batch([["action": "wait", "amount": 2.0]]),
+        ]
+        let program = """
+            import Foundation
+            enum LampDriver {
+            \(try block("Action"))
+            \(try block("holdsController"))
+            }
+            for json in \(String(reflecting: batches)) {
+                let actions = try! JSONDecoder().decode([LampDriver.Action].self, from: Data(json.utf8))
+                print(LampDriver.holdsController(actions))
+            }
+            """
+        let work = try folder()
+        try program.write(to: work.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
+        let built = TestShell.run(Shell.compatibleSDK + "xcrun swiftc -o driver main.swift 2>&1", in: work)
+        XCTAssertEqual(built.status, 0, built.output)
+        let ran = TestShell.run("./driver", in: work)
+        XCTAssertEqual(ran.output.split(separator: "\n"), ["true", "true", "true", "false"])
+    }
+
+    /// Lamp sends a game's page a click only when the open copy's driver keeps it to the page: the words it looks for are
+    /// the driver's own, in one piece, so a driver that has them is found and an older one isn't.
+    func testThePageMarkerIsTheDriversOwn() {
+        XCTAssertTrue(Template.lampSupportSwift.contains("\"" + Store.gamePageMarker + "\""))
+    }
+
     // MARK: A fresh start
 
     /// Opened for a fresh start (`lampFreshStart`, a launch Lamp asked for one), the game starts from its beginning:

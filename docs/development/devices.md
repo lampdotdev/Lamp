@@ -506,11 +506,12 @@ under the same signed batch, Stop and report as any Mac app's use (`LampDriver`,
 `stick`, `button` and `wait` into the driver's actions (`GameKit.controls`, each held at most 10 s), and passes a
 `click`, `double_click` or `type` on what the game's page shows (a menu's button, a mode switch, a field) marked `page`,
 which the driver carries out in the page (`LampPageItems.act`) and never on what's around it, reporting it as sent, not
-as taken; `key` is refused with what does a key's work (a `button` or a `stick`), since the runtime's keyboard never
+as taken, and only to an open copy whose driver knows `page` (`Store.gamePageMarker`, read from its binary; an older one
+is asked to be rebuilt first, since it would click and type natively wherever the point fell); `key` is refused with what does a key's work (a `button` or a `stick`), since the runtime's keyboard never
 reads a key a script made and a real key would be taken for the person's play. The driver hands each
 hold to the page (`LampPageItems.hold`, LampPage.swift, `window.__lampDrive`) and reports the page's answer, held or
 why not (no Lamp runtime running in it, the page failing), never "held" before the page took it; it lets the hold go when
-it's due, when the batch stops or a newer one begins (`Handover.hold(for:release:)`). A batch with controller moves has
+it's due, when the batch stops or a newer one begins (`Handover.hold(for:release:)`). A batch with controller moves, or with a click or typing on the page (`LampDriver.holdsController`), has
 the controller from its start to its end, waits and gaps included (`LampPageItems.own`, `__lampOwn`, given back by
 `Handover.whenOver` however the batch ends). In the page (lamp-game.js, "Lamp's hands on the controller") Lamp's
 controller is the first player while it holds anything, in place of that player's controller, keyboard and touch, never
