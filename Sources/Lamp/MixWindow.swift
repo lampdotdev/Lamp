@@ -19,7 +19,7 @@ struct MixScene: Scene {
 
 @MainActor
 final class MixModel: ObservableObject {
-    /// One window, one mix: the import's review hands it a file too (Mix… there).
+    /// One window, one mix: the import's review hands it its package too (Mix… there).
     static let shared = MixModel()
     enum Stage: Equatable { case waiting, reading, problem(String), ready, mixing }
     @Published var stage = Stage.waiting
@@ -28,41 +28,71 @@ final class MixModel: ObservableObject {
     @Published var preview = Mix.Preview()
     @Published var review: ImportReview?
     private var previewing: Task<Void, Never>?
+    /// The package being mixed, which is this window's to remove (`reset`): work for any other has gone stale.
     private var folder: URL?
+    /// The file being unpacked, before its package is this window's: a newer open or a reset leaves it to remove itself.
+    private var opening: UUID?
 
     /// Nothing while a mix is being saved: that one finishes first.
     func open(_ file: URL, store: Store) {
         guard stage != .mixing else { return }
         reset()
         stage = .reading
+        let token = UUID()
+        opening = token
         Task {
             do {
                 let package = try await Task.detached { try Sharing.open(file) }.value
+                guard opening == token else { try? FileManager.default.removeItem(at: package.folder); return }
+                opening = nil
                 folder = package.folder
-                guard let history = MixHistory.read(in: package.folder) else {
-                    throw Mix.Failure(message: "This copy came without its versions. Ask for it again, shared from a Lamp with mixing on.")
-                }
-                guard let project = Mix.copy(of: package, among: store.projects) else {
-                    throw Mix.Failure(message: "You don't have a copy of “\(package.name)” to mix it into.")
-                }
-                guard !store.busy.contains(project.id) else {
-                    throw Mix.Failure(message: "“\(project.name)” is busy right now. Try again when it's done.")
-                }
-                if await Versions.hasUnsavedChanges(project) {
-                    guard await Versions.save(project, message: "Before mixing") else { throw Mix.Failure(message: "Lamp couldn't save your copy first.") }
-                    store.versionsRevision += 1
-                }
-                let lineup = try await Mix.lineUp(package, history: history, with: project)
-                guard folder == package.folder else { return }
-                self.lineup = lineup
-                picked = Set(lineup.changes.filter(\.here).map(\.id))
-                stage = .ready
-                refresh()
-                let review = await Sharing.review(package)
-                if folder == package.folder { self.review = review }
+                await prepare(package, store: store)
             } catch {
+                guard opening == token else { return }
+                opening = nil
                 stage = .problem(error.localizedDescription)
             }
+        }
+    }
+
+    /// A package already open (the import's review, Mix… there), which this window then owns and removes as its own.
+    /// False while a mix is being saved: the package stays with whoever has it.
+    func adopt(_ package: Sharing.Package, store: Store) -> Bool {
+        guard stage != .mixing else { return false }
+        reset()
+        folder = package.folder
+        stage = .reading
+        Task { await prepare(package, store: store) }
+        return true
+    }
+
+    /// Lines the package up with the copy here. Whatever comes back once another package has taken its place is dropped.
+    private func prepare(_ package: Sharing.Package, store: Store) async {
+        do {
+            guard let history = MixHistory.read(in: package.folder) else {
+                throw Mix.Failure(message: "This copy came without its versions. Ask for it again, shared from a Lamp with mixing on.")
+            }
+            guard let project = Mix.copy(of: package, among: store.projects) else {
+                throw Mix.Failure(message: "You don't have a copy of “\(package.name)” to mix it into.")
+            }
+            guard !store.busy.contains(project.id) else {
+                throw Mix.Failure(message: "“\(project.name)” is busy right now. Try again when it's done.")
+            }
+            if await Versions.hasUnsavedChanges(project) {
+                guard await Versions.save(project, message: "Before mixing") else { throw Mix.Failure(message: "Lamp couldn't save your copy first.") }
+                store.versionsRevision += 1
+            }
+            let lineup = try await Mix.lineUp(package, history: history, with: project)
+            guard folder == package.folder else { return }
+            self.lineup = lineup
+            picked = Set(lineup.changes.filter(\.here).map(\.id))
+            stage = .ready
+            refresh()
+            let review = await Sharing.review(package)
+            if folder == package.folder { self.review = review }
+        } catch {
+            guard folder == package.folder else { return }
+            stage = .problem(error.localizedDescription)
         }
     }
 
@@ -111,6 +141,7 @@ final class MixModel: ObservableObject {
         previewing?.cancel()
         if let folder { try? FileManager.default.removeItem(at: folder) }
         folder = nil
+        opening = nil
         lineup = nil
         picked = []
         preview = Mix.Preview()
