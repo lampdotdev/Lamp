@@ -450,9 +450,10 @@ enum Versions {
     /// by something else at work in the folder (the agent's own git, say, which is free to use it), so one
     /// that fails with changes still unsaved is tried again before it's given up on.
     static func commitAll(_ arguments: String, in dir: URL, env: [String: String] = [:]) async -> Saved {
-        // The wish's list of apps goes with each new version (`appsTrailer`); a version amended keeps the one it has.
+        // The wish's list of apps goes with each new version (`appsTrailer`); a version amended keeps the one it has,
+        // unless the amend writes its message afresh (`-m`), which takes the old list away with the old message.
         var arguments = arguments, env = env
-        if !arguments.contains("--amend"), let apps = appsTrailer(in: dir) {
+        if !arguments.contains("--amend") || arguments.contains(" -m "), let apps = appsTrailer(in: dir) {
             arguments += " --trailer \"$LAMP_APPS\""
             env["LAMP_APPS"] = apps
         }
@@ -469,6 +470,13 @@ enum Versions {
             if attempt < savePauses.count { try? await Task.sleep(for: savePauses[attempt]) }
         }
         return .failed
+    }
+
+    /// Whether the folder has anything not in its latest version.
+    static func hasChanges(in dir: URL) async -> Bool {
+        var unsaved = ""
+        guard await git("git status --porcelain", cwd: dir, onLine: { unsaved += $0 }) == 0 else { return true }
+        return !unsaved.trimmed.isEmpty
     }
 
     static func head(_ project: LampProject) async -> String? {

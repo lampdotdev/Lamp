@@ -78,6 +78,9 @@ public struct ChatScreen: View {
         }
         .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity)
         .chatGround()
+        // Claude Code has the wish in a terminal: the chat closes, also when it's opened again meanwhile.
+        .onAppear { if link.state?.inClaudeCode != nil { link.closeChat() } }
+        .onChange(of: link.state?.inClaudeCode) { if link.state?.inClaudeCode != nil { link.closeChat() } }
         // Files and pictures dropped on the chat go with the next message, as in Lamp's window.
         .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
             Dropped.load(providers) { files in if !files.isEmpty { link.send(.attach(files)) } }

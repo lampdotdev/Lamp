@@ -16,13 +16,24 @@ final class SetupSheet: NSObject, ObservableObject, NSWindowDelegate {
     var isShowing: Bool { showing != nil }
 
     private var window: NSPanel?
+    /// The app in front when the sheet came up by itself (a terminal Claude Code works in): it keeps being the active
+    /// app, and gets activation back if something in the sheet took it.
+    private var returnTo: NSRunningApplication?
 
-    func show(_ project: LampProject, line: LogLine) {
+    /// `byItself`: the sheet comes up without a click, while another app is in front. It floats over that app without
+    /// making Lamp the active app, so none of Lamp's other windows come forward; a click in it gives it the keyboard
+    /// (a non-activating panel), and when it goes the keyboard is back where it was.
+    func show(_ project: LampProject, line: LogLine, byItself: Bool = false) {
+        returnTo = nil
         close()
+        let front = NSWorkspace.shared.frontmostApplication
+        let beside = byItself && front?.processIdentifier != ProcessInfo.processInfo.processIdentifier
+        returnTo = beside ? front : nil
         showing = (project.id, line.id)
         if line.kind == .drawIcon { Store.shared.iconFromPlayground(project) }
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 520, height: 300),
-                            styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+        var style: NSWindow.StyleMask = [.titled, .closable, .fullSizeContentView]
+        if beside { style.insert(.nonactivatingPanel) }
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 520, height: 300), styleMask: style, backing: .buffered, defer: false)
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.isReleasedWhenClosed = false
@@ -30,6 +41,14 @@ final class SetupSheet: NSObject, ObservableObject, NSWindowDelegate {
         panel.contentView = NSHostingView(rootView: SetupSheetView(projectID: project.id, lineID: line.id) { [weak self] in self?.close() }
             .environmentObject(Store.shared))
         window = panel
+        if beside {
+            panel.center()
+            panel.level = .floating
+            // Lamp stays in the background, where a panel would otherwise hide.
+            panel.hidesOnDeactivate = false
+            panel.orderFrontRegardless()
+            return
+        }
         NSApp.activate()
         if let chat = ChatPanel.window(for: project.id) {
             chat.beginSheet(panel)
@@ -45,10 +64,21 @@ final class SetupSheet: NSObject, ObservableObject, NSWindowDelegate {
         self.window = nil
         if let parent = window.sheetParent { parent.endSheet(window) } else { window.close() }
         showing = nil
+        giveFocusBack()
     }
 
     func windowWillClose(_ notification: Notification) {
-        if (notification.object as? NSWindow) === window { window = nil; showing = nil }
+        if (notification.object as? NSWindow) === window { window = nil; showing = nil; giveFocusBack() }
+    }
+
+    /// Only needed when something in the sheet made Lamp the active app (Image Playground, a dialog): activation is
+    /// handed back to the app that had it, as macOS's cooperative activation lets an active app do.
+    private func giveFocusBack() {
+        guard let app = returnTo else { return }
+        returnTo = nil
+        guard NSApp.isActive, !app.isTerminated else { return }
+        NSApp.yieldActivation(to: app)
+        app.activate(from: .current, options: [])
     }
 }
 

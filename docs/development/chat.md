@@ -122,7 +122,8 @@ about the chat is decided where it's drawn, so a change to what the chat shows o
 the screen, and reaches both. A row of the chat is given its own line and only what it needs besides (a first build's live
 line gets the turn's activity, `LiveActivity`), never the whole state: every row compares what it's given whenever the
 chat changes, so a row given the whole chat makes each change cost the chat's length times its rows, which in a long
-chat held up for seconds what was just sent. Where the chat is, and how it moves, is in "Generated apps" (beside a Mac app) and below.
+chat held up for seconds what was just sent. Where the chat is, and how it moves, is in "Generated apps" (beside a Mac app) and below. While Claude Code has the wish in a terminal the
+chat is closed wherever it's drawn (`SidebarState.inClaudeCode`; "Claude Code in a terminal" in the engines guide).
 
 The chat is in one place at a time, always beside whatever is showing the wish (`ChatPanel.beside`): a Mac app's own
 chat beside its window (the extension, from the first build on); beside the iPhone or iPad simulator, Lamp's Android
