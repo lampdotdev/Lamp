@@ -514,20 +514,49 @@ enum Mix {
 
     private static let moved = Failure(message: "Your copy changed while this was open. Drop their copy here again.")
 
-    /// Every file in a tree, by its path as it's spelled in History/ and on disk: "<mode> <blob>", so two trees compare
-    /// file by file, the mode with the content. Read with NULs between entries, since git quotes a path with a quote, a
-    /// backslash or a control character in it even with quotePath off, and a quoted key would match no other.
+    /// Every file in a tree, by its path byte for byte as it's spelled in History/ and on disk: "<mode> <blob>", so two
+    /// trees compare file by file, the mode with the content. git quotes a path with a quote, a backslash or a control
+    /// character in it, and any character but NUL can be in a name, so the listing comes NUL-separated and as hex: no
+    /// name can be read as two, or as another.
     private static func entries(of tree: String, in project: LampProject) async throws -> [String: String] {
-        let listed = await run("git ls-tree -r -z --full-tree \(tree) | tr '\\0' '\\036'", in: project)
-        guard listed.status == 0 else { throw Failure(message: "Lamp couldn't read what the mix came to.") }
+        let listed = await run("set -o pipefail; git ls-tree -r -z --full-tree \(tree) | /usr/bin/xxd -p | /usr/bin/tr -d '\\n'", in: project)
+        guard listed.status == 0, let bytes = hexBytes(listed.output.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            throw Failure(message: "Lamp couldn't read what the mix came to.")
+        }
         var entries: [String: String] = [:]
-        for entry in listed.output.split(separator: "\u{1e}") {
-            guard let tab = entry.firstIndex(of: "\t") else { continue }
-            let fields = entry[..<tab].split(separator: " ")
-            guard fields.count == 3 else { continue }
-            entries[String(entry[entry.index(after: tab)...])] = "\(fields[0]) \(fields[2])"
+        for raw in bytes.split(separator: 0, omittingEmptySubsequences: true) {
+            guard let tab = raw.firstIndex(of: 9),
+                  let meta = String(bytes: raw[..<tab], encoding: .utf8),
+                  let path = String(bytes: raw[raw.index(after: tab)...], encoding: .utf8) else {
+                throw Failure(message: "Lamp couldn't read what the mix came to.")
+            }
+            let fields = meta.split(separator: " ")
+            guard fields.count == 3 else { throw Failure(message: "Lamp couldn't read what the mix came to.") }
+            entries[path] = "\(fields[0]) \(fields[2])"
         }
         return entries
+    }
+
+    private static func hexBytes(_ hex: String) -> [UInt8]? {
+        let digits = Array(hex.utf8)
+        guard digits.count % 2 == 0 else { return nil }
+        func value(_ c: UInt8) -> UInt8? {
+            switch c {
+            case 48...57: c - 48
+            case 97...102: c - 87
+            case 65...70: c - 55
+            default: nil
+            }
+        }
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(digits.count / 2)
+        var index = 0
+        while index < digits.count {
+            guard let high = value(digits[index]), let low = value(digits[index + 1]) else { return nil }
+            bytes.append(high << 4 | low)
+            index += 2
+        }
+        return bytes
     }
 
     /// A tree of this copy read as a shared file of it would be (`Sharing.open`): unpacked into a folder of its own with
@@ -538,7 +567,21 @@ enum Mix {
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         var opened = false
         defer { if !opened { try? fm.removeItem(at: folder) } }
-        guard await run("git archive --format=tar \(tree) | /usr/bin/tar -x -C \(Sandbox.quoted(folder.path))", in: lineup.project).status == 0 else {
+        // Each file's blob as the tree holds it, never `git archive`, which leaves out whatever the tree's own
+        // .gitattributes marks export-ignore and so would hide a file from the check that the mix still saves. Only
+        // plain files are written; links and submodules aren't code the reader takes, and their paths come from no
+        // History/ (`Mix.lineUp` writes plain files only).
+        let script = """
+        set -o pipefail
+        git ls-tree -r -z --full-tree "$LAMP_TREE" | while IFS= read -r -d '' e; do
+          meta="${e%%$'\\t'*}"; p="${e#*$'\\t'}"; mode="${meta%% *}"; sha="${meta##* }"
+          case "$mode" in 100644|100755) ;; *) continue ;; esac
+          mkdir -p -- "$LAMP_OUT/$(dirname -- "$p")" || exit 3
+          git cat-file blob "$sha" > "$LAMP_OUT/$p" || exit 3
+          if [ "$mode" = 100755 ]; then chmod +x -- "$LAMP_OUT/$p" || exit 3; fi
+        done
+        """
+        guard await run(script, in: lineup.project, env: ["LAMP_TREE": tree, "LAMP_OUT": folder.path]).status == 0 else {
             throw Failure(message: "Lamp couldn't read what the mix came to.")
         }
         let (root, parts) = Sharing.layout(of: lineup.project)

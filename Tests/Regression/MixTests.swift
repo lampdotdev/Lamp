@@ -631,11 +631,10 @@ final class MixTests: XCTestCase {
         model.reset()
     }
 
-    /// A path git would quote (a quote in a folder's name) is still the path it is: a file of theirs there that no shared
-    /// copy carries, here one named as Lamp's own scene file so no review reads it, stays out. Lamp never writes such a
-    /// path into History/, so the file is the sender's own doing.
-    func testAFileNoSharedCopyCarriesStaysOutWhateverItsName() async throws {
-        let hidden = "Sources/x\"y/LampScene.swift"
+    /// A file of theirs at a path git would quote, or one holding a character a tool might read as a separator, is
+    /// still the path it is: there, named as Lamp's own scene file so no review reads it, and carried by no shared copy,
+    /// it stays out. Lamp never writes such a path into History/, so the file is the sender's own doing.
+    private func hiddenFileStaysOut(_ hidden: String) async throws {
         let (yours, lineup) = try await shared(["Sources/App.swift": lines], [
             Step(theirs: true, title: "Add a scene", at: 200, files: ["Sources/App.swift": "A-them\nb\nc\nd\ne\n"]),
         ], tamper: { stage in
@@ -650,12 +649,53 @@ final class MixTests: XCTestCase {
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             try "// not read by any review\n".write(to: file, atomically: true, encoding: .utf8)
         })
-        XCTAssertTrue(try XCTUnwrap(lineup.changes.first).files.contains(hidden), "the sender's path reaches the lineup")
         let prepared = try await Mix.prepare(Set(lineup.changes.map(\.id)), in: lineup)
         let checked = ImportReview(summary: "checked", capabilities: [], concerns: [], detected: [])
         _ = try await Mix.apply(prepared, in: lineup, checked: prepared.needsCheck ? checked : nil)
         XCTAssertEqual(text(yours), "A-them\nb\nc\nd\ne\n")
-        XCTAssertNil(text(yours, "Sources/x\"y/LampScene.swift"))
+        XCTAssertNil(text(yours, hidden))
+        let saved = try escape.loose("git ls-tree -r -z --name-only HEAD | tr '\\0' '\\n' | grep -c LampScene", in: yours.project.dir)
+        XCTAssertEqual(saved.output.trimmingCharacters(in: .whitespacesAndNewlines), "0", "nothing of it is in the saved version")
+    }
+
+    func testAFileNoSharedCopyCarriesStaysOutWhateverItsName() async throws {
+        try await hiddenFileStaysOut("Sources/x\"y/LampScene.swift")
+    }
+
+    func testAFileWhoseNameHoldsAControlCharacterStaysOut() async throws {
+        try await hiddenFileStaysOut("Sources/x\u{1e}y/LampScene.swift")
+    }
+
+    /// The check reads every file the mix saves as the tree holds it: one the tree's own .gitattributes marks
+    /// export-ignore, which `git archive` would leave out, is read like the rest.
+    func testTheCheckReadsAFileTheTreeMarksExportIgnore() async throws {
+        let (yours, lineup) = try await shared(["Sources/App.swift": lines], [
+            Step(theirs: false, title: "Keep the helper out of archives", at: 150, files: [".gitattributes": "Sources/Helper.swift export-ignore\n"]),
+            Step(theirs: true, title: "Add a helper", at: 200, files: ["Sources/Helper.swift": "// sends your files away\n"]),
+        ], top: ["Sources/Helper.swift": "// harmless\n"])
+        let prepared = try await Mix.prepare(Set(lineup.changes.map(\.id)), in: lineup)
+        XCTAssertTrue(prepared.needsCheck)
+        let input = try await Mix.checkInput(prepared, in: lineup)
+        defer { try? FileManager.default.removeItem(at: input.package.folder) }
+        XCTAssertTrue(input.inspection.files.contains { $0.name == "Sources/Helper.swift" && $0.text == "// sends your files away\n" },
+                      "the file the mix saves is the file the check reads")
+        let checked = ImportReview(summary: "checked", capabilities: [], concerns: [], detected: [])
+        _ = try await Mix.apply(prepared, in: lineup, checked: checked)
+        XCTAssertEqual(text(yours, "Sources/Helper.swift"), "// sends your files away\n")
+    }
+
+    /// Two reviews saying one thing: said once, as seriously as the more serious one says it, with each reason given.
+    func testWarningsSaidTwiceKeepTheStrongerWeightAndEveryReason() {
+        typealias Item = ImportReviewCard.Consideration
+        let merged = MixModel.merged([
+            [Item(text: "Not checked by AI", weight: .warning, detail: "The provider's filter cut the reply off."),
+             Item(text: "Reads every file", weight: .caution)],
+            [Item(text: "Not checked by AI", weight: .warning, detail: "The check ran out of time."),
+             Item(text: "Reads every file", weight: .warning)],
+        ])
+        XCTAssertEqual(merged.map(\.text), ["Not checked by AI", "Reads every file"])
+        XCTAssertEqual(merged[0].detail, "The provider's filter cut the reply off.\nThe check ran out of time.")
+        XCTAssertEqual(merged[1].weight, .warning)
     }
 
     /// A check adds to the file's review and never softens it: a risky file stays Mix Anyway, its warnings shown, however

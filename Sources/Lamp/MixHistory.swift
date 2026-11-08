@@ -207,9 +207,11 @@ struct MixHistory: Codable {
         return history
     }
 
-    /// A relative path inside the wish, with nothing git or a line-by-line plan would read otherwise.
+    /// A relative path inside the wish, with nothing git or a line-by-line plan would read otherwise: no control
+    /// character at all, since some tool on the way may take one as a separator.
     static func isSafe(_ path: String) -> Bool {
-        !path.isEmpty && !path.hasPrefix("/") && !path.hasPrefix("\"") && !path.contains("\n") && !path.contains("\t")
+        !path.isEmpty && !path.hasPrefix("/") && !path.hasPrefix("\"")
+            && !path.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7f }
             && !path.split(separator: "/").contains { $0 == ".." || $0 == "." || $0 == ".git" }
     }
 

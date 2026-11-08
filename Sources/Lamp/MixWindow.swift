@@ -59,11 +59,24 @@ final class MixModel: ObservableObject {
         return reviews.map(\.opening).max { order.firstIndex(of: $0)! < order.firstIndex(of: $1)! }
     }
 
-    /// Everything the reviews in force have to say, each once, the file's first.
+    /// Everything the reviews in force have to say, each once, the file's first (`merged`).
     var considerations: [ImportReviewCard.Consideration] {
+        Self.merged((reviewsInForce ?? []).map { ImportReviewCard.considerations($0) })
+    }
+
+    /// Several reviews' considerations as one list: a thing two of them say is said once, as seriously as the more
+    /// serious says it, with every distinct reason given for it ("Not checked by AI" for two different causes).
+    nonisolated static func merged(_ lists: [[ImportReviewCard.Consideration]]) -> [ImportReviewCard.Consideration] {
         var all: [ImportReviewCard.Consideration] = []
-        for review in reviewsInForce ?? [] {
-            for item in ImportReviewCard.considerations(review) where !all.contains(where: { $0.text == item.text }) { all.append(item) }
+        for item in lists.joined() {
+            guard let index = all.firstIndex(where: { $0.text == item.text }) else { all.append(item); continue }
+            let held = all[index]
+            let stronger = item.weight == .warning && held.weight != .warning ? item : held
+            let details = [held.detail, item.detail].compactMap { $0 }.reduce(into: [String]()) { kept, detail in
+                if !kept.contains(detail) { kept.append(detail) }
+            }
+            all[index] = ImportReviewCard.Consideration(text: held.text, weight: stronger.weight, icon: stronger.icon,
+                                                         detail: details.isEmpty ? nil : details.joined(separator: "\n"))
         }
         return all
     }
@@ -474,7 +487,7 @@ struct MixTimeline: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(verbatim: item.text).fixedSize(horizontal: false, vertical: true)
                         if let detail = item.detail {
-                            Text(verbatim: detail).font(.system(size: 11)).foregroundStyle(Paper.muted).lineLimit(2).help(detail)
+                            Text(verbatim: detail).font(.system(size: 11)).foregroundStyle(Paper.muted).lineLimit(4).help(detail)
                         }
                     }
                 } icon: {
