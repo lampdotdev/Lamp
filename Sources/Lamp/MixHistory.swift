@@ -4,7 +4,8 @@ import Foundation
 /// it was saved, and the files it changed as they were after it, so the Mac that opens the file can replay them one at
 /// a time. Only what a shared file would carry anyway: Lamp's own files, its records and the chat's attachments are left
 /// out (`Upstream.isLeftOut`), and the whole folder goes through the same check for keys the rest of the file does. Code
-/// in it reaches an app only through the mix window, after the file's review. An older Lamp never reads the folder.
+/// in it reaches an app only through the mix window, after the file's review, and after a check of its own wherever a mix
+/// comes to code that review didn't read (`Mix.prepare`). An older Lamp never reads the folder.
 struct MixHistory: Codable {
     static let folder = "History"
     static let file = "history.json"

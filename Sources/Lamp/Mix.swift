@@ -168,9 +168,6 @@ enum Mix {
 
         // Theirs, rebuilt here: each of their versions is the one before it with its files put in place.
         let start = try await treeID(of: base, in: project)
-        let indexes = project.dir.appendingPathComponent(".lamp/mix")
-        try? FileManager.default.createDirectory(at: indexes, withIntermediateDirectories: true)
-        let index = indexes.appendingPathComponent("index")
         var files: [URL] = []
         for version in theirs {
             for path in version.changed where !Upstream.isLeftOut(path, in: project) {
@@ -202,7 +199,7 @@ enum Mix {
             kept.append(version)
             plan += "FROM \(kept.count == 1 ? start : "-")\n" + lines.joined(separator: "\n") + "\n@@\n"
         }
-        let trees = kept.isEmpty ? [] : try await edit(plan, index: index, in: project)
+        let trees = kept.isEmpty ? [] : try await edit(plan, in: project)
         var before = start
         for (version, after) in zip(kept, trees) {
             defer { before = after }
@@ -252,7 +249,8 @@ enum Mix {
                   ordered[shared].id == resuming.ordered[shared].id { shared += 1 }
         }
         let first = resuming.map { $0.trees[shared] } ?? lineup.start
-        let index = lineup.project.dir.appendingPathComponent(".lamp/mix/index")
+        let index = try scratchIndex(in: lineup.project)
+        defer { try? FileManager.default.removeItem(at: index) }
         let script = """
         I="$LAMP_INDEX"; t="$LAMP_START"; echo "T $t"
         # An older git merges commits only, merge base included: each tree goes in as a commit of its own.
@@ -343,13 +341,34 @@ enum Mix {
 
     // MARK: Mixing
 
-    /// Saves what the picked changes come to on top of this copy's history, and puts it in the wish's folder. The wish's
-    /// files are expected saved. Returns how many versions were saved, none when the pick changes nothing.
-    static func apply(_ picked: Set<String>, in lineup: Lineup) async throws -> Int {
-        let project = lineup.project
-        guard await Versions.head(project) == lineup.head else {
-            throw Failure(message: "Your copy changed while this was open. Drop their copy here again.")
+    /// What a pick comes to, worked out once (`prepare`) and saved exactly so (`apply`): each version it saves, as a
+    /// tree, and which of them hold code no review read. Made for one file, at the version this copy was then, from
+    /// exactly `picked`: a check of it (`checkInput`) is a check of these trees and no others.
+    struct Prepared: Equatable {
+        struct Version: Equatable {
+            let tree: String
+            let message: String
+            let title: String
         }
+        /// The package's folder: which file this is for.
+        let folder: URL
+        let head: String
+        let picked: Set<String>
+        let versions: [Version]
+        /// The versions (by their place in `versions`) holding something neither the file's review read nor this copy
+        /// already has: a change of theirs taken without a later one, a file both of you changed, what their History/
+        /// says that the file's code doesn't. Any version can be gone back to (Undo, the History list), so each is checked,
+        /// not only the last.
+        let unseen: [Int]
+        var needsCheck: Bool { !unseen.isEmpty }
+    }
+
+    /// Plays the pick back into the versions a mix saves, without saving any. What a mix doesn't carry stays as this copy
+    /// has it: Lamp's own files, and a file a shared copy never carries (`Upstream.stage`), which their changes don't
+    /// touch here, as an update's never would.
+    static func prepare(_ picked: Set<String>, in lineup: Lineup) async throws -> Prepared {
+        let project = lineup.project
+        guard await Versions.head(project) == lineup.head else { throw moved }
         let changes = lineup.changes
         let mine = changes.filter { $0.here && picked.contains($0.id) }
         let left = changes.filter { $0.here && !picked.contains($0.id) }
@@ -362,21 +381,22 @@ enum Mix {
         for (offset, change) in coming.enumerated() {
             plans.append((mine + coming[...offset], change.title + "\n\n\(trailer): \(change.id)", change.title, change.id))
         }
-        guard !plans.isEmpty else { return 0 }
+        let none = Prepared(folder: lineup.package.folder, head: lineup.head, picked: picked, versions: [], unseen: [])
+        guard !plans.isEmpty else { return none }
 
-        // What a mix doesn't carry stays as this copy has it now.
-        let index = project.dir.appendingPathComponent(".lamp/mix/index")
-        let ownListed = await run("git -c core.quotePath=false ls-tree -r HEAD", in: project)
+        let ownListed = await run("git -c core.quotePath=false ls-tree -r \(lineup.head)", in: project)
         guard ownListed.status == 0 else { throw Failure(message: "Lamp couldn't read your copy.") }
         let own = ownListed.output.split(separator: "\n").map(String.init).filter { line in
             guard let tab = line.firstIndex(of: "\t") else { return false }
             let path = String(line[line.index(after: tab)...])
             return !path.hasPrefix("\"") && Upstream.isLeftOut(path, in: project)
         }
-        let headTree = try await treeID(of: "HEAD", in: project)
-        var parent = lineup.head
+        let headTree = try await treeID(of: lineup.head, in: project)
+        let headEntries = try await entries(of: headTree, in: project)
+        let carry = try await Carrying(lineup: lineup, head: headTree)
+        defer { carry.clear() }
         var tree = headTree
-        var saved: [(commit: String, title: String)] = []
+        var versions: [Prepared.Version] = []
         // Each plan is the one before with one more change of theirs, so it picks up where they part.
         var last: Played? = nil
         for plan in plans {
@@ -386,30 +406,205 @@ enum Mix {
             guard listed.status == 0 else { throw Failure(message: "Lamp couldn't read what the mix came to.") }
             let dropped = listed.output.split(separator: "\n").map(String.init).filter { !$0.hasPrefix("\"") && Upstream.isLeftOut($0, in: project) }
             let lines = dropped.map { "0 0000000000000000000000000000000000000000\t\($0)" } + own
-            let whole = lines.isEmpty ? played.tree : try await edit("FROM \(played.tree)\n" + lines.joined(separator: "\n") + "\n@@\n", index: index, in: project).first ?? played.tree
+            var whole = lines.isEmpty ? played.tree : try await edit("FROM \(played.tree)\n" + lines.joined(separator: "\n") + "\n@@\n", in: project).first ?? played.tree
+            // Their changes to a file no shared copy carries: it stays as yours is.
+            let theirs = Set(plan.changes.filter { $0.side == .them && !$0.here }.flatMap(\.files))
+            if !theirs.isEmpty {
+                let now = try await entries(of: whole, in: project)
+                let doubtful = theirs.filter { now[$0] != headEntries[$0] && !carry.carries($0) }
+                if !doubtful.isEmpty {
+                    let carried = try await carry.paths(of: whole)
+                    let back = doubtful.filter { !carried.contains($0) }.sorted().map { path in
+                        headEntries[path].map { "\($0)\t\(path)" } ?? "0 0000000000000000000000000000000000000000\t\(path)"
+                    }
+                    if !back.isEmpty { whole = try await edit("FROM \(whole)\n" + back.joined(separator: "\n") + "\n@@\n", in: project).first ?? whole }
+                }
+            }
             // A change of theirs a later one of yours wholly replaces still gets its version, and so does leaving out a
             // change a later one had already replaced: the history says what was taken and left out, and the next lineup
             // shows it so.
             guard whole != tree || plan.mixed != nil || plan.message.contains("\n\(leftOutTrailer): ") else { continue }
-            let made = await run("printf '%s' \"$LAMP_MESSAGE\" | git -c user.name=Lamp -c user.email=lamp@localhost commit-tree \(whole) -p \(parent) -F -",
-                                 in: project, env: ["LAMP_MESSAGE": plan.message])
-            guard made.status == 0, let commit = Credits.validCommit(made.output) else { throw Failure(message: "Lamp couldn't save the mix.") }
-            saved.append((commit, plan.title))
-            parent = commit
+            versions.append(Prepared.Version(tree: whole, message: plan.message, title: plan.title))
             tree = whole
         }
-        guard !saved.isEmpty else { return 0 }
-        // The files first, then the history: a mix that can't put its files in place leaves the copy as it was.
-        guard await run("git read-tree --reset -u \(tree)", in: project).status == 0 else {
+        guard !versions.isEmpty else { return none }
+
+        // What counts as read: the file's code as its review read it, and what this copy has had at any version since
+        // the copies met. A file whose content and mode (or whose absence) is neither is code nobody read.
+        let reviewed = try await carry.reviewed()
+        var yours: [[String: String]] = [headEntries, try await entries(of: lineup.start, in: project)]
+        for change in changes where change.here { yours.append(try await entries(of: change.after, in: project)) }
+        var unseen: [Int] = []
+        for (index, version) in versions.enumerated() {
+            let saved = try await entries(of: version.tree, in: project)
+            let touched = Set(saved.keys).union(headEntries.keys).filter { saved[$0] != headEntries[$0] && !Upstream.isLeftOut($0, in: project) }
+            if touched.contains(where: { path in saved[path] != reviewed[path] && !yours.contains { $0[path] == saved[path] } }) {
+                unseen.append(index)
+            }
+        }
+        return Prepared(folder: lineup.package.folder, head: lineup.head, picked: picked, versions: versions, unseen: unseen)
+    }
+
+    /// What a check of a prepared mix reads: the app as the mix leaves it, read as a shared file is, so every file the
+    /// mix brings is read under the rules an import's are; and the code of each earlier version it saves that holds
+    /// code no review read, under that version's title. One check, however many versions. The package's folder is the
+    /// caller's to remove.
+    static func checkInput(_ prepared: Prepared, in lineup: Lineup) async throws -> (package: Sharing.Package, inspection: Sharing.Inspection) {
+        guard let final = prepared.versions.last else { throw Failure(message: "There's nothing to check.") }
+        let package = try await read(final.tree, in: lineup)
+        var found = Sharing.inspect(package)
+        var files = found.files
+        for index in prepared.unseen where index != prepared.versions.count - 1 {
+            let version = prepared.versions[index]
+            let earlier = try await read(version.tree, in: lineup)
+            defer { try? FileManager.default.removeItem(at: earlier.folder) }
+            let more = Sharing.inspect(earlier)
+            var theirFiles = more.files
+            if let about = more.about, about != found.about { theirFiles.append(("APP.md", about)) }
+            for file in theirFiles where !files.contains(where: { $0.name == file.name && $0.text == file.text }) {
+                files.append(("\(file.name) (in “\(version.title)”)", file.text))
+            }
+            for item in more.detected where !found.detected.contains(where: { $0.label == item.label }) { found.detected.append(item) }
+            found.truncated = found.truncated || more.truncated
+            found.finished = found.finished && more.finished
+        }
+        found.batches = Sharing.batches(files)
+        if found.batches.count > Sharing.batchCount {
+            found.batches.removeLast(found.batches.count - Sharing.batchCount)
+            found.truncated = true
+        }
+        return (package, found)
+    }
+
+    /// Saves a prepared mix on top of this copy's history, and puts it in the wish's folder. The wish's files are
+    /// expected saved. Nothing is saved for a copy that has moved on since, for another file, or for a mix that holds
+    /// code no review read without the check that read it (`checked`). Returns how many versions were saved.
+    static func apply(_ prepared: Prepared, in lineup: Lineup, checked: ImportReview?) async throws -> Int {
+        let project = lineup.project
+        guard prepared.folder == lineup.package.folder, prepared.head == lineup.head,
+              await Versions.head(project) == prepared.head else { throw moved }
+        guard !prepared.needsCheck || checked != nil else { throw Failure(message: "Lamp hasn't checked what this mix brings in.") }
+        guard !prepared.versions.isEmpty else { return 0 }
+        var parent = prepared.head
+        var saved: [(commit: String, title: String)] = []
+        for version in prepared.versions {
+            let made = await run("printf '%s' \"$LAMP_MESSAGE\" | git -c user.name=Lamp -c user.email=lamp@localhost commit-tree \(version.tree) -p \(parent) -F -",
+                                 in: project, env: ["LAMP_MESSAGE": version.message])
+            guard made.status == 0, let commit = Credits.validCommit(made.output) else { throw Failure(message: "Lamp couldn't save the mix.") }
+            saved.append((commit, version.title))
+            parent = commit
+        }
+        // Once more before anything is touched: the files first, then the history, so a mix that can't put its files in
+        // place leaves the copy as it was.
+        guard await Versions.head(project) == prepared.head else { throw moved }
+        guard let tree = prepared.versions.last?.tree, await run("git read-tree --reset -u \(tree)", in: project).status == 0 else {
             _ = await run("git read-tree --reset -u HEAD", in: project)
             throw Failure(message: "Lamp couldn't put the mixed files in place.")
         }
-        guard await run("git update-ref -m mix HEAD \(parent) \(lineup.head)", in: project).status == 0 else {
+        guard await run("git update-ref -m mix HEAD \(parent) \(prepared.head)", in: project).status == 0 else {
             _ = await run("git read-tree --reset -u HEAD", in: project)
             throw Failure(message: "Lamp couldn't save the mix.")
         }
         for version in saved { VersionTitles.save(version.title, for: version.commit, in: project) }
         return saved.count
+    }
+
+    private static let moved = Failure(message: "Your copy changed while this was open. Drop their copy here again.")
+
+    /// Every file in a tree, by path: "<mode> <blob>", so two trees compare file by file, the mode with the content.
+    private static func entries(of tree: String, in project: LampProject) async throws -> [String: String] {
+        let listed = await run("git -c core.quotePath=false ls-tree -r --full-tree \(tree)", in: project)
+        guard listed.status == 0 else { throw Failure(message: "Lamp couldn't read what the mix came to.") }
+        var entries: [String: String] = [:]
+        for line in listed.output.split(separator: "\n") {
+            guard let tab = line.firstIndex(of: "\t") else { continue }
+            let fields = line[..<tab].split(separator: " ")
+            guard fields.count == 3 else { continue }
+            entries[String(line[line.index(after: tab)...])] = "\(fields[0]) \(fields[2])"
+        }
+        return entries
+    }
+
+    /// A tree of this copy read as a shared file of it would be (`Sharing.open`): unpacked into a folder of its own with
+    /// a manifest saying what this copy is, so what's code, what's data and what's never carried are the import's to say.
+    private static func read(_ tree: String, in lineup: Lineup) async throws -> Sharing.Package {
+        let fm = FileManager.default
+        let folder = Sharing.workFolder.appendingPathComponent("lamp-mix-check-\(UUID().uuidString)")
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        var opened = false
+        defer { if !opened { try? fm.removeItem(at: folder) } }
+        guard await run("git archive --format=tar \(tree) | /usr/bin/tar -x -C \(Sandbox.quoted(folder.path))", in: lineup.project).status == 0 else {
+            throw Failure(message: "Lamp couldn't read what the mix came to.")
+        }
+        let (root, parts) = Sharing.layout(of: lineup.project)
+        let manifest = Sharing.Manifest(format: Sharing.formatVersion, name: lineup.project.name, exportedAt: Date(),
+                                        app: lineup.package.identity, platform: root.platform, family: root.hasIOS ? root.family : nil,
+                                        parts: parts.isEmpty ? nil : parts.map {
+                                            Sharing.Manifest.Part(folder: $0.dir.lastPathComponent, platform: $0.platform, family: $0.hasIOS ? $0.family : nil)
+                                        }, site: lineup.package.site ? true : nil)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(manifest).write(to: folder.appendingPathComponent("lamp-app.json"))
+        do {
+            let package = try Sharing.open(unpacked: folder)
+            opened = true
+            return package
+        } catch {
+            throw Failure(message: "Lamp couldn't check what this mix comes to: \(error.localizedDescription)")
+        }
+    }
+
+    /// What a shared copy carries (`Upstream.stage`), for a preparation: the file's, as its review read it, and this
+    /// copy's own, by path; and, asked for, a tree's. Its staged folders go when it's cleared.
+    private final class Carrying {
+        let lineup: Lineup
+        private let work = Sharing.workFolder.appendingPathComponent("lamp-mix-carry-\(UUID().uuidString)")
+        private var known: Set<String> = []
+
+        init(lineup: Lineup, head: String) async throws {
+            self.lineup = lineup
+            try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+            known = Self.files(in: try stage(lineup.package, as: "theirs"))
+            if let package = try? await Mix.read(head, in: lineup) {
+                defer { try? FileManager.default.removeItem(at: package.folder) }
+                known.formUnion(Self.files(in: try stage(package, as: "yours")))
+            }
+        }
+
+        /// Whether the file's or this copy's carries the path: known without reading any other tree.
+        func carries(_ path: String) -> Bool { known.contains(path) }
+
+        func paths(of tree: String) async throws -> Set<String> {
+            let package = try await Mix.read(tree, in: lineup)
+            defer { try? FileManager.default.removeItem(at: package.folder) }
+            return Self.files(in: try stage(package, as: UUID().uuidString))
+        }
+
+        /// The file's code as its review read it and an import would install it, by path: "<mode> <blob>".
+        func reviewed() async throws -> [String: String] {
+            let indexes = work.appendingPathComponent("indexes")
+            try FileManager.default.createDirectory(at: indexes, withIntermediateDirectories: true)
+            let tree = try await Upstream.tree(of: work.appendingPathComponent("theirs"), in: lineup.project, indexes: indexes)
+            return try await Mix.entries(of: tree, in: lineup.project)
+        }
+
+        func clear() { try? FileManager.default.removeItem(at: work) }
+
+        private func stage(_ package: Sharing.Package, as name: String) throws -> URL {
+            let folder = work.appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Upstream.stage(package, for: lineup.project, into: folder)
+            return folder
+        }
+
+        private static func files(in folder: URL) -> Set<String> {
+            guard let walk = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return [] }
+            var paths: Set<String> = []
+            for case let file as URL in walk where (try? file.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true {
+                paths.insert(Sharing.relativePath(of: file, in: folder))
+            }
+            return paths
+        }
     }
 
     /// What of their credits joins this copy's when their work is taken: the work it uses (its sources, licenses and
@@ -423,9 +618,11 @@ enum Mix {
 
     // MARK: Git
 
-    /// Builds trees in an index of the mix's own: each block of `plan` starts from a tree (`FROM <tree>`, or `FROM -`
-    /// for the one before), applies index lines ("<mode> <blob>\t<path>", mode 0 removing the path), and ends at `@@`.
-    private static func edit(_ plan: String, index: URL, in project: LampProject) async throws -> [String] {
+    /// Builds trees in an index of its own (`scratchIndex`): each block of `plan` starts from a tree (`FROM <tree>`, or
+    /// `FROM -` for the one before), applies index lines ("<mode> <blob>\t<path>", mode 0 removing the path), and ends at `@@`.
+    private static func edit(_ plan: String, in project: LampProject) async throws -> [String] {
+        let index = try scratchIndex(in: project)
+        defer { try? FileManager.default.removeItem(at: index) }
         let script = """
         I="$LAMP_INDEX"; t=""; buf=""; from=""
         while IFS= read -r line; do
@@ -442,6 +639,14 @@ enum Mix {
         let trees = ran.output.split(separator: "\n").compactMap { $0.hasPrefix("T ") ? Credits.validCommit(String($0.dropFirst(2))) : nil }
         guard ran.status == 0 else { throw Failure(message: "Lamp couldn't rebuild their changes.") }
         return trees
+    }
+
+    /// An index file for one piece of the mix's git work, never another's: the window's preview, a preparation and a
+    /// save can run at once, and two sharing an index would build trees from each other's entries.
+    private static func scratchIndex(in project: LampProject) throws -> URL {
+        let folder = project.dir.appendingPathComponent(".lamp/mix")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent("index-\(UUID().uuidString)")
     }
 
     private static func treeID(of commit: String, in project: LampProject) async throws -> String {
