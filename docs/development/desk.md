@@ -355,8 +355,8 @@ change's time shows while Option is held.
 Nothing of theirs starts in; Mix waits for the file's review (`Sharing.review`), as opening it would: the import's own,
 whole, when it had finished before Mix… (`MixModel.adopt`), so the code is checked once; otherwise Mix checks it itself. The window's head
 names the wish being mixed into and how a click works, and Choose Another… starts over with another file. Under the
-two copies, every warning the review in force has, with its detail, as the import's review shows them
-(`ImportReviewCard.considerations`); and Mix follows that review's rule (`ImportReview.opening`): Return mixes only
+two copies, every warning of the reviews in force, with its detail, as the import's review shows them
+(`ImportReviewCard.considerations`); and Mix follows their rule (`ImportReview.opening`): Return mixes only
 on a review Lamp vouches for, anything less takes a click, and "Mix Anyway" when there's something to be wary of.
 
 A wish file dropped on the desk opens as one opened from the Finder (`Store.importApp`). With the switch on, a file
@@ -386,8 +386,8 @@ in place of Update on its review, waiting while another mix is saved
   (`Mix.prepare`) into the trees it will save; a version holding a file (its content and mode, or its absence) that is
   neither what the review read, as an import stages it (`Upstream.stage`), nor what this copy has had since the copies
   met, needs a check. Mix then saves nothing: it checks the app as the mix leaves it, read as a shared file is
-  (`Mix.checkInput`), with each such earlier version's code beside it under that version's title, in one review, and
-  that review is the one in force. The check is of those trees only: a change to the pick drops it, and `Mix.apply`
+  (`Mix.checkInput`), with each such earlier version's code beside it under that version's title, in one review, which
+  adds to the file's and never takes any of it back: Mix shows what both say and follows the stricter rule. The check is of those trees only: a change to the pick drops it, and `Mix.apply`
   saves the very trees prepared, refusing one that needs a check without it or a copy that has moved on, before a file
   is touched. Their changes to a file no shared copy carries don't come in; it stays as this copy has it. Each
   preparation, preview and save builds its trees in an index of its own.

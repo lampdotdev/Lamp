@@ -398,7 +398,7 @@ final class MixTests: XCTestCase {
     /// Yours and theirs from one start, then `steps`; and the file theirs shares as a shared file is laid out: their
     /// latest at its top (`top` in place of a file of it, as a sender's own file could say), read as an import reads it,
     /// and their versions in History/.
-    private func shared(_ start: [String: String], _ steps: [Step], top: [String: String] = [:])
+    private func shared(_ start: [String: String], _ steps: [Step], top: [String: String] = [:], tamper: (URL) throws -> Void = { _ in })
         async throws -> (yours: HistoryEscapeTests.App, lineup: Mix.Lineup) {
         let yours = try escape.app(), theirs = try escape.app()
         for app in [yours, theirs] {
@@ -431,6 +431,7 @@ final class MixTests: XCTestCase {
         try #"{"format": 2, "name": "Coin Flip", "exportedAt": "2026-01-01T00:00:00Z", "platform": "mac", "app": "\#(identity)"}"#
             .write(to: stage.appendingPathComponent("lamp-app.json"), atomically: true, encoding: .utf8)
         MixHistory.write(for: theirs.project, credits: Credits.load(theirs.project), identity: identity, into: stage)
+        try tamper(stage)
         let package = try Sharing.open(unpacked: stage)
         let history = try XCTUnwrap(MixHistory.read(in: stage))
         return (yours, try await Mix.lineUp(package, history: history, with: yours.project))
@@ -600,24 +601,24 @@ final class MixTests: XCTestCase {
         XCTAssertTrue(model.adopt(package, reviewed: fine, store: store))
         try await until("lined up") { model.stage == .ready && model.lineup != nil }
         model.takeAllTheirs()
-        XCTAssertEqual(model.reviewInForce?.opening, .byReturn)
+        XCTAssertEqual(model.mixOpening, .byReturn)
 
         let before = try head(yours)
         model.mix(store: store) { XCTFail("mixed before the check was in") }
         try await until("the pick is checked") { gate.lock.withLock { gate.waiting.count == 1 } }
-        XCTAssertNil(model.reviewInForce, "nothing to mix by while it's checked")
+        XCTAssertNil(model.mixOpening, "nothing to mix by while it's checked")
         XCTAssertTrue(gate.lock.withLock { gate.read[0] }.contains("Sources/App.swift (in “Shout the first line”)"))
         gate.lock.withLock { gate.waiting.removeFirst() }.resume()
         try await until("the check's answer") { model.check?.review != nil }
-        XCTAssertEqual(model.reviewInForce?.opening, .anyway, "Return doesn't mix on a risky check")
-        XCTAssertEqual(ImportReviewCard.considerations(try XCTUnwrap(model.reviewInForce)).count, 3)
+        XCTAssertEqual(model.mixOpening, .anyway, "Return doesn't mix on a risky check")
+        XCTAssertEqual(model.considerations.map(\.text), ["Looks risky. Don't open unless you trust the sender", "Sends your files away", "Reads every file"])
         XCTAssertEqual(try head(yours), before)
 
         // A new pick: the check was of the old one.
         let mine = try XCTUnwrap(lineup.changes.first { $0.title == "Add mine" })
         model.toggle(mine)
         XCTAssertNil(model.check)
-        XCTAssertEqual(model.reviewInForce?.opening, .byReturn)
+        XCTAssertEqual(model.mixOpening, .byReturn)
 
         // Checked again, and changed again before the answer: the answer is dropped.
         model.mix(store: store) { XCTFail("mixed before the check was in") }
@@ -627,6 +628,71 @@ final class MixTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertNil(model.check)
         XCTAssertEqual(try head(yours), before)
+        model.reset()
+    }
+
+    /// A path git would quote (a quote in a folder's name) is still the path it is: a file of theirs there that no shared
+    /// copy carries, here one named as Lamp's own scene file so no review reads it, stays out. Lamp never writes such a
+    /// path into History/, so the file is the sender's own doing.
+    func testAFileNoSharedCopyCarriesStaysOutWhateverItsName() async throws {
+        let hidden = "Sources/x\"y/LampScene.swift"
+        let (yours, lineup) = try await shared(["Sources/App.swift": lines], [
+            Step(theirs: true, title: "Add a scene", at: 200, files: ["Sources/App.swift": "A-them\nb\nc\nd\ne\n"]),
+        ], tamper: { stage in
+            let history = stage.appendingPathComponent(MixHistory.folder)
+            let json = history.appendingPathComponent(MixHistory.file)
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: json)) as? [String: Any])
+            var versions = try XCTUnwrap(object["versions"] as? [[String: Any]])
+            versions[0]["changed"] = (versions[0]["changed"] as? [String] ?? []) + [hidden]
+            object["versions"] = versions
+            try JSONSerialization.data(withJSONObject: object).write(to: json)
+            let file = history.appendingPathComponent(try XCTUnwrap(versions[0]["folder"] as? String)).appendingPathComponent(hidden)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "// not read by any review\n".write(to: file, atomically: true, encoding: .utf8)
+        })
+        XCTAssertTrue(try XCTUnwrap(lineup.changes.first).files.contains(hidden), "the sender's path reaches the lineup")
+        let prepared = try await Mix.prepare(Set(lineup.changes.map(\.id)), in: lineup)
+        let checked = ImportReview(summary: "checked", capabilities: [], concerns: [], detected: [])
+        _ = try await Mix.apply(prepared, in: lineup, checked: prepared.needsCheck ? checked : nil)
+        XCTAssertEqual(text(yours), "A-them\nb\nc\nd\ne\n")
+        XCTAssertNil(text(yours, "Sources/x\"y/LampScene.swift"))
+    }
+
+    /// A check adds to the file's review and never softens it: a risky file stays Mix Anyway, its warnings shown, however
+    /// the check of the pick comes back.
+    @MainActor
+    func testACheckNeverTakesBackWhatTheFilesReviewSaid() async throws {
+        let (yours, lineup) = try await twoOfTheirs()
+        let saved = MixModel.reviewForCheck
+        defer { MixModel.reviewForCheck = saved }
+        MixModel.reviewForCheck = { _, _ in
+            var fine = ImportReview(summary: "A coin.", capabilities: [], concerns: [], detected: [])
+            fine.risk = .low
+            fine.asked = true
+            fine.reviewer = ImportReview.Reviewer(name: "A model", onThisMac: false)
+            return fine
+        }
+        var risky = ImportReview(summary: "Sends what it reads.", capabilities: [], concerns: ["Sends your files away"], detected: [])
+        risky.risk = .high
+        risky.asked = true
+        let store = Store(testingAt: yours.root.appendingPathComponent("Apps"))
+        store.projects = [yours.project]
+        let model = MixModel()
+        func until(_ what: String, _ done: () -> Bool) async throws {
+            for _ in 0..<400 where !done() { try await Task.sleep(for: .milliseconds(25)) }
+            XCTAssertTrue(done(), what)
+        }
+        let copy = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-mix-test-\(UUID().uuidString)")
+        try FileManager.default.copyItem(at: lineup.package.folder, to: copy)
+        addTeardownBlock { try? FileManager.default.removeItem(at: copy) }
+        XCTAssertTrue(model.adopt(try Sharing.open(unpacked: copy), reviewed: risky, store: store))
+        try await until("lined up") { model.stage == .ready && model.lineup != nil }
+        model.takeAllTheirs()
+        XCTAssertEqual(model.mixOpening, .anyway)
+        model.mix(store: store) { XCTFail("mixed before the check was in") }
+        try await until("the check's answer") { model.check?.review != nil }
+        XCTAssertEqual(model.mixOpening, .anyway)
+        XCTAssertEqual(model.considerations.map(\.text), ["Looks risky. Don't open unless you trust the sender", "Sends your files away"])
         model.reset()
     }
 }

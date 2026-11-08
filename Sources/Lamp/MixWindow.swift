@@ -32,7 +32,7 @@ final class MixModel: ObservableObject {
     @Published var review: ImportReview?
     /// The check of what this pick comes to, when that holds code no review read (`Mix.Prepared.unseen`): made on Mix,
     /// for exactly the pick then, and gone the moment the pick changes. Mix saves it only after its review is in, and
-    /// only by that review's rule (`reviewInForce`).
+    /// only by the stricter rule of it and the file's (`mixOpening`).
     struct Check {
         let prepared: Mix.Prepared
         var review: ImportReview?
@@ -43,11 +43,29 @@ final class MixModel: ObservableObject {
     private var checking: Task<Void, Never>?
     private var previewing: Task<Void, Never>?
 
-    /// The review Mix goes by: the check of this pick once Mix found code no review read, else the file's. Nil while
-    /// either is still checking.
-    var reviewInForce: ImportReview? {
-        if let check { return check.review }
-        return review
+    /// The reviews Mix goes by: the file's, and once Mix found code no review read, the check of this pick too. A check
+    /// adds to what the file's review said and never takes any of it back: the same code read again can come back
+    /// rated lower. Nil while either is still checking.
+    var reviewsInForce: [ImportReview]? {
+        guard let review else { return nil }
+        guard let check else { return [review] }
+        return check.review.map { [review, $0] }
+    }
+
+    /// How Mix is pressed (`ImportReview.opening`): the strictest of the reviews in force.
+    var mixOpening: ImportReview.Opening? {
+        guard let reviews = reviewsInForce else { return nil }
+        let order: [ImportReview.Opening] = [.byReturn, .byClick, .anyway]
+        return reviews.map(\.opening).max { order.firstIndex(of: $0)! < order.firstIndex(of: $1)! }
+    }
+
+    /// Everything the reviews in force have to say, each once, the file's first.
+    var considerations: [ImportReviewCard.Consideration] {
+        var all: [ImportReviewCard.Consideration] = []
+        for review in reviewsInForce ?? [] {
+            for item in ImportReviewCard.considerations(review) where !all.contains(where: { $0.text == item.text }) { all.append(item) }
+        }
+        return all
     }
     /// The package being mixed, which is this window's to remove (`reset`): work for any other has gone stale.
     private var folder: URL?
@@ -400,12 +418,12 @@ struct MixTimeline: View {
         }
     }
 
-    /// Mix, by the rule the import's buttons follow (`ImportReview.opening`), from the review in force: Return mixes
+    /// Mix, by the rule the import's buttons follow (`ImportReview.opening`), from the reviews in force: Return mixes
     /// only on a review Lamp vouches for; anything less takes a click, and "Mix Anyway" when there's something to be
     /// wary of.
     @ViewBuilder private var mixButton: some View {
-        let disabled = model.stage != .ready || !model.changesSomething || model.reviewInForce == nil || model.check?.failure != nil
-        switch model.reviewInForce?.opening {
+        let disabled = model.stage != .ready || !model.changesSomething || model.mixOpening == nil || model.check?.failure != nil
+        switch model.mixOpening {
         case .byReturn:
             Button("Mix", action: mix).buttonStyle(PaperButtonStyle(.ink)).keyboardShortcut(.defaultAction).disabled(disabled)
         case .anyway:
@@ -418,7 +436,7 @@ struct MixTimeline: View {
     /// What the checks found, each thing the review has to say in its own words, as the import's review says them:
     /// red for what should stop someone, orange for what should make them think. Nothing when it found nothing.
     private var reviewLines: some View {
-        let items = model.reviewInForce.map { ImportReviewCard.considerations($0) } ?? []
+        let items = model.considerations
         return VStack(alignment: .leading, spacing: 4) {
             if model.review == nil {
                 waiting("Checking their code…")

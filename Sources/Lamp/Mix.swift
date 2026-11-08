@@ -452,6 +452,8 @@ enum Mix {
     static func checkInput(_ prepared: Prepared, in lineup: Lineup) async throws -> (package: Sharing.Package, inspection: Sharing.Inspection) {
         guard let final = prepared.versions.last else { throw Failure(message: "There's nothing to check.") }
         let package = try await read(final.tree, in: lineup)
+        var kept = false
+        defer { if !kept { try? FileManager.default.removeItem(at: package.folder) } }
         var found = Sharing.inspect(package)
         var files = found.files
         for index in prepared.unseen where index != prepared.versions.count - 1 {
@@ -473,6 +475,7 @@ enum Mix {
             found.batches.removeLast(found.batches.count - Sharing.batchCount)
             found.truncated = true
         }
+        kept = true
         return (package, found)
     }
 
@@ -511,16 +514,18 @@ enum Mix {
 
     private static let moved = Failure(message: "Your copy changed while this was open. Drop their copy here again.")
 
-    /// Every file in a tree, by path: "<mode> <blob>", so two trees compare file by file, the mode with the content.
+    /// Every file in a tree, by its path as it's spelled in History/ and on disk: "<mode> <blob>", so two trees compare
+    /// file by file, the mode with the content. Read with NULs between entries, since git quotes a path with a quote, a
+    /// backslash or a control character in it even with quotePath off, and a quoted key would match no other.
     private static func entries(of tree: String, in project: LampProject) async throws -> [String: String] {
-        let listed = await run("git -c core.quotePath=false ls-tree -r --full-tree \(tree)", in: project)
+        let listed = await run("git ls-tree -r -z --full-tree \(tree) | tr '\\0' '\\036'", in: project)
         guard listed.status == 0 else { throw Failure(message: "Lamp couldn't read what the mix came to.") }
         var entries: [String: String] = [:]
-        for line in listed.output.split(separator: "\n") {
-            guard let tab = line.firstIndex(of: "\t") else { continue }
-            let fields = line[..<tab].split(separator: " ")
+        for entry in listed.output.split(separator: "\u{1e}") {
+            guard let tab = entry.firstIndex(of: "\t") else { continue }
+            let fields = entry[..<tab].split(separator: " ")
             guard fields.count == 3 else { continue }
-            entries[String(line[line.index(after: tab)...])] = "\(fields[0]) \(fields[2])"
+            entries[String(entry[entry.index(after: tab)...])] = "\(fields[0]) \(fields[2])"
         }
         return entries
     }
@@ -563,11 +568,16 @@ enum Mix {
 
         init(lineup: Lineup, head: String) async throws {
             self.lineup = lineup
-            try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
-            known = Self.files(in: try stage(lineup.package, as: "theirs"))
-            if let package = try? await Mix.read(head, in: lineup) {
-                defer { try? FileManager.default.removeItem(at: package.folder) }
-                known.formUnion(Self.files(in: try stage(package, as: "yours")))
+            do {
+                try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+                known = Self.files(in: try stage(lineup.package, as: "theirs"))
+                if let package = try? await Mix.read(head, in: lineup) {
+                    defer { try? FileManager.default.removeItem(at: package.folder) }
+                    known.formUnion(Self.files(in: try stage(package, as: "yours")))
+                }
+            } catch {
+                clear()
+                throw error
             }
         }
 
