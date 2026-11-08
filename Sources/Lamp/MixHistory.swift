@@ -4,7 +4,8 @@ import Foundation
 /// it was saved, and the files it changed as they were after it, so the Mac that opens the file can replay them one at
 /// a time. Only what a shared file would carry anyway: Lamp's own files, its records and the chat's attachments are left
 /// out (`Upstream.isLeftOut`), and the whole folder goes through the same check for keys the rest of the file does. Code
-/// in it reaches an app only through the mix window, after the file's review. An older Lamp never reads the folder.
+/// in it reaches an app only through the mix window, after the file's review, and after a check of its own wherever a mix
+/// comes to code that review didn't read (`Mix.prepare`). An older Lamp never reads the folder.
 struct MixHistory: Codable {
     static let folder = "History"
     static let file = "history.json"
@@ -206,9 +207,11 @@ struct MixHistory: Codable {
         return history
     }
 
-    /// A relative path inside the wish, with nothing git or a line-by-line plan would read otherwise.
+    /// A relative path inside the wish, with nothing git or a line-by-line plan would read otherwise: no control
+    /// character at all, since some tool on the way may take one as a separator.
     static func isSafe(_ path: String) -> Bool {
-        !path.isEmpty && !path.hasPrefix("/") && !path.hasPrefix("\"") && !path.contains("\n") && !path.contains("\t")
+        !path.isEmpty && !path.hasPrefix("/") && !path.hasPrefix("\"")
+            && !path.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7f }
             && !path.split(separator: "/").contains { $0 == ".." || $0 == "." || $0 == ".git" }
     }
 

@@ -26,6 +26,15 @@ final class MixTests: XCTestCase {
         XCTAssertEqual(made.status, 0, made.output)
     }
 
+    /// Mixes a pick as the window does once any check of it is in: these tests are about what a mix saves, so a pick
+    /// holding code no review read gets a stand-in for that check.
+    @discardableResult
+    private func apply(_ picked: Set<String>, in lineup: Mix.Lineup) async throws -> Int {
+        let prepared = try await Mix.prepare(picked, in: lineup)
+        let stand = ImportReview(summary: "checked", capabilities: [], concerns: [], detected: [])
+        return try await Mix.apply(prepared, in: lineup, checked: prepared.needsCheck ? stand : nil)
+    }
+
     private func head(_ app: HistoryEscapeTests.App) throws -> String {
         try XCTUnwrap(Credits.validCommit(try escape.loose("git rev-parse HEAD", in: app.project.dir).output))
     }
@@ -73,7 +82,7 @@ final class MixTests: XCTestCase {
         let preview = await Mix.preview(lineup.changes, in: lineup)
         XCTAssertEqual(preview.replaced, [lineup.changes[0].id: "Whisper the first line"])
 
-        let saved = try await Mix.apply(all, in: lineup)
+        let saved = try await apply(all, in: lineup)
         XCTAssertEqual(saved, 2)
         XCTAssertEqual(text(yours), "A-you\nb\nc\nd\nE-them\n")
         XCTAssertEqual(text(yours, "Notes.txt"), "x\n")
@@ -91,7 +100,7 @@ final class MixTests: XCTestCase {
     func testLeavingOutYourOwnChangeSavesThatFirst() async throws {
         let (yours, _, package, history) = try await copies()
         let lineup = try await Mix.lineUp(package, history: history, with: yours.project)
-        let saved = try await Mix.apply([lineup.changes[0].id], in: lineup)
+        let saved = try await apply([lineup.changes[0].id], in: lineup)
         XCTAssertEqual(saved, 2)
         XCTAssertEqual(text(yours), "A-them\nb\nc\nd\ne\n")
         XCTAssertNil(text(yours, "Notes.txt"))
@@ -104,7 +113,7 @@ final class MixTests: XCTestCase {
     func testALaterChangeIsMeasuredAgainstTheirEarlierOnes() async throws {
         let (yours, _, package, history) = try await copies()
         let first = try await Mix.lineUp(package, history: history, with: yours.project)
-        _ = try await Mix.apply([first.changes[0].id, first.changes[1].id], in: first)
+        _ = try await apply([first.changes[0].id, first.changes[1].id], in: first)
         XCTAssertEqual(text(yours), "A-you\nb\nc\nd\ne\n")
         // Newer than their first-line change, older than their last-line one.
         try commit(yours, "Whisper it again", at: 350, ["Sources/App.swift": "A-you-again\nb\nc\nd\ne\n"])
@@ -112,7 +121,7 @@ final class MixTests: XCTestCase {
         let lineup = try await Mix.lineUp(package, history: history, with: yours.project)
         let last = try XCTUnwrap(lineup.changes.first { !$0.here })
         XCTAssertEqual(lineup.changes.filter { !$0.here }.map(\.title), ["Shout the last line"])
-        _ = try await Mix.apply(Set(lineup.changes.filter(\.here).map(\.id) + [last.id]), in: lineup)
+        _ = try await apply(Set(lineup.changes.filter(\.here).map(\.id) + [last.id]), in: lineup)
         XCTAssertEqual(text(yours), "A-you-again\nb\nc\nd\nE-them\n")
     }
 
@@ -135,7 +144,7 @@ final class MixTests: XCTestCase {
 
         let package = Sharing.Package(name: "Coin Flip", identity: identity, folder: stage, sources: [], attachments: [], fileCount: 0)
         let lineup = try await Mix.lineUp(package, history: history, with: yours.project)
-        _ = try await Mix.apply(Set(lineup.changes.map(\.id)), in: lineup)
+        _ = try await apply(Set(lineup.changes.map(\.id)), in: lineup)
         XCTAssertEqual(text(yours, "Sources/Extra.swift"), "// helper\n")
         XCTAssertEqual(text(yours), "A-them\nb\nc\(MixHistory.limit)\nd\nE-them\n")
     }
@@ -185,7 +194,7 @@ final class MixTests: XCTestCase {
         try commit(yours, "Whisper the middle", at: 330, ["Sources/App.swift": "A-you\nb\nC-you\nd\ne\n"])
         let lineup = try await Mix.lineUp(package, history: history, with: yours.project)
         XCTAssertEqual(lineup.changes.map(\.title), ["Shout the last line", "Whisper the middle"])
-        _ = try await Mix.apply(Set(lineup.changes.map(\.id)), in: lineup)
+        _ = try await apply(Set(lineup.changes.map(\.id)), in: lineup)
         XCTAssertEqual(text(yours), "A-you\nb\nC-you\nd\nE-them\n")
         XCTAssertNil(text(yours, "Sources/Title.swift"))
         XCTAssertNotEqual(try head(yours), original)
@@ -226,28 +235,28 @@ final class MixTests: XCTestCase {
 
         let first = try await Mix.lineUp(package, history: history, with: yours.project)
         let shout = try XCTUnwrap(first.changes.first { $0.title == "Shout the first line" })
-        _ = try await Mix.apply([shout.id], in: first)   // "Whisper the first line" left out
+        _ = try await apply([shout.id], in: first)   // "Whisper the first line" left out
         XCTAssertEqual(text(yours), "A-them\nb\nc\nd\ne\n")
 
         let second = try await Mix.lineUp(package, history: history, with: yours.project)
         XCTAssertEqual(second.changes.map(\.title), ["Shout the first line", "Whisper the first line", "Shout the last line", "Shout it again"])
         XCTAssertEqual(second.changes.map(\.here), [true, false, false, false])
         let again = try XCTUnwrap(second.changes.first { $0.title == "Shout it again" })
-        _ = try await Mix.apply(Set(second.changes.filter(\.here).map(\.id) + [again.id]), in: second)
+        _ = try await apply(Set(second.changes.filter(\.here).map(\.id) + [again.id]), in: second)
         XCTAssertEqual(text(yours), "A-them-again\nb\nc\nd\ne\n")
         XCTAssertNil(text(yours, "Notes.txt"))
 
         // Taking the left-out change back brings it in once, under its own row.
         let third = try await Mix.lineUp(package, history: history, with: yours.project)
         let whisper = try XCTUnwrap(third.changes.first { $0.title == "Whisper the first line" })
-        _ = try await Mix.apply(Set(third.changes.filter(\.here).map(\.id) + [whisper.id]), in: third)
+        _ = try await apply(Set(third.changes.filter(\.here).map(\.id) + [whisper.id]), in: third)
         XCTAssertEqual(text(yours, "Notes.txt"), "x\n")
         let fourth = try await Mix.lineUp(package, history: history, with: yours.project)
         XCTAssertEqual(fourth.changes.filter { $0.title == "Whisper the first line" }.map(\.here), [true])
 
         // Left out once more, it stays out: the latest word wins.
         let back = try XCTUnwrap(fourth.changes.first { $0.title == "Whisper the first line" })
-        _ = try await Mix.apply(Set(fourth.changes.filter(\.here).map(\.id)).subtracting([back.id]), in: fourth)
+        _ = try await apply(Set(fourth.changes.filter(\.here).map(\.id)).subtracting([back.id]), in: fourth)
         XCTAssertNil(text(yours, "Notes.txt"))
         let fifth = try await Mix.lineUp(package, history: history, with: yours.project)
         XCTAssertEqual(fifth.changes.filter { $0.title == "Whisper the first line" }.map(\.here), [false])
@@ -257,10 +266,10 @@ final class MixTests: XCTestCase {
     func testLeavingOutAReplacedChangeIsRemembered() async throws {
         let (yours, _, package, history) = try await copies()
         let first = try await Mix.lineUp(package, history: history, with: yours.project)
-        _ = try await Mix.apply(Set(first.changes.map(\.id)), in: first)
+        _ = try await apply(Set(first.changes.map(\.id)), in: first)
         let second = try await Mix.lineUp(package, history: history, with: yours.project)
         let replaced = try XCTUnwrap(second.changes.first { $0.title == "Shout the first line" })
-        let saved = try await Mix.apply(Set(second.changes.map(\.id)).subtracting([replaced.id]), in: second)
+        let saved = try await apply(Set(second.changes.map(\.id)).subtracting([replaced.id]), in: second)
         XCTAssertEqual(saved, 1)
         XCTAssertEqual(text(yours), "A-you\nb\nc\nd\nE-them\n")
         let third = try await Mix.lineUp(package, history: history, with: yours.project)
@@ -295,7 +304,7 @@ final class MixTests: XCTestCase {
         let package = Sharing.Package(name: "Coin Flip", identity: identity, folder: stage, sources: [], attachments: [], fileCount: 0)
         let lineup = try await Mix.lineUp(package, history: history, with: theirs.project)
         XCTAssertEqual(lineup.changes.map(\.title), ["Remix of Coin Flip", "Shout the last line"])
-        _ = try await Mix.apply(Set(lineup.changes.map(\.id)), in: lineup)
+        _ = try await apply(Set(lineup.changes.map(\.id)), in: lineup)
         XCTAssertEqual(text(theirs), "A-you\nb\nc\nd\nE-you\n")
         XCTAssertEqual(text(theirs, "Sources/Title.swift"), "Coin Flip Remix\n")
     }
@@ -373,6 +382,357 @@ final class MixTests: XCTestCase {
         checks.lock.withLock { checks.release }?.resume()
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(model.review?.summary, finished.summary)
+        model.reset()
+    }
+
+    // MARK: What a mix brings that no review read
+
+    /// One step of a copy's history: whose, its title, when, and the files it writes (nil removes one).
+    private struct Step {
+        let theirs: Bool
+        let title: String
+        let at: Int
+        let files: [String: String?]
+    }
+
+    /// Yours and theirs from one start, then `steps`; and the file theirs shares as a shared file is laid out: their
+    /// latest at its top (`top` in place of a file of it, as a sender's own file could say), read as an import reads it,
+    /// and their versions in History/.
+    private func shared(_ start: [String: String], _ steps: [Step], top: [String: String] = [:], tamper: (URL) throws -> Void = { _ in })
+        async throws -> (yours: HistoryEscapeTests.App, lineup: Mix.Lineup) {
+        let yours = try escape.app(), theirs = try escape.app()
+        for app in [yours, theirs] {
+            try FileManager.default.removeItem(atPath: app.tool)
+            try FileManager.default.createDirectory(at: app.project.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+        }
+        var first = start
+        first[".gitignore"] = ".lamp/\n"
+        try commit(yours, "Start", at: 100, first)
+        Sharing.setIdentity(identity, of: yours.project)
+        let met = try head(yours)
+        var credits = Credits()
+        credits.remixOf = [Credits.Remix(name: "Coin Flip", wish: identity, commit: met)]
+        try credits.encoded().write(to: theirs.project.dir.appendingPathComponent(Credits.file))
+        try commit(theirs, "Imported from a shared file", at: 100, first)
+        Sharing.setIdentity(identity, of: theirs.project)
+        for step in steps {
+            let app = step.theirs ? theirs : yours
+            for (path, content) in step.files where content == nil {
+                try FileManager.default.removeItem(at: app.project.dir.appendingPathComponent(path))
+            }
+            try commit(app, step.title, at: step.at, step.files.compactMapValues { $0 })
+        }
+
+        let stage = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-mix-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: stage) }
+        XCTAssertEqual(try escape.loose("git archive --format=tar HEAD | tar -x -C \(Sandbox.quoted(stage.path))", in: theirs.project.dir).status, 0)
+        for (path, content) in top { try content.write(to: stage.appendingPathComponent(path), atomically: true, encoding: .utf8) }
+        try #"{"format": 2, "name": "Coin Flip", "exportedAt": "2026-01-01T00:00:00Z", "platform": "mac", "app": "\#(identity)"}"#
+            .write(to: stage.appendingPathComponent("lamp-app.json"), atomically: true, encoding: .utf8)
+        MixHistory.write(for: theirs.project, credits: Credits.load(theirs.project), identity: identity, into: stage)
+        try tamper(stage)
+        let package = try Sharing.open(unpacked: stage)
+        let history = try XCTUnwrap(MixHistory.read(in: stage))
+        return (yours, try await Mix.lineUp(package, history: history, with: yours.project))
+    }
+
+    private let lines = "a\nb\nc\nd\ne\n"
+    private func ids(_ lineup: Mix.Lineup, _ titles: String...) -> Set<String> {
+        Set(lineup.changes.filter { titles.contains($0.title) }.map(\.id))
+    }
+
+    /// Two changes of theirs to one file, and one of yours elsewhere.
+    private func twoOfTheirs() async throws -> (yours: HistoryEscapeTests.App, lineup: Mix.Lineup) {
+        try await shared(["Sources/App.swift": lines], [
+            Step(theirs: true, title: "Shout the first line", at: 200, files: ["Sources/App.swift": "A-them\nb\nc\nd\ne\n"]),
+            Step(theirs: false, title: "Add mine", at: 300, files: ["Sources/Mine.swift": "mine\n"]),
+            Step(theirs: true, title: "Shout the last line", at: 400, files: ["Sources/App.swift": "A-them\nb\nc\nd\nE-them\n"]),
+        ])
+    }
+
+    /// One change of theirs, beside one of yours: everything the mix saves is either what the file's review read or
+    /// what this copy has had, so the file's review is all Mix goes by.
+    func testAMixOfOnlyWhatTheReviewReadIsNotCheckedAgain() async throws {
+        let (yours, lineup) = try await shared(["Sources/App.swift": lines], [
+            Step(theirs: true, title: "Shout the first line", at: 200, files: ["Sources/App.swift": "A-them\nb\nc\nd\ne\n"]),
+            Step(theirs: false, title: "Add mine", at: 300, files: ["Sources/Mine.swift": "mine\n"]),
+        ])
+        let prepared = try await Mix.prepare(Set(lineup.changes.map(\.id)), in: lineup)
+        XCTAssertFalse(prepared.needsCheck)
+        let saved = try await Mix.apply(prepared, in: lineup, checked: nil)
+        XCTAssertEqual(saved, 1)
+        XCTAssertEqual(text(yours), "A-them\nb\nc\nd\ne\n")
+    }
+
+    /// Their later change without their earlier one comes to a file nobody read: it's checked, as the app the mix
+    /// leaves.
+    func testALaterChangeOfTheirsWithoutTheEarlierIsChecked() async throws {
+        let (_, lineup) = try await twoOfTheirs()
+        let prepared = try await Mix.prepare(ids(lineup, "Add mine", "Shout the last line"), in: lineup)
+        XCTAssertEqual(prepared.unseen, [prepared.versions.count - 1])
+        let input = try await Mix.checkInput(prepared, in: lineup)
+        defer { try? FileManager.default.removeItem(at: input.package.folder) }
+        let read = Dictionary(input.inspection.files.map { ($0.name, $0.text) }, uniquingKeysWith: { first, _ in first })
+        XCTAssertEqual(read["Sources/App.swift"], "a\nb\nc\nd\nE-them\n")
+        XCTAssertEqual(read["Sources/Mine.swift"], "mine\n", "the check reads the app the mix leaves, yours included")
+    }
+
+    /// Taking all of theirs leaves what the review read, but the version saved for their first change is theirs as it
+    /// was then, which Undo goes straight back to: that version's code is checked with the rest.
+    func testAVersionTheMixSavesOnTheWayIsCheckedToo() async throws {
+        let (_, lineup) = try await twoOfTheirs()
+        let prepared = try await Mix.prepare(Set(lineup.changes.map(\.id)), in: lineup)
+        XCTAssertEqual(prepared.versions.map(\.title), ["Shout the first line", "Shout the last line"])
+        XCTAssertEqual(prepared.unseen, [0])
+        let input = try await Mix.checkInput(prepared, in: lineup)
+        defer { try? FileManager.default.removeItem(at: input.package.folder) }
+        let read = Dictionary(input.inspection.files.map { ($0.name, $0.text) }, uniquingKeysWith: { first, _ in first })
+        XCTAssertEqual(read["Sources/App.swift"], "A-them\nb\nc\nd\nE-them\n")
+        XCTAssertEqual(read["Sources/App.swift (in “Shout the first line”)"], "A-them\nb\nc\nd\ne\n")
+    }
+
+    /// A file both of you changed comes to lines in an order no one read.
+    func testAFileBothChangedIsChecked() async throws {
+        let (_, lineup) = try await shared(["Sources/App.swift": lines], [
+            Step(theirs: true, title: "Shout the first line", at: 200, files: ["Sources/App.swift": "A-them\nb\nc\nd\ne\n"]),
+            Step(theirs: false, title: "Whisper the middle", at: 300, files: ["Sources/App.swift": "a\nb\nc-you\nd\ne\n"]),
+        ])
+        let prepared = try await Mix.prepare(Set(lineup.changes.map(\.id)), in: lineup)
+        XCTAssertTrue(prepared.needsCheck)
+        let input = try await Mix.checkInput(prepared, in: lineup)
+        defer { try? FileManager.default.removeItem(at: input.package.folder) }
+        XCTAssertTrue(input.inspection.files.contains { $0.name == "Sources/App.swift" && $0.text == "A-them\nb\nc-you\nd\ne\n" })
+    }
+
+    /// A file of theirs that came and went, and one of yours they took away and put back: taking only the first change
+    /// brings a file and takes one away, neither as the review read it. A file no shared copy carries stays as yours is.
+    func testNewAndRemovedFilesAreCheckedAndUncarriedOnesStayYours() async throws {
+        let (yours, lineup) = try await shared(["Sources/App.swift": lines, "Sources/Guard.swift": "guard\n"], [
+            Step(theirs: true, title: "Try a helper", at: 200,
+                 files: ["Sources/Extra.swift": "extra\n", "Sources/Guard.swift": nil, "Scripts/run.sh": "echo hi\n"]),
+            Step(theirs: true, title: "Put it back", at: 400,
+                 files: ["Sources/Extra.swift": nil, "Sources/Guard.swift": "guard\n", "Scripts/run.sh": nil]),
+        ])
+        let prepared = try await Mix.prepare(ids(lineup, "Try a helper"), in: lineup)
+        XCTAssertTrue(prepared.needsCheck)
+        let input = try await Mix.checkInput(prepared, in: lineup)
+        defer { try? FileManager.default.removeItem(at: input.package.folder) }
+        let names = Set(input.inspection.files.map(\.name))
+        XCTAssertTrue(names.contains("Sources/Extra.swift"))
+        XCTAssertFalse(names.contains("Sources/Guard.swift"))
+        let checked = ImportReview(summary: "checked", capabilities: [], concerns: [], detected: [])
+        let saved = try await Mix.apply(prepared, in: lineup, checked: checked)
+        XCTAssertEqual(saved, 1)
+        XCTAssertEqual(text(yours, "Sources/Extra.swift"), "extra\n")
+        XCTAssertNil(text(yours, "Sources/Guard.swift"))
+        XCTAssertNil(text(yours, "Scripts/run.sh"), "a file no shared copy carries doesn't come in")
+    }
+
+    /// History/ that says something other than the file's code is what a mix would bring: checked, even taking all.
+    func testHistoryThatDiffersFromTheFilesCodeIsChecked() async throws {
+        let (_, lineup) = try await shared(["Sources/App.swift": lines], [
+            Step(theirs: true, title: "Shout the first line", at: 200, files: ["Sources/App.swift": "A-them\nb\nc\nd\ne\n"]),
+        ], top: ["Sources/App.swift": "harmless\n"])
+        let prepared = try await Mix.prepare(Set(lineup.changes.map(\.id)), in: lineup)
+        XCTAssertEqual(prepared.unseen, [0])
+    }
+
+    /// Nothing is saved, nor any file touched, for a mix that needs its check and hasn't had it, or for a copy that has
+    /// moved on since the mix was worked out.
+    func testAMixIsSavedOnlyAsItWasCheckedAndOnlyOntoTheCopyItWasMadeFor() async throws {
+        let (yours, lineup) = try await twoOfTheirs()
+        let prepared = try await Mix.prepare(Set(lineup.changes.map(\.id)), in: lineup)
+        XCTAssertTrue(prepared.needsCheck)
+        let before = try head(yours)
+        do { _ = try await Mix.apply(prepared, in: lineup, checked: nil); XCTFail("saved without its check") } catch {}
+        XCTAssertEqual(try head(yours), before)
+        XCTAssertEqual(text(yours), lines)
+
+        try commit(yours, "Something else", at: 500, ["Sources/Mine.swift": "mine, later\n"])
+        let moved = try head(yours)
+        let checked = ImportReview(summary: "checked", capabilities: [], concerns: [], detected: [])
+        do { _ = try await Mix.apply(prepared, in: lineup, checked: checked); XCTFail("saved onto a copy that moved on") } catch {}
+        XCTAssertEqual(try head(yours), moved)
+        XCTAssertEqual(text(yours), lines)
+        XCTAssertEqual(text(yours, "Sources/Mine.swift"), "mine, later\n")
+        let unsaved = await Versions.hasUnsavedChanges(yours.project)
+        XCTAssertFalse(unsaved)
+    }
+
+    /// The window: Mix on a pick holding code no review read saves nothing and checks it; the check's answer is what Mix
+    /// then goes by; a change to the pick drops it, and an answer for a pick that's gone is dropped too.
+    @MainActor
+    func testTheWindowChecksAPickBeforeMixingItAndForgetsTheCheckWhenThePickChanges() async throws {
+        let (yours, lineup) = try await twoOfTheirs()
+        final class Gate: @unchecked Sendable {
+            let lock = NSLock()
+            var waiting: [CheckedContinuation<Void, Never>] = []
+            var read: [[String]] = []
+        }
+        let gate = Gate()
+        let saved = MixModel.reviewForCheck
+        defer { MixModel.reviewForCheck = saved }
+        MixModel.reviewForCheck = { _, inspection in
+            gate.lock.withLock { gate.read.append(inspection.files.map(\.name)) }
+            await withCheckedContinuation { go in gate.lock.withLock { gate.waiting.append(go) } }
+            var risky = ImportReview(summary: "Sends what it reads.", capabilities: [], concerns: ["Sends your files away", "Reads every file"], detected: [])
+            risky.risk = .high
+            risky.asked = true
+            return risky
+        }
+        var fine = ImportReview(summary: "A coin.", capabilities: [], concerns: [], detected: [])
+        fine.risk = .low
+        fine.asked = true
+        fine.reviewer = ImportReview.Reviewer(name: "A model", onThisMac: false)
+        XCTAssertEqual(fine.opening, .byReturn)
+
+        let store = Store(testingAt: yours.root.appendingPathComponent("Apps"))
+        store.projects = [yours.project]
+        let model = MixModel()
+        func until(_ what: String, _ done: () -> Bool) async throws {
+            for _ in 0..<400 where !done() { try await Task.sleep(for: .milliseconds(25)) }
+            XCTAssertTrue(done(), what)
+        }
+        let copy = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-mix-test-\(UUID().uuidString)")
+        try FileManager.default.copyItem(at: lineup.package.folder, to: copy)
+        addTeardownBlock { try? FileManager.default.removeItem(at: copy) }
+        let package = try Sharing.open(unpacked: copy)
+        XCTAssertTrue(model.adopt(package, reviewed: fine, store: store))
+        try await until("lined up") { model.stage == .ready && model.lineup != nil }
+        model.takeAllTheirs()
+        XCTAssertEqual(model.mixOpening, .byReturn)
+
+        let before = try head(yours)
+        model.mix(store: store) { XCTFail("mixed before the check was in") }
+        try await until("the pick is checked") { gate.lock.withLock { gate.waiting.count == 1 } }
+        XCTAssertNil(model.mixOpening, "nothing to mix by while it's checked")
+        XCTAssertTrue(gate.lock.withLock { gate.read[0] }.contains("Sources/App.swift (in “Shout the first line”)"))
+        gate.lock.withLock { gate.waiting.removeFirst() }.resume()
+        try await until("the check's answer") { model.check?.review != nil }
+        XCTAssertEqual(model.mixOpening, .anyway, "Return doesn't mix on a risky check")
+        XCTAssertEqual(model.considerations.map(\.text), ["Looks risky. Don't open unless you trust the sender", "Sends your files away", "Reads every file"])
+        XCTAssertEqual(try head(yours), before)
+
+        // A new pick: the check was of the old one.
+        let mine = try XCTUnwrap(lineup.changes.first { $0.title == "Add mine" })
+        model.toggle(mine)
+        XCTAssertNil(model.check)
+        XCTAssertEqual(model.mixOpening, .byReturn)
+
+        // Checked again, and changed again before the answer: the answer is dropped.
+        model.mix(store: store) { XCTFail("mixed before the check was in") }
+        try await until("the new pick is checked") { gate.lock.withLock { gate.waiting.count == 1 } }
+        model.toggle(mine)
+        gate.lock.withLock { gate.waiting.removeFirst() }.resume()
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertNil(model.check)
+        XCTAssertEqual(try head(yours), before)
+        model.reset()
+    }
+
+    /// A file of theirs at a path git would quote, or one holding a character a tool might read as a separator, is
+    /// still the path it is: there, named as Lamp's own scene file so no review reads it, and carried by no shared copy,
+    /// it stays out. Lamp never writes such a path into History/, so the file is the sender's own doing.
+    private func hiddenFileStaysOut(_ hidden: String) async throws {
+        let (yours, lineup) = try await shared(["Sources/App.swift": lines], [
+            Step(theirs: true, title: "Add a scene", at: 200, files: ["Sources/App.swift": "A-them\nb\nc\nd\ne\n"]),
+        ], tamper: { stage in
+            let history = stage.appendingPathComponent(MixHistory.folder)
+            let json = history.appendingPathComponent(MixHistory.file)
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: json)) as? [String: Any])
+            var versions = try XCTUnwrap(object["versions"] as? [[String: Any]])
+            versions[0]["changed"] = (versions[0]["changed"] as? [String] ?? []) + [hidden]
+            object["versions"] = versions
+            try JSONSerialization.data(withJSONObject: object).write(to: json)
+            let file = history.appendingPathComponent(try XCTUnwrap(versions[0]["folder"] as? String)).appendingPathComponent(hidden)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "// not read by any review\n".write(to: file, atomically: true, encoding: .utf8)
+        })
+        let prepared = try await Mix.prepare(Set(lineup.changes.map(\.id)), in: lineup)
+        let checked = ImportReview(summary: "checked", capabilities: [], concerns: [], detected: [])
+        _ = try await Mix.apply(prepared, in: lineup, checked: prepared.needsCheck ? checked : nil)
+        XCTAssertEqual(text(yours), "A-them\nb\nc\nd\ne\n")
+        XCTAssertNil(text(yours, hidden))
+        let saved = try escape.loose("git ls-tree -r -z --name-only HEAD | tr '\\0' '\\n' | grep -c LampScene", in: yours.project.dir)
+        XCTAssertEqual(saved.output.trimmingCharacters(in: .whitespacesAndNewlines), "0", "nothing of it is in the saved version")
+    }
+
+    func testAFileNoSharedCopyCarriesStaysOutWhateverItsName() async throws {
+        try await hiddenFileStaysOut("Sources/x\"y/LampScene.swift")
+    }
+
+    func testAFileWhoseNameHoldsAControlCharacterStaysOut() async throws {
+        try await hiddenFileStaysOut("Sources/x\u{1e}y/LampScene.swift")
+    }
+
+    /// The check reads every file the mix saves as the tree holds it: one the tree's own .gitattributes marks
+    /// export-ignore, which `git archive` would leave out, is read like the rest.
+    func testTheCheckReadsAFileTheTreeMarksExportIgnore() async throws {
+        let (yours, lineup) = try await shared(["Sources/App.swift": lines], [
+            Step(theirs: false, title: "Keep the helper out of archives", at: 150, files: [".gitattributes": "Sources/Helper.swift export-ignore\n"]),
+            Step(theirs: true, title: "Add a helper", at: 200, files: ["Sources/Helper.swift": "// sends your files away\n"]),
+        ], top: ["Sources/Helper.swift": "// harmless\n"])
+        let prepared = try await Mix.prepare(Set(lineup.changes.map(\.id)), in: lineup)
+        XCTAssertTrue(prepared.needsCheck)
+        let input = try await Mix.checkInput(prepared, in: lineup)
+        defer { try? FileManager.default.removeItem(at: input.package.folder) }
+        XCTAssertTrue(input.inspection.files.contains { $0.name == "Sources/Helper.swift" && $0.text == "// sends your files away\n" },
+                      "the file the mix saves is the file the check reads")
+        let checked = ImportReview(summary: "checked", capabilities: [], concerns: [], detected: [])
+        _ = try await Mix.apply(prepared, in: lineup, checked: checked)
+        XCTAssertEqual(text(yours, "Sources/Helper.swift"), "// sends your files away\n")
+    }
+
+    /// Two reviews saying one thing: said once, as seriously as the more serious one says it, with each reason given.
+    func testWarningsSaidTwiceKeepTheStrongerWeightAndEveryReason() {
+        typealias Item = ImportReviewCard.Consideration
+        let merged = MixModel.merged([
+            [Item(text: "Not checked by AI", weight: .warning, detail: "The provider's filter cut the reply off."),
+             Item(text: "Reads every file", weight: .caution)],
+            [Item(text: "Not checked by AI", weight: .warning, detail: "The check ran out of time."),
+             Item(text: "Reads every file", weight: .warning)],
+        ])
+        XCTAssertEqual(merged.map(\.text), ["Not checked by AI", "Reads every file"])
+        XCTAssertEqual(merged[0].detail, "The provider's filter cut the reply off.\nThe check ran out of time.")
+        XCTAssertEqual(merged[1].weight, .warning)
+    }
+
+    /// A check adds to the file's review and never softens it: a risky file stays Mix Anyway, its warnings shown, however
+    /// the check of the pick comes back.
+    @MainActor
+    func testACheckNeverTakesBackWhatTheFilesReviewSaid() async throws {
+        let (yours, lineup) = try await twoOfTheirs()
+        let saved = MixModel.reviewForCheck
+        defer { MixModel.reviewForCheck = saved }
+        MixModel.reviewForCheck = { _, _ in
+            var fine = ImportReview(summary: "A coin.", capabilities: [], concerns: [], detected: [])
+            fine.risk = .low
+            fine.asked = true
+            fine.reviewer = ImportReview.Reviewer(name: "A model", onThisMac: false)
+            return fine
+        }
+        var risky = ImportReview(summary: "Sends what it reads.", capabilities: [], concerns: ["Sends your files away"], detected: [])
+        risky.risk = .high
+        risky.asked = true
+        let store = Store(testingAt: yours.root.appendingPathComponent("Apps"))
+        store.projects = [yours.project]
+        let model = MixModel()
+        func until(_ what: String, _ done: () -> Bool) async throws {
+            for _ in 0..<400 where !done() { try await Task.sleep(for: .milliseconds(25)) }
+            XCTAssertTrue(done(), what)
+        }
+        let copy = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-mix-test-\(UUID().uuidString)")
+        try FileManager.default.copyItem(at: lineup.package.folder, to: copy)
+        addTeardownBlock { try? FileManager.default.removeItem(at: copy) }
+        XCTAssertTrue(model.adopt(try Sharing.open(unpacked: copy), reviewed: risky, store: store))
+        try await until("lined up") { model.stage == .ready && model.lineup != nil }
+        model.takeAllTheirs()
+        XCTAssertEqual(model.mixOpening, .anyway)
+        model.mix(store: store) { XCTFail("mixed before the check was in") }
+        try await until("the check's answer") { model.check?.review != nil }
+        XCTAssertEqual(model.mixOpening, .anyway)
+        XCTAssertEqual(model.considerations.map(\.text), ["Looks risky. Don't open unless you trust the sender", "Sends your files away"])
         model.reset()
     }
 }

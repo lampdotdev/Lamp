@@ -21,13 +21,65 @@ struct MixScene: Scene {
 final class MixModel: ObservableObject {
     /// One window, one mix: the import's review hands it its package too (Mix… there).
     static let shared = MixModel()
-    enum Stage: Equatable { case waiting, reading, problem(String), ready, mixing }
+    /// `preparing`: Mix was clicked and the pick is being played back (`Mix.prepare`); the pick holds still meanwhile,
+    /// as it does while `mixing` saves it.
+    enum Stage: Equatable { case waiting, reading, problem(String), ready, preparing, mixing }
     @Published var stage = Stage.waiting
     @Published var lineup: Mix.Lineup?
     @Published var picked: Set<String> = []
     @Published var preview = Mix.Preview()
+    /// The file's review.
     @Published var review: ImportReview?
+    /// The check of what this pick comes to, when that holds code no review read (`Mix.Prepared.unseen`): made on Mix,
+    /// for exactly the pick then, and gone the moment the pick changes. Mix saves it only after its review is in, and
+    /// only by the stricter rule of it and the file's (`mixOpening`).
+    struct Check {
+        let prepared: Mix.Prepared
+        var review: ImportReview?
+        /// Why what the mix comes to couldn't be read for a check: nothing of it can be saved then.
+        var failure: String?
+    }
+    @Published private(set) var check: Check?
+    private var checking: Task<Void, Never>?
     private var previewing: Task<Void, Never>?
+
+    /// The reviews Mix goes by: the file's, and once Mix found code no review read, the check of this pick too. A check
+    /// adds to what the file's review said and never takes any of it back: the same code read again can come back
+    /// rated lower. Nil while either is still checking.
+    var reviewsInForce: [ImportReview]? {
+        guard let review else { return nil }
+        guard let check else { return [review] }
+        return check.review.map { [review, $0] }
+    }
+
+    /// How Mix is pressed (`ImportReview.opening`): the strictest of the reviews in force.
+    var mixOpening: ImportReview.Opening? {
+        guard let reviews = reviewsInForce else { return nil }
+        let order: [ImportReview.Opening] = [.byReturn, .byClick, .anyway]
+        return reviews.map(\.opening).max { order.firstIndex(of: $0)! < order.firstIndex(of: $1)! }
+    }
+
+    /// Everything the reviews in force have to say, each once, the file's first (`merged`).
+    var considerations: [ImportReviewCard.Consideration] {
+        Self.merged((reviewsInForce ?? []).map { ImportReviewCard.considerations($0) })
+    }
+
+    /// Several reviews' considerations as one list: a thing two of them say is said once, as seriously as the more
+    /// serious says it, with every distinct reason given for it ("Not checked by AI" for two different causes).
+    nonisolated static func merged(_ lists: [[ImportReviewCard.Consideration]]) -> [ImportReviewCard.Consideration] {
+        var all: [ImportReviewCard.Consideration] = []
+        for item in lists.joined() {
+            guard let index = all.firstIndex(where: { $0.text == item.text }) else { all.append(item); continue }
+            let held = all[index]
+            let stronger = item.weight == .warning && held.weight != .warning ? item : held
+            let details = [held.detail, item.detail].compactMap { $0 }.reduce(into: [String]()) { kept, detail in
+                if !kept.contains(detail) { kept.append(detail) }
+            }
+            all[index] = ImportReviewCard.Consideration(text: held.text, weight: stronger.weight, icon: stronger.icon,
+                                                         detail: details.isEmpty ? nil : details.joined(separator: "\n"))
+        }
+        return all
+    }
     /// The package being mixed, which is this window's to remove (`reset`): work for any other has gone stale.
     private var folder: URL?
     /// The file being unpacked, before its package is this window's: a newer open or a reset leaves it to remove itself.
@@ -70,6 +122,10 @@ final class MixModel: ObservableObject {
 
     /// How the window checks a package it was given unchecked: `Sharing.review`, which tests replace to count the checks.
     nonisolated(unsafe) static var reviewForMix: @Sendable (Sharing.Package) async -> ImportReview = { await Sharing.review($0) }
+    /// How it checks what a pick comes to (`Mix.checkInput`): the same review, which tests replace to see what it reads.
+    nonisolated(unsafe) static var reviewForCheck: @Sendable (Sharing.Package, Sharing.Inspection) async -> ImportReview = {
+        await Sharing.review($0, inspection: $1)
+    }
 
     /// Lines the package up with the copy here, and checks it unless `reviewed` already did. Whatever comes back once
     /// another package has taken its place is dropped.
@@ -104,12 +160,13 @@ final class MixModel: ObservableObject {
     }
 
     func toggle(_ change: Mix.Change) {
+        guard stage == .ready else { return }
         if picked.contains(change.id) { picked.remove(change.id) } else { picked.insert(change.id) }
         refresh()
     }
 
     func takeAllTheirs() {
-        guard let lineup else { return }
+        guard stage == .ready, let lineup else { return }
         picked.formUnion(lineup.changes.filter { $0.side == .them }.map(\.id))
         refresh()
     }
@@ -129,23 +186,78 @@ final class MixModel: ObservableObject {
         return "\(inCount) of \(theirs.count) of theirs in" + (out > 0 ? " · \(out) of yours out" : "")
     }
 
+    /// Plays the pick back (`Mix.prepare`) and saves it, when the file's review read all it brings. When it brings code
+    /// no review read, nothing is saved: that's checked (`Check`), and Mix saves it once the check is in, by its rule.
     func mix(store: Store, done: @escaping () -> Void) {
-        guard let lineup, changesSomething else { return }
-        stage = .mixing
+        guard stage == .ready, let lineup, changesSomething, review != nil else { return }
+        if let check {
+            guard check.review != nil, check.prepared.picked == picked else { return }
+            save(check.prepared, checked: check.review, in: lineup, store: store, done: done)
+            return
+        }
+        stage = .preparing
+        let picked = self.picked
         Task {
             do {
-                try await store.mix(picked, in: lineup)
-                guard self.lineup?.package.folder == lineup.package.folder else { return }
-                reset()
-                done()
+                let prepared = try await Mix.prepare(picked, in: lineup)
+                guard stage == .preparing, self.lineup?.package.folder == lineup.package.folder, self.picked == picked else { return }
+                if prepared.needsCheck {
+                    stage = .ready
+                    startCheck(prepared, in: lineup)
+                } else {
+                    save(prepared, checked: nil, in: lineup, store: store, done: done)
+                }
             } catch {
+                guard self.lineup?.package.folder == lineup.package.folder else { return }
                 stage = .problem(error.localizedDescription)
             }
         }
     }
 
+    private func save(_ prepared: Mix.Prepared, checked: ImportReview?, in lineup: Mix.Lineup, store: Store, done: @escaping () -> Void) {
+        stage = .mixing
+        Task {
+            do {
+                try await store.mix(prepared, checked: checked, in: lineup)
+                guard self.lineup?.package.folder == lineup.package.folder else { return }
+                reset()
+                done()
+            } catch {
+                guard self.lineup?.package.folder == lineup.package.folder else { return }
+                stage = .problem(error.localizedDescription)
+            }
+        }
+    }
+
+    /// Checks what a prepared pick comes to. An answer for a pick or a file that has gone since is dropped.
+    private func startCheck(_ prepared: Mix.Prepared, in lineup: Mix.Lineup) {
+        dropCheck()
+        check = Check(prepared: prepared)
+        checking = Task {
+            let input: (package: Sharing.Package, inspection: Sharing.Inspection)
+            do {
+                input = try await Mix.checkInput(prepared, in: lineup)
+            } catch {
+                guard !Task.isCancelled, check?.prepared == prepared else { return }
+                check?.failure = error.localizedDescription
+                return
+            }
+            defer { try? FileManager.default.removeItem(at: input.package.folder) }
+            let review = await Self.reviewForCheck(input.package, input.inspection)
+            guard !Task.isCancelled, check?.prepared == prepared, check?.review == nil else { return }
+            check?.review = review
+        }
+    }
+
+    private func dropCheck() {
+        checking?.cancel()
+        checking = nil
+        check = nil
+    }
+
     func reset() {
         previewing?.cancel()
+        dropCheck()
         if let folder { try? FileManager.default.removeItem(at: folder) }
         folder = nil
         opening = nil
@@ -156,8 +268,9 @@ final class MixModel: ObservableObject {
         stage = .waiting
     }
 
-    /// What the pick comes to, a moment after the last click.
+    /// What the pick comes to, a moment after the last click. A check of the pick before it no longer holds.
     private func refresh() {
+        dropCheck()
         previewing?.cancel()
         guard let lineup else { return }
         let picked = lineup.changes.filter { self.picked.contains($0.id) }
@@ -183,7 +296,7 @@ struct MixView: View {
             case .waiting: dropZone
             case .reading: progress("Lining up both copies…")
             case .problem(let message): problem(message)
-            case .ready, .mixing:
+            case .ready, .preparing, .mixing:
                 if let lineup = model.lineup {
                     MixTimeline(model: model, lineup: lineup, another: choose) { model.mix(store: store) { dismiss() } }
                 } else {
@@ -267,7 +380,7 @@ struct MixTimeline: View {
                 Spacer(minLength: 12)
                 Button("Choose Another…", action: another)
                     .buttonStyle(PaperButtonStyle(.outline))
-                    .disabled(model.stage == .mixing)
+                    .disabled(model.stage != .ready)
             }
             .padding(.horizontal, 28).padding(.top, 16).padding(.bottom, 12)
             HStack(alignment: .top, spacing: 16) {
@@ -277,7 +390,7 @@ struct MixTimeline: View {
                         icon: lineup.package.folder.appendingPathComponent("icon.png"))
             }
             .padding(.horizontal, 28).padding(.bottom, 10)
-            if let line = reviewLine { line.padding(.bottom, 6) }
+            reviewLines.padding(.horizontal, 28).padding(.bottom, 6)
             Rectangle().fill(Paper.rule).frame(height: 1)
             ScrollView {
                 LazyVStack(spacing: 6) {
@@ -297,14 +410,11 @@ struct MixTimeline: View {
             HStack(spacing: 10) {
                 Text(model.status).font(.system(size: 12)).foregroundStyle(Paper.muted)
                 Spacer()
-                if model.stage == .mixing { ProgressView().controlSize(.small) }
+                if model.stage == .mixing || model.stage == .preparing { ProgressView().controlSize(.small) }
                 Button("Take All of Theirs") { model.takeAllTheirs() }
                     .buttonStyle(PaperButtonStyle(.outline))
-                    .disabled(model.stage == .mixing || !lineup.changes.contains { $0.side == .them && !model.picked.contains($0.id) })
-                Button("Mix", action: mix)
-                    .buttonStyle(PaperButtonStyle(.ink))
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(model.stage == .mixing || !model.changesSomething || model.review == nil)
+                    .disabled(model.stage != .ready || !lineup.changes.contains { $0.side == .them && !model.picked.contains($0.id) })
+                mixButton
             }
             .padding(.horizontal, 20).padding(.vertical, 12)
         }
@@ -321,18 +431,72 @@ struct MixTimeline: View {
         }
     }
 
-    /// What the check of their code found, in the review's own words; nothing when it found nothing.
-    private var reviewLine: AnyView? {
-        guard let review = model.review else {
-            return AnyView(HStack(spacing: 6) {
-                ProgressView().controlSize(.mini)
-                Text("Checking their code…")
-            }.font(.system(size: 12)).foregroundStyle(Paper.muted))
+    /// Mix, by the rule the import's buttons follow (`ImportReview.opening`), from the reviews in force: Return mixes
+    /// only on a review Lamp vouches for; anything less takes a click, and "Mix Anyway" when there's something to be
+    /// wary of.
+    @ViewBuilder private var mixButton: some View {
+        let disabled = model.stage != .ready || !model.changesSomething || model.mixOpening == nil || model.check?.failure != nil
+        switch model.mixOpening {
+        case .byReturn:
+            Button("Mix", action: mix).buttonStyle(PaperButtonStyle(.ink)).keyboardShortcut(.defaultAction).disabled(disabled)
+        case .anyway:
+            Button("Mix Anyway", role: .destructive, action: mix).buttonStyle(PaperButtonStyle(.ink)).disabled(disabled)
+        case .byClick, nil:
+            Button("Mix", action: mix).buttonStyle(PaperButtonStyle(.ink)).disabled(disabled)
         }
-        guard let first = ImportReviewCard.considerations(review).first else { return nil }
-        return AnyView(Label(first.text, systemImage: first.icon)
-            .font(.system(size: 12))
-            .foregroundStyle(first.weight == .warning ? Color.red : Color.orange))
+    }
+
+    /// What the checks found, each thing the review has to say in its own words, as the import's review says them:
+    /// red for what should stop someone, orange for what should make them think. Nothing when it found nothing.
+    private var reviewLines: some View {
+        let items = model.considerations
+        return VStack(alignment: .leading, spacing: 4) {
+            if model.review == nil {
+                waiting("Checking their code…")
+            } else if let check = model.check {
+                if let failure = check.failure {
+                    Label(failure, systemImage: "xmark.octagon.fill").foregroundStyle(Color.red)
+                } else if check.review == nil {
+                    waiting("Checking what this mix brings in…")
+                } else {
+                    Text("Checked what this mix brings in").foregroundStyle(Paper.muted)
+                }
+            }
+            if items.count > 3 {
+                ScrollView { considerations(items) }.frame(height: 84)
+            } else {
+                considerations(items)
+            }
+        }
+        .font(.system(size: 12))
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func waiting(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            ProgressView().controlSize(.mini)
+            Text(text)
+        }
+        .foregroundStyle(Paper.muted)
+    }
+
+    private func considerations(_ items: [ImportReviewCard.Consideration]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(items) { item in
+                Label {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(verbatim: item.text).fixedSize(horizontal: false, vertical: true)
+                        if let detail = item.detail {
+                            Text(verbatim: detail).font(.system(size: 11)).foregroundStyle(Paper.muted).lineLimit(4).help(detail)
+                        }
+                    }
+                } icon: {
+                    Image(systemName: item.icon)
+                }
+                .foregroundStyle(item.weight == .warning ? Color.red : Color.orange)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

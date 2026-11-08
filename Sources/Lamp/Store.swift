@@ -4657,8 +4657,9 @@ final class Store: ObservableObject {
 
     /// Mixes what was picked of two copies into this one (`Mix.apply`), owning the wish as an update does, then builds
     /// it as a merged update is built. The wish's files must be as its latest version has them: the mix window saves
-    /// what's unsaved before lining the copies up.
-    func mix(_ picked: Set<String>, in lineup: Mix.Lineup) async throws {
+    /// what's unsaved before lining the copies up. `checked` is the check of `prepared`, when it held code no review read.
+    func mix(_ prepared: Mix.Prepared, checked: ImportReview?, in lineup: Mix.Lineup) async throws {
+        let picked = prepared.picked
         guard let project = current(lineup.project), begin(project) != nil else {
             throw Mix.Failure(message: "“\(lineup.project.name)” is busy right now. Try again when it's done.")
         }
@@ -4668,7 +4669,7 @@ final class Store: ObservableObject {
         }
         let iconFile = project.dir.appendingPathComponent("icon.json")
         let iconBefore = try? Data(contentsOf: iconFile)
-        guard try await Mix.apply(picked, in: lineup) > 0 else { return }
+        guard try await Mix.apply(prepared, in: lineup, checked: checked) > 0 else { return }
         // The icon's pictures live outside the versions: theirs go in when the mix brought their icon's design.
         let iconAfter = try? Data(contentsOf: iconFile)
         if iconAfter != iconBefore, iconAfter == (try? Data(contentsOf: lineup.package.folder.appendingPathComponent("icon.json"))) {
