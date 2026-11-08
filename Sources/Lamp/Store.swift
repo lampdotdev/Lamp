@@ -4295,11 +4295,12 @@ final class Store: ObservableObject {
         return file != nil
     }
 
-    /// Mix… on the review: the mix takes the review's package, then the review closes without removing it, since the
-    /// mix window owns it from here (`MixModel.reset` removes it). False, with the review left up, while a mix is
-    /// being saved.
+    /// Mix… on the review: the mix takes the review's package and, when its check has finished, that check too, so the
+    /// code isn't checked twice; then the review closes without removing the package, since the mix window owns it from
+    /// here (`MixModel.reset` removes it). False, with the review left up, while a mix is being saved.
     @discardableResult func mixPendingImport() -> Bool {
-        guard let pending = pendingImport, pending.mixable, MixModel.shared.adopt(pending.package, store: self) else { return false }
+        guard let pending = pendingImport, pending.mixable,
+              MixModel.shared.adopt(pending.package, reviewed: pending.review, store: self) else { return false }
         endReview()
         if let copy = pending.copy { Task { await discardPreparedCopy(copy, movingQueuedTo: nil) } }
         pendingImport = nil

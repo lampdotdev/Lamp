@@ -352,13 +352,14 @@ its file finds the wish it was remixed from by its chain, and the original's fil
 unsaved, and lines up every change either of you made since the copies last met on one timeline by date, each a switch: lit when it's kept, dimmed when it's left out, across the window's width. A thumb on
 its owner's side (yours left, theirs right) does what a click does: up to keep it, turned over to leave it out. A
 change's time shows while Option is held.
-Nothing of theirs starts in; Mix waits for the file's review (`Sharing.review`), as opening it would. The window's head
+Nothing of theirs starts in; Mix waits for the file's review (`Sharing.review`), as opening it would: the import's own,
+whole, when it had finished before Mix… (`MixModel.adopt`), so the code is checked once; otherwise Mix checks it itself. The window's head
 names the wish being mixed into and how a click works, and Choose Another… starts over with another file.
 
 A wish file dropped on the desk opens as one opened from the Finder (`Store.importApp`). With the switch on, a file
 that carries its versions and finds a wish here it met at a version both have (`Mix.copy`, `Mix.meeting`) gets Mix…
 in place of Update on its review, waiting while another mix is saved
-(`PendingImport.mixFile`), beside Keep as Separate App: Mix… closes the review and opens the window on that file
+(`PendingImport.mixable`), beside Keep as Separate App: Mix… closes the review and opens the window on that file
 (`MixModel.shared`).
 
 - **What travels.** With the switch on, a shared file carries History/ (`MixHistory`): the sender's versions since
