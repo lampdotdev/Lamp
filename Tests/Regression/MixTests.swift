@@ -316,4 +316,63 @@ final class MixTests: XCTestCase {
         XCTAssertEqual(lineup.changes.map(\.title), ["Shout the first line", "Whisper the first line", "Shout the last line"])
         XCTAssertEqual(lineup.changes.map(\.side), [.you, .them, .you])
     }
+
+    /// Mix… on a review that has finished hands the mix that review, and the mix shows it whole rather than checking the
+    /// code again. Without one (the review was still checking) the mix checks the package itself, and that check's
+    /// answer, coming after another package took its place, is dropped.
+    @MainActor
+    func testMixTakesTheFinishedReviewInsteadOfCheckingAgain() async throws {
+        let (yours, _, unchecked, _) = try await copies()
+        let checkedFolder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-mix-test-\(UUID().uuidString)")
+        try FileManager.default.copyItem(at: unchecked.folder, to: checkedFolder)
+        addTeardownBlock { try? FileManager.default.removeItem(at: checkedFolder) }
+        let checked = Sharing.Package(name: "Coin Flip", identity: identity, folder: checkedFolder, sources: [], attachments: [], fileCount: 0)
+
+        final class Checks: @unchecked Sendable {
+            let lock = NSLock()
+            var folders: [URL] = []
+            var release: CheckedContinuation<Void, Never>?
+        }
+        let checks = Checks()
+        let saved = MixModel.reviewForMix
+        defer { MixModel.reviewForMix = saved }
+        MixModel.reviewForMix = { package in
+            checks.lock.withLock { checks.folders.append(package.folder) }
+            await withCheckedContinuation { go in checks.lock.withLock { checks.release = go } }
+            var late = ImportReview(summary: "late", capabilities: [], concerns: [], detected: [])
+            late.note = "late"
+            return late
+        }
+        var finished = ImportReview(summary: "Reads the files you pick.", capabilities: [], concerns: [], detected: [])
+        finished.asked = true
+        finished.partial = true
+        finished.note = "Lamp's AI check didn't finish in time. Look at the list above carefully."
+
+        let store = Store(testingAt: yours.root.appendingPathComponent("Apps"))
+        store.projects = [yours.project]
+        let model = MixModel()
+        func until(_ what: String, _ done: () -> Bool) async throws {
+            for _ in 0..<400 where !done() { try await Task.sleep(for: .milliseconds(25)) }
+            XCTAssertTrue(done(), what)
+        }
+
+        // Still checking when Mix… was clicked: the mix checks it.
+        XCTAssertTrue(model.adopt(unchecked, reviewed: nil, store: store))
+        try await until("the mix checks a package it was given unchecked") { checks.lock.withLock { checks.release != nil } }
+        XCTAssertNil(model.review)
+
+        // A finished review: shown as it is, warnings and notes and all, with no second check.
+        XCTAssertTrue(model.adopt(checked, reviewed: finished, store: store))
+        try await until("the mix lines up the checked package") { model.stage == .ready && model.review != nil }
+        XCTAssertEqual(checks.lock.withLock { checks.folders }, [unchecked.folder], "the checked package isn't checked again")
+        XCTAssertEqual(model.review?.summary, finished.summary)
+        XCTAssertEqual(model.review?.note, finished.note)
+        XCTAssertEqual(model.review?.partial, true)
+
+        // The first package's check answers late: it's not this package's, so it's dropped.
+        checks.lock.withLock { checks.release }?.resume()
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(model.review?.summary, finished.summary)
+        model.reset()
+    }
 }

@@ -56,18 +56,24 @@ final class MixModel: ObservableObject {
     }
 
     /// A package already open (the import's review, Mix… there), which this window then owns and removes as its own.
+    /// `reviewed` is that review's finished check of exactly this package, which the window shows as it is rather than
+    /// checking the code a second time; nil when the review hadn't finished, and the window checks it then.
     /// False while a mix is being saved: the package stays with whoever has it.
-    func adopt(_ package: Sharing.Package, store: Store) -> Bool {
+    func adopt(_ package: Sharing.Package, reviewed: ImportReview?, store: Store) -> Bool {
         guard stage != .mixing else { return false }
         reset()
         folder = package.folder
         stage = .reading
-        Task { await prepare(package, store: store) }
+        Task { await prepare(package, reviewed: reviewed, store: store) }
         return true
     }
 
-    /// Lines the package up with the copy here. Whatever comes back once another package has taken its place is dropped.
-    private func prepare(_ package: Sharing.Package, store: Store) async {
+    /// How the window checks a package it was given unchecked: `Sharing.review`, which tests replace to count the checks.
+    nonisolated(unsafe) static var reviewForMix: @Sendable (Sharing.Package) async -> ImportReview = { await Sharing.review($0) }
+
+    /// Lines the package up with the copy here, and checks it unless `reviewed` already did. Whatever comes back once
+    /// another package has taken its place is dropped.
+    private func prepare(_ package: Sharing.Package, reviewed: ImportReview? = nil, store: Store) async {
         do {
             guard let history = MixHistory.read(in: package.folder) else {
                 throw Mix.Failure(message: "This copy came without its versions. Ask for it again, shared from a Lamp with mixing on.")
@@ -88,7 +94,8 @@ final class MixModel: ObservableObject {
             picked = Set(lineup.changes.filter(\.here).map(\.id))
             stage = .ready
             refresh()
-            let review = await Sharing.review(package)
+            let review: ImportReview
+            if let reviewed { review = reviewed } else { review = await Self.reviewForMix(package) }
             if folder == package.folder { self.review = review }
         } catch {
             guard folder == package.folder else { return }
