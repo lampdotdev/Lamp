@@ -22,6 +22,9 @@ enum WishLink {
         /// The changes Lamp suggests for the wish (`RemixSuggestions`), which the page offers to remix with.
         static let ideas = 3
         static let idea = 100
+        /// The questions the box under the app on its page asks in turn ("Found a bug?"), where people send ideas.
+        static let asks = 3
+        static let ask = 80
         /// What's new in each release (`WishReleases`): the most releases a link keeps, the lines in one, and a line's
         /// characters.
         static let releases = 30
@@ -55,6 +58,10 @@ enum WishLink {
         var words: String
         /// The changes Lamp suggests for it, the page's to offer. Nil in links from before.
         var ideas: [String]? = nil
+        /// The questions the page's box asks in turn, written by Lamp and the person's to change (`WishAsks`). Nil in
+        /// links from before, which Lamp writes some for; empty when the person cleared them, which stays so, and the page
+        /// asks its own.
+        var asks: [String]? = nil
         /// The shape its page plays in (`Publish.pageShape`): "fill", or its width over its height. Nil for a wish with no
         /// page, and in links from before.
         var shape: String? = nil
@@ -186,6 +193,7 @@ enum WishLink {
         var body: [String: Any] = ["name": words.name.trimmed, "line": words.line.trimmed, "words": words.words.trimmed, "releases": releases]
         if let by = words.by?.trimmed, !by.isEmpty { body["by"] = by }
         if let ideas = words.ideas, !ideas.isEmpty { body["ideas"] = ideas }
+        if let asks = words.asks, !asks.isEmpty { body["asks"] = asks }
         if let shape = words.shape { body["shape"] = shape == "fill" ? shape : Double(shape) ?? NSNull() }
         body["picture"] = picture?.base64EncodedString() ?? NSNull()
         body["icon"] = icon?.base64EncodedString() ?? NSNull()
@@ -321,6 +329,48 @@ enum WishLink {
         guard status == 204 || status == 404 else { throw failure(status) }
     }
 
+    /// An idea someone playing the wish sent from its link's page, for its maker (`/api/wish-ideas` on the site): their
+    /// words, when it came, and whether they asked to hear when it's in (the site keeps their address and writes to them;
+    /// Lamp never has it). Theirs, shown as theirs, never the agent's.
+    struct Idea: Codable, Equatable, Identifiable, Sendable {
+        var n: Int
+        var text: String
+        var wantsNews: Bool?
+        var at: String
+        var id: Int { n }
+    }
+
+    private static func ideasAddress(for id: String, number: Int? = nil) -> URL {
+        var parts = URLComponents(url: endpoint.deletingLastPathComponent().appendingPathComponent("wish-ideas"), resolvingAgainstBaseURL: false)!
+        parts.queryItems = [URLQueryItem(name: "id", value: id)] + (number.map { [URLQueryItem(name: "n", value: String($0))] } ?? [])
+        return parts.url!
+    }
+
+    /// The ideas sent to the link so far, oldest first. Only the link's secret reads them.
+    static func ideas(for shared: Shared) async throws -> [Idea] {
+        var request = URLRequest(url: ideasAddress(for: shared.id))
+        request.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
+        let (data, status) = try await send(request)
+        if status == 404 { return [] }
+        guard status == 200 else { throw failure(status) }
+        struct Answer: Decodable { var ideas: [Idea] }
+        return try JSONDecoder().decode(Answer.self, from: data).ideas
+    }
+
+    /// Lets an idea go from the link. `built`: it's in, and the site first writes to whoever asked to hear back; answers
+    /// whether it did.
+    @discardableResult
+    static func removeIdea(_ number: Int, built: Bool, for shared: Shared) async throws -> Bool {
+        var address = URLComponents(url: ideasAddress(for: shared.id, number: number), resolvingAgainstBaseURL: false)!
+        if built { address.queryItems?.append(URLQueryItem(name: "built", value: "1")) }
+        var request = URLRequest(url: address.url!)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
+        let (data, status) = try await send(request)
+        guard status == 200 || status == 404 else { throw failure(status) }
+        return ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["notified"] as? Bool ?? false
+    }
+
     /// Takes the link down: the page says the wish isn't shared any more. A link the site no longer has is down already.
     static func remove(_ shared: Shared) async throws {
         var request = URLRequest(url: address(for: shared.id))
@@ -397,6 +447,8 @@ enum WishLink {
         var released = false
         /// Lamp is writing what's new for the release (`WishReleases.write`).
         var writingNotes = false
+        /// Lamp is writing the questions the page's box asks (`WishAsks.write`).
+        var writingAsks = false
         /// The app's repository on GitHub, which a release goes to too while its box is ticked (`GitHubRelease`), or why
         /// it can't from here.
         var gitHub: GitHubRelease.Target?
@@ -423,7 +475,7 @@ enum WishLink {
             // wish, not a message.
             WishLink.Words(name: values.name.trimmed, by: values.by.trimmed, line: values.line.trimmed,
                            words: values.line.trimmed.isEmpty ? values.words.trimmed : values.line.trimmed,
-                           ideas: ideas.isEmpty ? nil : ideas, shape: shape,
+                           ideas: ideas.isEmpty ? nil : ideas, asks: WishAsks.lines(from: values.asks), shape: shape,
                            picture: pictureDigest, file: values.includeFile ? true : nil)
         }
         /// A link that carries the wish is always worth sending again: the file is the wish as it is now. So is one with
@@ -465,7 +517,7 @@ enum WishLink {
         let name = WishLink.clip(project.title, WishLink.Limit.name)
         // The wish itself always goes with its link when its kind can go as a file: the link shares the wish.
         let values = shared.map { WishLinkCard.Values(name: name, by: $0.shown.by ?? WishLink.sharer, line: $0.shown.line, words: $0.shown.words,
-                                                      includeFile: Self.canIncludeFile(project)) }
+                                                      includeFile: Self.canIncludeFile(project), asks: ($0.shown.asks ?? []).joined(separator: "\n")) }
             ?? WishLinkCard.Values(name: name, by: WishLink.sharer, line: WishLink.line(of: project), words: WishLink.firstRequest(of: project, store: Store.shared),
                                    includeFile: Self.canIncludeFile(project))
         var card = Card(values: values, pictureDigest: digest, shared: shared)
@@ -475,7 +527,17 @@ enum WishLink {
         card.picture = picture
         // A link that's out is released again: Lamp writes what's new since the last release, for the person to change.
         card.writingNotes = shared != nil
+        // A link without questions yet gets Lamp's, for the person to change.
+        card.writingAsks = shared?.shown.asks == nil
         cards[project.id] = card
+        if card.writingAsks {
+            Task {
+                let lines = await WishAsks.write(for: project)
+                guard cards[project.id]?.writingAsks == true else { return }
+                cards[project.id]?.writingAsks = false
+                if cards[project.id]?.values.asks.trimmed.isEmpty == true { cards[project.id]?.values.asks = lines.joined(separator: "\n") }
+            }
+        }
         Task {
             let icon = await Sharing.sharedIcon(of: project)
             cards[project.id]?.icon = icon
@@ -907,7 +969,7 @@ enum WishLink {
 
 extension WishLink {
     static let cardLimits = WishLinkCard.Limits(name: Limit.name, line: Limit.line, words: Limit.words, by: Limit.by,
-                                                 notes: Limit.releaseLines, note: Limit.releaseLine)
+                                                 notes: Limit.releaseLines, note: Limit.releaseLine, asks: Limit.asks, ask: Limit.ask)
 
     /// The name a link says it's by: what the person last gave on the card, kept in Lamp's own settings; until they have,
     /// their name on this Mac, which they see on the card before anything goes.

@@ -97,6 +97,11 @@ struct WishDesk: View {
                 SuggestionsPanel(wish: wish) { store.suggestionsOpen = nil }
                     .id(wish)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let wish = store.ideasOpen {
+                // Ideas sent from a link, the same way.
+                IdeasPanel(wish: wish) { store.ideasOpen = nil }
+                    .id(wish)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 deskList
             }
@@ -109,7 +114,7 @@ struct WishDesk: View {
         .navigationTitle("Lamp")
         .toolbar {
             // Only where the panel has room to show: in a narrower window the list keeps the space.
-            if panelFits, store.suggestionsOpen == nil { ToolbarItem(placement: .primaryAction) {
+            if panelFits, store.suggestionsOpen == nil, store.ideasOpen == nil { ToolbarItem(placement: .primaryAction) {
                 Button { withAnimation(Self.slide) { panelShown.toggle() } } label: {
                     Label(panelShown ? "Hide Details" : "Show Details", systemImage: "sidebar.right")
                 }
@@ -231,30 +236,42 @@ struct WishDesk: View {
         .overlay(alignment: .trailing) { Self.separator }
     }
 
-    /// The way to the changes people sent: as quiet as the rest of the column, there only once someone has sent some,
-    /// with how many are new. It opens at the app with the most new.
+    /// The ways to what people sent: changes, and ideas from people playing a link, each a line of its own, as quiet as the
+    /// rest of the column, there only once someone has sent some, with how many are new. Each opens at the app with the
+    /// most new, and from either the other is a click away, seen or not.
     @ViewBuilder private var sentToYou: some View {
         let wishes = store.wishesWithSuggestions
+        let withIdeas = store.wishesWithIdeas
         if !wishes.isEmpty {
-            let new = store.newSuggestionsInAll
-            Button {
+            sentLine("Sent to you", symbol: "tray.and.arrow.down", new: store.newSuggestionsInAll, open: store.suggestionsOpen != nil) {
+                store.ideasOpen = nil
                 store.suggestionsOpen = store.suggestionsOpen == nil ? (wishes.max { store.newSuggestions($0) < store.newSuggestions($1) } ?? wishes[0]).id : nil
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "tray.and.arrow.down").font(.system(size: 13))
-                    Text("Sent to you").font(.system(size: 13))
-                    Spacer()
-                    if new > 0 { Text("\(new) new").font(.system(size: 12)).foregroundStyle(Paper.muted) }
-                }
-                .foregroundStyle(Paper.ink)
-                .padding(.horizontal, 10).frame(height: 30)
-                .background(Paper.ink.opacity(store.suggestionsOpen == nil ? 0.05 : 0.1), in: RoundedRectangle(cornerRadius: 7))
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 12).padding(.bottom, 8)
-            .accessibilityLabel(new > 0 ? "Sent to you, \(new) new" : "Sent to you")
         }
+        if !withIdeas.isEmpty {
+            sentLine("Ideas", symbol: "lightbulb", new: store.newIdeasInAll, open: store.ideasOpen != nil) {
+                store.suggestionsOpen = nil
+                store.ideasOpen = store.ideasOpen == nil ? withIdeas[0].id : nil
+            }
+        }
+    }
+
+    private func sentLine(_ title: String, symbol: String, new: Int, open: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: symbol).font(.system(size: 13))
+                Text(title).font(.system(size: 13))
+                Spacer()
+                if new > 0 { Text("\(new) new").font(.system(size: 12)).foregroundStyle(Paper.muted) }
+            }
+            .foregroundStyle(Paper.ink)
+            .padding(.horizontal, 10).frame(height: 30)
+            .background(Paper.ink.opacity(open ? 0.1 : 0.05), in: RoundedRectangle(cornerRadius: 7))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12).padding(.bottom, 8)
+        .accessibilityLabel(new > 0 ? "\(title), \(new) new" : title)
     }
 
     private var list: some View {

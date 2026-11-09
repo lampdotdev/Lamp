@@ -405,6 +405,14 @@ struct DeskListRow: View {
                         }
                         .buttonStyle(.plain)
                     }
+                    // Ideas sent from its link that haven't been seen, the same way.
+                    if !opening, let project, case let new = store.newIdeas(project), new > 0 {
+                        Button { store.ideasOpen = project.id } label: {
+                            Text("\(new) new \(new == 1 ? "idea" : "ideas") sent").font(.system(size: 12)).foregroundStyle(Paper.muted)
+                                .underline(true, color: Paper.rule)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if !compact {

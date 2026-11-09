@@ -386,8 +386,27 @@ the file kept in lamp.dev's Blob store; the file always goes when the wish can g
 each Release Update sends the file again, which counts the link's version up (see "Releases" below). A wish with a page (a web app, a web
 game, a screen: `Publish.hasPage`) sends that too (`WishLink.playablePage`, the page a release puts on GitHub, which
 stays as it is), and its link's page opens on it, playing, with the ways to make one's own under it: whoever has the
-link tries the wish first and remixes it after (SHARED_WISHES.md). A new page leaves the one before it playable
-(`previousPage` in lib/shared-wishes.js), since a game open on it goes on loading files as it's played (Ann Arbor's map
+link tries the wish first and remixes it after (SHARED_WISHES.md). The box under it (labeled only for screen readers) asks
+in turn the questions the link carries (`asks`: open questions about what's broken, missing or could be better, in the
+app's own terms, which Lamp writes as the Share Link card opens for a link without any, `WishAsks.write`, and the person
+can change under Ask for Ideas), else "Found a bug?", "What's missing?" and "What would make it better?"; its button says
+who reads it ("Send to Alex", the full name where there's room), and it sends what's written, never a question, to the
+wish's maker first (`/api/wish-ideas`, `createIdeasHandler`): the site keeps it with the link, numbered, until the maker lets it go,
+sent only once the sender confirms it in the dialog the box opens, where they can still change it and give an address
+to hear back at. Only the link's
+secret reads them; they go with the link, and nothing of them is logged. Lamp asks for them for every wish with a link
+at launch and every five minutes (`WishIdeas`, `Store.checkIdeas`); the desk shows them on a line of their own
+under its changes ("Ideas", with how many are new, and a line under the app's row while some are new; seen ones are
+counted by the link, since a link made again counts from one), and the person goes to them in `IdeasPanel`, which takes the list's place
+with Back: Build It asks the wish's chat for one, in the sender's words, marked as theirs (`WishIdeas.request`); It's In
+lets it go and has the site write once to whoever asked to hear back, through Resend (`tellItsIn`: `RESEND_API_KEY` and
+`LAMP_IDEAS_FROM` in the site's environment); Dismiss lets it go quietly. The maker sees only that someone wants to hear
+back, never their address. Either way the idea is kept with its outcome for 90 days (`finishIdea`, one step, so the
+email goes once): the sender's browser keeps each idea's number and a token the site answered, asks after them on its
+next visit (`?mine=`), and an idea that's in says so once in a bar over the app, with See What's New; one dismissed
+says nothing. Making one's own with Lamp stays in the
+dialog under the idea sent, and is all it offers when the idea couldn't go. A new page leaves the one before it playable
+(`previousPage` in lib/shared-wishes.js), since a game open on it goes on loading files as it's played (a big city's map
 as the player moves); the one before that goes. A file a game asks for through lamp-game.js's `asset` that doesn't come
 puts a bar with Reload on the page (`loadProblem`) rather than leaving the game on its loading screen: for a 404 only
 when the page itself is gone too, since a game may ask for a file it doesn't have. Keys reach a framed page only while its frame has

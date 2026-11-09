@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { deflateSync, crc32 } from "node:zlib";
-import { createShareHandler, createFileHandler, createPlayHandler, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, slugFor, wishIDFrom, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
+import { createShareHandler, createFileHandler, createIdeasHandler, IDEA_LIMITS, createPlayHandler, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, slugFor, wishIDFrom, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
 import { createPageHandler } from "../lib/shared-wish-page.js";
 import { createCardHandler } from "../lib/wish-card.js";
 
@@ -315,7 +315,7 @@ test("the site and Lamp agree on the limits", () => {
   const swift = readFileSync(new URL("../../Sources/Lamp/WishLink.swift", import.meta.url), "utf8");
   assert.ok(swift.includes(`static let filePart = ${FILE_LIMITS.part.toLocaleString("en").replaceAll(",", "_")}`), "filePart");
   assert.ok(swift.includes(`static let fileTotal = ${FILE_LIMITS.total.toLocaleString("en").replaceAll(",", "_")}`), "fileTotal");
-  for (const [name, value] of Object.entries({ name: LIMITS.name, by: LIMITS.by, line: LIMITS.line, words: LIMITS.words, ideas: LIMITS.ideas, idea: LIMITS.idea,
+  for (const [name, value] of Object.entries({ name: LIMITS.name, by: LIMITS.by, line: LIMITS.line, words: LIMITS.words, ideas: LIMITS.ideas, idea: LIMITS.idea, asks: LIMITS.asks, ask: LIMITS.ask,
     releases: LIMITS.releases, releaseLines: LIMITS.releaseLines, releaseLine: LIMITS.releaseLine })) {
     assert.ok(swift.includes(`static let ${name} = ${value}`), name);
   }
@@ -394,4 +394,88 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   assert.deepEqual([await plays(2), await plays(3)], [200, 200]);
   await again();
   assert.deepEqual([await plays(2), await plays(3), await plays(4)], [404, 200, 200]);
+});
+
+test("a link's questions go to its page, and only as questions within the limits", async () => {
+  const store = memoryStore();
+  const handler = createShareHandler({ store, limited: false });
+  const asks = ["Found a bug?", "Something in town we're missing?"];
+  const { id } = await (await send(handler, "POST", { ...share, asks })).json();
+  const page = await (await createPageHandler({ store, template: async () => "<html><head></head><body></body></html>" })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
+  assert.match(page, /"asks":\["Found a bug\?","Something in town we're missing\?"\]/);
+  assert.equal((await send(handler, "POST", { ...share, asks: ["a", "b", "c", "d"] })).status, 400, "three at most");
+  assert.equal((await send(handler, "POST", { ...share, asks: ["x".repeat(81)] })).status, 400);
+});
+
+test("ideas reach the link's maker, and only the maker reads them", async () => {
+  const store = memoryStore();
+  const { id, secret } = await (await send(createShareHandler({ store, limited: false }), "POST", share)).json();
+  const ideas = createIdeasHandler({ store, limited: false });
+  const post = (body, at = id) => ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${at}`, {
+    method: "POST", headers: { "content-type": "application/json", origin: "https://lamp.dev" }, body: JSON.stringify(body),
+  }));
+  const list = (key = secret) => ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}`, { headers: { authorization: `Bearer ${key}` } }));
+
+  assert.equal((await post({ text: "Add a night mode" })).status, 201);
+  assert.equal((await post({ text: "Bigger waves", email: "not an address" })).status, 400);
+  const sent = await (await post({ text: "Bigger waves", email: "someone@example.com" })).json();
+  assert.equal(sent.n, 2);
+  assert.equal((await post({ text: "  " })).status, 400, "words required");
+  assert.equal((await post({ text: "x".repeat(1001) })).status, 400);
+  assert.equal((await post({ text: "hi" }, "zzzzzzzzzz")).status, 404, "only for a link that's out");
+  assert.equal((await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}`, {
+    method: "POST", headers: { "content-type": "application/json", origin: "https://elsewhere.example" }, body: "{}" }))).status, 403);
+
+  assert.equal((await list("x".repeat(43))).status, 404, "only with the link's secret");
+  const kept = (await (await list()).json()).ideas;
+  assert.deepEqual(kept.map((idea) => [idea.n, idea.text, idea.wantsNews]), [[1, "Add a night mode", undefined], [2, "Bigger waves", true]]);
+  assert.ok(kept.every((idea) => !("email" in idea) && typeof idea.at === "string"), "never the addresses");
+
+  const done = await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
+  assert.equal(done.status, 200);
+  assert.deepEqual((await (await list()).json()).ideas.map((idea) => idea.n), [2]);
+  assert.equal((await post({ text: "Night mode" })).status, 201);
+  assert.deepEqual((await (await list()).json()).ideas.map((idea) => idea.n), [2, 3], "numbers never come back");
+
+  // Built: the site writes to whoever asked, once, through Resend, and the maker never sees where.
+  const mails = [];
+  const fetcher = async (url, init) => { mails.push([url, JSON.parse(init.body)]); return new Response("{}", { status: 200 }); };
+  const built = createIdeasHandler({ store, limited: false, fetcher, env: { RESEND_API_KEY: "re_test", LAMP_IDEAS_FROM: "Lamp <ideas@lamp.dev>" } });
+  const answer = await (await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=2&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }))).json();
+  assert.equal(answer.notified, true);
+  assert.equal(mails.length, 1);
+  assert.equal(mails[0][0], "https://api.resend.com/emails");
+  assert.deepEqual(mails[0][1].to, ["someone@example.com"]);
+  assert.match(mails[0][1].text, /Bigger waves[\s\S]*https:\/\/lamp\.dev\/w\//);
+  assert.deepEqual((await (await list()).json()).ideas.map((idea) => idea.n), [3]);
+  assert.equal(mails.length, 1);
+  // Two at once for one idea: one email.
+  const twice = await (await post({ text: "Fireworks at midnight", email: "someone@example.com" })).json();
+  const asked = () => built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${twice.n}&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
+  const answers = await Promise.all([asked(), asked()]);
+  assert.deepEqual((await Promise.all(answers.map((one) => one.json()))).map((one) => one.notified).sort(), [false, true]);
+  assert.equal(mails.length, 2);
+  assert.equal(mails[1][1].to[0], "someone@example.com");
+  // The sender's browser asks after its own ideas, by number and token, and hears only their outcome.
+  const kept1 = await (await post({ text: "A lighthouse on the point" })).json();
+  const kept2 = await (await post({ text: "Fog in the mornings" })).json();
+  const mine = async (pairs) => (await (await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&mine=${pairs}`))).json()).ideas;
+  assert.deepEqual(await mine(`${kept1.n}.${kept1.token},${kept2.n}.${kept2.token}`), [{ n: kept1.n, status: "open" }, { n: kept2.n, status: "open" }]);
+  assert.deepEqual(await mine(`${kept1.n}.${"x".repeat(16)}`), [], "only with its token");
+  await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${kept1.n}&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
+  await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${kept2.n}`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
+  assert.deepEqual((await mine(`${kept1.n}.${kept1.token},${kept2.n}.${kept2.token}`)).map((one) => one.status), ["in", "dismissed"]);
+  assert.ok(!(await (await list()).json()).ideas.some((one) => one.n === kept1.n || one.n === kept2.n), "the maker sees only those still open");
+  // Dealing with ideas makes room for more: the cap counts those still open.
+  const full = memoryStore();
+  const { id: fullID, secret: fullSecret } = await (await send(createShareHandler({ store: full, limited: false }), "POST", share)).json();
+  const fullIdeas = createIdeasHandler({ store: full, limited: false });
+  for (let i = 0; i < IDEA_LIMITS.kept; i++) await full.addIdea(fullID, { text: `idea ${i}`, at: new Date().toISOString() });
+  const postFull = () => fullIdeas(new Request(`https://lamp.dev/api/wish-ideas?id=${fullID}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "one more" }) }));
+  assert.equal((await postFull()).status, 429);
+  await fullIdeas(new Request(`https://lamp.dev/api/wish-ideas?id=${fullID}&n=1`, { method: "DELETE", headers: { authorization: `Bearer ${fullSecret}` } }));
+  assert.equal((await postFull()).status, 201);
+  const quiet = await (await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=3&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }))).json();
+  assert.equal(quiet.notified, false, "nobody asked");
+  assert.equal(mails.length, 2);
 });
