@@ -103,19 +103,19 @@ when it has no window.
 
 ## Where things are kept
 
-- **The log.** In an app Lamp made, `.lamp/runtime/log.txt` in the folder, where Lamp keeps it too. A plain site's is
-  kept with lamp's other state, and `lamp look` names it.
-- **Everything else** (the browser's files, so a game's saves last from one run to the next; the last few pictures;
-  which server is running) is in `~/.lamp/dev/<folder's name>-<hash>/`, outside the folder, so nothing of lamp's is
-  committed or published with a site. `LAMP_DEV_HOME` moves it.
-- **The port** is 4400, or the next free one; a folder keeps its port from run to run, since a game's saves belong
-  to the address.
+- **Nothing in the app's folder.** lamp reads the folder and never writes in it (`lamp new` aside), so nothing of
+  lamp's is committed or published with it, and a folder Lamp's app is running too keeps its own log.
+- **Everything lamp keeps** (the page's log, which `lamp look` names; the browser's files, so a game's saves last
+  from one run to the next; the last few pictures; which server is running) is in
+  `~/.lamp/dev/<folder's name>-<hash>/`. `LAMP_DEV_HOME` moves it.
+- **The port** is the folder's own, from its path (4400 to 4899), or the next free one, so two apps run side by side.
+  A folder keeps its port from run to run, since a game's saves belong to the address.
 
 ## Who it answers
 
 The server listens on this computer only, unless `--lan` is given. It answers requests made to its own name
 (`localhost`, and with `--lan` the computer's names on the network), nothing sent by a page of another site, and
-never a hidden file or one outside the page. `look`, `use`, `reload` and `stop` need a token only lamp's own commands
+never a hidden file, one outside the page, or one a link in the folder points to elsewhere. `look`, `use`, `reload` and `stop` need a token only lamp's own commands
 can read.
 
 ## What it doesn't do yet

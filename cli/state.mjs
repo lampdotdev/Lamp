@@ -33,15 +33,23 @@ export function layoutOf(given) {
 export function stateOf(folder) {
   const home = process.env.LAMP_DEV_HOME || join(homedir(), ".lamp", "dev");
   const name = basename(folder).replace(/[^\w.-]+/g, "-").slice(0, 40) || "app";
-  return join(home, `${name}-${createHash("sha256").update(folder).digest("hex").slice(0, 8)}`);
+  return join(home, `${name}-${hashOf(folder).slice(0, 8)}`);
 }
 
+const hashOf = (folder) => createHash("sha256").update(folder).digest("hex");
+
 /**
- * The page's log. In an app Lamp made it's where Lamp keeps it (.lamp/runtime/log.txt), so whatever is told to read
- * it there finds it; a plain site's is kept with the rest of lamp's state.
+ * The port a folder's page is first served on: its own, from its path, so two apps run side by side and each keeps
+ * its address (a game's saves belong to the address) from the first run on.
+ */
+export const firstPortOf = (folder) => 4400 + (parseInt(hashOf(folder).slice(0, 6), 16) % 500);
+
+/**
+ * The page's log, with the rest of lamp's state: lamp writes nothing in the app's folder, which may be one Lamp's app
+ * is running too, with a log of its own where an app made by Lamp keeps it.
  */
 export function logFileOf(layout) {
-  return layout.lamps ? join(layout.folder, ".lamp", "runtime", "log.txt") : join(stateOf(layout.folder), "log.txt");
+  return join(stateOf(layout.folder), "log.txt");
 }
 
 export const serverFileOf = (folder) => join(stateOf(folder), "server.json");

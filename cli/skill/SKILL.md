@@ -10,6 +10,11 @@ goes in. Never build, restart or reload anything for a change.
 
 Run the commands from the app's folder, or give the folder after the command (`{{lamp}} look path/to/app`).
 
+This is for an app that is a web page: a web game, a web app, a plain site. An app Lamp made that way has the page
+in `Web/`, beside the Swift of the app around it, which stays as it is. An app whose own screens are Swift (no
+`Web/index.html`) is built and run by Lamp's app, not here: use Lamp's own tools for one if you have them
+(`open_project`, `apply_change`), and say so if you don't.
+
 ## A new game
 
 `{{lamp}} new path/to/folder --name "Its Name"` makes a new web game's folder from Lamp's starting files: the game

@@ -7,13 +7,13 @@
 
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
-import { watch, statSync, mkdirSync, appendFileSync, writeFileSync, readFileSync, readdirSync, createReadStream, rmSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { watch, statSync, mkdirSync, appendFileSync, writeFileSync, readFileSync, readdirSync, createReadStream, rmSync, realpathSync } from "node:fs";
+import { readFile, stat, realpath } from "node:fs/promises";
 import { networkInterfaces, hostname } from "node:os";
 import { join, resolve, extname, sep, relative, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { Problem, layoutOf, stateOf, logFileOf, serverFileOf } from "./state.mjs";
+import { Problem, layoutOf, stateOf, logFileOf, serverFileOf, firstPortOf } from "./state.mjs";
 import { findBrowser, launch, keyNamed } from "./browser.mjs";
 
 const TYPES = {
@@ -69,7 +69,7 @@ const isError = (line) => line.level === "error" || /^(\[[\d.]+ s\] )?Error: /.t
 
 /**
  * Starts serving the folder. `port` asks for one port and no other; without it the folder's last is used again when
- * it's free (a game's saves belong to the address), else the first free from 4400. `lan` lets other devices on the
+ * it's free (a game's saves belong to the address), else the folder's own (`firstPortOf`) or the next free. `lan` lets other devices on the
  * network open the page. `quiet` prints nothing. `idle` (minutes) ends a server nothing has used for that long, which
  * one started by `lamp look` is given.
  */
@@ -158,6 +158,10 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     check(new Set([...known.keys(), ...filesUnder()]));
   }
   const watcher = watch(root, { recursive: true }, (_event, name) => noticed(name));
+  // A folder taken away while it's watched ends the watching, not lamp: a look still checks every file.
+  watcher.on("error", () => {});
+  // The page's files are those in its folder: a link in it to somewhere else isn't followed out.
+  const rootReal = realpathSync(root);
 
   // MARK: What the pages say
 
@@ -457,7 +461,11 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { return null; }
   }
 
-  const server = createServer(async (request, response) => {
+  const server = createServer((request, response) => {
+    // Nothing a request holds ends lamp: what can't be answered is refused.
+    answer(request, response).catch(() => { try { if (!response.headersSent) response.writeHead(400); response.end(); } catch {} });
+  });
+  async function answer(request, response) {
     const url = new URL(request.url, "http://localhost");
     const headers = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
     const send = (status, type, content) => {
@@ -538,7 +546,11 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     // Hidden files (.git, .lamp, .env) are no part of the page.
     if (name.split("/").some((part) => part.startsWith("."))) return send(404, "text/plain", "Not found");
     let info;
-    try { info = await stat(file); } catch {
+    try {
+      info = await stat(file);
+      const real = await realpath(file);
+      if (real !== rootReal && !real.startsWith(rootReal + sep)) return send(404, "text/plain", "Not found");
+    } catch {
       // A file the page asks for and the folder doesn't have is an error the page itself often can't say: a module
       // that imports one never runs, with nothing in the page's log.
       const missing = () => {
@@ -580,12 +592,14 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     const stream = createReadStream(file, { start, end });
     stream.on("error", () => response.destroy());
     stream.pipe(response);
-  });
+  }
 
-  // The port: the one asked for and no other, else the folder's last when it's free, else the first free from 4400.
+  // The port: the one asked for and no other, else the folder's last when it's free, else the folder's own and the
+  // ones after it.
   const portFile = join(state, "port");
   const remembered = Number((() => { try { return readFileSync(portFile, "utf8"); } catch { return ""; } })()) || 0;
-  const tries = asked ? [asked] : [...new Set([remembered || 4400, ...Array.from({ length: 30 }, (_, i) => 4400 + i)])];
+  const first = firstPortOf(folder);
+  const tries = asked ? [asked] : [...new Set([remembered || first, ...Array.from({ length: 30 }, (_, i) => first + i)])];
   let port = 0;
   for (const candidate of tries) {
     try {
@@ -599,7 +613,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       if (error.code !== "EADDRINUSE") throw new Problem(error.message);
     }
   }
-  if (!port) throw new Problem(asked ? `port ${asked} is in use; leave --port out and lamp finds one` : "no port from 4400 to 4429 is free");
+  if (!port) throw new Problem(asked ? `port ${asked} is in use; leave --port out and lamp finds one` : `no port from ${first} to ${first + 29} is free`);
   address = `http://localhost:${port}/`;
   writeFileSync(portFile, String(port));
   writeFileSync(serverFileOf(folder), JSON.stringify({ port, pid: process.pid, token, folder }), { mode: 0o600 });
