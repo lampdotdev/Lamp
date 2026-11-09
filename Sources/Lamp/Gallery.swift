@@ -828,6 +828,14 @@ enum Gallery {
                                                                reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true,
                                                                detected: found("Uses AI (your OpenRouter credit)")),
                app: "Hours", description: "Tracks the hours you work for each client and turns them into an invoice.", ownFolder: true),
+        review("A site from your coding agent's folder", ImportReview(summary: "A practice field for robot programs: a block editor and a 3D mat.",
+                                                                      capabilities: [], concerns: [], risk: .low,
+                                                                      reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true, detected: found()),
+               app: "Practice Field", ownFolder: true, folderChange: OutsideWork.Conversion.inPlaceLine),
+        review("A copy of your coding agent's folder", ImportReview(summary: "A practice field for robot programs: a block editor and a 3D mat.",
+                                                                    capabilities: [], concerns: [], risk: .low,
+                                                                    reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true, detected: found()),
+               app: "Practice Field", ownFolder: true, folderChange: OutsideWork.Conversion.copyLine),
         review("Reading its code", nil, existing: "Drive Anywhere", progress: "Checking its code…"),
         review("Asking the AI", nil, existing: "Drive Anywhere", progress: "Asking Lamp's AI about it…"),
         review("Check didn't finish", nil, existing: "Drive Anywhere", failure: "Lamp couldn't finish checking this in time. Nothing was changed."),
@@ -921,11 +929,11 @@ enum Gallery {
     private static func review(_ name: String, _ review: ImportReview?, app: String = "Drive Anywhere", description: String? = nil,
                                existing: String? = nil, changedHere: Bool = false, android: Bool = false, prepared: Bool = false,
                                mix: Bool = false, trying: Bool = false, progress: String? = nil, failure: String? = nil,
-                               room: CGFloat = .infinity, ownFolder: Bool = false) -> Entry {
+                               room: CGFloat = .infinity, ownFolder: Bool = false, folderChange: String? = nil) -> Entry {
         Entry(group: "Shared app", name: name) {
             AnyView(ImportReviewCard(name: app, description: description,
                                      icon: nil, review: review, existing: existing, changedHere: changedHere, room: room, cancel: {}, open: {}, update: {}, android: android,
-                                     prepared: prepared, mix: mix ? {} : nil, trying: trying, ownFolder: ownFolder, progress: progress, failure: failure)
+                                     prepared: prepared, mix: mix ? {} : nil, trying: trying, ownFolder: ownFolder, folderChange: folderChange, progress: progress, failure: failure)
                 .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)

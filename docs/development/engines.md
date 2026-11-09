@@ -376,8 +376,9 @@ Lamp starts no process for it and sees none of its commands, so its shell is und
 - **Converting in place, or in a copy.** By default the folder is converted where it is: that's what the person's
   source control is for. A Lamp app needs nothing; a plain site gets Lamp's manifest for a site beside its page
   (`.lamp-wish/lamp-app.json` and `APP.md`, the very ones the review read), which makes it a laid-out site
-  (`StaticSite`). It's written once, after Build & Open, never over a file that's there, and the answer names what was
-  added. A copy is made only when the conversion would be disruptive (`OutsideWork.Conversion.disruptive`, the one
+  (`StaticSite`). The conversion is worked out before the review, which says what Build & Open will change in the
+  folder (`Conversion.reviewLine`: the manifest added, or a copy made); it's written once, after Build & Open, never
+  over a file that's there, and the answer names what was added. A copy is made only when the conversion would be disruptive (`OutsideWork.Conversion.disruptive`, the one
   place that decides): it would replace or remove meaningful existing files, substantially reorganize the project,
   replace its build or dependency setup, drop targets or features, break its own way of working, or overwrite
   uncommitted work. Adding a manifest or a few support files and small, reviewable edits stay in place. The copy is the
@@ -405,6 +406,9 @@ Lamp starts no process for it and sees none of its commands, so its shell is und
   APP.md). The capture's checks, the sync, the metadata digest (every file of the folder the mapping doesn't put in the
   app) and the paths answered to the agent all go through it. Its record is kept per folder (`Adopted.files`), so a file
   taken out of the folder is taken out of the workspace where the import put it, and Lamp's own files there stay.
+- **Pictures.** What apply_change and look_at_app show is the app's window once it has drawn: a window just opened is
+  pictured before its page paints, one even color (`GameKit.isBlank`), so it's pictured again for up to 15 seconds,
+  and one still blank is said rather than sent (`outsidePictures`).
 - **One at a time.** Every call on a folder waits for the one before it, whatever connection sent it
   (`outsideSerially`). An apply answers stale when the folder changed while it built. `operation_id` replays an apply
   that ran, for as long as Lamp runs; after Lamp starts again an apply waits for a `look_at_app` first.

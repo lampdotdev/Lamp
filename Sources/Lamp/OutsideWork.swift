@@ -420,6 +420,14 @@ enum OutsideWork {
         var disruptive: [String] = []
         /// Of `added`, those the mapping puts in the app (a laid-out site's APP.md), so they aren't counted as metadata.
         var appFiles: Set<String> = []
+
+        /// What the review says Build & Open will change in the folder, before it's chosen; nil when nothing.
+        var reviewLine: String? {
+            if !disruptive.isEmpty { return Self.copyLine }
+            return added.isEmpty ? nil : Self.inPlaceLine
+        }
+        static let inPlaceLine = "Building adds Lamp's manifest to this folder. Nothing else in it changes."
+        static let copyLine = "Building works in a copy beside this folder, which stays as it is."
     }
 
     static func conversion(for capture: Capture, in repo: URL) -> Conversion {
@@ -527,6 +535,8 @@ enum OutsideWork {
     let repo: String
     /// The folder as captured: what the review reads and the install puts in. Kept until the review ends.
     let snapshot: Sharing.Package
+    /// What taking it on will change in the folder, as worked out before the review, which says so.
+    let conversion: OutsideWork.Conversion
     /// Build & Open was chosen: the review closing after that isn't a no.
     var confirmed = false
     private var done: ((LampProject?, String?) -> Void)?
@@ -534,9 +544,10 @@ enum OutsideWork {
     /// second open_project would make again.
     var isFinished: Bool { done == nil }
 
-    init(repo: String, snapshot: Sharing.Package, done: @escaping (LampProject?, String?) -> Void) {
+    init(repo: String, snapshot: Sharing.Package, conversion: OutsideWork.Conversion, done: @escaping (LampProject?, String?) -> Void) {
         self.repo = repo
         self.snapshot = snapshot
+        self.conversion = conversion
         self.done = done
     }
 
@@ -722,8 +733,10 @@ extension Store {
         // The same review as any app that comes to Lamp: its fixed checks, the AI's check when AI is set up, and the
         // person's Build & Open, of exactly what was captured, which is what's then installed. The agent's call waits
         // for that answer.
+        // What taking it on will change in the folder is worked out now, so the review says it before Build & Open.
+        let planned = OutsideWork.conversion(for: capture, in: repo)
         let made: (LampProject?, String?) = await withCheckedContinuation { answered in
-            importApp(from: repo, outside: OutsideImport(repo: now.real, snapshot: package) { answered.resume(returning: ($0, $1)) })
+            importApp(from: repo, outside: OutsideImport(repo: now.real, snapshot: package, conversion: planned) { answered.resume(returning: ($0, $1)) })
         }
         guard let project = made.0 else {
             try? FileManager.default.removeItem(at: package.folder)
@@ -731,7 +744,10 @@ extension Store {
         }
         // Approved: what it takes for the folder to read as a Lamp app goes in now, in place, or in a copy when that
         // would be disruptive (`OutsideWork.Conversion`). Never before Build & Open, so a no leaves the folder as it was.
-        let conversion = OutsideWork.conversion(for: capture, in: repo)
+        // Worked out again, since the folder may have changed while the review was up; a plan that became disruptive
+        // (a file now in the way) is a copy rather than anything written over, and the answer says which happened.
+        var conversion = OutsideWork.conversion(for: capture, in: repo)
+        if conversion.disruptive.isEmpty, !planned.disruptive.isEmpty { conversion.disruptive = planned.disruptive }
         try? FileManager.default.removeItem(at: package.folder)
         let folder: URL
         do { folder = try await Self.offMain { Result { try OutsideWork.convert(conversion, in: repo) } }.get() } catch {
@@ -868,7 +884,9 @@ extension Store {
                         try? await Task.sleep(for: .milliseconds(300))
                         Runtime.requestScreenshots(of: project)
                     }
-                    answer.pictures = Self.pictureData(Self.agentPictures(await Runtime.screenshots(of: project, since: began), in: project), in: project)
+                    let drawn = await outsidePictures(of: project, since: began)
+                    answer.pictures = drawn.pictures
+                    if let note = drawn.note { answer.text += " " + note }
                 }
             }
             if Privacy.sharesLog, let tail = Runtime.logTail(project) { answer.text += "\n\nWhat it printed:\n\(tail)" }
@@ -896,6 +914,24 @@ extension Store {
         }
     }
 
+    /// The app's pictures once its window has drawn. A window that has just opened is pictured before its page (or
+    /// anything the system draws in it) has painted, which comes out one even color (`GameKit.isBlank`): it's pictured
+    /// again until it shows something, for a while, and a window still blank then is said rather than shown.
+    private func outsidePictures(of project: LampProject, since: Date, waiting: Double = 6) async -> (pictures: [[String: String]], note: String?) {
+        var shots = await Runtime.screenshots(of: project, since: since, waiting: waiting)
+        let deadline = Date().addingTimeInterval(15)
+        while let first = shots.first, GameKit.isBlank(first), Date() < deadline, isRunning(project), !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(700))
+            let asked = Date()
+            Runtime.requestScreenshots(of: project)
+            shots = await Runtime.screenshots(of: project, since: asked, waiting: 3)
+        }
+        if let first = shots.first, GameKit.isBlank(first) {
+            return ([], "Its window stayed one even color, so no picture follows: it may not have drawn yet, or be covered. Call look_at_app in a moment.")
+        }
+        return (Self.pictureData(Self.agentPictures(shots, in: project), in: project), nil)
+    }
+
     // MARK: look_at_app
 
     private func outsideLook(_ path: String) async -> OutsideWork.Answer {
@@ -912,7 +948,9 @@ extension Store {
         Runtime.requestScreenshots(of: project)
         var answer = OutsideWork.Answer(outcome: "open", text: (pending ? "The folder has changes not put in yet; apply_change puts them in. " : "The app runs what the folder holds. ")
                                         + "Pictures of its windows follow, frontmost first.", facts: ["pending": pending])
-        answer.pictures = Self.pictureData(Self.agentPictures(await Runtime.screenshots(of: project, since: asked, waiting: 3), in: project), in: project)
+        let drawn = await outsidePictures(of: project, since: asked, waiting: 3)
+        answer.pictures = drawn.pictures
+        if let note = drawn.note { answer.text += " " + note }
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { answer.text += "\n\nWhat it printed:\n\(tail)" }
         return answer
     }
