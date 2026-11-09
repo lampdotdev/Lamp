@@ -499,6 +499,9 @@ import { DOWNLOAD_URL } from "../../lib/download";
       open.href = (wish.file && wish.shared ? sharedWishLink(wish.shared, ask) : wishLink(withAsk(wish.wish, ask))) ?? "/";
     };
     ideaText.addEventListener("input", pointOpen);
+    // Each time the bar opens the dialog is a draft of its own: an answer to one sent earlier never changes a later one.
+    let draft = 0;
+    let fromBar = "";
     // The bar's send opens the dialog with the idea, to confirm before it goes; nothing is sent until then.
     $<HTMLFormElement>("[data-prompt]").addEventListener("submit", (event) => {
       event.preventDefault();
@@ -506,6 +509,9 @@ import { DOWNLOAD_URL } from "../../lib/download";
       if (!ask) return change.focus();
       // That one was written, never what it says.
       track("idea_own_change", { idea: wish.name, place: "shared" });
+      draft += 1;
+      fromBar = ask;
+      confirmSend.disabled = false;
       title.textContent = maker ? `Send to ${maker}?` : "Send your idea?";
       text.textContent = `${maker || "Whoever made it"} sees every idea, and can add yours to ${wish.name}.`;
       ideaText.value = ask;
@@ -522,6 +528,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
       const idea = ideaText.value.trim();
       const email = $<HTMLInputElement>("[data-notify-email]").value.trim();
       if (!idea || confirmSend.disabled) return ideaText.focus();
+      const mine = draft, written = fromBar;
       confirmSend.disabled = true;
       let sent = false;
       try {
@@ -530,18 +537,23 @@ import { DOWNLOAD_URL } from "../../lib/download";
           signal: AbortSignal.timeout(8000),
         });
         sent = response.status === 201;
-        if (!sent && response.status === 400 && email) { notifyNote.textContent = "Check the email address."; confirmSend.disabled = false; return; }
+        if (!sent && response.status === 400 && email && mine === draft) { notifyNote.textContent = "Check the email address."; confirmSend.disabled = false; return; }
       } catch {}
+      if (sent) {
+        track("idea_sent_to_maker", { idea: wish.name, place: "shared" });
+        if (email) track("idea_notify", { idea: wish.name, place: "shared" });
+        // The bar is emptied only while it still holds what was sent.
+        if (change.value.trim() === written) change.value = "";
+      }
+      // The dialog has moved on to another idea since: it's left as it is.
+      if (mine !== draft) return;
       confirmSend.disabled = false;
       if (!sent) { notifyNote.textContent = "That didn't go. Try again in a moment."; return; }
-      track("idea_sent_to_maker", { idea: wish.name, place: "shared" });
-      if (email) track("idea_notify", { idea: wish.name, place: "shared" });
       title.textContent = maker ? `Sent to ${maker}` : "Sent";
       sentText.textContent = idea;
       sentText.hidden = false;
       confirm.hidden = true;
       notifyNote.textContent = email ? "We'll email you once when it's in." : "";
-      change.value = "";
     });
     $<HTMLButtonElement>("[data-remix-close]").addEventListener("click", () => dialog.close());
     dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
