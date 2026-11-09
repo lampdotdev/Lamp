@@ -752,7 +752,8 @@ the start of a service's name (no minus sign, no period before a digit), on a TV
 read among them, gets no service: its lamp.js names none, and `start({ host: 'game' })` there is refused by Lamp, which
 answers the page's asks.
 `Tests/LGPhones/relay-test.js` runs the service on real sockets under each Node an LG TV has, with LG's
-`webos-service` stood in for.
+`webos-service` stood in for. `.github/workflows/lg-phone-tests.yml` runs it on Node 8.12, 12, 16 and 20 when the
+service, its tests or the ws update script changes, and on demand. It uses the bundled ws without installing packages.
 On the Xbox a game that chose its own runs its phones in Lamp's WebView2 host (`lamp_web_host.cpp`, with the protocol in
 `Resources/WebHost/lamp_controllers.h`, plain C++ that keeps to LampRelayKit's wire message for message): the page is
 in the package as `Phone/`, beside `Web/` (`GamePhones.xboxPage`, `WebHost.payload`), and the page asks the host for its
