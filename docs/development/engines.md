@@ -381,9 +381,10 @@ Lamp starts no process for it and sees none of its commands, so its shell is und
   place that decides): it would replace or remove meaningful existing files, substantially reorganize the project,
   replace its build or dependency setup, drop targets or features, break its own way of working, or overwrite
   uncommitted work. Adding a manifest or a few support files and small, reviewable edits stay in place. The copy is the
-  whole folder, its git with it, beside the original (`<name>-lamp`); the answer gives its absolute path, why it was
-  made, that the original is unchanged, and the steps the agent passes on to the person (`OutsideWork.switchSteps`: the desktop
-  apps first, which are the main clients, then `--add-dir <path>` for the command line), and later calls on the original are answered from the copy (`Adopted.copiedFrom`).
+  whole folder, its git with it, beside the folder given (`<name>-lamp`), which may itself be a worktree checkout: a
+  worktree's `.git` file is left out of the copy, which would otherwise claim the same checkout, and the answer says so; the answer gives its absolute path, why it was
+  made, that the original is unchanged, and the steps the agent passes on to the person (`OutsideWork.switchSteps`: Claude Code's and
+  ChatGPT's desktop apps first, which are the main clients, then one line for the command line's `--add-dir`), and later calls on the original are answered from the copy (`Adopted.copiedFrom`).
 - **The folder and the workspace.** The folder stays the source and its git is the person's: Lamp writes in it only the
   conversion above.
   What builds and runs is the project in Lamp's apps folder the review made, so LiveReload's live copy, libraries and

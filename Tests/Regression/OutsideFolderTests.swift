@@ -158,6 +158,47 @@ final class OutsideFolderTests: XCTestCase {
         XCTAssertEqual(try OutsideWork.convert(conversion, in: site).path, root.appendingPathComponent("practice-lamp-2").path, "never over an earlier copy")
     }
 
+    /// The folder given may be a git worktree checkout: it's acted on where it is, and a copy of it leaves the worktree's
+    /// .git file out, so the copy never claims the same checkout. The notice names the copy, why, and the folder unchanged.
+    func testAWorktreeIsCopiedWithoutClaimingItsCheckout() throws {
+        let fm = FileManager.default
+        func git(_ args: String..., in folder: URL) throws {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = ["-C", folder.path] + args
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0, args.joined(separator: " "))
+        }
+        // A worktree with no commit (an orphan branch), so the test makes none.
+        let main = root.appendingPathComponent("main")
+        try fm.createDirectory(at: main, withIntermediateDirectories: true)
+        try git("init", "-q", in: main)
+        let worktree = root.appendingPathComponent("practice-wt")
+        try git("worktree", "add", "-q", "--orphan", "-b", "site", worktree.path, in: main)
+        try write("<!doctype html><title>Practice</title>", to: "index.html", in: worktree)
+        try write("notes of mine\n", to: StaticSite.folder, in: worktree)
+        XCTAssertTrue(OutsideWork.isLinkedCheckout(worktree))
+
+        let before = OutsideWork.hashes(of: worktree)
+        XCTAssertNil(before[".git"], "git's own file is never the app's")
+        let capture = try OutsideWork.capture(worktree)
+        defer { try? fm.removeItem(at: capture.package.folder) }
+        let conversion = OutsideWork.conversion(for: capture, in: worktree)
+        let copy = try OutsideWork.convert(conversion, in: worktree)
+        XCTAssertEqual(copy.path, root.appendingPathComponent("practice-wt-lamp").path)
+        XCTAssertFalse(fm.fileExists(atPath: copy.appendingPathComponent(".git").path))
+        XCTAssertEqual(OutsideWork.hashes(of: worktree), before)
+        XCTAssertTrue(fm.fileExists(atPath: worktree.appendingPathComponent(".git").path))
+
+        let notice = OutsideWork.copyNotice(copy: copy.path, original: worktree.path, because: conversion.disruptive, withoutGit: true)
+        XCTAssertTrue(notice.contains("at \(copy.path), because "), notice)
+        XCTAssertTrue(notice.contains("\(worktree.path), is unchanged"), notice)
+        XCTAssertTrue(notice.contains("Add folder"), notice)
+    }
+
     /// A folder the importer can't read says what it lacks.
     func testAFolderLampCantReadSaysWhatsMissing() throws {
         let built = root.appendingPathComponent("built")

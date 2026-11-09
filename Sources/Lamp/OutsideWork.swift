@@ -159,19 +159,23 @@ enum OutsideWork {
         var copiedBecause: [String]? = nil
     }
 
-    /// What the agent passes on when Lamp works in a copy: where it is, why, that the original is unchanged, and how the
-    /// person lets their agent edit it (`switchSteps`).
-    static func copyNotice(copy: String, original: String, because: [String]) -> String {
-        "Lamp works on this app in a copy, at \(copy), because \(because.joined(separator: "; ")). The original at \(original) is unchanged.\n"
-            + "Tell the person, in these words: \(switchSteps(copy))\n"
-            + "From now on, edit the copy and call every tool with path \(copy)."
+    /// What the agent passes on when Lamp works in a copy: its exact path, why it was made, that the folder the agent
+    /// gave is unchanged, and how the person lets their agent edit the copy (`switchSteps`).
+    static func copyNotice(copy: String, original: String, because: [String], withoutGit: Bool = false) -> String {
+        "Lamp works on this app in a copy, at \(copy), because \(because.joined(separator: "; ")). The folder you gave, \(original), is unchanged."
+            + (withoutGit ? " That folder is a git worktree, so the copy has no git of its own: commit from it with `git init`, or bring changes back by hand." : "")
+            + "\nTell the person, in these words:\n\(switchSteps(copy))\n"
+            + "From now on, edit only the copy and call every tool with path \(copy)."
     }
 
-    /// How the person points their coding app at the copy. The desktop apps (ChatGPT, Claude) are the main clients, the
-    /// command line the second, so the desktop steps lead; this is the one place the wording lives.
+    /// How the person points their coding app at the copy. The desktop apps are the main clients, so their steps lead and
+    /// the command line gets one short line; this is the one place the wording lives.
     static func switchSteps(_ copy: String) -> String {
-        "To keep working on it, open the folder \(copy) in your coding app: in the Claude or ChatGPT desktop app, start a new session in that folder. "
-            + "From the command line, start Claude Code or Codex again with `--add-dir \(copy)`."
+        """
+        - Claude Code desktop: to keep this conversation, click + beside the prompt → Add folder, pick \(copy), and work only there. To make the copy the project, choose New → Local → Open folder… and pick \(copy).
+        - ChatGPT desktop (Work/Codex, local project): Edit project → Add folder and pick \(copy). To make it the main folder, point at it → Make primary, then start a new chat.
+        - Command line: start the agent again with `--add-dir \(copy)`.
+        """
     }
 
     static var registryURL: URL { Edition.supportFolder.appendingPathComponent("Outside/adopted.json") }
@@ -251,6 +255,8 @@ enum OutsideWork {
             let values = try? item.resourceValues(forKeys: Set(keys))
             if values?.isSymbolicLink == true { items.skipDescendants(); continue }
             if values?.isDirectory == true, skipped.contains(item.lastPathComponent) { items.skipDescendants(); continue }
+            // A worktree's .git is a file: git's, never the app's.
+            if item.lastPathComponent == ".git" { continue }
             guard values?.isRegularFile == true, item.pathExtension != "lampapp", let data = try? Data(contentsOf: item) else { continue }
             found[Sharing.relativePath(of: item, in: folder)] = sha(data)
         }
@@ -436,6 +442,12 @@ enum OutsideWork {
         return conversion
     }
 
+    /// A git worktree or submodule checkout: its .git is a file, not the repository itself.
+    static func isLinkedCheckout(_ folder: URL) -> Bool {
+        let values = try? folder.appendingPathComponent(".git").resourceValues(forKeys: [.isRegularFileKey])
+        return values?.isRegularFile == true
+    }
+
     /// Carries a conversion out: in the folder, never over a file that's there, or, when it's disruptive, in a copy of
     /// the whole folder (its git with it) beside the original, which is left as it was. Answers the folder to work in.
     static func convert(_ conversion: Conversion, in repo: URL) throws -> URL {
@@ -448,6 +460,9 @@ enum OutsideWork {
             while fm.fileExists(atPath: parent.appendingPathComponent(name).path) { name = repo.lastPathComponent + "-lamp-\(n)"; n += 1 }
             folder = parent.appendingPathComponent(name)
             try fm.copyItem(at: repo, to: folder)
+            // A worktree's (or submodule's) .git is a file naming the main repository's record of this checkout: the copy
+            // would claim that same checkout, so it goes without it.
+            if isLinkedCheckout(repo) { try fm.removeItem(at: folder.appendingPathComponent(".git")) }
             // In the copy only, a file in the way of what's added is kept beside it under another name.
             for path in conversion.added.keys.sorted() {
                 var walked = ""
@@ -747,7 +762,8 @@ extension Store {
         let added = conversion.added.keys.sorted()
         if !conversion.disruptive.isEmpty {
             // The agent must pass this on: its own session can't edit outside the folder it was started in.
-            lead = OutsideWork.copyNotice(copy: worked.real, original: now.real, because: conversion.disruptive)
+            lead = OutsideWork.copyNotice(copy: worked.real, original: now.real, because: conversion.disruptive,
+                                          withoutGit: OutsideWork.isLinkedCheckout(repo))
                 + "\nLamp took the copy on as “\(project.name)”" + (added.isEmpty ? "." : ", with \(added.joined(separator: " and ")) added to it.")
             answer.facts["copied_to"] = worked.real
             answer.facts["copied_because"] = conversion.disruptive

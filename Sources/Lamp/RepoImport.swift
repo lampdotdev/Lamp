@@ -210,6 +210,8 @@ enum RepoImport {
             let values = try? item.resourceValues(forKeys: keys)
             if values?.isSymbolicLink == true { items.skipDescendants(); continue }
             if values?.isDirectory == true, skipped.contains(item.lastPathComponent) { items.skipDescendants(); continue }
+            // A git worktree's or submodule's .git is a file naming where its repository is: git's, never the app's.
+            if item.lastPathComponent == ".git", skipped.contains(".git") { continue }
             guard values?.isRegularFile == true, item.pathExtension != "lampapp" else { continue }
             files += 1
             bytes += values?.fileSize ?? 0
