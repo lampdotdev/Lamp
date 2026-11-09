@@ -4511,14 +4511,21 @@ final class Store: ObservableObject {
                 return
             }
             if await Versions.hasUnsavedChanges(project) {
-                guard await Versions.save(project, message: pending.prepared != nil ? "Updated" : "Updated from a shared file") else {
+                // Part of someone's suggested change is one version named for it, which Undo takes back whole.
+                let message = pending.prepared?.suggestion.map { "Brought in part of @\($0.login)'s changes" }
+                    ?? (pending.prepared != nil ? "Updated" : "Updated from a shared file")
+                guard await Versions.save(project, message: message) else {
                     let iconBack = await putBack()
                     await followRestored(project)
                     setApps(project, appsBefore)
                     log(project, .error, Self.updateFailed + (iconBack ? "" : Self.updateChangedIcon))
                     return
                 }
-                Versions.rememberUpdate(project)
+                if let suggestion = pending.prepared?.suggestion {
+                    Versions.rememberPartBroughtIn(project, from: suggestion.login)
+                } else {
+                    Versions.rememberUpdate(project)
+                }
                 versionsRevision += 1
             } else if !newArtwork {
                 log(project, .status, "You already have this version.")
@@ -4526,7 +4533,7 @@ final class Store: ObservableObject {
             }
             // In place: the copy it was prepared in has done its work.
             if let job = pending.prepared {
-                updateChecks[AppUpdates.key(job.url)]?.tip = job.target
+                if job.suggestion == nil { updateChecks[AppUpdates.key(job.url)]?.tip = job.target }
                 if let copy = pending.copy { await discardPreparedCopy(copy, movingQueuedTo: project) }
             }
             updateApplied(project)

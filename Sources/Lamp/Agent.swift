@@ -383,12 +383,16 @@ enum Agent {
     the request asks for from it. Your last message says what you took from whose copy.
     """
 
-    /// When to look at changes someone suggested; what the tool fetches, and that bringing one in is the person's review,
-    /// is its own to say.
+    /// When to look at changes someone suggested, and how choosing what to bring in goes in the chat; what the tool
+    /// fetches, and that bringing one in is the person's review, is its own to say.
     private static let suggestedRules = """
 
     - When the person asks about changes someone sent or suggested for this app, or to bring them in, use \
-    `suggested_changes`; if it isn't clear which request they mean, ask.
+    `suggested_changes`; if it isn't clear which request they mean, ask. Before anything comes in, read it and show \
+    what it does as a short list, one line per thing the person would notice, then ask what they want of it, unless \
+    they already said. Once they answer, say back in a line or two what you understood, with anything that has to come \
+    along for it to work, and ask again only when the answer would change the result. All of it goes in with \
+    `bring_in`; part of it with `take`.
     """
 
     private static let connectorRules = """
