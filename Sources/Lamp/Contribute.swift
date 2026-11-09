@@ -96,6 +96,37 @@ enum Contribute {
         return candidate
     }
 
+    /// The version that goes: the wish's saved version, with only Lamp's own files (`GitHubRepo.isOwned`, an app's in its
+    /// folder) allowed to differ from it. A rebuild for a newer Lamp writes those afresh without saving a version
+    /// (`Store.updateForThisForge`), and they never go (`Upstream.isLeftOut`), so they mustn't hold the changes back.
+    /// Nil while anything else is unsaved, since then the files are no version at all.
+    nonisolated static func sendableVersion(of project: LampProject) -> String? {
+        let status = Versions.gitBlocking("git status --porcelain -z --untracked-files=all -- . ':!\(Attachments.folder)'", cwd: project.dir)
+        guard status.ok else { return nil }
+        let entries = status.output.split(separator: "\0").map(String.init)
+        if !entries.isEmpty {
+            // Each app with the folder its files are in, from the wish's: none for an app at the top, its own for one
+            // in a folder, which the root app is too when every app of the wish is in one (`Sharing.layout`).
+            let (root, parts) = Sharing.layout(of: project)
+            let top = project.dir.standardizedFileURL.path
+            let apps: [(folder: String, app: LampProject)] = ([root] + parts).compactMap { app in
+                let dir = app.dir.standardizedFileURL.path
+                if dir == top { return ("", app) }
+                return dir.hasPrefix(top + "/") ? (String(dir.dropFirst(top.count + 1)) + "/", app) : nil
+            }
+            for entry in entries {
+                // A rename or copy names two paths and is never one of Lamp's own rewrites.
+                guard entry.count > 3, !entry.prefix(2).contains(where: { $0 == "R" || $0 == "C" }) else { return nil }
+                let path = String(entry.dropFirst(3))
+                // A path in an app's folder is that app's; any other is the app at the top's, when there is one.
+                let owner = apps.first { !$0.folder.isEmpty && path.hasPrefix($0.folder) } ?? apps.first { $0.folder.isEmpty }
+                guard let owner, GitHubRepo.isOwned(String(path.dropFirst(owner.folder.count)), in: owner.app) else { return nil }
+            }
+        }
+        let head = Versions.gitBlocking("git rev-parse HEAD", cwd: project.dir)
+        return head.ok ? Credits.validCommit(head.output.trimmed) : nil
+    }
+
     /// Works out what would go: the wish's change since it last took anything in, replayed on the repository's latest
     /// commit (fetched with the person's sign-in, so a private repository they can read works too), committed in their
     /// name (`GitHubRepo.author`). Throws, saying why, when nothing would go or it can't go as it is.
@@ -112,7 +143,7 @@ enum Contribute {
                         access: [String], login: String) async throws -> Prepared {
         let fm = FileManager.default
         // What's sent is a version of the wish: files changed since its last version are no version at all.
-        guard let version = await Task.detached(operation: { Versions.savedVersion(of: project.dir) }).value else {
+        guard let version = await Task.detached(operation: { sendableVersion(of: project) }).value else {
             throw Failure(message: "\(project.name) has changes that aren't saved yet. Try again once Lamp has saved them.")
         }
         let folder = Sharing.workFolder.appendingPathComponent("lamp-contribute-\(UUID().uuidString)")
@@ -127,7 +158,7 @@ enum Contribute {
         guard Subprocess.runBlocking("/usr/bin/ditto", ["-x", "-k", file.path, exported.path], timeout: 120).ok else {
             throw Failure(message: "Couldn't read \(project.name)'s files.")
         }
-        guard await Task.detached(operation: { Versions.savedVersion(of: project.dir) }).value == version else {
+        guard await Task.detached(operation: { sendableVersion(of: project) }).value == version else {
             throw Failure(message: "\(project.name) changed while Lamp was looking. Try again.")
         }
         let clone = folder.appendingPathComponent("clone")
@@ -213,7 +244,7 @@ enum Contribute {
     static func send(_ prepared: Prepared, of project: LampProject, to source: RepoImport.Source, fork: String?,
                      gh: String, login: String, step: @escaping @Sendable (String) -> Void) async throws -> Request {
         let upstream = "\(source.owner)/\(source.name)"
-        guard await Task.detached(operation: { Versions.savedVersion(of: project.dir) }).value == prepared.version else {
+        guard await Task.detached(operation: { sendableVersion(of: project) }).value == prepared.version else {
             throw Failure(message: "\(project.name) changed since Lamp looked. Close this and send the changes again.")
         }
         var fork = fork
@@ -267,7 +298,7 @@ enum Contribute {
 
     /// The same from any remote, with `access` the options git fetches it with: what tests give a repository on disk.
     static func recover(_ project: LampProject, remote: String, git: String, access: [String]) async -> Bool {
-        guard let version = await Task.detached(operation: { Versions.savedVersion(of: project.dir) }).value else { return false }
+        guard let version = await Task.detached(operation: { sendableVersion(of: project) }).value else { return false }
         guard let named = await namedCommit(of: project, at: version) else { return false }
         if await base(of: project, at: version) != nil { return true }
         let fm = FileManager.default

@@ -177,6 +177,101 @@ final class ContributeTests: XCTestCase {
         }
     }
 
+    /// Lamp rewrote its own files (a rebuild for a newer Lamp, which saves no version) after the change was saved: the
+    /// change still goes, without them, while a change of the remix's own that isn't saved still holds it back.
+    func testLampsOwnFilesWrittenAfreshDoNotHoldTheChangeBack() async throws {
+        let repo = try repository(["Sources/App.swift": "a\nb\nc\n"])
+        let (project, _) = try await remix(of: ["Sources/App.swift": "a\nb\nc\n"], commit: try git("git rev-parse HEAD", in: repo))
+        try await change(project, ["Sources/App.swift": "a\nB\nc\n"], "Mine")
+        try Template.writeOwnedFiles(for: project)
+        XCTAssertFalse(try git("git status --porcelain", in: project.dir).isEmpty, "Lamp's files differ from the saved version")
+
+        let head = await Versions.head(project)
+        let prepared = try await prepare(project, from: repo)
+        XCTAssertEqual(prepared.version, head)
+        XCTAssertEqual(prepared.changed, ["Sources/App.swift", "drive.lampapp"])
+
+        try write(["Sources/App.swift": "a\nB\nC\n"], in: project.dir)
+        do {
+            _ = try await prepare(project, from: repo)
+            XCTFail("an unsaved change should hold it back")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("aren't saved yet"), error.localizedDescription)
+        }
+    }
+
+    /// The same for a part: its own files, in its folder, may differ from the saved version; its code may not, nor may
+    /// a file at the top with the name of one of a part's.
+    func testAPartsOwnFilesWrittenAfreshDoNotHoldTheChangeBack() async throws {
+        let (project, _) = try await remix(of: ["Sources/App.swift": "a\n"], commit: String(repeating: "a", count: 40))
+        let phone = LampProject(id: Parts.id(wish: project.id, folder: "iPhone"), name: project.name, exe: project.exe,
+                                dir: project.dir.appendingPathComponent("iPhone"), platform: .iphone, partOf: project.id)
+        try FileManager.default.createDirectory(at: phone.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+        try Template.saveMeta(phone)
+        try Template.fill(phone)
+        try Template.writeOwnedFiles(for: phone)
+        try await change(project, ["iPhone/Sources/Pad.swift": "pad\n"], "Phone")
+        let head = await Versions.head(project)
+        XCTAssertEqual(Sharing.layout(of: project).parts.map(\.dir.lastPathComponent), ["iPhone"])
+
+        try write(["iPhone/Sources/LampSupport.swift": "// runtime 9\n", "iPhone/build.sh": "# newer\n"], in: project.dir)
+        XCTAssertNil(Versions.savedVersion(of: project.dir))
+        XCTAssertEqual(Contribute.sendableVersion(of: project), head)
+
+        try write(["iPhone/Sources/Pad.swift": "pads\n"], in: project.dir)
+        XCTAssertNil(Contribute.sendableVersion(of: project))
+        try write(["iPhone/Sources/Pad.swift": "pad\n", "Pad/Sources/LampSupport.swift": "// not a part's\n"], in: project.dir)
+        XCTAssertNil(Contribute.sendableVersion(of: project))
+    }
+
+    /// A wish whose apps are all in folders of their own: the app the wish is shared as (`Sharing.layout`'s root) is in
+    /// one too, and its own files there may differ as a part's do. Its code may not, nor a file outside every app's
+    /// folder, nor a renamed file; and the version is the one HEAD is at.
+    func testTheFirstAppsOwnFilesInItsFolderDoNotHoldTheChangeBack() async throws {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser.appendingPathComponent(".lamp-contribute-test-\(UUID().uuidString)")
+        folders.append(home)
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        let made = try Template.scaffold(name: "Remote", platform: .mac, in: home)
+        for (kind, folder) in [(Platform.tv, "TV"), (.universal, "iPhone")] {
+            let part = LampProject(id: Parts.id(wish: made.id, folder: folder), name: made.name, exe: made.exe,
+                                   dir: made.dir.appendingPathComponent(folder), instance: Parts.instance(wish: made, folder: folder),
+                                   platform: kind, partOf: made.id)
+            try fm.createDirectory(at: part.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+            try Template.saveMeta(part)
+            try Template.fill(part)
+            try write(["Sources/LampSupport.swift": "// runtime 1\n", "build.sh": "# \(folder)\n"], in: part.dir)
+        }
+        let kept = Parts.folders.union([".lamp", ".git", ".gitignore", "icon.json", AppDescription.file, Attachments.folder])
+        for name in try fm.contentsOfDirectory(atPath: made.dir.path) where !kept.contains(name) {
+            try fm.removeItem(at: made.dir.appendingPathComponent(name))
+        }
+        let wish = try XCTUnwrap(Store.readWish(at: made.dir))
+        XCTAssertFalse(wish.holdsApp)
+        let (root, parts) = Sharing.layout(of: wish)
+        let first = root.dir.lastPathComponent, other = try XCTUnwrap(parts.first).dir.lastPathComponent
+        XCTAssertNotEqual(root.dir.standardizedFileURL, wish.dir.standardizedFileURL, "the app it's shared as is in a folder")
+        let head = try git("git init -q -b main && git add -A && git -c user.name=Lamp -c user.email=lamp@localhost commit -qm first && git rev-parse HEAD", in: wish.dir)
+
+        try write(["\(first)/Sources/LampSupport.swift": "// runtime 2\n", "\(first)/build.sh": "# newer\n",
+                   "\(other)/Sources/LampSupport.swift": "// runtime 2\n"], in: wish.dir)
+        XCTAssertNil(Versions.savedVersion(of: wish.dir))
+        XCTAssertEqual(Contribute.sendableVersion(of: wish), head)
+
+        for unsaved in ["\(first)/Sources/Pad.swift", "Sources/LampSupport.swift", "Elsewhere/Sources/LampSupport.swift"] {
+            try write([unsaved: "// unsaved\n"], in: wish.dir)
+            XCTAssertNil(Contribute.sendableVersion(of: wish), unsaved)
+            try write([unsaved: nil], in: wish.dir)
+        }
+        XCTAssertEqual(Contribute.sendableVersion(of: wish), head)
+        _ = try git("git mv \(first)/build.sh \(first)/build2.sh", in: wish.dir)
+        XCTAssertNil(Contribute.sendableVersion(of: wish), "a rename")
+        _ = try git("git mv \(first)/build2.sh \(first)/build.sh", in: wish.dir)
+        let moved = try git("git -c user.name=Lamp -c user.email=lamp@localhost commit -qm later --allow-empty && git rev-parse HEAD", in: wish.dir)
+        XCTAssertEqual(Contribute.sendableVersion(of: wish), moved, "the version HEAD is at")
+        XCTAssertNotEqual(moved, head)
+    }
+
     /// What `prepare` stopped at, when it was blocked.
     private func blocked(_ project: LampProject, from repo: URL) async -> Contribute.Blocked? {
         do {
