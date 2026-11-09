@@ -47,7 +47,8 @@ enum StaticSite {
         let web = copy.appendingPathComponent(TVTemplate.webFolder)
         try RepoImport.copyTree(tree, to: web, skipped: [".git"])
         let lamps = web.appendingPathComponent(folder)
-        if fm.fileExists(atPath: lamps.path) {
+        // Lamp's folder only when it holds the manifest (`holdsWish`): anything else by that name is the site's own.
+        if fm.fileExists(atPath: lamps.appendingPathComponent("lamp-app.json").path) {
             for item in try fm.contentsOfDirectory(at: lamps, includingPropertiesForKeys: nil) {
                 try fm.moveItem(at: item, to: copy.appendingPathComponent(item.lastPathComponent))
             }

@@ -6,7 +6,8 @@ A capability given to one engine must be given to all of them that can take it, 
 coding agent driving Lamp over MCP isn't one of them ("The person's own agent through MCP" in the engines guide):
 Lamp starts no process for it and sees none of its commands, so its shell and its edits to its own folder are under
 its own approvals. What Lamp does for it keeps Lamp's checks: a folder is taken on only through the import review,
-Lamp's builds of it run in the sandbox as any app's, it never writes in that folder, and sharing goes through Share…'s
+Lamp's builds of it run in the sandbox as any app's, it writes in that folder only what it takes to read it as an
+app, after the review's Build & Open and never over a file that's there (`OutsideWork.Conversion`), and sharing goes through Share…'s
 checks and the Share Link card.
 
 

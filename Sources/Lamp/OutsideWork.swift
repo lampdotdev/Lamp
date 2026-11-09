@@ -4,7 +4,9 @@ import Foundation
 
 /// A Lamp project worked on by the person's own coding agent (Claude Code, Codex) in a folder of theirs, through Lamp's
 /// MCP server (`OutsideServer`). The folder is a normal repository laid out as Lamp lays a wish out on GitHub
-/// (`RepoImport.open`): it stays the source of truth for the code and its git is the person's. Lamp never writes in it.
+/// (`RepoImport.open`): it stays the source of truth for the code and its git is the person's. Lamp writes in it only
+/// what it takes to read it as a Lamp app, once, after the person's Build & Open (`Conversion`: a site's manifest), and
+/// makes a copy instead when that would be disruptive.
 ///
 /// What Lamp builds and runs is a project of its own in its apps folder, the workspace: made once, when the folder is
 /// opened, and kept from then on, with its live copy, the libraries a change goes in as, the baselines those are
@@ -61,14 +63,16 @@ enum OutsideWork {
     pictures of its windows. look_at_app shows the open app as it is and never applies anything; you can't click or \
     type in the app, so ask the person to try what needs a hand. export_app makes the app's shared file and \
     publish_link opens Lamp's Share Link card for the person; both share only what's built from the folder as it is. \
-    Lamp never writes in your folder; its git is yours.
+    Lamp writes in your folder only what it needs to read it as an app (a site gets Lamp's manifest), once, and says \
+    so; its git is yours. When that would be disruptive, Lamp works in a copy instead and the answer says where: pass \
+    on to the person exactly what it says to do.
     """
 
     static var tools: [[String: Any]] {
         let path: [String: Any] = ["type": "string", "description": "The folder's absolute path."]
         return [
             ["name": "open_project",
-             "description": "Has Lamp take on the app in a folder, build it and open it on this Mac. Lamp reads the folder as it reads anything brought to it: an app in Lamp's format (lamp-app.json and its code at the top), or a plain site (index.html at the top, no build step), which it runs as a web app. The folder stays where edits are made; Lamp never writes in it. Lamp shows the person its review of the code first, and builds it only if they choose Build & Open. A folder Lamp can't read as an app is answered not_importable, with what it lacks. Call again if Lamp says the folder moved or is missing.",
+             "description": "Has Lamp take on the app in a folder, build it and open it on this Mac. Lamp reads the folder as it reads anything brought to it: an app in Lamp's format (lamp-app.json and its code at the top), or a plain site (index.html at the top, no build step), which it runs as a web app. The folder stays where edits are made: once the person approves, Lamp adds only what it needs to read it (a site gets Lamp's manifest), or, when that would replace or reorganize the folder's own files, works in a copy and answers its path and what the person must do to work there. Lamp shows the person its review of the code first, and builds it only if they choose Build & Open. A folder Lamp can't read as an app is answered not_importable, with what it lacks. Call again if Lamp says the folder moved or is missing.",
              "inputSchema": ["type": "object", "properties": ["path": path], "required": ["path"]]],
             ["name": "apply_change",
              "description": "Builds what the folder holds now and puts it into the open app. Answers the outcome: live (went into the running app, window as it was), reopened (closed and opened again for it), opened (it wasn't open), held (waits for the person's Reload), unchanged (nothing new), not_built (compiler errors follow), crashed (the app quit; its log follows), stale (the folder changed while Lamp built it: apply again), cancelled. Retrying with the same operation_id gets the first answer.",
@@ -148,6 +152,26 @@ enum OutsideWork {
         /// from, so a file taken out of the folder is taken out where the import had put it. Nil in records from before
         /// it was kept.
         var files: [String: String]?
+        /// For a copy Lamp made to work in (`Conversion.disruptive`): the original folder's real path, whose own calls are
+        /// answered from this copy rather than taking the original on a second time.
+        var copiedFrom: String? = nil
+        /// Why it was copied, said again whenever the original is named.
+        var copiedBecause: [String]? = nil
+    }
+
+    /// What the agent passes on when Lamp works in a copy: where it is, why, that the original is unchanged, and how the
+    /// person lets their agent edit it (`switchSteps`).
+    static func copyNotice(copy: String, original: String, because: [String]) -> String {
+        "Lamp works on this app in a copy, at \(copy), because \(because.joined(separator: "; ")). The original at \(original) is unchanged.\n"
+            + "Tell the person, in these words: \(switchSteps(copy))\n"
+            + "From now on, edit the copy and call every tool with path \(copy)."
+    }
+
+    /// How the person points their coding app at the copy. The desktop apps (ChatGPT, Claude) are the main clients, the
+    /// command line the second, so the desktop steps lead; this is the one place the wording lives.
+    static func switchSteps(_ copy: String) -> String {
+        "To keep working on it, open the folder \(copy) in your coding app: in the Claude or ChatGPT desktop app, start a new session in that folder. "
+            + "From the command line, start Claude Code or Codex again with `--add-dir \(copy)`."
     }
 
     static var registryURL: URL { Edition.supportFolder.appendingPathComponent("Outside/adopted.json") }
@@ -372,6 +396,81 @@ enum OutsideWork {
         return have
     }
 
+    // MARK: Converting a folder
+
+    /// What it takes for a folder to read as a Lamp app in place, and whether that can be done there. A Lamp app needs
+    /// nothing; a plain site needs Lamp's manifest beside its page, as Lamp lays a site out on GitHub
+    /// (`StaticSite.folder`: lamp-app.json and APP.md, the very ones the review read), which turns it into a laid-out site.
+    ///
+    /// The folder is edited in place, as the person's source control expects; a copy is made only when the conversion
+    /// would be disruptive: replace or remove meaningful existing files, substantially reorganize the project, replace
+    /// its build or dependency setup, drop targets or features, break its own way of working, or overwrite uncommitted
+    /// work. Adding a manifest or a few support files stays in place. `disruptive` says why, when it is; every check of
+    /// that kind belongs here, so the one decision is made in one place.
+    struct Conversion: Equatable {
+        /// Files added, by their path in the folder.
+        var added: [String: Data] = [:]
+        /// Why the conversion can't be done in the folder itself; empty when it can.
+        var disruptive: [String] = []
+        /// Of `added`, those the mapping puts in the app (a laid-out site's APP.md), so they aren't counted as metadata.
+        var appFiles: Set<String> = []
+    }
+
+    static func conversion(for capture: Capture, in repo: URL) -> Conversion {
+        guard capture.layout == .site(laidOut: false) else { return Conversion() }
+        var conversion = Conversion()
+        for name in ["lamp-app.json", "APP.md"] {
+            guard let data = try? Data(contentsOf: capture.package.folder.appendingPathComponent(name)) else { continue }
+            conversion.added[StaticSite.folder + "/" + name] = data
+        }
+        conversion.appFiles = [StaticSite.folder + "/APP.md"]
+        let fm = FileManager.default
+        var isFolder: ObjCBool = false
+        if fm.fileExists(atPath: repo.appendingPathComponent(StaticSite.folder).path, isDirectory: &isFolder), !isFolder.boolValue {
+            conversion.disruptive.append("the folder has a file named \(StaticSite.folder), where Lamp keeps a site's manifest, and adding it would replace that file")
+        }
+        for path in conversion.added.keys.sorted() where fm.fileExists(atPath: repo.appendingPathComponent(path).path) {
+            conversion.disruptive.append("adding Lamp's manifest would replace the folder's own \(path)")
+        }
+        if !fm.isWritableFile(atPath: repo.path) { conversion.disruptive.append("Lamp can't write in the folder") }
+        return conversion
+    }
+
+    /// Carries a conversion out: in the folder, never over a file that's there, or, when it's disruptive, in a copy of
+    /// the whole folder (its git with it) beside the original, which is left as it was. Answers the folder to work in.
+    static func convert(_ conversion: Conversion, in repo: URL) throws -> URL {
+        let fm = FileManager.default
+        var folder = repo
+        if !conversion.disruptive.isEmpty {
+            let parent = repo.deletingLastPathComponent()
+            var name = repo.lastPathComponent + "-lamp"
+            var n = 2
+            while fm.fileExists(atPath: parent.appendingPathComponent(name).path) { name = repo.lastPathComponent + "-lamp-\(n)"; n += 1 }
+            folder = parent.appendingPathComponent(name)
+            try fm.copyItem(at: repo, to: folder)
+            // In the copy only, a file in the way of what's added is kept beside it under another name.
+            for path in conversion.added.keys.sorted() {
+                var walked = ""
+                for step in path.split(separator: "/").map(String.init) {
+                    walked += (walked.isEmpty ? "" : "/") + step
+                    let item = folder.appendingPathComponent(walked)
+                    var isFolder: ObjCBool = false
+                    guard fm.fileExists(atPath: item.path, isDirectory: &isFolder) else { break }
+                    if !isFolder.boolValue || walked == path {
+                        try fm.moveItem(at: item, to: folder.appendingPathComponent(walked + "-before-lamp"))
+                        break
+                    }
+                }
+            }
+        }
+        for (path, data) in conversion.added.sorted(by: { $0.key < $1.key }) {
+            let target = folder.appendingPathComponent(path)
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: target, options: .withoutOverwriting)
+        }
+        return folder
+    }
+
     /// The app's own metadata, put in as the import puts it in (`Sharing.install`), from the same checked package: its
     /// capabilities (a file that declares none takes them away), description, credits and the license files they name,
     /// and its icon's design and artwork. Each is written by the import's own writer; what's answered as written is
@@ -570,6 +669,15 @@ extension Store {
             }
             return answer
         }
+        // A folder Lamp works on in a copy: answered from the copy, never taken on a second time.
+        if let copy = state.adopted.first(where: { $0.copiedFrom == now.real }), projects.contains(where: { $0.id == copy.project }),
+           OutsideWork.identity(of: copy.repo) != nil {
+            var answer = await outsideApply(copy.repo, reopen: false)
+            answer.text = OutsideWork.copyNotice(copy: copy.repo, original: now.real, because: copy.copiedBecause ?? ["taking it on in place would have been disruptive"]) + "\n\n" + answer.text
+            answer.facts["copied_to"] = copy.repo
+            answer.facts["original_unchanged"] = true
+            return answer
+        }
         // A folder put where one Lamp knew was: that one is let go (its workspace stays on the desk), and this one is new.
         state.adopted.removeAll { $0.repo == now.real }
         state.save()
@@ -602,11 +710,29 @@ extension Store {
         let made: (LampProject?, String?) = await withCheckedContinuation { answered in
             importApp(from: repo, outside: OutsideImport(repo: now.real, snapshot: package) { answered.resume(returning: ($0, $1)) })
         }
+        guard let project = made.0 else {
+            try? FileManager.default.removeItem(at: package.folder)
+            return .refused(made.1 ?? "Lamp didn't take the folder on.")
+        }
+        // Approved: what it takes for the folder to read as a Lamp app goes in now, in place, or in a copy when that
+        // would be disruptive (`OutsideWork.Conversion`). Never before Build & Open, so a no leaves the folder as it was.
+        let conversion = OutsideWork.conversion(for: capture, in: repo)
         try? FileManager.default.removeItem(at: package.folder)
-        guard let project = made.0 else { return .refused(made.1 ?? "Lamp didn't take the folder on.") }
-        // The review installed the capture: its metadata, and the files the mapping names.
-        state.adopted.append(OutsideWork.Adopted(repo: now.real, device: now.device, inode: now.inode, project: project.id, applied: nil,
-                                                 metadata: OutsideWork.metadataDigest(capture), files: capture.mapping.record))
+        let folder: URL
+        do { folder = try await Self.offMain { Result { try OutsideWork.convert(conversion, in: repo) } }.get() } catch {
+            // The app made for it goes too: kept, it would be one no call knows of, and the next open_project would make another.
+            await delete(current(project) ?? project)
+            return .refused("Lamp couldn't \(conversion.disruptive.isEmpty ? "add its manifest to the folder" : "make a copy of the folder to work in"): \(error.localizedDescription) Nothing was kept; the folder is as it was.")
+        }
+        guard let worked = OutsideWork.identity(of: folder.path) else { return .refused("Lamp lost the folder it was to work in.") }
+        var reviewed = capture.hashes
+        for (path, data) in conversion.added { reviewed[path] = OutsideWork.sha(data) }
+        let code = capture.mapping.sources.union(conversion.appFiles)
+        state.adopted.append(OutsideWork.Adopted(repo: worked.real, device: worked.device, inode: worked.inode, project: project.id, applied: nil,
+                                                 metadata: OutsideWork.fingerprint(reviewed.filter { !code.contains($0.key) }),
+                                                 files: capture.mapping.record,
+                                                 copiedFrom: conversion.disruptive.isEmpty ? nil : now.real,
+                                                 copiedBecause: conversion.disruptive.isEmpty ? nil : conversion.disruptive))
         state.save()
         // An app that came with no icon gets its design now, before its first build, as a new app's is designed while its
         // first request builds: designed after it, the icon is a change the open app can't take, and the next change of
@@ -616,9 +742,22 @@ extension Store {
         }
         // Its first build is what the review read and installed, never the folder read again: an edit made while the
         // review was up would otherwise go in unreviewed. Such an edit is pending, for the next apply.
-        var answer = await outsideApply(now.real, reopen: false, reviewed: capture.hashes)
-        answer.text = "Lamp took on \(now.real) as “\(project.name)”.\n\n" + answer.text
-            + "\n\n" + OutsideWork.guidance(for: current(project) ?? project, layout: capture.layout)
+        var answer = await outsideApply(worked.real, reopen: false, reviewed: reviewed)
+        var lead = "Lamp took on \(worked.real) as “\(project.name)”."
+        let added = conversion.added.keys.sorted()
+        if !conversion.disruptive.isEmpty {
+            // The agent must pass this on: its own session can't edit outside the folder it was started in.
+            lead = OutsideWork.copyNotice(copy: worked.real, original: now.real, because: conversion.disruptive)
+                + "\nLamp took the copy on as “\(project.name)”" + (added.isEmpty ? "." : ", with \(added.joined(separator: " and ")) added to it.")
+            answer.facts["copied_to"] = worked.real
+            answer.facts["copied_because"] = conversion.disruptive
+            answer.facts["original_unchanged"] = true
+        } else if !added.isEmpty {
+            lead += " To read it as a Lamp app, Lamp added \(added.joined(separator: " and ")) to the folder; nothing else in it was changed. They're Lamp's manifest for a site: keep them with the site in its git."
+        }
+        if !added.isEmpty { answer.facts["added"] = added }
+        answer.facts["path"] = worked.real
+        answer.text = lead + "\n\n" + answer.text + "\n\n" + OutsideWork.guidance(for: current(project) ?? project, layout: RepoImport.layout(of: folder))
         return answer
     }
 

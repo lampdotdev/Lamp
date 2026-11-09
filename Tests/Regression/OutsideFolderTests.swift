@@ -107,6 +107,57 @@ final class OutsideFolderTests: XCTestCase {
         XCTAssertTrue(fm.fileExists(atPath: app.dir.appendingPathComponent("Sources/LampSupport.swift").path))
     }
 
+    /// A plain site is converted in place by adding Lamp's manifest beside its page, and nothing else changes: it then
+    /// reads as a laid-out site whose edits land where they did.
+    func testAPlainSiteTakesLampsManifestInPlace() throws {
+        let fm = FileManager.default
+        let site = root.appendingPathComponent("practice")
+        try write("<!doctype html><title>Practice</title>", to: "index.html", in: site)
+        try write("console.log('one');\n", to: "js/app.js", in: site)
+        let before = OutsideWork.hashes(of: site)
+        let capture = try OutsideWork.capture(site)
+        defer { try? fm.removeItem(at: capture.package.folder) }
+        let conversion = OutsideWork.conversion(for: capture, in: site)
+        XCTAssertEqual(conversion.disruptive, [])
+        XCTAssertEqual(Set(conversion.added.keys), [StaticSite.folder + "/lamp-app.json", StaticSite.folder + "/APP.md"])
+
+        XCTAssertEqual(try OutsideWork.convert(conversion, in: site).path, site.path, "worked on in place")
+        XCTAssertEqual(RepoImport.layout(of: site), .site(laidOut: true))
+        var after = OutsideWork.hashes(of: site)
+        for path in conversion.added.keys { after[path] = nil }
+        XCTAssertEqual(after, before, "only the manifest was added")
+
+        let again = try OutsideWork.capture(site)
+        defer { try? fm.removeItem(at: again.package.folder) }
+        XCTAssertEqual(Set(again.mapping.files.keys), Set(capture.mapping.files.keys))
+        XCTAssertEqual(again.mapping.files["Web/js/app.js"]?.source, "js/app.js")
+        XCTAssertEqual(again.mapping.files["APP.md"]?.source, StaticSite.folder + "/APP.md")
+        XCTAssertEqual(again.package.name, "Practice")
+        XCTAssertEqual(OutsideWork.conversion(for: again, in: site), OutsideWork.Conversion(), "nothing more to add")
+    }
+
+    /// When adding the manifest would replace one of the folder's own files, Lamp works in a copy beside it and leaves the
+    /// original exactly as it was.
+    func testAConversionThatWouldReplaceAFileIsMadeInACopy() throws {
+        let fm = FileManager.default
+        let site = root.appendingPathComponent("practice")
+        try write("<!doctype html><title>Practice</title>", to: "index.html", in: site)
+        try write("notes of mine\n", to: StaticSite.folder, in: site)
+        let before = OutsideWork.hashes(of: site)
+        let capture = try OutsideWork.capture(site)
+        defer { try? fm.removeItem(at: capture.package.folder) }
+        let conversion = OutsideWork.conversion(for: capture, in: site)
+        XCTAssertFalse(conversion.disruptive.isEmpty)
+
+        let copy = try OutsideWork.convert(conversion, in: site)
+        XCTAssertEqual(copy.path, root.appendingPathComponent("practice-lamp").path)
+        XCTAssertEqual(OutsideWork.hashes(of: site), before, "the original is unchanged")
+        XCTAssertEqual(RepoImport.layout(of: site), .site(laidOut: false))
+        XCTAssertEqual(RepoImport.layout(of: copy), .site(laidOut: true))
+        XCTAssertEqual(read(StaticSite.folder + "-before-lamp", in: copy), "notes of mine\n", "the copy keeps the file it moved aside")
+        XCTAssertEqual(try OutsideWork.convert(conversion, in: site).path, root.appendingPathComponent("practice-lamp-2").path, "never over an earlier copy")
+    }
+
     /// A folder the importer can't read says what it lacks.
     func testAFolderLampCantReadSaysWhatsMissing() throws {
         let built = root.appendingPathComponent("built")

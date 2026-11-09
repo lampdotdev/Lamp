@@ -373,7 +373,19 @@ Lamp starts no process for it and sees none of its commands, so its shell is und
 - **An app with no icon.** Its icon is designed right after the review, before the first build, as a new app's is
   while its first request builds: designed after it, the icon is a change the open app can't take, and the next
   change of any kind would reopen the app.
-- **The folder and the workspace.** The folder stays the source and its git is the person's: Lamp never writes in it.
+- **Converting in place, or in a copy.** By default the folder is converted where it is: that's what the person's
+  source control is for. A Lamp app needs nothing; a plain site gets Lamp's manifest for a site beside its page
+  (`.lamp-wish/lamp-app.json` and `APP.md`, the very ones the review read), which makes it a laid-out site
+  (`StaticSite`). It's written once, after Build & Open, never over a file that's there, and the answer names what was
+  added. A copy is made only when the conversion would be disruptive (`OutsideWork.Conversion.disruptive`, the one
+  place that decides): it would replace or remove meaningful existing files, substantially reorganize the project,
+  replace its build or dependency setup, drop targets or features, break its own way of working, or overwrite
+  uncommitted work. Adding a manifest or a few support files and small, reviewable edits stay in place. The copy is the
+  whole folder, its git with it, beside the original (`<name>-lamp`); the answer gives its absolute path, why it was
+  made, that the original is unchanged, and the steps the agent passes on to the person (`OutsideWork.switchSteps`: the desktop
+  apps first, which are the main clients, then `--add-dir <path>` for the command line), and later calls on the original are answered from the copy (`Adopted.copiedFrom`).
+- **The folder and the workspace.** The folder stays the source and its git is the person's: Lamp writes in it only the
+  conversion above.
   What builds and runs is the project in Lamp's apps folder the review made, so LiveReload's live copy, libraries and
   runtime folder stay where they always are. Each apply captures
   the folder as the import reads one (`RepoImport.open`), checks the bytes copied against the folder before and after,
