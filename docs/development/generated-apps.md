@@ -505,7 +505,8 @@ A wish that came from a repository can send its changes back: Send Changes Backâ
 (`SidebarToolbar.canContribute`, `Contribute`, its card `ContributeCards` and `ContributeCard`, shaped as Put on
 GitHub's). What goes is only what the wish changed, on top of where the repository is now, worked out before the card
 offers to send (`Contribute.prepare`) from the saved version the card shows, which must still be the wish's when it
-goes. The change is measured in the wish's own history, never from the commit its credits name (a shared file names
+goes (`Contribute.sendableVersion`: nothing unsaved but Lamp's own files, the root app's and each part's in its folder,
+which a rebuild for a newer Lamp writes afresh without saving a version and which never go). The change is measured in the wish's own history, never from the commit its credits name (a shared file names
 the commit before the one it went up in): from the snapshot of the last update it took in, kept by the commit its
 credits moved on to (`Upstream.snapshot`, so an update undone isn't counted), else the version it arrived as
 (`Contribute.base`), to the version sent, each side as a shared file carries it (`Upstream.filteredTree`: never Lamp's
