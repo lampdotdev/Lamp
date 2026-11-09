@@ -177,6 +177,53 @@ final class ContributeTests: XCTestCase {
         }
     }
 
+    /// Lamp rewrote its own files (a rebuild for a newer Lamp, which saves no version) after the change was saved: the
+    /// change still goes, without them, while a change of the remix's own that isn't saved still holds it back.
+    func testLampsOwnFilesWrittenAfreshDoNotHoldTheChangeBack() async throws {
+        let repo = try repository(["Sources/App.swift": "a\nb\nc\n"])
+        let (project, _) = try await remix(of: ["Sources/App.swift": "a\nb\nc\n"], commit: try git("git rev-parse HEAD", in: repo))
+        try await change(project, ["Sources/App.swift": "a\nB\nc\n"], "Mine")
+        try Template.writeOwnedFiles(for: project)
+        XCTAssertFalse(try git("git status --porcelain", in: project.dir).isEmpty, "Lamp's files differ from the saved version")
+
+        let head = await Versions.head(project)
+        let prepared = try await prepare(project, from: repo)
+        XCTAssertEqual(prepared.version, head)
+        XCTAssertEqual(prepared.changed, ["Sources/App.swift", "drive.lampapp"])
+
+        try write(["Sources/App.swift": "a\nB\nC\n"], in: project.dir)
+        do {
+            _ = try await prepare(project, from: repo)
+            XCTFail("an unsaved change should hold it back")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("aren't saved yet"), error.localizedDescription)
+        }
+    }
+
+    /// The same for a part: its own files, in its folder, may differ from the saved version; its code may not, nor may
+    /// a file at the top with the name of one of a part's.
+    func testAPartsOwnFilesWrittenAfreshDoNotHoldTheChangeBack() async throws {
+        let (project, _) = try await remix(of: ["Sources/App.swift": "a\n"], commit: String(repeating: "a", count: 40))
+        let phone = LampProject(id: Parts.id(wish: project.id, folder: "iPhone"), name: project.name, exe: project.exe,
+                                dir: project.dir.appendingPathComponent("iPhone"), platform: .iphone, partOf: project.id)
+        try FileManager.default.createDirectory(at: phone.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+        try Template.saveMeta(phone)
+        try Template.fill(phone)
+        try Template.writeOwnedFiles(for: phone)
+        try await change(project, ["iPhone/Sources/Pad.swift": "pad\n"], "Phone")
+        let head = await Versions.head(project)
+        XCTAssertEqual(Sharing.layout(of: project).parts.map(\.dir.lastPathComponent), ["iPhone"])
+
+        try write(["iPhone/Sources/LampSupport.swift": "// runtime 9\n", "iPhone/build.sh": "# newer\n"], in: project.dir)
+        XCTAssertNil(Versions.savedVersion(of: project.dir))
+        XCTAssertEqual(Contribute.sendableVersion(of: project), head)
+
+        try write(["iPhone/Sources/Pad.swift": "pads\n"], in: project.dir)
+        XCTAssertNil(Contribute.sendableVersion(of: project))
+        try write(["iPhone/Sources/Pad.swift": "pad\n", "Pad/Sources/LampSupport.swift": "// not a part's\n"], in: project.dir)
+        XCTAssertNil(Contribute.sendableVersion(of: project))
+    }
+
     /// What `prepare` stopped at, when it was blocked.
     private func blocked(_ project: LampProject, from repo: URL) async -> Contribute.Blocked? {
         do {
