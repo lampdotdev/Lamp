@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + shareEntries + wishLinkEntries + contributeEntries + remixEntries + transitionEntries + deviceEntries + suggestionEntries
+    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + shareEntries + wishLinkEntries + contributeEntries + remixEntries + transitionEntries + deviceEntries + suggestionEntries + ideaEntries
 
     private static let useRowStatuses: [EngineUseRow.Status] = [
         .use, .gettingReady, .downloading(0.4), .failed(ErrorMessages.noConnection),

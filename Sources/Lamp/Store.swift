@@ -590,6 +590,11 @@ final class Store: ObservableObject {
     var suggestionTimer: Timer?
     /// The wish whose suggested changes the desk shows in place of its list (`SuggestionsPanel`), while it does.
     @Published var suggestionsOpen: String?
+    /// Ideas people sent from each wish's link, by wish, as the site last answered (`WishIdeas`), and the wish whose
+    /// ideas the desk shows in place of its list (`IdeasPanel`), while it does.
+    @Published var ideas: [String: [WishLink.Idea]] = [:]
+    @Published var ideasOpen: String?
+    var ideasTimer: Timer?
     /// The try of a suggested change open for each wish, at most one in all (`SuggestionTrial`).
     @Published var trials: [String: SuggestionTrial.Running] = [:]
     /// Copies an update was prepared in that are going, by the app they went into: a message sent to one meanwhile goes
@@ -13785,6 +13790,8 @@ final class Store: ObservableObject {
         // one left from before (a crash, a quit that couldn't wait) goes first, with all it made.
         Task.detached { SuggestionTrial.sweep() }
         startCheckingSuggestions()
+        // Ideas people sent from a wish's link: now, and every few minutes (`WishIdeas`).
+        startCheckingIdeas()
     }
 
     /// The person's apps Lamp knows on the phone `udid`: those it keeps for renewal there, and those put there before

@@ -321,6 +321,42 @@ enum WishLink {
         guard status == 204 || status == 404 else { throw failure(status) }
     }
 
+    /// An idea someone playing the wish sent from its link's page, for its maker (`/api/wish-ideas` on the site): their
+    /// words, when it came, and an address if they asked to hear back. All theirs, shown as theirs, never the agent's.
+    struct Idea: Codable, Equatable, Identifiable, Sendable {
+        var n: Int
+        var text: String
+        var email: String?
+        var at: String
+        var id: Int { n }
+    }
+
+    private static func ideasAddress(for id: String, number: Int? = nil) -> URL {
+        var parts = URLComponents(url: endpoint.deletingLastPathComponent().appendingPathComponent("wish-ideas"), resolvingAgainstBaseURL: false)!
+        parts.queryItems = [URLQueryItem(name: "id", value: id)] + (number.map { [URLQueryItem(name: "n", value: String($0))] } ?? [])
+        return parts.url!
+    }
+
+    /// The ideas sent to the link so far, oldest first. Only the link's secret reads them.
+    static func ideas(for shared: Shared) async throws -> [Idea] {
+        var request = URLRequest(url: ideasAddress(for: shared.id))
+        request.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
+        let (data, status) = try await send(request)
+        if status == 404 { return [] }
+        guard status == 200 else { throw failure(status) }
+        struct Answer: Decodable { var ideas: [Idea] }
+        return try JSONDecoder().decode(Answer.self, from: data).ideas
+    }
+
+    /// Lets an idea go from the link, once the maker has dealt with it.
+    static func removeIdea(_ number: Int, for shared: Shared) async throws {
+        var request = URLRequest(url: ideasAddress(for: shared.id, number: number))
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
+        let (_, status) = try await send(request)
+        guard status == 204 || status == 404 else { throw failure(status) }
+    }
+
     /// Takes the link down: the page says the wish isn't shared any more. A link the site no longer has is down already.
     static func remove(_ shared: Shared) async throws {
         var request = URLRequest(url: address(for: shared.id))

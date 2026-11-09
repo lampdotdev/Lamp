@@ -386,7 +386,15 @@ the file kept in lamp.dev's Blob store; the file always goes when the wish can g
 each Release Update sends the file again, which counts the link's version up (see "Releases" below). A wish with a page (a web app, a web
 game, a screen: `Publish.hasPage`) sends that too (`WishLink.playablePage`, the page a release puts on GitHub, which
 stays as it is), and its link's page opens on it, playing, with the ways to make one's own under it: whoever has the
-link tries the wish first and remixes it after (SHARED_WISHES.md). Keys reach a framed page only while its frame has
+link tries the wish first and remixes it after (SHARED_WISHES.md). The box under it sends what's written to the wish's maker
+first (`/api/wish-ideas`, `createIdeasHandler`): the site keeps it with the link, numbered, until the maker lets it go,
+and answers a key with which the sender can add an address to hear back at (the dialog's Tell Me). Only the link's
+secret reads them; they go with the link, and nothing of them is logged. Lamp asks for them for every wish with a link
+at launch and every five minutes (`WishIdeas`, `Store.checkIdeas`); the desk counts the new ones beside its changes
+("Sent to you", a line under the app's row), and the person goes to them in `IdeasPanel`, which takes the list's place
+with Back: Build It asks the wish's chat for one, in the sender's words, marked as theirs (`WishIdeas.request`); Write to
+Them opens an email to whoever left an address; Done lets it go from the link. Making one's own with Lamp stays in the
+dialog under the idea sent, and is all it offers when the idea couldn't go. Keys reach a framed page only while its frame has
 focus: the link's page focuses it as it loads and after its own buttons, and lamp.js in the page takes focus back on any
 press inside it, since a game that cancels pointerdown (to drag its camera) also cancels the press that would have. The version is what followers ask for (`latest` in
 lib/shared-wishes.js, `GET /api/wishes?id=`, `WishLink.latest`). The page's Open in Lamp is `lamp://wish?shared=<id>`

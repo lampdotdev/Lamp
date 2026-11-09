@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { deflateSync, crc32 } from "node:zlib";
-import { createShareHandler, createFileHandler, createPlayHandler, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, slugFor, wishIDFrom, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
+import { createShareHandler, createFileHandler, createIdeasHandler, createPlayHandler, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, slugFor, wishIDFrom, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
 import { createPageHandler } from "../lib/shared-wish-page.js";
 import { createCardHandler } from "../lib/wish-card.js";
 
@@ -383,4 +383,40 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   assert.equal((await send_("&what=page", "PUT", zip("index.html", html), "&part=0&of=1")).status, 204);
   assert.equal((await send_("&what=page", "POST")).status, 200);
   assert.equal(store.records.get(id).page.version, 2);
+});
+
+test("ideas reach the link's maker, and only the maker reads them", async () => {
+  const store = memoryStore();
+  const { id, secret } = await (await send(createShareHandler({ store, limited: false }), "POST", share)).json();
+  const ideas = createIdeasHandler({ store, limited: false });
+  const post = (body, at = id) => ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${at}`, {
+    method: "POST", headers: { "content-type": "application/json", origin: "https://lamp.dev" }, body: JSON.stringify(body),
+  }));
+  const list = (key = secret) => ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}`, { headers: { authorization: `Bearer ${key}` } }));
+
+  assert.equal((await post({ text: "Add geese that chase you" })).status, 201);
+  const sent = await (await post({ text: "Survival Flight helicopters" })).json();
+  assert.equal(sent.n, 2);
+  const email = (body, n = 2) => ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${n}`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  }));
+  assert.equal((await email({ key: sent.key, email: "not an address" })).status, 400);
+  assert.equal((await email({ key: sent.key, email: "someone@example.com" }, 1)).status, 404, "only with that idea's key");
+  assert.equal((await email({ key: sent.key, email: "someone@example.com" })).status, 204);
+  assert.equal((await post({ text: "  " })).status, 400, "words required");
+  assert.equal((await post({ text: "x".repeat(1001) })).status, 400);
+  assert.equal((await post({ text: "hi" }, "zzzzzzzzzz")).status, 404, "only for a link that's out");
+  assert.equal((await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}`, {
+    method: "POST", headers: { "content-type": "application/json", origin: "https://elsewhere.example" }, body: "{}" }))).status, 403);
+
+  assert.equal((await list("x".repeat(43))).status, 404, "only with the link's secret");
+  const kept = (await (await list()).json()).ideas;
+  assert.deepEqual(kept.map((idea) => [idea.n, idea.text, idea.email]), [[1, "Add geese that chase you", undefined], [2, "Survival Flight helicopters", "someone@example.com"]]);
+  assert.ok(kept.every((idea) => !("key" in idea) && typeof idea.at === "string"), "never the keys");
+
+  const done = await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
+  assert.equal(done.status, 204);
+  assert.deepEqual((await (await list()).json()).ideas.map((idea) => idea.n), [2]);
+  assert.equal((await post({ text: "Night mode" })).status, 201);
+  assert.deepEqual((await (await list()).json()).ideas.map((idea) => idea.n), [2, 3], "numbers never come back");
 });

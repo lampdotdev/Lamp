@@ -97,6 +97,11 @@ struct WishDesk: View {
                 SuggestionsPanel(wish: wish) { store.suggestionsOpen = nil }
                     .id(wish)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let wish = store.ideasOpen {
+                // Ideas sent from a link, the same way.
+                IdeasPanel(wish: wish) { store.ideasOpen = nil }
+                    .id(wish)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 deskList
             }
@@ -109,7 +114,7 @@ struct WishDesk: View {
         .navigationTitle("Lamp")
         .toolbar {
             // Only where the panel has room to show: in a narrower window the list keeps the space.
-            if panelFits, store.suggestionsOpen == nil { ToolbarItem(placement: .primaryAction) {
+            if panelFits, store.suggestionsOpen == nil, store.ideasOpen == nil { ToolbarItem(placement: .primaryAction) {
                 Button { withAnimation(Self.slide) { panelShown.toggle() } } label: {
                     Label(panelShown ? "Hide Details" : "Show Details", systemImage: "sidebar.right")
                 }
@@ -231,14 +236,23 @@ struct WishDesk: View {
         .overlay(alignment: .trailing) { Self.separator }
     }
 
-    /// The way to the changes people sent: as quiet as the rest of the column, there only once someone has sent some,
-    /// with how many are new. It opens at the app with the most new.
+    /// The way to the changes and ideas people sent: as quiet as the rest of the column, there only once someone has sent
+    /// some, with how many are new. It opens at what has the most new: an app's changes, else an app's ideas.
     @ViewBuilder private var sentToYou: some View {
         let wishes = store.wishesWithSuggestions
-        if !wishes.isEmpty {
-            let new = store.newSuggestionsInAll
+        let withIdeas = store.wishesWithIdeas
+        if !wishes.isEmpty || !withIdeas.isEmpty {
+            let new = store.newSuggestionsInAll + store.newIdeasInAll
+            let open = store.suggestionsOpen != nil || store.ideasOpen != nil
             Button {
-                store.suggestionsOpen = store.suggestionsOpen == nil ? (wishes.max { store.newSuggestions($0) < store.newSuggestions($1) } ?? wishes[0]).id : nil
+                if open { store.suggestionsOpen = nil; store.ideasOpen = nil; return }
+                let changes = wishes.max { store.newSuggestions($0) < store.newSuggestions($1) }
+                let ideas = withIdeas.first
+                if let changes, store.newSuggestions(changes) >= (ideas.map(store.newIdeas) ?? 0) || ideas == nil {
+                    store.suggestionsOpen = changes.id
+                } else {
+                    store.ideasOpen = ideas?.id
+                }
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "tray.and.arrow.down").font(.system(size: 13))
@@ -248,7 +262,7 @@ struct WishDesk: View {
                 }
                 .foregroundStyle(Paper.ink)
                 .padding(.horizontal, 10).frame(height: 30)
-                .background(Paper.ink.opacity(store.suggestionsOpen == nil ? 0.05 : 0.1), in: RoundedRectangle(cornerRadius: 7))
+                .background(Paper.ink.opacity(open ? 0.1 : 0.05), in: RoundedRectangle(cornerRadius: 7))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

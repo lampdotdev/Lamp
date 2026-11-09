@@ -212,6 +212,7 @@ export function cloudStore(env, fetcher = fetch) {
   const db = redis(env);
   const scope = env.VERCEL_ENV === "production" ? "production" : "preview";
   const key = (id) => `lamp:shared-wish:{${scope}}:${id}`;
+  const ideasKey = (id) => `lamp:shared-wish:{${scope}}:ideas:${id}`;
   const command = async (args) => {
     const response = await fetcher(db.url, {
       method: "POST", redirect: "error", signal: AbortSignal.timeout(3000),
@@ -240,7 +241,31 @@ export function cloudStore(env, fetcher = fetch) {
       return (await command(["EVAL", "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('SET', KEYS[1], ARGV[2]) end return false",
         "1", key(after.id), JSON.stringify(before), JSON.stringify(after)])) === "OK";
     },
-    async remove(id) { await command(["DEL", key(id)]); },
+    async remove(id) { await command(["DEL", key(id), ideasKey(id)]); },
+    /** Keeps an idea for the link, numbered in the order they came: null when the link already holds `IDEA_LIMITS.kept`. */
+    async addIdea(id, idea) {
+      // Its number is its field, given as it's kept, so two at once never share one.
+      const n = await command(["EVAL", `if redis.call('HLEN', KEYS[1]) > tonumber(ARGV[1]) then return false end
+        local n = redis.call('HINCRBY', KEYS[1], 'next', 1)
+        redis.call('HSET', KEYS[1], tostring(n), ARGV[2])
+        return n`, "1", ideasKey(id), String(IDEA_LIMITS.kept), JSON.stringify(idea)]);
+      return Number.isInteger(n) ? n : null;
+    },
+    async ideas(id) {
+      const flat = (await command(["HGETALL", ideasKey(id)])) ?? [];
+      const ideas = [];
+      for (let i = 0; i < flat.length; i += 2) if (flat[i] !== "next") ideas.push({ ...JSON.parse(flat[i + 1]), n: Number(flat[i]) });
+      return ideas.sort((a, b) => a.n - b.n);
+    },
+    async removeIdea(id, n) { await command(["HDEL", ideasKey(id), String(n)]); },
+    /** Adds the address to hear back at to idea `n`, given the key it was sent with: false when it's gone or the key isn't its. */
+    async addEmail(id, n, key, email) {
+      const text = await command(["HGET", ideasKey(id), String(n)]);
+      const idea = typeof text === "string" ? JSON.parse(text) : null;
+      if (!idea || typeof idea.key !== "string" || idea.key !== key) return false;
+      await command(["HSET", ideasKey(id), String(n), JSON.stringify({ ...idea, email })]);
+      return true;
+    },
     async putImage(id, name, image) {
       const { put } = await import("@vercel/blob");
       const blob = await put(`${scope}/w/${id}/${name}.${image.extension}`, image.bytes, {
@@ -305,7 +330,7 @@ export function cloudStore(env, fetcher = fetch) {
 
 /** Kept in memory, for `npm run dev` and the tests: pictures as data: URLs, so nothing else needs serving. */
 export function memoryStore() {
-  const records = new Map(), pages = new Map();
+  const records = new Map(), pages = new Map(), ideas = new Map();
   return {
     limiter: null,
     records,
@@ -317,7 +342,23 @@ export function memoryStore() {
       records.set(after.id, structuredClone(after));
       return true;
     },
-    async remove(id) { records.delete(id); },
+    async remove(id) { records.delete(id); ideas.delete(id); },
+    async addIdea(id, idea) {
+      const kept = ideas.get(id) ?? { next: 0, all: new Map() };
+      if (kept.all.size > IDEA_LIMITS.kept) return null;
+      const n = ++kept.next;
+      kept.all.set(n, { ...idea, n });
+      ideas.set(id, kept);
+      return n;
+    },
+    async ideas(id) { return [...(ideas.get(id)?.all.values() ?? [])].map((idea) => structuredClone(idea)).sort((a, b) => a.n - b.n); },
+    async removeIdea(id, n) { ideas.get(id)?.all.delete(n); },
+    async addEmail(id, n, key, email) {
+      const idea = ideas.get(id)?.all.get(n);
+      if (!idea || idea.key !== key) return false;
+      idea.email = email;
+      return true;
+    },
     async putImage(_id, _name, image) { return `data:${image.type};base64,${image.bytes.toString("base64")}`; },
     async removeImages() {},
     async putFile(_id, _name, bytes) { return `data:application/octet-stream;base64,${bytes.toString("base64")}`; },
@@ -440,6 +481,87 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       try { await kept.removeImages(uploaded); } catch {}
       return reply(503, { error: "service_unavailable" });
     }
+  };
+}
+
+// MARK: Ideas for the maker
+
+/** What someone playing a shared wish may send its maker: their idea, and an address to hear back at if they want. */
+export const IDEA_LIMITS = { text: 1000, email: 200, kept: 500 };
+// A visitor sends a handful an hour; a link takes a few hundred a day; overall, a ceiling on a flood.
+export const IDEA_QUOTAS = [
+  { name: "idea-ip", perIP: true, limit: 12, seconds: 3600 },
+  { name: "idea-ip-day", perIP: true, limit: 40, seconds: 86400 },
+  { name: "idea-day", limit: 5000, seconds: 86400 },
+];
+const EMAIL = /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[^\s@<>()",;:]+$/;
+
+/** An idea as sent from a link's page, or null: its words. */
+export function readIdea(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const text = tidy(body.text, IDEA_LIMITS.text, { lines: true });
+  return text ? { text } : null;
+}
+
+/** An address to hear back at, as given after the idea went, or null unless it looks like one. */
+export function readEmail(body) {
+  if (!body || typeof body !== "object" || typeof body.key !== "string" || !/^[A-Za-z0-9_-]{12}$/.test(body.key)) return null;
+  const email = tidy(body.email, IDEA_LIMITS.email);
+  return email && EMAIL.test(email) ? { key: body.key, email } : null;
+}
+
+/**
+ * Ideas for a link's maker (`/api/wish-ideas?id=`). POST, from the link's page, keeps one: what someone playing it would
+ * change. It answers the idea's number and a key, which PUT ?n= takes with an address, if they give one, for the maker
+ * to tell them it's in. GET, with the link's secret, answers them for Lamp to show the maker (never the keys); DELETE ?n=
+ * with the secret lets one go once the maker has dealt with it. Kept only for the maker: never logged, never on the
+ * page, gone with the link.
+ */
+export function createIdeasHandler({ env = process.env, fetcher = fetch, store, limited = true, now = () => new Date() } = {}) {
+  return async (request) => {
+    const method = request.method;
+    if (!["GET", "POST", "PUT", "DELETE"].includes(method)) return reply(405, { error: "method_not_allowed" }, { Allow: "GET, POST, PUT, DELETE" });
+    const url = new URL(request.url);
+    const origin = request.headers.get("origin");
+    if (origin && origin !== url.origin) return reply(403, { error: "origin_not_allowed" });
+    const id = url.searchParams.get("id");
+    if (!isID(id)) return reply(404, { error: "not_found" });
+
+    let idea = null;
+    if (method === "POST" || method === "PUT") {
+      if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(request.headers.get("content-type") || "")) return reply(415, { error: "json_required" });
+      try { const body = JSON.parse(await readBody(request)); idea = method === "POST" ? readIdea(body) : readEmail(body); }
+      catch (error) { return reply(error instanceof RangeError ? 413 : 400, { error: "invalid_idea" }); }
+      if (!idea) return reply(400, { error: "invalid_idea" });
+    }
+    const n = method === "DELETE" || method === "PUT" ? Number(url.searchParams.get("n")) : null;
+    if (n !== null && (!Number.isInteger(n) || n < 1)) return reply(400, { error: "invalid_idea" });
+
+    let kept;
+    try { kept = store ?? cloudStore(env, fetcher); } catch { return reply(503, { error: "service_unavailable" }); }
+    if (limited && (method === "POST" || method === "PUT")) {
+      const ip = (request.headers.get("x-vercel-forwarded-for") || request.headers.get("x-forwarded-for") || "").trim();
+      if (!isIP(ip) || !kept.limiter) return reply(503, { error: "service_unavailable" });
+      let retry;
+      try { retry = await reserve(kept.limiter, ip, IDEA_QUOTAS, fetcher); }
+      catch { return reply(503, { error: "service_unavailable" }); }
+      if (retry > 0) return reply(429, { error: "rate_limited" }, { "Retry-After": String(retry) });
+    }
+
+    try {
+      const record = await kept.get(id);
+      if (!record) return reply(404, { error: "not_found" });
+      if (method === "POST") {
+        const key = randomBytes(9).toString("base64url");
+        const number = await kept.addIdea(id, { ...idea, key, at: now().toISOString() });
+        return number ? reply(201, { n: number, key }) : reply(429, { error: "full" });
+      }
+      if (method === "PUT") return (await kept.addEmail(id, n, idea.key, idea.email)) ? reply(204) : reply(404, { error: "not_found" });
+      if (!secretMatches(bearer(request), record.secret)) return reply(404, { error: "not_found" });
+      if (method === "GET") return reply(200, { ideas: (await kept.ideas(id)).map(({ key: _key, ...shown }) => shown) });
+      await kept.removeIdea(id, n);
+      return reply(204);
+    } catch { return reply(503, { error: "service_unavailable" }); }
   };
 }
 
