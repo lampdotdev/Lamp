@@ -205,6 +205,50 @@ final class OutsideFolderTests: XCTestCase {
         XCTAssertTrue(steps.allSatisfy { $0.contains(copy.path) })
     }
 
+    /// Two credits may name the same license file. An apply that carries the folder's metadata reads each license file
+    /// once, rather than stopping Lamp on the repeated path.
+    func testALicenseNamedByTwoCreditsIsCarriedOnce() throws {
+        let fm = FileManager.default
+        let site = root.appendingPathComponent("practice")
+        try write("<!doctype html><title>Practice</title>", to: "index.html", in: site)
+        let capture = try OutsideWork.capture(site)
+        defer { try? fm.removeItem(at: capture.package.folder) }
+        var package = capture.package
+        try write("Made-up license, second edition\n", to: "LICENSE", in: package.folder)
+        let licence = package.folder.appendingPathComponent("LICENSE")
+        package.licences = [licence, licence]
+        var app = try Template.scaffold(name: "Practice", platform: .mac, in: root)
+        app.platform = .webApp
+        try Template.saveMeta(app)
+        try write("Made-up license, first edition\n", to: "LICENSE", in: app.dir)
+
+        let changed = try OutsideWork.syncMetadata(package, into: app)
+        XCTAssertTrue(changed.contains("LICENSE"), changed.joined(separator: ", "))
+        XCTAssertEqual(read("LICENSE", in: app.dir), "Made-up license, second edition\n")
+    }
+
+    /// A site whose .lamp-wish is a link to somewhere else is never converted through that link: the manifest would land
+    /// outside the folder given. Lamp works in a copy, where the link is set aside, and the linked folder stays empty.
+    func testAManifestFolderThatIsALinkIsNeverWrittenThrough() throws {
+        let fm = FileManager.default
+        let site = root.appendingPathComponent("practice")
+        let elsewhere = root.appendingPathComponent("elsewhere")
+        try fm.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        try write("<!doctype html><title>Practice</title>", to: "index.html", in: site)
+        try fm.createSymbolicLink(at: site.appendingPathComponent(StaticSite.folder), withDestinationURL: elsewhere)
+        let capture = try OutsideWork.capture(site)
+        defer { try? fm.removeItem(at: capture.package.folder) }
+        let conversion = OutsideWork.conversion(for: capture, in: site)
+        XCTAssertFalse(conversion.disruptive.isEmpty, "a link where the manifest goes isn't written through in place")
+
+        let copy = try OutsideWork.convert(conversion, in: site)
+        XCTAssertNotEqual(copy.path, site.path)
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: elsewhere.path), [], "nothing was written outside the folder")
+        XCTAssertEqual(RepoImport.layout(of: copy), .site(laidOut: true))
+        let manifest = try fm.attributesOfItem(atPath: copy.appendingPathComponent(StaticSite.folder).path)
+        XCTAssertEqual(manifest[.type] as? FileAttributeType, .typeDirectory, "the copy's manifest folder is a real folder")
+    }
+
     /// A folder the importer can't read says what it lacks.
     func testAFolderLampCantReadSaysWhatsMissing() throws {
         let built = root.appendingPathComponent("built")

@@ -439,15 +439,24 @@ enum OutsideWork {
         }
         conversion.appFiles = [StaticSite.folder + "/APP.md"]
         let fm = FileManager.default
-        var isFolder: ObjCBool = false
-        if fm.fileExists(atPath: repo.appendingPathComponent(StaticSite.folder).path, isDirectory: &isFolder), !isFolder.boolValue {
+        // Read without following a link: a link here would carry what's added out of the folder.
+        switch itemType(repo.appendingPathComponent(StaticSite.folder)) {
+        case .typeSymbolicLink?:
+            conversion.disruptive.append("the folder's \(StaticSite.folder), where Lamp keeps a site's manifest, is a link to somewhere else, and adding the manifest would write through it")
+        case let type? where type != .typeDirectory:
             conversion.disruptive.append("the folder has a file named \(StaticSite.folder), where Lamp keeps a site's manifest, and adding it would replace that file")
+        default: break
         }
         for path in conversion.added.keys.sorted() where fm.fileExists(atPath: repo.appendingPathComponent(path).path) {
             conversion.disruptive.append("adding Lamp's manifest would replace the folder's own \(path)")
         }
         if !fm.isWritableFile(atPath: repo.path) { conversion.disruptive.append("Lamp can't write in the folder") }
         return conversion
+    }
+
+    /// What's at a path, the link itself rather than what it points to; nil when nothing is.
+    static func itemType(_ url: URL) -> FileAttributeType? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType
     }
 
     /// A git worktree or submodule checkout: its .git is a file, not the repository itself.
@@ -471,15 +480,14 @@ enum OutsideWork {
             // A worktree's (or submodule's) .git is a file naming the main repository's record of this checkout: the copy
             // would claim that same checkout, so it goes without it.
             if isLinkedCheckout(repo) { try fm.removeItem(at: folder.appendingPathComponent(".git")) }
-            // In the copy only, a file in the way of what's added is kept beside it under another name.
+            // In the copy only, a file or link in the way of what's added is kept beside it under another name.
             for path in conversion.added.keys.sorted() {
                 var walked = ""
                 for step in path.split(separator: "/").map(String.init) {
                     walked += (walked.isEmpty ? "" : "/") + step
                     let item = folder.appendingPathComponent(walked)
-                    var isFolder: ObjCBool = false
-                    guard fm.fileExists(atPath: item.path, isDirectory: &isFolder) else { break }
-                    if !isFolder.boolValue || walked == path {
+                    guard let type = itemType(item) else { break }
+                    if type != .typeDirectory || walked == path {
                         try fm.moveItem(at: item, to: folder.appendingPathComponent(walked + "-before-lamp"))
                         break
                     }
@@ -500,8 +508,15 @@ enum OutsideWork {
     /// only what came out different, so a folder whose metadata didn't change still answers unchanged.
     static func syncMetadata(_ package: Sharing.Package, into project: LampProject) throws -> [String] {
         let fm = FileManager.default
-        let licences = package.licences.map { Sharing.relativePath(of: $0, in: package.folder) }.filter { !$0.contains("..") }
-        let watched = [Template.Capabilities.file, AppDescription.file, Credits.file, Credits.arrivedPath] + licences
+        // Credits may name the same license file more than once; each path is read and written once.
+        var seen = Set<String>()
+        let files = package.licences.filter {
+            let path = Sharing.relativePath(of: $0, in: package.folder)
+            return !path.contains("..") && seen.insert(path).inserted
+        }
+        let licences = files.map { Sharing.relativePath(of: $0, in: package.folder) }
+        var listed = Set<String>()
+        let watched = ([Template.Capabilities.file, AppDescription.file, Credits.file, Credits.arrivedPath] + licences).filter { listed.insert($0).inserted }
         func read() -> [String: Data] {
             Dictionary(uniqueKeysWithValues: watched.compactMap { path in
                 (try? Data(contentsOf: project.dir.appendingPathComponent(path))).map { (path, $0) }
@@ -512,7 +527,7 @@ enum OutsideWork {
         try package.capabilities.save(for: project)
         try AppDescription.write(package.description, for: project)
         try Credits.arrive(package.credits, in: project)
-        for (file, path) in zip(package.licences.filter { !Sharing.relativePath(of: $0, in: package.folder).contains("..") }, licences) {
+        for (file, path) in zip(files, licences) {
             let target = project.dir.appendingPathComponent(path)
             if (try? Data(contentsOf: target)) == (try? Data(contentsOf: file)) { continue }
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
