@@ -225,9 +225,10 @@ export function cloudStore(env, fetcher = fetch) {
       headers: { Authorization: `Bearer ${db.token}`, "Content-Type": "application/json" },
       body: JSON.stringify(args),
     });
-    if (!response.ok) throw new Error("Store unavailable");
+    if (!response.ok) throw new Error(`Store unavailable (${response.status})`);
     const body = await response.json();
-    if (body.error) throw new Error("Store unavailable");
+    // Upstash's own words for it (a limit reached, say), which name no key.
+    if (body.error) throw new Error(`Store unavailable: ${String(body.error).slice(0, 200)}`);
     return body.result;
   };
   // A store connected now gives the project its id (BLOB_STORE_ID), and @vercel/blob signs in with the deployment's
@@ -332,7 +333,7 @@ export function cloudStore(env, fetcher = fetch) {
       const timer = setTimeout(() => waiting.abort(), 10000);
       try {
         const response = await fetcher(url, { redirect: "error", signal: waiting.signal });
-        if (!response.ok || !response.body) throw new Error("Part unavailable");
+        if (!response.ok || !response.body) throw new Error(`Part unavailable (${response.status})`);
         return { body: response.body, length: response.headers.get("content-length") };
       } finally { clearTimeout(timer); }
     },
@@ -771,7 +772,12 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
     const missing = () => new Response(null, { status: 404, headers: { "Cache-Control": "no-store" } });
     if (!isID(id) || !Number.isInteger(version)) return missing();
     let record;
-    try { record = await recordOf(id, version); } catch { return new Response(null, { status: 503 }); }
+    // Why it failed goes to the log, never the link's id or anything it holds: a 503 here once took every link down
+    // with nothing to say which store refused.
+    try { record = await recordOf(id, version); } catch (error) {
+      console.error("wish play: the record couldn't be read:", error?.name, error?.message);
+      return new Response(null, { status: 503 });
+    }
     // A page's other .html files are asked for by their clean names (the site's `cleanUrls` redirects to them), and a
     // folder's index.html by the folder, with its slash or without (a rewrite may not keep it): without, the page is
     // given its folder as its base, so its own files resolve there and not one folder up.
@@ -803,7 +809,10 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
       } else if (request.method !== "HEAD") {
         ({ body: bytes, length } = await kept.openFile(at));
       }
-    } catch { return new Response(null, { status: 503 }); }
+    } catch (error) {
+      console.error("wish play: a file couldn't be read:", error?.name, error?.message);
+      return new Response(null, { status: 503 });
+    }
     const site = env.LAMP_SITE_ORIGIN || (anyHost ? url.origin : "https://lamp.dev");
     return new Response(request.method === "HEAD" ? null : bytes, {
       headers: {
