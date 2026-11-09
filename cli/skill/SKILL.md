@@ -1,6 +1,6 @@
 ---
 name: lamp
-description: Run, see and try a web app or web game while changing it, with lamp's command line. Use when working in a folder made with Lamp (its page is in Web/, often beside lamp-game.js and APP.md) or in a plain site's folder, whenever the person asks to make or change the app, to see it, or to check that a change works. Every saved change goes into the open page, and a game keeps the player's place.
+description: Make, run, see and try a web app or web game with lamp's command line. Use when the person asks for a new web game, or when working in a folder made with Lamp (a page beside lamp-game.js, or in Web/ with APP.md) or in a plain site's folder and they ask to change the app, to see it, or to check that a change works. Every saved change goes into the open page, and a game keeps the player's place.
 ---
 
 # Working on an app with lamp
@@ -9,6 +9,13 @@ description: Run, see and try a web app or web game while changing it, with lamp
 goes in. Never build, restart or reload anything for a change.
 
 Run the commands from the app's folder, or give the folder after the command (`{{lamp}} look path/to/app`).
+
+## A new game
+
+`{{lamp}} new path/to/folder --name "Its Name"` makes a new web game's folder from Lamp's starting files: the game
+runtime (`lamp-game.js`), three.js, and a page that shows a card until the game replaces it. Read Lamp's `web-game`
+skill before writing the game, then work on it as below. A plain web page needs no starting files: write its
+`index.html` in an empty folder.
 
 ## The loop
 

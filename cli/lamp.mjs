@@ -2,6 +2,7 @@
 // lamp: runs a web app or web game from its folder and puts each saved change into the open page, for whoever is
 // making it, a person or a coding agent. It needs no Mac app and no build step. No dependencies: Node 20 or later.
 //
+//   lamp new <folder>     a new web game's folder, from Lamp's starting files
 //   lamp dev [folder]     run it, each save going into the open page
 //   lamp open [folder]    show it in a window, running it if it isn't
 //   lamp look [folder]    how the last change went, a picture, the screen as text and the log
@@ -11,9 +12,9 @@
 //   lamp skills           Lamp's guidance for each kind of work; lamp skill <name> reads one
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Problem, layoutOf, stateOf, running, ask } from "./state.mjs";
 import { serve } from "./dev.mjs";
@@ -23,6 +24,8 @@ const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 const USAGE = `lamp runs the web app or game in a folder and puts each saved change into the open page.
 
+  lamp new <folder> [--name "Its Name"]
+      Make a new web game's folder from Lamp's starting files: the game runtime, three.js and a page to build on.
   lamp dev [folder] [--open] [--port N] [--lan]
       Run it, saying how each change went. --open opens a window for it; --lan lets other devices on the
       network open it too.
@@ -122,6 +125,27 @@ function report(seen) {
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (!command || command === "--help" || command === "-h" || command === "help") { console.log(USAGE); return; }
+
+  if (command === "new") {
+    const { options, rest } = parse(args, ["name"]);
+    if (!rest[0]) throw new Problem("new takes the folder to make: lamp new harbor-racer");
+    const folder = resolve(rest[0]);
+    if (existsSync(folder) && readdirSync(folder).length) throw new Problem(`${folder} already has things in it`);
+    // What Lamp gives a new web game: its starting page, the game runtime and three.js, from Lamp's own folder.
+    const lamps = join(here, "..", "Resources"), scaffold = join(lamps, "GameKit", "scaffold-web", "Web");
+    const runtime = join(lamps, "GameKit", "web"), three = join(lamps, "WebLibraries", "three");
+    if (![scaffold, runtime, three].every(existsSync)) throw new Problem("Lamp's starting files aren't beside this copy of lamp");
+    const name = String(options.name ?? basename(folder).split(/[-_\s]+/).filter(Boolean).map((word) => word[0].toUpperCase() + word.slice(1)).join(" "));
+    const inPage = name.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+    mkdirSync(folder, { recursive: true });
+    for (const file of readdirSync(scaffold)) {
+      writeFileSync(join(folder, file), readFileSync(join(scaffold, file), "utf8").replaceAll("{{NAME}}", file.endsWith(".html") ? inPage : name.replace(/[\r\n]+/g, " ")));
+    }
+    for (const file of readdirSync(runtime)) cpSync(join(runtime, file), join(folder, file));
+    cpSync(three, join(folder, "three"), { recursive: true });
+    console.log(`Made ${folder}: a new game, "${name}", on Lamp's game runtime with three.js.\nShow it with: lamp open ${/\s/.test(folder) ? JSON.stringify(folder) : folder}`);
+    return;
+  }
 
   if (command === "dev") {
     const { options, rest } = parse(args, ["port", "idle"]);

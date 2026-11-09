@@ -34,7 +34,23 @@ const DEVICE_FILE = "lamp-device.js", BUILD_FILE = "lamp-build.js";
 const ANY_BROWSER = `// Written by lamp dev for a browser on any device (any-browser); don't edit.
 export default {"keys":{"AltLeft":"Alt / Option","AltRight":"Alt / Option","Backspace":"Backspace / Delete","Enter":"Enter / Return","MetaLeft":"Win / ⌘","MetaRight":"Win / ⌘"}};
 `;
-const PAGE_SCRIPT = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "page.js"), "utf8");
+const HERE = dirname(fileURLToPath(import.meta.url));
+const PAGE_SCRIPT = readFileSync(join(HERE, "page.js"), "utf8");
+// Lamp's building blocks for a page (AI, saved data, the app's files) come with Lamp's app around it, which writes
+// lamp.js at each build. A game whose folder has none is given this in its place, so the page loads.
+const LAMP_JS = "// lamp dev's stand-in for lamp.js: Lamp's building blocks come with Lamp's app around the page, and aren't here.\n";
+// The controllers a game names buttons for, which Lamp's app writes beside the page at every build and the game
+// runtime can't load without: Lamp's list as a file (a test keeps it Lamp's, `CLIFilesTests`).
+const CONTROLLERS_FILE = "lamp-controllers.js", CONTROLLERS = join(HERE, "lamps", CONTROLLERS_FILE);
+// The libraries Lamp puts beside a game's page when the page uses them (`DeviceSupport`), where they are in Lamp's
+// own folder: a game whose folder has none of one is served Lamp's copy.
+const LIBRARIES = join(HERE, "..", "Resources", "WebLibraries");
+function lampsCopy(name) {
+  if (name === CONTROLLERS_FILE) return CONTROLLERS;
+  if (!/^(three|phaser|rapier)\//.test(name)) return null;
+  const file = resolve(join(LIBRARIES, name));
+  return file.startsWith(LIBRARIES + sep) ? file : null;
+}
 
 // How a page says a change went: the word lamp's commands answer with, and what it means.
 const OUTCOMES = {
@@ -308,7 +324,10 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
         : { files: named(change), outcome: "opened", means: "no page was open; it's in the one opened now", why: "" };
     });
     const fresh = log.filter((line) => line.n > lastLookLine);
-    const errors = fresh.filter(isError).map((line) => line.text);
+    // An error said over and over is said once, with how many times.
+    const counts = new Map();
+    for (const line of fresh.filter(isError)) counts.set(line.text, (counts.get(line.text) ?? 0) + 1);
+    const errors = [...counts].map(([text, times]) => (times > 1 ? `${text} (${times} times)` : text));
     lastLookGen = gen;
     lastLookLine = logCount;
     return {
@@ -455,16 +474,27 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     let path;
     try { path = decodeURIComponent(url.pathname); } catch { return send(400, "text/plain", "Bad path"); }
     if (path.endsWith("/")) path += "index.html";
-    const file = resolve(join(root, path));
+    let file = resolve(join(root, path));
     if (file !== root && !file.startsWith(root + sep)) return send(403, "text/plain", "Outside the page");
     const name = relative(root, file).split(sep).join("/");
     // Hidden files (.git, .lamp, .env) are no part of the page.
     if (name.split("/").some((part) => part.startsWith("."))) return send(404, "text/plain", "Not found");
     let info;
     try { info = await stat(file); } catch {
-      if (layout.game && name === DEVICE_FILE) return send(200, TYPES[".js"], ANY_BROWSER);
-      if (layout.game && name === BUILD_FILE) return send(200, TYPES[".js"], `export default "${buildName()}";\n`);
-      return send(404, "text/plain", "Not found");
+      // A file the page asks for and the folder doesn't have is an error the page itself often can't say: a module
+      // that imports one never runs, with nothing in the page's log.
+      const missing = () => {
+        if (!/(^|\/)favicon\.ico$|\.map$/.test(name)) logged([{ level: "error", text: `${name} isn't in the folder, and the page asked for it.` }]);
+        return send(404, "text/plain", "Not found");
+      };
+      if (!layout.game) return missing();
+      if (name === DEVICE_FILE) return send(200, TYPES[".js"], ANY_BROWSER);
+      if (name === BUILD_FILE) return send(200, TYPES[".js"], `export default "${buildName()}";\n`);
+      if (name === "lamp.js") return send(200, TYPES[".js"], LAMP_JS);
+      const own = lampsCopy(name);
+      try { info = own ? await stat(own) : null; } catch { info = null; }
+      if (!info) return missing();
+      file = own;
     }
     if (info.isDirectory()) { response.writeHead(302, { Location: url.pathname + "/" + url.search, ...headers }); return response.end(); }
     const type = TYPES[extname(file).toLowerCase()] ?? "application/octet-stream";

@@ -13,6 +13,7 @@ with an `index.html`; without one, the folder you're in.
 
 | Command | What it does |
 | --- | --- |
+| `lamp new <folder> [--name "Its Name"]` | Makes a new web game's folder from Lamp's starting files. |
 | `lamp dev [--open] [--lan] [--port N]` | Runs the page and says how each change went. Each save goes into every open copy of it. `--open` opens a window for it; `--lan` lets other devices on the network open it. |
 | `lamp open` | Shows the page in a window, running it in the background if it isn't running, and returns at once. |
 | `lamp look [--wait s] [--json]` | How the changes since the last look went, a picture of the page, its screen as text, new errors and the log. |
@@ -47,8 +48,27 @@ Files are watched; a save is handed to every open page a moment later.
   player's place (`reopened`); and a game at a moment it can't be interrupted waits for the person's Reload (`held`).
 - **Any other page** opens again.
 
-The two files Lamp writes beside the runtime in each copy of a game (`lamp-device.js`, `lamp-build.js`) are served
-from memory when the folder has none: the device is a browser on any device, as a page published to the web is given.
+## Lamp's own files beside a game's page
+
+Lamp's app writes some files beside a game's page at every build. A folder that came from Lamp has most of them; one
+`lamp new` made has only what's in Lamp's folder as files. What a game's folder lacks, the server gives it:
+
+| File | Where it comes from here |
+| --- | --- |
+| `lamp-device.js`, `lamp-build.js` | Made by the server: the device is a browser on any device, as a page published to the web is given, and the build is named for the files as they are. |
+| `lamp-controllers.js` | `cli/lamps/lamp-controllers.js`, the list of controllers as Lamp writes it (`Controllers.pageJS`). `CLIFilesTests` fails when the two differ, and writes the copy again when run with `LAMP_WRITE_CLI_FILES=1`. The game runtime can't load without it. |
+| `three/`, `phaser/`, `rapier/` | Lamp's copies (`Resources/WebLibraries`), for a library the page asks for and the folder has none of. |
+| `lamp.js` | A stand-in that holds nothing. Lamp's building blocks for a page (AI, saved data, the app's files) are code in Lamp's app and reach the page through it, so a page that uses one says so in its errors. |
+
+A file the page asks for that neither the folder nor Lamp has is logged as an error, since a module that imports one
+never runs and the page can't say so itself.
+
+## A new game
+
+`lamp new` copies what Lamp gives a new web game: the starting page (`Resources/GameKit/scaffold-web`), the game
+runtime (`Resources/GameKit/web`) and three.js. The page is at the top of the folder, so Lamp's app can open the
+folder too. It isn't yet an app as Lamp's app makes one: it has no manifest and none of the app around the page, which
+Lamp's app adds when it takes the folder on. A plain web page needs no starting files.
 
 A change saved while a page is opening isn't lost: each page says which change its files had, and is handed what came
 after. A server started again tells its pages to open again, since it can't know what changed while it was away.
@@ -99,7 +119,7 @@ can read.
 ## What it doesn't do yet
 
 Phones, TVs and consoles as places to run; sharing; and anything that needs Lamp's Mac app around the page
-(`LampNative`, a game's phone controllers). A new app isn't made here either: the folder comes from Lamp.
+(`lamp.js`'s building blocks, `LampNative`, a game's phone controllers).
 
 ## Tests
 
