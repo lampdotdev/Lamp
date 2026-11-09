@@ -19,6 +19,9 @@ export const LIMITS = {
   /** The changes Lamp suggests for the wish (`RemixSuggestions`), each a line; the page offers them to remix with. */
   ideas: 3,
   idea: 100,
+  /** The questions the box under the app asks in turn, where people send its maker ideas ("Found a bug?"). */
+  asks: 3,
+  ask: 80,
   /** A playing page's shape, its width over its height (`shape`), within these; or "fill", a page that takes any. */
   shape: [0.2, 5],
   /** What's new in each version the sharer released (`releases`), newest first: the most kept, the lines each holds
@@ -137,7 +140,7 @@ function release(value) {
  *  from before them), so a change keeps the ones the link has. */
 export function readShare(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
-  const known = ["name", "by", "line", "words", "ideas", "shape", "releases", "picture", "icon"];
+  const known = ["name", "by", "line", "words", "ideas", "asks", "shape", "releases", "picture", "icon"];
   if (Object.keys(body).some((key) => !known.includes(key))) return null;
   const name = tidy(body.name, LIMITS.name);
   const words = tidy(body.words, LIMITS.words, { lines: true });
@@ -145,20 +148,22 @@ export function readShare(body) {
   const by = body.by == null || body.by === "" ? "" : tidy(body.by, LIMITS.by);
   const ideas = body.ideas == null ? [] : Array.isArray(body.ideas) && body.ideas.length <= LIMITS.ideas
     ? body.ideas.map((idea) => tidy(idea, LIMITS.idea)) : [null];
+  const asks = body.asks == null ? [] : Array.isArray(body.asks) && body.asks.length <= LIMITS.asks
+    ? body.asks.map((ask) => tidy(ask, LIMITS.ask)) : [null];
   const shape = body.shape == null ? null : body.shape === "fill" ? "fill"
     : typeof body.shape === "number" && body.shape >= LIMITS.shape[0] && body.shape <= LIMITS.shape[1] ? Math.round(body.shape * 10000) / 10000 : undefined;
   const releases = body.releases === undefined ? undefined : Array.isArray(body.releases) && body.releases.length <= LIMITS.releases
     ? body.releases.map(release) : [null];
   const shot = picture(body.picture, LIMITS.picture);
   const icon = picture(body.icon, LIMITS.icon, { square: true });
-  if (!name || !words || line == null || by == null || ideas.includes(null) || shape === undefined || releases?.includes(null) || !shot || !icon) return null;
-  return { name, by, line, words, ideas, shape, releases: releases?.sort((a, b) => b.date.localeCompare(a.date)),
+  if (!name || !words || line == null || by == null || ideas.includes(null) || asks.includes(null) || shape === undefined || releases?.includes(null) || !shot || !icon) return null;
+  return { name, by, line, words, ideas, asks, shape, releases: releases?.sort((a, b) => b.date.localeCompare(a.date)),
     picture: shot.bytes ? shot : null, icon: icon.bytes ? icon : null };
 }
 
 /** What anyone may see of a shared wish: never its secret. */
 export const shown = (record) => record && ({
-  id: record.id, name: record.name, by: record.by ?? "", line: record.line, words: record.words, ideas: record.ideas ?? [], shape: record.shape ?? null,
+  id: record.id, name: record.name, by: record.by ?? "", line: record.line, words: record.words, ideas: record.ideas ?? [], asks: record.asks ?? [], shape: record.shape ?? null,
   releases: record.releases ?? [], picture: record.picture, icon: record.icon, file: record.file ?? null, updated: record.updated,
   page: record.page ? { version: record.page.version } : null,
 });
@@ -469,7 +474,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       const picture = share.picture && { url: await put("picture", share.picture), width: share.picture.width, height: share.picture.height };
       const icon = share.icon && { url: await put("icon", share.icon) };
       const time = now().toISOString();
-      const words = { name: share.name, by: share.by, line: share.line, words: share.words, ideas: share.ideas, shape: share.shape,
+      const words = { name: share.name, by: share.by, line: share.line, words: share.words, ideas: share.ideas, asks: share.asks, shape: share.shape,
         ...(share.releases ? { releases: share.releases } : {}), picture: picture || null, icon: icon || null };
       if (method === "PUT") {
         await kept.replace({ ...earlier, ...words, updated: time });

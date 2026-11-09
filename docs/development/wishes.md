@@ -386,8 +386,12 @@ the file kept in lamp.dev's Blob store; the file always goes when the wish can g
 each Release Update sends the file again, which counts the link's version up (see "Releases" below). A wish with a page (a web app, a web
 game, a screen: `Publish.hasPage`) sends that too (`WishLink.playablePage`, the page a release puts on GitHub, which
 stays as it is), and its link's page opens on it, playing, with the ways to make one's own under it: whoever has the
-link tries the wish first and remixes it after (SHARED_WISHES.md). The box under it sends what's written to the wish's maker
-first (`/api/wish-ideas`, `createIdeasHandler`): the site keeps it with the link, numbered, until the maker lets it go,
+link tries the wish first and remixes it after (SHARED_WISHES.md). The box under it ("How would you make this better?") asks
+in turn the questions the link carries (`asks`: open questions about what's broken, missing or could be better, in the
+app's own terms, which Lamp writes as the Share Link card opens for a link without any, `WishAsks.write`, and the person
+can change under Ask for Ideas), else "Found a bug?", "What's missing?" and "What would make it better?"; its button says
+who reads it ("Send to Alex", the full name where there's room), and it sends what's written, never a question, to the
+wish's maker first (`/api/wish-ideas`, `createIdeasHandler`): the site keeps it with the link, numbered, until the maker lets it go,
 and answers a key with which the sender can add an address to hear back at (the dialog's Tell Me). Only the link's
 secret reads them; they go with the link, and nothing of them is logged. Lamp asks for them for every wish with a link
 at launch and every five minutes (`WishIdeas`, `Store.checkIdeas`); the desk shows them on a line of their own

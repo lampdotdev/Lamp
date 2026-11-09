@@ -315,7 +315,7 @@ test("the site and Lamp agree on the limits", () => {
   const swift = readFileSync(new URL("../../Sources/Lamp/WishLink.swift", import.meta.url), "utf8");
   assert.ok(swift.includes(`static let filePart = ${FILE_LIMITS.part.toLocaleString("en").replaceAll(",", "_")}`), "filePart");
   assert.ok(swift.includes(`static let fileTotal = ${FILE_LIMITS.total.toLocaleString("en").replaceAll(",", "_")}`), "fileTotal");
-  for (const [name, value] of Object.entries({ name: LIMITS.name, by: LIMITS.by, line: LIMITS.line, words: LIMITS.words, ideas: LIMITS.ideas, idea: LIMITS.idea,
+  for (const [name, value] of Object.entries({ name: LIMITS.name, by: LIMITS.by, line: LIMITS.line, words: LIMITS.words, ideas: LIMITS.ideas, idea: LIMITS.idea, asks: LIMITS.asks, ask: LIMITS.ask,
     releases: LIMITS.releases, releaseLines: LIMITS.releaseLines, releaseLine: LIMITS.releaseLine })) {
     assert.ok(swift.includes(`static let ${name} = ${value}`), name);
   }
@@ -394,6 +394,17 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   assert.deepEqual([await plays(2), await plays(3)], [200, 200]);
   await again();
   assert.deepEqual([await plays(2), await plays(3), await plays(4)], [404, 200, 200]);
+});
+
+test("a link's questions go to its page, and only as questions within the limits", async () => {
+  const store = memoryStore();
+  const handler = createShareHandler({ store, limited: false });
+  const asks = ["Found a bug?", "Something in town we're missing?"];
+  const { id } = await (await send(handler, "POST", { ...share, asks })).json();
+  const page = await (await createPageHandler({ store, template: async () => "<html><head></head><body></body></html>" })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
+  assert.match(page, /"asks":\["Found a bug\?","Something in town we're missing\?"\]/);
+  assert.equal((await send(handler, "POST", { ...share, asks: ["a", "b", "c", "d"] })).status, 400, "three at most");
+  assert.equal((await send(handler, "POST", { ...share, asks: ["x".repeat(81)] })).status, 400);
 });
 
 test("ideas reach the link's maker, and only the maker reads them", async () => {

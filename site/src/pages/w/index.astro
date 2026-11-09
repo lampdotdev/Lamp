@@ -74,9 +74,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
     <aside class="remix-band h-16 border-t border-tape/15 bg-paper" aria-label="Make a change">
       <form data-prompt class="mx-auto flex h-full max-w-[52rem] items-center gap-3 py-3 pr-14 pl-3 sm:pl-6 lg:px-6">
         <!-- Says what the box is for beside it; on a phone, where there's no room, only to screen readers. -->
-        <label for="change" data-change-label class="sr-only shrink-0 text-[15px] font-medium sm:not-sr-only">What would you change or fix?</label>
+        <label for="change" class="sr-only shrink-0 text-[15px] font-medium sm:not-sr-only">How would you make this better?</label>
         <div class="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-tape/15 bg-paper py-1 pr-1 pl-3 shadow-xs transition focus-within:border-tape/50 focus-within:ring-3 focus-within:ring-tape/10">
-          <svg aria-hidden="true" viewBox="0 0 16 16" class="size-4 shrink-0 fill-current text-muted-ink"><path d="M8 0.8l1.6 4.2 4.2 1.6-4.2 1.6L8 12.4 6.4 8.2 2.2 6.6 6.4 5zM13 10.5l0.7 1.8 1.8 0.7-1.8 0.7L13 15.5l-0.7-1.8-1.8-0.7 1.8-0.7z" /></svg>
           <input
             id="change"
             data-change
@@ -86,9 +85,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
             placeholder="What would you change?"
             class="min-w-0 flex-1 bg-transparent py-1.5 text-[15px] placeholder:text-muted-ink focus:outline-none"
           />
-          <button type="submit" data-remix aria-label="Send this change" class="grid size-8 shrink-0 cursor-pointer place-items-center rounded-md bg-tape text-paper transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tape/50">
-            <svg aria-hidden="true" viewBox="0 0 16 16" class="size-4 fill-none stroke-current stroke-2 [stroke-linecap:round] [stroke-linejoin:round]"><path d="M8 13V3M3.5 7.5L8 3l4.5 4.5" /></svg>
-          </button>
+          <!-- Says who reads it, when the link names its maker: the box is a note to a person. -->
+          <button type="submit" data-remix class="h-8 shrink-0 cursor-pointer rounded-md bg-tape px-3 text-sm font-semibold whitespace-nowrap text-paper transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tape/50"><span data-send-short class="sm:hidden">Send</span><span data-send-long class="hidden sm:inline">Send</span></button>
         </div>
       </form>
     </aside>
@@ -284,7 +282,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
   import { track } from "../../lib/analytics";
 
   type Release = { date: string; lines: string[] };
-  type Shared = { id: string; name: string; by?: string; ideas?: string[]; releases?: Release[]; about: string; wish: string; picture: string; icon: string; file?: string; shared?: string; play?: string; shape?: number | "fill" };
+  type Shared = { id: string; name: string; by?: string; ideas?: string[]; asks?: string[]; releases?: Release[]; about: string; wish: string; picture: string; icon: string; file?: string; shared?: string; play?: string; shape?: number | "fill" };
   const json = document.getElementById("shared-wish")?.textContent;
   // Only ever a shared wish's page: on its own, there's nothing to show.
   if (!json) location.replace("/ideas");
@@ -454,19 +452,21 @@ import { DOWNLOAD_URL } from "../../lib/download";
     change.value = askFrom(location.search) ?? "";
     // That someone started writing a change, once a visit, to count those who begin one and never send it.
     change.addEventListener("input", () => track("idea_change_started", { idea: wish.name, place: "shared" }), { once: true });
-    const ideas = wish.ideas ?? [];
+    // The questions the maker's link asks in turn (Lamp writes them, the maker can change them), else these: open
+    // questions that draw out what someone found, not changes for them to pick.
+    const asks = wish.asks?.length ? wish.asks : ["Found a bug?", "What's missing?", "What would make it better?"];
     let shown = 0;
-    const placeholder = () => { change.placeholder = ideas.length ? ideas[shown] : "What would you change?"; };
+    const placeholder = () => { change.placeholder = asks[shown]; };
     placeholder();
-    if (ideas.length > 1 && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    if (asks.length > 1 && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
       setInterval(() => {
         if (document.activeElement === change || change.value) return;
-        shown = (shown + 1) % ideas.length;
+        shown = (shown + 1) % asks.length;
         placeholder();
       }, 3500);
     }
-    // What Remix takes: what's written, or else the change the box is showing.
-    const asked = () => change.value.trim() || (ideas.length ? ideas[shown] : "");
+    // Only what's written: a question isn't an idea.
+    const asked = () => change.value.trim();
 
     // Remix opens a dialog with the change, a line on Lamp, and, since a page can't tell whether Lamp is installed,
     // Open in Lamp for whoever has it (on a Mac) beside Get Lamp for whoever doesn't. Open is the exact wish when it
@@ -477,7 +477,11 @@ import { DOWNLOAD_URL } from "../../lib/download";
     const open = $<HTMLAnchorElement>("[data-open]");
     // The box asks for ideas in the maker's name, as they gave it when they shared it.
     const maker = wish.by?.trim() || "";
-    if (maker) $<HTMLElement>("[data-change-label]").textContent = `${maker} wants your ideas`;
+    // "Send to Alex Kim" where there's room, "Send to Alex" on a phone or for a long name, else "Send".
+    const first = maker.split(/\s+/)[0] ?? "";
+    const short = maker && first.length <= 12 ? `Send to ${first}` : "Send";
+    $<HTMLElement>("[data-send-short]").textContent = short;
+    $<HTMLElement>("[data-send-long]").textContent = maker && maker.length <= 16 ? `Send to ${maker}` : short;
     const notify = $<HTMLFormElement>("[data-notify]");
     const notifyNote = $<HTMLElement>("[data-notify-note]");
     let sentIdea: { n: number; key: string } | null = null;
@@ -488,8 +492,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
       event.preventDefault();
       const ask = asked();
       if (!ask || send.disabled) return change.focus();
-      // Which kind of change was sent, a suggestion or the visitor's own, never what they wrote.
-      track(change.value.trim() ? "idea_own_change" : "idea_suggestion", { idea: wish.name, place: "shared" });
+      // That one was sent, never what it says.
+      track("idea_own_change", { idea: wish.name, place: "shared" });
       send.disabled = true;
       sentIdea = null;
       try {
