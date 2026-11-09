@@ -64,7 +64,10 @@ export async function ask(server, path, body, { timeout = 10_000 } = {}) {
   return said;
 }
 
-/** The server running for this folder, if one is: what it wrote when it started, checked by asking it. */
+/**
+ * The server running for this folder, if one is: what it wrote when it started, checked by asking it. `own` is one a
+ * lamp command started for itself that has no window open: a `lamp dev` run by hand takes its place.
+ */
 export async function running(folder) {
   let server;
   try { server = JSON.parse(readFileSync(serverFileOf(folder), "utf8")); } catch { return null; }

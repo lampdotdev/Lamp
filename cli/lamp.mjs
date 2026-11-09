@@ -3,17 +3,19 @@
 // making it, a person or a coding agent. It needs no Mac app and no build step. No dependencies: Node 20 or later.
 //
 //   lamp dev [folder]     run it, each save going into the open page
+//   lamp open [folder]    show it in a window, running it if it isn't
 //   lamp look [folder]    how the last change went, a picture, the screen as text and the log
 //   lamp use [folder] …   try it: a key, a click, some typing
 //   lamp stop [folder]    stop running it
-//   lamp guide            what a coding agent needs to know to work this way
+//   lamp setup            teach the coding agents on this computer to work this way
 //   lamp skills           Lamp's guidance for each kind of work; lamp skill <name> reads one
 
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, openSync, readdirSync, readFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Problem, layoutOf, stateOf, logFileOf, running, ask } from "./state.mjs";
+import { Problem, layoutOf, stateOf, running, ask } from "./state.mjs";
 import { serve } from "./dev.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -22,46 +24,33 @@ const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 const USAGE = `lamp runs the web app or game in a folder and puts each saved change into the open page.
 
   lamp dev [folder] [--open] [--port N] [--lan]
-      Run it. --open opens a window for it; --lan lets other devices on the network open it too.
+      Run it, saying how each change went. --open opens a window for it; --lan lets other devices on the
+      network open it too.
+  lamp open [folder]
+      Show it in a window, running it in the background if it isn't running. Returns at once.
   lamp look [folder] [--wait seconds] [--json]
       How the changes since the last look went, a picture of the page, its screen as text, and its log.
   lamp use [folder] key <name> [seconds] | click <x> <y> | type <text> | wait <seconds>
       Try it as a person would, then look.
   lamp reload [folder]    Open the page again from its files, a game from where the player is.
   lamp stop [folder]      Stop running it.
-  lamp guide              What a coding agent needs to know to work this way.
-  lamp skills             Lamp's guidance for each kind of work; lamp skill <name> reads one.
+  lamp setup [--remove]   Teach Claude Code and Codex on this computer to work this way (a skill for each).
+  lamp guide              What that skill says, for any other agent.
+  lamp skills [word]      Lamp's guidance for each kind of work, those about a word; lamp skill <name> reads one.
 
 The folder is one Lamp made (its page is in Web/) or any folder with an index.html; without one, the folder you're in.`;
 
-const GUIDE = (log) => `Working on a web app or game with lamp
-
-lamp runs the page from this folder and puts each change into it while it's open. Save files and the change goes in:
-nothing is built, restarted or reloaded by hand.
-
-  lamp dev --open      Run it in a window the person can use and play. Leave it running.
-  lamp look            After a change: how it went in, a picture of the page (a file to read), its screen as text,
-                       new errors and the log. It waits for the change to finish going in.
-  lamp use key w 2     Try it: hold a key for some seconds, \`click 640 400\` a point of the picture, \`type hello\`.
-                       It answers with a look. With a window open the person sees it happen.
-  lamp skills          Lamp's guidance for each kind of work. Read the ones that fit with \`lamp skill <name>\` before
-                       changing what they cover: they say which of Lamp's building blocks to use and how.
-
-How a change goes in. A plain page opens again. A game made with Lamp's runtime keeps the player's place: a module
-that ends with hot(import.meta).accept() is swapped in while the game runs ("live"), other code is run again with the
-player where they were ("reran"), and what can't go in either way opens the page again from the player's place
-("reopened"). "held" means the game is at a moment it can't be interrupted and waits for the person's Reload.
-Prefer changes that go in live: keep what changes as the game is played in modules that accept their changes.
-
-Look after every change, and read the errors before saying it works. The page's log is at
-${log}
-
-Lamp's own files in the folder are rewritten by Lamp and never edited: lamp.js, lamp-game.js, lamp-phaser.js,
-lamp-controllers.js, and the three/ and phaser/ folders.
-
-Where a skill names one of Lamp's own tools: look_at_app is \`lamp look\`, use_app is \`lamp use\`, and a change needs no
-tool at all. What lamp doesn't do yet: phones, TVs and consoles, sharing, and anything that needs Lamp's Mac app around
-the page.`;
+// What tells a coding agent how to work with lamp: one file, installed as a skill by `lamp setup` and printed by
+// `lamp guide`. `{{lamp}}` in it is how lamp is run on this computer.
+const SKILL_MARK = "<!-- Written by lamp setup: run it again to update, or with --remove to take it away. -->";
+function skillText() {
+  // `lamp` when that name runs this very file, else the file itself.
+  const me = fileURLToPath(import.meta.url);
+  const found = spawnSync(process.platform === "win32" ? "where" : "which", ["lamp"], { encoding: "utf8" });
+  const onPath = found.status === 0 && found.stdout.trim().split("\n").some((path) => { try { return realpathSync(path.trim()) === realpathSync(me); } catch { return false; } });
+  const lamp = onPath ? "lamp" : `node ${/\s/.test(me) ? JSON.stringify(me) : me}`;
+  return readFileSync(join(here, "skill", "SKILL.md"), "utf8").replaceAll("{{lamp}}", lamp);
+}
 
 function fail(problem) {
   console.error(`lamp: ${problem}`);
@@ -102,25 +91,31 @@ async function serverFor(folder) {
 
 const WHERE = {
   window: "the window the person has open",
-  copy: "lamp's own copy of the page (no window is open, so it starts where the page starts)",
+  copy: "lamp's own copy of the page, which nobody sees (no window is open)",
   page: "a page open in a browser lamp can't look into",
 };
 
 function report(seen) {
   const lines = [];
   if (seen.did) lines.push(seen.did);
-  if (seen.where) lines.push(`Looked at ${WHERE[seen.where]}${seen.title ? `: "${seen.title}"` : ""}${seen.width ? `, ${seen.width}×${seen.height}` : ""}.`);
+  if (seen.where) lines.push(`Looked at ${WHERE[seen.where]}${seen.title ? `: "${seen.title}"` : ""}${seen.width ? `, ${seen.width}×${seen.height}` : ""}.${seen.opened ? " It was opened just now, from the files as they are." : ""}`);
   if (seen.problem) lines.push(seen.problem);
   if (seen.unfinished) lines.push(`Taken while ${seen.unfinished}: look again.`);
   if (seen.picture) lines.push(`Picture   ${seen.picture}`);
   if (seen.changes.length) {
     lines.push("Changes since the last look");
     for (const change of seen.changes) lines.push(`  ${change.files} → ${change.outcome}: ${change.means}${change.why ? ` (${change.why})` : ""}`);
+  } else {
+    lines.push(`Changes since the last look: none${seen.opened ? " to put in (the page opened with every file as it is now)" : ""}`);
   }
   lines.push(seen.errors.length ? "Errors since the last look" : "Errors since the last look: none");
   for (const error of seen.errors) lines.push(`  ${error.split("\n").join("\n    ")}`);
   if (seen.screen) lines.push("Screen", ...seen.screen.split("\n").map((line) => `  ${line}`));
-  if (seen.log.length) lines.push(`Log (the last ${seen.log.length} lines; all of it: ${seen.logFile})`, ...seen.log.map((line) => `  ${line.split("\n")[0].slice(0, 300)}`));
+  if (seen.log.length) {
+    lines.push(`Log since the last look${seen.logLines > seen.log.length ? ` (the last ${seen.log.length} of ${seen.logLines} lines)` : ""}; all of it: ${seen.logFile}`, ...seen.log.map((line) => `  ${line.split("\n")[0].slice(0, 300)}`));
+  } else {
+    lines.push(`Log since the last look: nothing; all of it: ${seen.logFile}`);
+  }
   return lines.join("\n");
 }
 
@@ -176,6 +171,42 @@ async function main() {
     return;
   }
 
+  if (command === "open") {
+    const { rest } = parse(args, []);
+    const layout = layoutOf(rest[0] ?? ".");
+    const opened = await ask(await serverFor(layout.folder), "open", {}, { timeout: 30_000 });
+    console.log(opened.opened === "window" ? `Opened in a window: ${opened.url}` : `Opened in the browser: ${opened.url}\nlamp found no browser it can look into (Chrome, Edge, Brave or Chromium), so looks have no picture.`);
+    return;
+  }
+
+  if (command === "setup") {
+    const { options } = parse(args, []);
+    const text = `${skillText().trimEnd()}\n\n${SKILL_MARK}\n`;
+    let any = false;
+    for (const [agent, home] of [["Claude Code", join(homedir(), ".claude")], ["Codex", join(homedir(), ".codex")]]) {
+      const folder = join(home, "skills", "lamp"), file = join(folder, "SKILL.md");
+      // Only a skill lamp wrote is replaced or taken away.
+      const theirs = existsSync(file) && !readFileSync(file, "utf8").includes(SKILL_MARK);
+      if (options.remove) {
+        if (!existsSync(file) || theirs) continue;
+        rmSync(file);
+        try { rmdirSync(folder); } catch {}
+        console.log(`Took lamp's skill away from ${agent}.`);
+        any = true;
+      } else if (theirs) {
+        console.log(`${agent} has a skill called lamp that lamp didn't write, left as it is: ${file}`);
+        any = true;
+      } else if (existsSync(home)) {
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(file, text);
+        console.log(`${agent} knows how to work with lamp, from its next session: ${file}`);
+        any = true;
+      }
+    }
+    if (!any) console.log(options.remove ? "There was no skill of lamp's to take away." : "Neither Claude Code nor Codex is set up on this computer. `lamp guide` prints what to give another agent.");
+    return;
+  }
+
   if (command === "reload" || command === "stop") {
     const { rest } = parse(args, []);
     const layout = layoutOf(rest[0] ?? ".");
@@ -187,10 +218,8 @@ async function main() {
   }
 
   if (command === "guide") {
-    const { rest } = parse(args, []);
-    let log = ".lamp/runtime/log.txt in the folder (a plain site's is named by `lamp look`)";
-    try { log = logFileOf(layoutOf(rest[0] ?? ".")); } catch {}
-    console.log(GUIDE(log));
+    // The skill without what only a skill's file needs in front.
+    console.log(skillText().replace(/^---\n[\s\S]*?\n---\n+/, "").trimEnd());
     return;
   }
 
@@ -201,6 +230,9 @@ async function main() {
     if (!existsSync(skills)) throw new Problem("Lamp's skills aren't beside this copy of lamp");
     const name = command === "skill" ? args[0] : null;
     if (command === "skill" && !name) throw new Problem("skill takes a name: lamp skills lists them");
+    // `lamp skills game` lists only those about a word.
+    const about = command === "skills" && args[0] ? args[0].toLowerCase() : null;
+    let listed = 0;
     if (name) {
       const file = join(skills, name, "SKILL.md");
       if (!/^[\w-]+$/.test(name) || !existsSync(file)) throw new Problem(`there's no skill "${name}": lamp skills lists them`);
@@ -211,8 +243,12 @@ async function main() {
       let text = "";
       try { text = readFileSync(join(skills, entry.name, "SKILL.md"), "utf8"); } catch { continue; }
       const description = /^description:\s*(.+)$/m.exec(text.split("\n---")[0] ?? "")?.[1] ?? "";
-      console.log(`${entry.name}: ${description}`);
+      if (about && !`${entry.name} ${description}`.toLowerCase().includes(about)) continue;
+      listed += 1;
+      console.log(`${entry.name}: ${description.length > 170 ? description.slice(0, 170).replace(/\s+\S*$/, "") + "…" : description}`);
     }
+    if (about && !listed) console.log(`No skill is about "${about}": lamp skills lists them all.`);
+    else if (!about) console.log("\n`lamp skills <word>` lists only those about a word; `lamp skill <name>` prints one.");
     return;
   }
 

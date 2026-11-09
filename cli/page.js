@@ -52,24 +52,26 @@
   events.addEventListener('look', e => post('looked', { ask: e.data, seen: window.__lampLook() }));
 
   // What's on the page, as text: each control and canvas with the point at its middle, and the words shown.
+  const CONTROLS = 'button, a[href], input, select, textarea, summary, [role=button], [role=link], [role=tab], [role=checkbox], [role=switch], [role=slider], [role=menuitem], [contenteditable=""], [contenteditable=true]';
+  const words = text => String(text || '').replace(/\s+/g, ' ').trim().slice(0, 90);
+  const kind = el => {
+    const tag = el.tagName.toLowerCase(), role = el.getAttribute('role');
+    if (role) return role;
+    if (tag === 'a') return 'link';
+    if (tag === 'select') return 'choice';
+    if (tag === 'textarea' || el.isContentEditable) return 'field';
+    if (tag === 'input') return ({ checkbox: 'checkbox', radio: 'radio', range: 'slider', button: 'button', submit: 'button' })[el.type] || 'field';
+    return 'button';
+  };
+  const named = el => `${kind(el)} "${words(el.getAttribute('aria-label') || el.innerText || el.getAttribute('title') || el.getAttribute('placeholder') || el.getAttribute('alt') || el.name)}"`;
+
   window.__lampLook = () => {
     const lines = [], width = innerWidth, height = innerHeight;
-    const CONTROLS = 'button, a[href], input, select, textarea, summary, [role=button], [role=link], [role=tab], [role=checkbox], [role=switch], [role=slider], [role=menuitem], [contenteditable=""], [contenteditable=true]';
-    const words = text => String(text || '').replace(/\s+/g, ' ').trim().slice(0, 90);
     const box = el => {
       const r = el.getBoundingClientRect();
       return r.width < 2 || r.height < 2 || r.bottom <= 0 || r.right <= 0 || r.top >= height || r.left >= width ? null : r;
     };
     const middle = r => Math.round(Math.min(Math.max(r.left + r.width / 2, 0), width - 1)) + ',' + Math.round(Math.min(Math.max(r.top + r.height / 2, 0), height - 1));
-    const kind = el => {
-      const tag = el.tagName.toLowerCase(), role = el.getAttribute('role');
-      if (role) return role;
-      if (tag === 'a') return 'link';
-      if (tag === 'select') return 'choice';
-      if (tag === 'textarea' || el.isContentEditable) return 'field';
-      if (tag === 'input') return ({ checkbox: 'checkbox', radio: 'radio', range: 'slider', button: 'button', submit: 'button' })[el.type] || 'field';
-      return 'button';
-    };
     const walk = parent => {
       for (const el of parent.children) {
         if (lines.length > 160) return;
@@ -80,10 +82,9 @@
         const hidden = look.visibility === 'hidden', r = hidden ? null : box(el);
         if (r && tag === 'canvas') { lines.push(`canvas ${Math.round(r.width)}×${Math.round(r.height)} at ${middle(r)}`); continue; }
         if (r && el.matches(CONTROLS)) {
-          const name = words(el.getAttribute('aria-label') || el.innerText || el.getAttribute('title') || el.getAttribute('placeholder') || el.getAttribute('alt') || el.name);
           const holds = el.type === 'checkbox' || el.type === 'radio' ? (el.checked ? ' (on)' : ' (off)')
             : 'value' in el && typeof el.value === 'string' && el.value && tag !== 'button' ? ` = "${words(el.value)}"` : '';
-          lines.push(`${kind(el)} "${name}"${holds}${el.disabled ? ' (off for now)' : ''} at ${middle(r)}`);
+          lines.push(`${named(el)}${holds}${el.disabled ? ' (off for now)' : ''} at ${middle(r)}`);
           continue;
         }
         if (r && tag === 'img') { const alt = words(el.alt); if (alt) lines.push(`picture "${alt}"`); continue; }
@@ -97,5 +98,16 @@
     if (document.body) walk(document.body);
     if (lines.length > 160) lines.push('… and more');
     return { tab, title: document.title, path: location.pathname + location.search, width, height, dpr: devicePixelRatio || 1, game: !!window.__lampLive, screen: lines.join('\n') };
+  };
+
+  // What's at a point of the page, in the screen's own words, so a click says what it landed on.
+  window.__lampAt = (x, y) => {
+    const el = document.elementFromPoint(x, y);
+    if (!el || el === document.documentElement || el === document.body) return 'nothing: the page\'s background';
+    const control = el.closest(CONTROLS);
+    if (control) return named(control);
+    if (el.tagName.toLowerCase() === 'canvas') return 'the canvas';
+    const text = words(el.innerText).slice(0, 50);
+    return text ? `the text "${text}", which isn't a control` : 'nothing that\'s a control';
   };
 })();

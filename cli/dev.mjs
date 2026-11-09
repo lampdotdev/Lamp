@@ -219,7 +219,9 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
   let address = "";
   let windowBrowser = null;       // the window the person uses
   let copyBrowser = null;         // a copy with no window, looked at when there's none
-  let copyTimer = null, lastUsed = Date.now();
+  let copyTimer = null, lastUsed = Date.now(), pictures = 0;
+  // The pictures of an earlier run are no use to this one.
+  for (const name of readdirSync(state)) if (/^look(-\d+)?\.png$/.test(name)) rmSync(join(state, name), { force: true });
   const lookers = new Map();      // a look asked of a page itself → who's waiting for it
 
   async function openWindow() {
@@ -243,9 +245,10 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     lastUsed = Date.now();
     if (windowBrowser?.alive) {
       const page = await windowBrowser.page(address);
-      if (page) return { page, where: "window" };
+      if (page) return { page, where: "window", fresh: false };
     }
-    if (!copyBrowser?.alive) {
+    const fresh = !copyBrowser?.alive;
+    if (fresh) {
       const path = findBrowser();
       if (!path) return null;
       const browser = await launch({ path, url: address, profile: join(state, "browser-copy"), window: false });
@@ -257,7 +260,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     copyTimer = setTimeout(() => copyBrowser?.close(), 10 * 60_000);
     copyTimer.unref();
     const page = await copyBrowser.page(address);
-    return page ? { page, where: "copy" } : null;
+    return page ? { page, where: "copy", fresh } : null;
   }
 
   /** What the page shows now: how the changes since the last look went, a picture, the screen as text, and the log. */
@@ -278,9 +281,11 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       await Promise.all([sleep(300), target.page.evaluate("new Promise(done => { setTimeout(done, 400); requestAnimationFrame(() => requestAnimationFrame(done)); })", { timeout: 1500 })]);
       seen = await target.page.evaluate("window.__lampLook ? window.__lampLook() : null");
       try {
+        // Each look's picture is a file of its own, so one already read is never taken for the next; a few are kept.
         const bytes = await target.page.picture(seen ?? {});
-        picture = join(state, "look.png");
+        picture = join(state, `look-${++pictures}.png`);
         writeFileSync(picture, bytes);
+        rmSync(join(state, `look-${pictures - 8}.png`), { force: true });
       } catch (error) { problem = `No picture: ${error.message}.`; }
     } else if (pages.size) {
       // Any open page says what's on it; there's no picture without a browser lamp can look into.
@@ -302,13 +307,15 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       return pages.size ? { files: named(change), outcome: "unanswered", means: "the page hasn't said how it went", why: "" }
         : { files: named(change), outcome: "opened", means: "no page was open; it's in the one opened now", why: "" };
     });
-    const errors = log.filter((line) => line.n > lastLookLine && isError(line)).map((line) => line.text);
+    const fresh = log.filter((line) => line.n > lastLookLine);
+    const errors = fresh.filter(isError).map((line) => line.text);
     lastLookGen = gen;
     lastLookLine = logCount;
     return {
-      where, address, picture, title: seen?.title ?? null, width: seen?.width ?? null, height: seen?.height ?? null,
+      where, opened: !!target?.fresh, address, picture, title: seen?.title ?? null, width: seen?.width ?? null, height: seen?.height ?? null,
       screen: seen?.screen ?? null, game: layout.game, unfinished, changes: since, errors: errors.slice(-20),
-      log: log.slice(-25).map((line) => `${line.level !== "log" ? line.level + ": " : ""}${line.text}`), logFile, problem,
+      // What the page logged since the last look: the end of it when there's a lot.
+      log: fresh.slice(-25).map((line) => `${line.level !== "log" ? line.level + ": " : ""}${line.text}`), logLines: fresh.length, logFile, problem,
     };
   }
 
@@ -327,8 +334,9 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     } else if (action.kind === "click") {
       const x = Number(action.x), y = Number(action.y);
       if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Problem("click takes a point: lamp use click 640 400");
+      const at = await page.evaluate(`window.__lampAt ? window.__lampAt(${x}, ${y}) : null`);
       await page.click(x, y);
-      did = `Clicked ${x},${y}.`;
+      did = `Clicked ${x},${y}${at ? `: ${at}` : ""}.`;
     } else if (action.kind === "type") {
       await page.type(String(action.text ?? ""));
       did = `Typed "${action.text}".`;
@@ -392,7 +400,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       if (request.headers["x-lamp-token"] !== token) return json(403, { problem: "that isn't lamp's own command" });
       const what = url.pathname.slice("/__lamp/cli/".length);
       try {
-        if (what === "hello") return json(200, { folder, url: address, pid: process.pid, run, own: idle > 0 });
+        if (what === "hello") return json(200, { folder, url: address, pid: process.pid, run, own: idle > 0 && !windowBrowser?.alive });
         if (request.method !== "POST") return json(405, { problem: "not a thing to ask that way" });
         const asked = (await body(request)) ?? {};
         if (what === "look") return json(200, await inTurn(() => look(asked)));

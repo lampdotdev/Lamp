@@ -13,13 +13,28 @@ with an `index.html`; without one, the folder you're in.
 
 | Command | What it does |
 | --- | --- |
-| `lamp dev [--open] [--lan] [--port N]` | Runs the page. Each save goes into every open copy of it. `--open` opens a window for it; `--lan` lets other devices on the network open it. |
+| `lamp dev [--open] [--lan] [--port N]` | Runs the page and says how each change went. Each save goes into every open copy of it. `--open` opens a window for it; `--lan` lets other devices on the network open it. |
+| `lamp open` | Shows the page in a window, running it in the background if it isn't running, and returns at once. |
 | `lamp look [--wait s] [--json]` | How the changes since the last look went, a picture of the page, its screen as text, new errors and the log. |
 | `lamp use key w 2` | Tries it as a person would, then looks: `key <name> [seconds]`, `click <x> <y>`, `type <text>`, `wait <seconds>`. |
 | `lamp reload` | Opens the page again from its files, a game from where the player is. |
 | `lamp stop` | Stops running it. |
-| `lamp guide` | What a coding agent needs to know to work this way. |
-| `lamp skills`, `lamp skill <name>` | Lamp's skills (`Resources/skills`), the one place that says which building blocks to use and how. |
+| `lamp setup [--remove]` | Teaches Claude Code and Codex on this computer to work this way: a skill for each. |
+| `lamp guide` | What that skill says, for any other agent. |
+| `lamp skills [word]`, `lamp skill <name>` | Lamp's skills (`Resources/skills`), the one place that says which building blocks to use and how: all of them or those about a word, and one in full. |
+
+## For a coding agent
+
+```bash
+node cli/lamp.mjs setup
+```
+
+writes one skill, [`skill/SKILL.md`](skill/SKILL.md), where each agent found on the computer reads its skills
+(`~/.claude/skills/lamp`, `~/.codex/skills/lamp`), with the command as it's run on this computer filled in. From its
+next session the agent uses lamp by itself in an app's folder: it opens the window for the person, changes the
+files, looks after each change, and tries the app only when asked to. `lamp setup` replaces only a skill it wrote,
+and `--remove` takes it away. That file is the one place that says how an agent works with lamp; `lamp guide`
+prints it for an agent that has no skills.
 
 ## How a change goes in
 
@@ -44,13 +59,14 @@ after. A server started again tells its pages to open again, since it can't know
 come before the system says the file changed), waits for the page to finish taking the change in, and answers:
 
 - how each change since the last look went in, in the words above, and why;
-- a picture of the page, one pixel a point, so a point of the picture is a point to click;
+- a picture of the page, one pixel a point, so a point of the picture is a point to click (each look's is a file of
+  its own, and the last few are kept);
 - the screen as text: each control and canvas with the point at its middle, and the words shown;
-- errors since the last look, and the end of the log.
+- the errors and the log since the last look.
 
 What it looks at:
 
-1. **The window `lamp dev --open` opened**, when there is one: what the person sees, where they are in it.
+1. **The window `lamp open` or `lamp dev --open` opened**, when there is one: what the person sees, where they are in it.
 2. **A copy of the page with no window**, which lamp starts for itself otherwise and closes ten minutes after it was
    last looked at. It starts where the page starts.
 3. With no browser lamp can drive on the computer, **a page open in any browser** says what's on it, without a picture.
@@ -59,14 +75,15 @@ The window and the copy are a Chromium-family browser already on the computer (C
 `LAMP_BROWSER` names another), started with files of its own, never the person's own browser profile, and spoken to
 over a pipe only lamp holds. `lamp use` acts in the same page, so with a window open the person sees it happen.
 
-`lamp look` and `lamp use` start `lamp dev` in the background when it isn't running; that one ends by itself after
-half an hour unused, and a `lamp dev` run by hand takes its place.
+`lamp open`, `lamp look` and `lamp use` start `lamp dev` in the background when it isn't running. That one ends by
+itself half an hour after it was last used, unless its window is open, and a `lamp dev` run by hand takes its place
+when it has no window.
 
 ## Where things are kept
 
 - **The log.** In an app Lamp made, `.lamp/runtime/log.txt` in the folder, where Lamp keeps it too. A plain site's is
   kept with lamp's other state, and `lamp look` names it.
-- **Everything else** (the browser's files, so a game's saves last from one run to the next; the last picture;
+- **Everything else** (the browser's files, so a game's saves last from one run to the next; the last few pictures;
   which server is running) is in `~/.lamp/dev/<folder's name>-<hash>/`, outside the folder, so nothing of lamp's is
   committed or published with a site. `LAMP_DEV_HOME` moves it.
 - **The port** is 4400, or the next free one; a folder keeps its port from run to run, since a game's saves belong

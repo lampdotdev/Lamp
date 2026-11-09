@@ -107,4 +107,4 @@ Read the guide for the part you're changing before you change it. A section name
 | [services](docs/development/services.md) | Services the person already uses: sign-in on the service's page, personal tokens, open data, the app's secrets |
 | [interface](docs/development/interface.md) | Any screen: Settings, the welcome, the chat's cards, the gallery |
 | [website](docs/development/website.md) | `site/` (lamp.dev) |
-| [lamp from a terminal](cli/README.md) | `cli/`: `lamp dev`, `lamp look` and `lamp use`, which run a web app or game from its folder with no Mac app |
+| [lamp from a terminal](cli/README.md) | `cli/`: `lamp dev`, `lamp look` and `lamp use`, which run a web app or game from its folder with no Mac app, and the skill that teaches a coding agent to use them |
