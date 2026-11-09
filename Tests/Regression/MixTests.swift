@@ -631,6 +631,77 @@ final class MixTests: XCTestCase {
         model.reset()
     }
 
+    /// A check that couldn't read what the mix comes to saves nothing and keeps Mix off; Try Again checks the same pick
+    /// again, beside the file's review as it was, and Mix goes by that check once it's in.
+    @MainActor
+    func testTryAgainChecksTheSamePickAfterACheckCouldNotRead() async throws {
+        let (yours, lineup) = try await twoOfTheirs()
+        final class Reads: @unchecked Sendable {
+            let lock = NSLock()
+            var count = 0
+        }
+        let reads = Reads()
+        let savedRead = MixModel.readForCheck
+        let savedReview = MixModel.reviewForCheck
+        defer { MixModel.readForCheck = savedRead; MixModel.reviewForCheck = savedReview }
+        MixModel.readForCheck = { prepared, lineup in
+            let first = reads.lock.withLock { reads.count += 1; return reads.count == 1 }
+            if first { throw Mix.Failure(message: "Lamp couldn't read what the mix came to.") }
+            return try await Mix.checkInput(prepared, in: lineup)
+        }
+        MixModel.reviewForCheck = { _, _ in
+            var careful = ImportReview(summary: "Reads a file.", capabilities: [], concerns: ["Reads one file"], detected: [])
+            careful.risk = .medium
+            careful.asked = true
+            return careful
+        }
+        var fine = ImportReview(summary: "A coin.", capabilities: [], concerns: [], detected: [])
+        fine.risk = .low
+        fine.asked = true
+        fine.reviewer = ImportReview.Reviewer(name: "A model", onThisMac: false)
+
+        let store = Store(testingAt: yours.root.appendingPathComponent("Apps"))
+        store.projects = [yours.project]
+        let model = MixModel()
+        func until(_ what: String, _ done: () -> Bool) async throws {
+            for _ in 0..<400 where !done() { try await Task.sleep(for: .milliseconds(25)) }
+            XCTAssertTrue(done(), what)
+        }
+        let copy = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-mix-test-\(UUID().uuidString)")
+        try FileManager.default.copyItem(at: lineup.package.folder, to: copy)
+        addTeardownBlock { try? FileManager.default.removeItem(at: copy) }
+        XCTAssertTrue(model.adopt(try Sharing.open(unpacked: copy), reviewed: fine, store: store))
+        try await until("lined up") { model.stage == .ready && model.lineup != nil }
+        model.takeAllTheirs()
+        let pick = model.picked
+        let before = try head(yours)
+
+        model.mix(store: store) { XCTFail("mixed on a check that couldn't read the mix") }
+        try await until("the check fails") { model.check?.failure != nil }
+        XCTAssertEqual(model.check?.failure, "Lamp couldn't read what the mix came to.")
+        XCTAssertNil(model.mixOpening, "nothing to mix by")
+        model.mix(store: store) { XCTFail("mixed on a check that couldn't read the mix") }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(try head(yours), before)
+
+        model.retryCheck()
+        XCTAssertNil(model.check?.failure)
+        XCTAssertNil(model.mixOpening, "nothing to mix by while it's checked again")
+        try await until("the check's answer") { model.check?.review != nil }
+        XCTAssertEqual(reads.lock.withLock { reads.count }, 2)
+        XCTAssertEqual(model.picked, pick, "the pick stays as it was")
+        XCTAssertEqual(model.review?.summary, "A coin.", "the file's review stays as it was")
+        XCTAssertNil(model.check?.failure)
+        XCTAssertEqual(model.mixOpening, .byClick, "the check's answer is what Mix goes by")
+        XCTAssertEqual(try head(yours), before, "nothing saved before Mix")
+
+        var mixed = false
+        model.mix(store: store) { mixed = true }
+        try await until("mixed") { mixed }
+        XCTAssertNotEqual(try head(yours), before)
+        model.reset()
+    }
+
     /// A file of theirs at a path git would quote, or one holding a character a tool might read as a separator, is
     /// still the path it is: there, named as Lamp's own scene file so no review reads it, and carried by no shared copy,
     /// it stays out. Lamp never writes such a path into History/, so the file is the sender's own doing.

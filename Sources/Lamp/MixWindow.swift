@@ -36,7 +36,8 @@ final class MixModel: ObservableObject {
     struct Check {
         let prepared: Mix.Prepared
         var review: ImportReview?
-        /// Why what the mix comes to couldn't be read for a check: nothing of it can be saved then.
+        /// Why what the mix comes to couldn't be read for a check: nothing of it can be saved then, until Try Again
+        /// (`retryCheck`) reads it.
         var failure: String?
     }
     @Published private(set) var check: Check?
@@ -125,6 +126,11 @@ final class MixModel: ObservableObject {
     /// How it checks what a pick comes to (`Mix.checkInput`): the same review, which tests replace to see what it reads.
     nonisolated(unsafe) static var reviewForCheck: @Sendable (Sharing.Package, Sharing.Inspection) async -> ImportReview = {
         await Sharing.review($0, inspection: $1)
+    }
+
+    /// How it reads what a pick comes to for that check: `Mix.checkInput`, which tests replace to make a read fail.
+    nonisolated(unsafe) static var readForCheck: @Sendable (Mix.Prepared, Mix.Lineup) async throws -> (package: Sharing.Package, inspection: Sharing.Inspection) = {
+        try await Mix.checkInput($0, in: $1)
     }
 
     /// Lines the package up with the copy here, and checks it unless `reviewed` already did. Whatever comes back once
@@ -236,7 +242,7 @@ final class MixModel: ObservableObject {
         checking = Task {
             let input: (package: Sharing.Package, inspection: Sharing.Inspection)
             do {
-                input = try await Mix.checkInput(prepared, in: lineup)
+                input = try await Self.readForCheck(prepared, lineup)
             } catch {
                 guard !Task.isCancelled, check?.prepared == prepared else { return }
                 check?.failure = error.localizedDescription
@@ -246,6 +252,30 @@ final class MixModel: ObservableObject {
             let review = await Self.reviewForCheck(input.package, input.inspection)
             guard !Task.isCancelled, check?.prepared == prepared, check?.review == nil else { return }
             check?.review = review
+        }
+    }
+
+    /// Try Again on a check that couldn't read what the mix comes to: the same pick, played back afresh (`Mix.prepare`,
+    /// which refuses a copy that has moved on) and checked again, beside the file's review as it was. Mix stays off
+    /// until that check is in; a change to the pick meanwhile drops it, as it drops any check.
+    func retryCheck() {
+        guard stage == .ready, let lineup, let failed = check, failed.failure != nil, failed.prepared.picked == picked else { return }
+        dropCheck()
+        // Shown as checking while the pick is played back again, so Mix has nothing to go by until the answer.
+        check = Check(prepared: failed.prepared)
+        stage = .preparing
+        let picked = self.picked
+        Task {
+            do {
+                let prepared = try await Mix.prepare(picked, in: lineup)
+                guard stage == .preparing, self.lineup?.package.folder == lineup.package.folder, self.picked == picked else { return }
+                stage = .ready
+                if prepared.needsCheck { startCheck(prepared, in: lineup) } else { dropCheck() }
+            } catch {
+                guard self.lineup?.package.folder == lineup.package.folder else { return }
+                dropCheck()
+                stage = .problem(error.localizedDescription)
+            }
         }
     }
 
@@ -455,7 +485,12 @@ struct MixTimeline: View {
                 waiting("Checking their code…")
             } else if let check = model.check {
                 if let failure = check.failure {
-                    Label(failure, systemImage: "xmark.octagon.fill").foregroundStyle(Color.red)
+                    HStack(spacing: 10) {
+                        Label(failure, systemImage: "xmark.octagon.fill").foregroundStyle(Color.red)
+                        Button("Try Again") { model.retryCheck() }
+                            .buttonStyle(PaperButtonStyle(.outline))
+                            .disabled(model.stage != .ready)
+                    }
                 } else if check.review == nil {
                     waiting("Checking what this mix brings in…")
                 } else {
