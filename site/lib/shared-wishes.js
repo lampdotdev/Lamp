@@ -168,7 +168,8 @@ const blobsOf = (record) => [record?.picture?.url, record?.icon?.url, record?.fi
   ...pageBlobs(record), ...partBlobs(record?.pageParts)].filter(Boolean);
 /** A file's parts so far, and those set aside (`spare`): replaced by a part sent again, or left by an earlier count. */
 const partBlobs = (parts) => [...Object.values(parts?.urls ?? {}), ...(parts?.spare ?? [])];
-const pageBlobs = (record) => Object.values(record?.page?.files ?? {});
+/** The page's files, and the version before it, kept for whoever was still playing that when this one went up. */
+const pageBlobs = (record) => [...Object.values(record?.page?.files ?? {}), ...Object.values(record?.previousPage?.files ?? {})];
 
 /**
  * What anyone's Lamp asks of a link it follows (`GET /api/wishes?id=`): the format of the answer, and the version of
@@ -570,7 +571,9 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
     // A page's other .html files are asked for by their clean names (the site's `cleanUrls` redirects to them), and a
     // folder's index.html by the folder, with its slash or without (a rewrite may not keep it): without, the page is
     // given its folder as its base, so its own files resolve there and not one folder up.
-    const files = record?.page?.version === version ? record.page.files : {};
+    // The page as it is, or the version before it, for a game that was open on that when this one went up.
+    const served = record?.page?.version === version ? record.page : record?.previousPage?.version === version ? record.previousPage : null;
+    const files = served?.files ?? {};
     const folder = path.replace(/\/$/, "");
     const name = path.endsWith("/") ? (files[`${path}index.html`] ? `${path}index.html` : null)
       : files[path] ? path : files[`${path}.html`] ? `${path}.html` : files[`${folder}/index.html`] ? `${folder}/index.html` : null;
@@ -581,7 +584,7 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
     // Not for a worker's own script, which a browser only takes from the page's own origin, nor from a store a browser
     // can't reach (the dev server's memory). Kept apart by what asked (`Vary`), so a worker never gets the redirect.
     const worker = /worker$/i.test(request.headers.get("sec-fetch-dest") ?? "");
-    if (!rebased && !worker && at.startsWith("https://") && !/\.html?$/i.test(name) && (record.page.sizes?.[name] ?? 0) >= direct) {
+    if (!rebased && !worker && at.startsWith("https://") && !/\.html?$/i.test(name) && (served.sizes?.[name] ?? 0) >= direct) {
       return new Response(null, { status: 302, headers: { Location: at, Vary: "Sec-Fetch-Dest", "Cache-Control": "public, max-age=300, s-maxage=31536000", ...cacheTags(id) } });
     }
     // Passed on as it comes from the store; only a folder's index.html given its base is read whole, to change it.
@@ -708,7 +711,7 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
         // The page goes with the wish itself: a link that no longer carries the wish has nothing to play.
         const gone = [...pageBlobs(record), ...partBlobs(record.pageParts),
           ...(page ? [] : [record.file?.url, ...partBlobs(record.parts)])].filter(Boolean);
-        const { page: _page, pageParts: _pageParts, ...rest } = record;
+        const { page: _page, previousPage: _previousPage, pageParts: _pageParts, ...rest } = record;
         // The count stays with the link, so a file sent again later is newer to its followers than any before.
         const next = { ...(page ? rest : { ...rest, file: null, parts: undefined, fileVersion: record.file?.version ?? record.fileVersion }),
           pageVersion: record.page?.version ?? record.pageVersion };
@@ -739,14 +742,18 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
         }
         // The count is the link's (`pageVersion`), so a page taken away and sent again never reuses a play address.
         const version = (record.page?.version ?? record.pageVersion ?? 0) + 1;
+        // The page it replaces stays playable as the version before, so a game open on it goes on finding its files
+        // (a game loads its map as the player moves); the one before that goes now.
         const { pageParts: _pageParts, ...rest } = record;
-        if (!(await kept.replace({ ...rest, page: { version, files: urls, sizes }, pageVersion: version, updated: now().toISOString() }))) {
+        const previousPage = record.page ? { version: record.page.version, files: record.page.files, sizes: record.page.sizes } : undefined;
+        if (!(await kept.replace({ ...rest, page: { version, files: urls, sizes }, ...(previousPage ? { previousPage } : {}),
+          pageVersion: version, updated: now().toISOString() }))) {
           await kept.removeImages([...uploaded, ...partBlobs(parts)]);
           uploaded = [];
           return reply(404, { error: "not_found" });
         }
         uploaded = [];
-        await kept.removeImages([...pageBlobs(record), ...partBlobs(parts)]);
+        await kept.removeImages([...Object.values(record.previousPage?.files ?? {}), ...partBlobs(parts)]);
         await kept.forget(id);
         return reply(200, { version, files: files.length });
       }

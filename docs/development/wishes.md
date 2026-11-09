@@ -386,7 +386,11 @@ the file kept in lamp.dev's Blob store; the file always goes when the wish can g
 each Release Update sends the file again, which counts the link's version up (see "Releases" below). A wish with a page (a web app, a web
 game, a screen: `Publish.hasPage`) sends that too (`WishLink.playablePage`, the page a release puts on GitHub, which
 stays as it is), and its link's page opens on it, playing, with the ways to make one's own under it: whoever has the
-link tries the wish first and remixes it after (SHARED_WISHES.md). Keys reach a framed page only while its frame has
+link tries the wish first and remixes it after (SHARED_WISHES.md). A new page leaves the one before it playable
+(`previousPage` in lib/shared-wishes.js), since a game open on it goes on loading files as it's played (Ann Arbor's map
+as the player moves); the one before that goes. A file a game asks for through lamp-game.js's `asset` that doesn't come
+puts a bar with Reload on the page (`loadProblem`) rather than leaving the game on its loading screen: for a 404 only
+when the page itself is gone too, since a game may ask for a file it doesn't have. Keys reach a framed page only while its frame has
 focus: the link's page focuses it as it loads and after its own buttons, and lamp.js in the page takes focus back on any
 press inside it, since a game that cancels pointerdown (to drag its camera) also cancels the press that would have. The version is what followers ask for (`latest` in
 lib/shared-wishes.js, `GET /api/wishes?id=`, `WishLink.latest`). The page's Open in Lamp is `lamp://wish?shared=<id>`
