@@ -36,14 +36,17 @@ const USAGE = `lamp runs the web app or game in a folder and puts each saved cha
       network open it too.
   lamp open [folder]
       Show it in a window, running it in the background if it isn't running. Returns at once.
-  lamp look [folder] [--reopen] [--wait seconds] [--json]
+  lamp look [folder] [--reopen] [--size 800x600] [--wait seconds] [--json]
       How the changes since the last look went, a picture of the page, its screen as text, and its log.
       --reopen opens the page again from its beginning first (a game's saves kept): what someone opening it sees.
+      --size looks at it as a window of that size shows it, when no window of the person's is open.
   lamp use [folder] <one of these>
       Try it as a person would, then look:
         click <x> <y>                         a point of the picture
         type <text>                           into whatever has the keyboard
-        key <name> [seconds]                  a key, or several at once (w+a), held
+        key <name> [seconds]                  a key, or several at once (w+a), held: a letter, a digit, space,
+                                              enter, escape, tab, backspace, delete, up, down, left, right,
+                                              shift, control, alt, command, f1 to f12
         drag <x> <y> <to x> <to y>            press, move and let go
         scroll <points> [x y]                 down is positive
         stick <left|right> <x> <y> [seconds] [buttons]
@@ -71,7 +74,16 @@ function lampCommand() {
   const onPath = found.status === 0 && found.stdout.trim().split("\n").some((path) => { try { return realpathSync(path.trim()) === realpathSync(me); } catch { return false; } });
   return onPath ? "lamp" : `node ${/\s/.test(me) ? JSON.stringify(me) : me}`;
 }
-const skillText = () => readFileSync(join(here, "skill", "SKILL.md"), "utf8").replaceAll("{{lamp}}", lampCommand());
+/**
+ * The skill as it's read on this computer. Where lamp isn't a command by its own name, the skill says once how it's
+ * run and calls it lamp from there on: the whole path in every line would bury what the lines say.
+ */
+function skillText() {
+  const text = readFileSync(join(here, "skill", "SKILL.md"), "utf8"), command = lampCommand();
+  if (command === "lamp") return text.replaceAll("{{lamp}}", "lamp");
+  const said = `**lamp isn't a command by that name on this computer. Wherever this says \`lamp\`, run:**\n\n    ${command}\n\n`;
+  return text.replaceAll("{{lamp}}", "lamp").replace(/\n# [^\n]*\n\n/, (heading) => heading + said);
+}
 const quoted = (path) => (/\s/.test(path) ? JSON.stringify(path) : path);
 
 /**
@@ -185,8 +197,12 @@ async function main() {
     cpSync(CONTROLLERS, join(folder, CONTROLLERS_FILE));
     writeFileSync(join(folder, DEVICE_FILE), ANY_BROWSER);
     writeFileSync(join(folder, "lamp.js"), LAMP_JS);
+    // The app's notes, which an app made by Lamp keeps and Lamp's skills write in.
+    writeFileSync(join(folder, "APP.md"), `# ${name.replace(/[\r\n]+/g, " ")}\n\nA web game on Lamp's game runtime, not written yet.\n`);
     console.log(`Made ${folder}: a new game, "${name}", on Lamp's game runtime, with three.js and Phaser beside it.`);
-    console.log(`It shows a card until the game is written. Write the game, then see its real opening with: ${lampCommand()} look ${quoted(folder)} --reopen`);
+    console.log("Yours to write: index.html (keep its head), game.js and modules beside it, and APP.md. world.js and making.js are the card it shows until then: the game replaces them.");
+    console.log("Lamp's, never edited: lamp.js, lamp-game.js, lamp-phaser.js, lamp-controllers.js, lamp-device.js, three/ and phaser/.");
+    console.log(`Write the game, then see its real opening with: ${lampCommand()} look ${quoted(folder)} --reopen`);
     return;
   }
 
@@ -241,10 +257,12 @@ async function main() {
   }
 
   if (command === "look") {
-    const { options, rest } = parse(args, ["wait"]);
+    const { options, rest } = parse(args, ["wait", "size"]);
     const layout = layoutOf(rest[0] ?? ".");
     const wait = options.wait === undefined ? 20 : Math.min(Math.max(Number(options.wait) || 0, 0), 120);
-    const seen = await ask(await serverFor(layout.folder), "look", { wait, reopen: !!options.reopen }, { timeout: (wait + 60) * 1000 });
+    const size = options.size === undefined ? null : /^(\d{3,4})x(\d{3,4})$/i.exec(options.size)?.slice(1).map(Number);
+    if (options.size !== undefined && !size) throw new Problem("--size takes a width and a height: --size 800x600");
+    const seen = await ask(await serverFor(layout.folder), "look", { wait, reopen: !!options.reopen, size }, { timeout: (wait + 60) * 1000 });
     console.log(options.json ? JSON.stringify(seen, null, 2) : report(seen));
     return;
   }

@@ -67,11 +67,16 @@ const DONE = new Set(["swapped", "restored", "fresh", "held", "started", "shown"
 const READY = new Set(["page-playing", "restored", "fresh", "started", "shown"]);
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
-/** Log lines as a look shows them: a line said over and over, or the same but for its numbers, is shown once. */
+/**
+ * Log lines as a look shows them: a line said over and over is shown once. The game's own lines are the same only
+ * when their words and numbers are (the time at their front aside); the runtime's own, which say the frame rate every
+ * few seconds, when only their numbers differ.
+ */
 function collapsed(lines) {
   const shown = [];
   for (const line of lines) {
-    const text = `${line.level !== "log" ? line.level + ": " : ""}${line.text}`, shape = text.replace(/[\d.]+/g, "#");
+    const text = `${line.level !== "log" ? line.level + ": " : ""}${line.text}`;
+    const said = text.replace(/^\[[\d.]+ s\] /, ""), shape = said.startsWith("Lamp: ") ? said.replace(/[\d.]+/g, "#") : said;
     const last = shown[shown.length - 1];
     if (last && last.shape === shape) { last.text = text; last.times += 1; } else shown.push({ text, shape, times: 1 });
   }
@@ -267,7 +272,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
   let address = "";
   let windowBrowser = null;       // the window the person uses
   let copyBrowser = null;         // a copy with no window, looked at when there's none
-  let copyTimer = null, lastUsed = Date.now(), pictures = 0;
+  let copyTimer = null, lastUsed = Date.now(), pictures = 0, copySized = false;
   // The pictures of an earlier run are no use to this one.
   for (const name of readdirSync(state)) if (/^look(-\d+)?\.png$/.test(name)) rmSync(join(state, name), { force: true });
   const lookers = new Map();      // a look asked of a page itself → who's waiting for it
@@ -314,10 +319,18 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
   }
 
   /** What the page shows now: how the changes since the last look went, a picture, the screen as text, and the log. */
-  async function look({ wait = 20, reopen = false } = {}) {
+  async function look({ wait = 20, reopen = false, size = null } = {}) {
     checkAll();
     let target = null, problem = null;
     try { target = await watched(); } catch (error) { problem = error.message; }
+    // Another size is for lamp's own copy: the person's window is the size they made it.
+    if (target?.where === "copy") {
+      if (size || copySized) await target.page.size(size?.[0], size?.[1]).catch(() => {});
+      copySized = !!size;
+      if (size) await sleep(400);
+    } else if (size) {
+      problem = "The size asked for wasn't used: the person's window is open, and it's the size they made it. Close it to look at other sizes.";
+    }
     // Which tab that is, which lasts through the page opening again: only its page is waited for.
     let tab = null;
     for (let tries = 0; target && !tab && tries < 40; tries++) {

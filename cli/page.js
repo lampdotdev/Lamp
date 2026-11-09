@@ -101,7 +101,14 @@
         // What's faded out, or nearly (a loading screen on its way out), isn't on the screen.
         if (look.display === 'none' || Number(look.opacity) < 0.1) continue;
         const hidden = look.visibility === 'hidden', r = hidden ? null : box(el);
-        if (r && tag === 'canvas') { lines.push(`canvas ${Math.round(r.width)}×${Math.round(r.height)} at ${middle(r)}`); continue; }
+        if (r && tag === 'canvas') {
+          // A canvas drawn at another size than it's shown (a game's stage) says how a point of what's drawn is found
+          // in the picture.
+          const scale = el.width ? r.width / el.width : 1, round = n => Math.round(n * 100) / 100;
+          const drawn = Math.abs(scale - 1) > 0.02 && el.width > 1 ? ` (drawn at ${el.width}×${el.height}: its point x,y is at ${Math.round(r.left)}+x×${round(scale)}, ${Math.round(r.top)}+y×${round(r.height / el.height)} in the picture)` : '';
+          lines.push(`canvas ${Math.round(r.width)}×${Math.round(r.height)} at ${middle(r)}${drawn}`);
+          continue;
+        }
         if (r && el.matches(CONTROLS)) {
           const holds = el.type === 'checkbox' || el.type === 'radio' ? (el.checked ? ' (on)' : ' (off)')
             : 'value' in el && typeof el.value === 'string' && el.value && tag !== 'button' ? ` = "${words(el.value)}"` : '';
@@ -110,8 +117,13 @@
         }
         if (r && tag === 'img') { const alt = words(el.alt); if (alt) lines.push(`picture "${alt}"`); continue; }
         if (r) {
-          const own = words([...el.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join(' '));
+          // Words set in pieces (a number in a span of its own, a heading in two colors) are one line, as they read.
+          const pieces = [...el.children];
+          const whole = pieces.length && (/^h[1-6]$/.test(tag) ? !el.querySelector(CONTROLS + ', canvas')
+            : pieces.every(c => getComputedStyle(c).display.startsWith('inline') && !c.children.length && !c.matches(CONTROLS) && c.tagName.toLowerCase() !== 'canvas'));
+          const own = words(whole ? el.innerText : [...el.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join(' '));
           if (own) lines.push(`${/^h[1-6]$/.test(tag) ? 'heading' : 'text'} "${own}"`);
+          if (whole) continue;
         }
         walk(el);
       }

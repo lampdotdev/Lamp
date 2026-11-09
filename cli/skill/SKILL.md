@@ -18,14 +18,18 @@ in `Web/`, beside the Swift of the app around it, which stays as it is. An app w
 ## A new game
 
 `{{lamp}} new path/to/folder --name "Its Name"` makes a new web game's folder from Lamp's starting files: the game
-runtime (`lamp-game.js`), three.js and Phaser, and a page that shows a card until the game replaces it. The page is at
-the top of the folder (what Lamp's skills call `Web/` is the folder itself), and there's no `APP.md` to keep. Read
-Lamp's `web-game` skill before writing the game, and "Lamp's skills" below for what in it is Lamp's app's doing.
+runtime (`lamp-game.js`), three.js and Phaser, `APP.md`, and a page that shows a card until the game replaces it. The
+page is at the top of the folder: what Lamp's skills call `Web/` is the folder itself.
 
-The card is a small game of its own: it registers a camera and a state the runtime keeps through a change. Write the
-whole game before the first look, and make that look with `--reopen` (`{{lamp}} look --reopen`), so the game opens
-from its beginning and not from the card's place. A plain web page needs no starting files: write its `index.html`
-in an empty folder.
+Before writing, read Lamp's `web-game` and `game-feel` skills, which are for every game, and `game-playtest` when
+you're asked to play it; "Lamp's skills" below says what in them is Lamp's app's doing. The card's `game.js`,
+`world.js` and `making.js` are yours to replace, as `web-game` says.
+
+The card is a small game of its own, and the runtime keeps what it registered (a state called `play`, a camera)
+through a change, as it would the player's place. So write the whole game before the first look, and make that look
+with `--reopen` (`{{lamp}} look --reopen`): the game then opens from its beginning, not from the card's. If you
+looked earlier, `--reopen` puts it right. A plain web page needs no starting files: write its `index.html` in an
+empty folder.
 
 ## A game that's already there
 
@@ -57,7 +61,8 @@ here: keep its license file, its copyright headers and its author's credit on sc
 3. **Look**: `{{lamp}} look`. It waits for the change to go in, then answers how it went, a picture of the page (a
    file: read it; the last forty are kept), the screen as text, and the errors and the log since your last look. Look
    after every change, and read the errors and the picture before saying it works. `{{lamp}} look --reopen` opens the
-   page again from its beginning first, a game with its saves kept: what someone opening it sees.
+   page again from its beginning first, a game with its saves kept: what someone opening it sees. `--size 900x600`
+   looks at it as a window of that size shows it, for a layout that has to hold at any shape (with no window open).
 
 Nothing has to be running first. With no window open, `look` runs the app itself in a copy of the page nobody sees,
 opened from the files as they are, so the first look has no changes to report. The copy goes on running between
@@ -79,7 +84,9 @@ Only when the person asks you to try, play or test the app: a request to change 
 
 Several moves go in one command with `then` between them, one after another with nothing in between and one look at
 the end: `{{lamp}} use click 640 400 then key w 3 then key w+d 2`. Play anything with a clock that way, a whole
-stretch of it to a command: the game runs on while you read a picture.
+stretch of it to a command, and end the stretch on the game's pause when it has one (`… then button menu`): the game
+runs on while you read a picture. Where a canvas is drawn at another size than it's shown, the screen as text says
+how a point of the game is found in the picture.
 
 A game on Lamp's runtime is played with Lamp's own controller, as Lamp's game skills say (`use_app`'s `stick` and
 `button`):
@@ -89,8 +96,9 @@ A game on Lamp's runtime is played with Lamp's own controller, as Lamp's game sk
 - `{{lamp}} use button a` presses a button, `a 1.5` holds it, and `a+rt` holds two: `a`, `b`, `x`, `y`, `lb`, `rb`,
   the triggers `lt` and `rt`, `menu`, `view`, `up`, `down`, `left`, `right`.
 
-It's the first player's controller, from wherever the game is. If the person plays meanwhile they have it back at
-once and the answer says so: the game is theirs until they ask again. A key works in a game here too.
+It's the first player's controller, from wherever the game is. It isn't a controller plugged in, so the game's
+prompts go on naming keys. If the person plays meanwhile they have it back at once and the answer says so: the game
+is theirs until they ask again. A key works in a game here too.
 
 Each answers with a look. With the window open it happens in the person's own window, where they see it.
 
@@ -99,12 +107,13 @@ Each answers with a look. With the window open it happens in the person's own wi
 `look` says one of these for each change since the last look:
 
 - **live**: swapped in while the page ran. Nothing was lost.
-- **reran**: the game's code ran again, with the player where they were.
+- **reran**: the game's code ran again, with the player where they were. In a small game that takes a moment, and
+  is as good as live.
 - **reopened**: the page opened again. A game opens from the player's place. A plain page always takes a change this
   way and starts over: what was typed or counted in it is gone, so change first and try after.
-- **held**: the change waits. Either for a pause in the game (the end of a round, a menu), and it goes in by itself
-  then: a later look says so. Or for Reload to be pressed in the page, because the page must open again for it:
-  `{{lamp}} reload` presses it, so with a window open ask the person first.
+- **held**: the change waits, and the page shows the person a Reload to apply button. Either it waits for a pause in
+  the game (the end of a round, a menu), and goes in by itself then: a later look says so. Or for that button, because
+  the page must open again for it: `{{lamp}} reload` presses it, so with a window open ask the person first.
 
 The reason given after one names the module that would have had to accept the change: the changed file itself, or
 the one that imports it. A game that takes changes live is written for it. When a change won't go in, needs Reload

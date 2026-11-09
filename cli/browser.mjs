@@ -115,6 +115,12 @@ class Page {
   async scroll(x, y, points) { await this.send("Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX: 0, deltaY: points }); }
 
   async front() { await this.send("Page.bringToFront").catch(() => {}); }
+
+  /** Shows the page at another size, as a window of that size would, or at its own again with none given. */
+  async size(width, height) {
+    if (width && height) await this.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 0, mobile: false });
+    else await this.send("Emulation.clearDeviceMetricsOverride").catch(() => {});
+  }
 }
 
 class Browser {
