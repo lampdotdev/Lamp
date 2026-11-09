@@ -1,256 +1,225 @@
 #!/usr/bin/env node
-// lamp dev: runs a web app or web game from its folder, in any browser, and puts each saved change into the open
-// page while it's used. A prototype of Lamp without the Mac app: whatever edits the files (a person, a coding agent)
-// just saves them, and the page takes the change the way it does inside Lamp.
+// lamp: runs a web app or web game from its folder and puts each saved change into the open page, for whoever is
+// making it, a person or a coding agent. It needs no Mac app and no build step. No dependencies: Node 20 or later.
 //
-//   node cli/lamp.mjs dev [folder] [--port 4400] [--open]
-//
-// A game made with Lamp's runtime (lamp-game.js beside the page) keeps the player's place: the runtime is handed the
-// change exactly as Lamp's app around the page hands it over (`window.__lampLive`), and swaps the code in, runs it
-// again in place, or opens the page again from where the player was. Any other page is opened again.
-//
-// What the page logs goes to .lamp/runtime/log.txt in the folder, where Lamp keeps it too, for whoever is making the
-// change to read. No dependencies: Node 20 or later.
+//   lamp dev [folder]     run it, each save going into the open page
+//   lamp look [folder]    how the last change went, a picture, the screen as text and the log
+//   lamp use [folder] …   try it: a key, a click, some typing
+//   lamp stop [folder]    stop running it
+//   lamp guide            what a coding agent needs to know to work this way
+//   lamp skills           Lamp's guidance for each kind of work; lamp skill <name> reads one
 
-import { createServer } from "node:http";
-import { createHash } from "node:crypto";
-import { watch, existsSync, statSync, mkdirSync, appendFileSync, writeFileSync, readdirSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
-import { join, resolve, extname, sep, relative } from "node:path";
 import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, openSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Problem, layoutOf, stateOf, logFileOf, running, ask } from "./state.mjs";
+import { serve } from "./dev.mjs";
 
-const TYPES = {
-  ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-  ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8",
-  ".map": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-  ".webp": "image/webp", ".gif": "image/gif", ".ico": "image/x-icon", ".avif": "image/avif", ".wasm": "application/wasm",
-  ".glb": "model/gltf-binary", ".gltf": "model/gltf+json", ".bin": "application/octet-stream", ".gz": "application/gzip",
-  ".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".wav": "audio/wav", ".m4a": "audio/mp4", ".mp4": "video/mp4",
-  ".webm": "video/webm", ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf", ".txt": "text/plain; charset=utf-8",
-  ".ktx2": "image/ktx2", ".csv": "text/csv; charset=utf-8", ".webmanifest": "application/manifest+json",
+const here = dirname(fileURLToPath(import.meta.url));
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+
+const USAGE = `lamp runs the web app or game in a folder and puts each saved change into the open page.
+
+  lamp dev [folder] [--open] [--port N] [--lan]
+      Run it. --open opens a window for it; --lan lets other devices on the network open it too.
+  lamp look [folder] [--wait seconds] [--json]
+      How the changes since the last look went, a picture of the page, its screen as text, and its log.
+  lamp use [folder] key <name> [seconds] | click <x> <y> | type <text> | wait <seconds>
+      Try it as a person would, then look.
+  lamp reload [folder]    Open the page again from its files, a game from where the player is.
+  lamp stop [folder]      Stop running it.
+  lamp guide              What a coding agent needs to know to work this way.
+  lamp skills             Lamp's guidance for each kind of work; lamp skill <name> reads one.
+
+The folder is one Lamp made (its page is in Web/) or any folder with an index.html; without one, the folder you're in.`;
+
+const GUIDE = (log) => `Working on a web app or game with lamp
+
+lamp runs the page from this folder and puts each change into it while it's open. Save files and the change goes in:
+nothing is built, restarted or reloaded by hand.
+
+  lamp dev --open      Run it in a window the person can use and play. Leave it running.
+  lamp look            After a change: how it went in, a picture of the page (a file to read), its screen as text,
+                       new errors and the log. It waits for the change to finish going in.
+  lamp use key w 2     Try it: hold a key for some seconds, \`click 640 400\` a point of the picture, \`type hello\`.
+                       It answers with a look. With a window open the person sees it happen.
+  lamp skills          Lamp's guidance for each kind of work. Read the ones that fit with \`lamp skill <name>\` before
+                       changing what they cover: they say which of Lamp's building blocks to use and how.
+
+How a change goes in. A plain page opens again. A game made with Lamp's runtime keeps the player's place: a module
+that ends with hot(import.meta).accept() is swapped in while the game runs ("live"), other code is run again with the
+player where they were ("reran"), and what can't go in either way opens the page again from the player's place
+("reopened"). "held" means the game is at a moment it can't be interrupted and waits for the person's Reload.
+Prefer changes that go in live: keep what changes as the game is played in modules that accept their changes.
+
+Look after every change, and read the errors before saying it works. The page's log is at
+${log}
+
+Lamp's own files in the folder are rewritten by Lamp and never edited: lamp.js, lamp-game.js, lamp-phaser.js,
+lamp-controllers.js, and the three/ and phaser/ folders.
+
+Where a skill names one of Lamp's own tools: look_at_app is \`lamp look\`, use_app is \`lamp use\`, and a change needs no
+tool at all. What lamp doesn't do yet: phones, TVs and consoles, sharing, and anything that needs Lamp's Mac app around
+the page.`;
+
+function fail(problem) {
+  console.error(`lamp: ${problem}`);
+  process.exit(1);
+}
+
+/** The command's options and what's left: `--name value` for those that take one, `--name` for the rest. */
+function parse(args, valued) {
+  const options = {}, rest = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--help" || arg === "-h") { console.log(USAGE); process.exit(0); }
+    if (!arg.startsWith("--")) { rest.push(arg); continue; }
+    const name = arg.slice(2);
+    if (valued.includes(name)) {
+      if (i + 1 >= args.length) throw new Problem(`--${name} takes a value`);
+      options[name] = args[++i];
+    } else options[name] = true;
+  }
+  return { options, rest };
+}
+
+/** The server for the folder: the one running, or one started for this command that ends when nothing uses it. */
+async function serverFor(folder) {
+  const live = await running(folder);
+  if (live) return live;
+  const state = stateOf(folder);
+  mkdirSync(state, { recursive: true });
+  const out = openSync(join(state, "server.log"), "a");
+  spawn(process.execPath, [fileURLToPath(import.meta.url), "dev", folder, "--quiet", "--idle", "30"], { detached: true, stdio: ["ignore", out, out] }).unref();
+  for (let tries = 0; tries < 60; tries++) {
+    await sleep(100);
+    const started = await running(folder);
+    if (started) return started;
+  }
+  throw new Problem(`lamp dev didn't start for this folder; see ${join(state, "server.log")}`);
+}
+
+const WHERE = {
+  window: "the window the person has open",
+  copy: "lamp's own copy of the page (no window is open, so it starts where the page starts)",
+  page: "a page open in a browser lamp can't look into",
 };
 
-// The two files Lamp writes beside a game's runtime in each copy of the page, which the folder's own copy doesn't
-// hold (`GamePage.stage`): which device the copy is on, and which build it is.
-const DEVICE_FILE = "lamp-device.js", BUILD_FILE = "lamp-build.js", RUNTIME_FILE = "lamp-game.js";
-// A browser on any device, as a page published to the web is given (`GamePage.anyBrowser`).
-const ANY_BROWSER = `// Written by lamp dev for a browser on any device (any-browser); don't edit.
-export default {"keys":{"AltLeft":"Alt / Option","AltRight":"Alt / Option","Backspace":"Backspace / Delete","Enter":"Enter / Return","MetaLeft":"Win / ⌘","MetaRight":"Win / ⌘"}};
-`;
-
-// What the page is given before any of its own scripts run: the two message handlers Lamp's app around a page has
-// (so the game runtime knows changes come while it's played, and can say how each one went), a line to this server
-// for changes, and the page's log sent back.
-const CLIENT = `(() => {
-  const send = (path, body) => { try { fetch('/__lamp/' + path, { method: 'POST', body: JSON.stringify(body), keepalive: true }).catch(() => {}); } catch (e) {} };
-  const handlers = { lampLive: { postMessage: said => send('said', said) }, lampPlaying: { postMessage: state => send('said', { state: 'page-' + state }) } };
-  try { window.webkit = window.webkit || {}; window.webkit.messageHandlers = Object.assign(window.webkit.messageHandlers || {}, handlers); }
-  catch (e) { try { Object.defineProperty(window, 'webkit', { value: { messageHandlers: handlers }, configurable: true }); } catch (e) {} }
-  let lines = [], timer = null;
-  const say = (level, parts) => {
-    let text;
-    try { text = parts.map(p => typeof p === 'string' ? p : p instanceof Error ? (p.stack || p.message) : JSON.stringify(p)).join(' '); } catch (e) { text = String(parts[0]); }
-    lines.push((level === 'log' ? '' : level + ': ') + String(text).slice(0, 4000));
-    if (!timer) timer = setTimeout(() => { timer = null; const batch = lines; lines = []; send('log', { lines: batch }); }, 300);
-  };
-  for (const level of ['log', 'info', 'warn', 'error']) {
-    const real = console[level];
-    console[level] = (...parts) => { real.apply(console, parts); say(level === 'info' ? 'log' : level, parts); };
+function report(seen) {
+  const lines = [];
+  if (seen.did) lines.push(seen.did);
+  if (seen.where) lines.push(`Looked at ${WHERE[seen.where]}${seen.title ? `: "${seen.title}"` : ""}${seen.width ? `, ${seen.width}×${seen.height}` : ""}.`);
+  if (seen.problem) lines.push(seen.problem);
+  if (seen.unfinished) lines.push(`Taken while ${seen.unfinished}: look again.`);
+  if (seen.picture) lines.push(`Picture   ${seen.picture}`);
+  if (seen.changes.length) {
+    lines.push("Changes since the last look");
+    for (const change of seen.changes) lines.push(`  ${change.files} → ${change.outcome}: ${change.means}${change.why ? ` (${change.why})` : ""}`);
   }
-  // A page with the game runtime logs its own errors; any other page's are logged here.
-  window.addEventListener('error', e => { if (!window.__lampLive) say('error', [e.message + ' (' + String(e.filename || '').split('/').pop() + ':' + e.lineno + ')']); });
-  window.addEventListener('unhandledrejection', e => { if (!window.__lampLive) say('error', [String(e.reason && e.reason.message || e.reason)]); });
-  const events = new EventSource('/__lamp/events');
-  events.addEventListener('change', e => {
-    const change = JSON.parse(e.data);
-    // A game takes the change and keeps the player's place; any other page opens again.
-    let taken = false;
-    try { taken = !!(window.__lampLive && window.__lampLive(change)); } catch (e) {}
-    if (!taken) { send('said', { gen: change.gen, state: 'reloading' }); location.reload(); }
-  });
-})();
-`;
-
-function usage(problem) {
-  if (problem) console.error(`lamp: ${problem}\n`);
-  console.error("Usage: lamp dev [folder] [--port 4400] [--open]\n\nRuns the web app or game in the folder and puts each saved change into the open page.");
-  process.exit(problem ? 1 : 0);
+  lines.push(seen.errors.length ? "Errors since the last look" : "Errors since the last look: none");
+  for (const error of seen.errors) lines.push(`  ${error.split("\n").join("\n    ")}`);
+  if (seen.screen) lines.push("Screen", ...seen.screen.split("\n").map((line) => `  ${line}`));
+  if (seen.log.length) lines.push(`Log (the last ${seen.log.length} lines; all of it: ${seen.logFile})`, ...seen.log.map((line) => `  ${line.split("\n")[0].slice(0, 300)}`));
+  return lines.join("\n");
 }
 
-const args = process.argv.slice(2);
-if (args[0] !== "dev") usage(args.length && args[0] !== "--help" && args[0] !== "-h" ? `there's no "${args[0]}" yet, only dev` : null);
-let folder = ".", port = 4400, opens = false;
-for (let i = 1; i < args.length; i++) {
-  if (args[i] === "--port") port = Number(args[++i]);
-  else if (args[i] === "--open") opens = true;
-  else if (args[i] === "--help" || args[i] === "-h") usage();
-  else if (args[i].startsWith("-")) usage(`unknown option ${args[i]}`);
-  else folder = args[i];
-}
-if (!Number.isInteger(port) || port < 1 || port > 65535) usage("--port takes a number from 1 to 65535");
-folder = resolve(folder);
-if (!existsSync(folder) || !statSync(folder).isDirectory()) usage(`${folder} isn't a folder`);
+async function main() {
+  const [command, ...args] = process.argv.slice(2);
+  if (!command || command === "--help" || command === "-h" || command === "help") { console.log(USAGE); return; }
 
-// The page: Web/ in an app Lamp made, else the folder itself for a plain site.
-const root = [join(folder, "Web"), folder].find((candidate) => existsSync(join(candidate, "index.html")));
-if (!root) usage(`${folder} has no page: no Web/index.html and no index.html`);
-const isGame = existsSync(join(root, RUNTIME_FILE));
-const logFolder = join(folder, ".lamp", "runtime"), logFile = join(logFolder, "log.txt");
-mkdirSync(logFolder, { recursive: true });
-writeFileSync(logFile, "");
-
-// What's never part of a change: hidden files and folders, what tools keep beside the code, and Lamp's own two files.
-const ignored = (path) => path.split("/").some((part) => part.startsWith(".") || part === "node_modules") || path.endsWith("~")
-  || path === DEVICE_FILE || path === BUILD_FILE;
-
-/** Every file of the page, by its path under the root. */
-function filesUnder(dir = root, prefix = "", found = []) {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = prefix + entry.name;
-    if (ignored(path)) continue;
-    if (entry.isDirectory()) filesUnder(join(dir, entry.name), path + "/", found);
-    else if (entry.isFile()) found.push(path);
-  }
-  return found;
-}
-
-// A file as it last was, to tell a real change from a save that changed nothing: its size and when it was written.
-const stamp = (path) => { try { const s = statSync(join(root, path)); return s.isFile() ? `${s.size}:${s.mtimeMs}` : null; } catch { return null; } };
-const known = new Map(filesUnder().map((path) => [path, stamp(path)]));
-
-/** A name for the page's files as they are, so a copy opened after a change knows it's a newer build. */
-function buildName() {
-  const hash = createHash("sha256");
-  for (const path of [...known.keys()].sort()) hash.update(path).update(known.get(path) ?? "");
-  return hash.digest("hex").slice(0, 16);
-}
-
-const clients = new Set();
-let gen = 0;
-const waitingFor = new Map();   // gen → what changed, until the page says how it went
-const time = () => new Date().toLocaleTimeString([], { hour12: false });
-const print = (text) => console.log(`${time()}  ${text}`);
-
-function broadcast(changed, removed) {
-  gen += 1;
-  const change = { gen, changed, removed, now: false, pill: true };
-  const what = [...changed, ...removed.map((path) => `${path} (removed)`)];
-  waitingFor.set(gen, what.length > 4 ? `${what.slice(0, 3).join(", ")} and ${what.length - 3} more` : what.join(", "));
-  if (waitingFor.size > 50) waitingFor.delete(waitingFor.keys().next().value);
-  const data = `event: change\ndata: ${JSON.stringify(change)}\n\n`;
-  for (const response of clients) response.write(data);
-  if (!clients.size) print(`${waitingFor.get(gen)}: no page is open; it's in the next one opened`);
-}
-
-// Saves are gathered for a moment, so a change of several files goes to the page as one.
-let pending = new Set(), timer = null;
-function noticed(path) {
-  if (!path) return;
-  path = path.split(sep).join("/");
-  if (ignored(path)) return;
-  pending.add(path);
-  clearTimeout(timer);
-  timer = setTimeout(() => {
-    const changed = [], removed = [];
-    for (const path of pending) {
-      const now = stamp(path), before = known.get(path);
-      if (now === before || (now === null && before === undefined)) continue;
-      if (now === null) { known.delete(path); removed.push(path); }
-      else { known.set(path, now); changed.push(path); }
+  if (command === "dev") {
+    const { options, rest } = parse(args, ["port", "idle"]);
+    const layout = layoutOf(rest[0] ?? ".");
+    const port = options.port === undefined ? undefined : Number(options.port);
+    if (port !== undefined && !(Number.isInteger(port) && port > 0 && port < 65536)) throw new Problem("--port takes a number from 1 to 65535");
+    const live = await running(layout.folder);
+    if (live?.own) {
+      // One `lamp look` started for itself, with nobody watching it: this one takes its place.
+      await ask(live, "stop", {}).catch(() => {});
+      for (let tries = 0; tries < 30 && (await running(layout.folder)); tries++) await sleep(100);
+    } else if (live) {
+      // One server a folder: this one says where it is, and opens the window when asked.
+      if (options.open) await ask(live, "open", {}, { timeout: 20_000 });
+      console.log(`lamp dev is already running for this folder: ${live.url}`);
+      return;
     }
-    pending = new Set();
-    if (changed.length || removed.length) broadcast(changed.sort(), removed.sort());
-  }, 120);
-}
-watch(root, { recursive: true }, (_event, name) => noticed(name));
-
-// How the page says a change went, in plain words.
-const OUTCOMES = {
-  swapped: "swapped in while it ran",
-  rerun: "the game's code ran again, the player where they were",
-  reloading: "the page opened again",
-  restored: "back where the player was",
-  fresh: "started fresh",
-  held: "waiting: press Reload in the page to apply",
-};
-
-function said(message) {
-  const { gen: about, state, why } = message;
-  if (state === "page-playing") return print("the game is playing");
-  if (!OUTCOMES[state]) return;
-  const what = waitingFor.get(about);
-  print(`${what ? what + " → " : ""}${OUTCOMES[state]}${why ? ` (${why})` : ""}`);
-}
-
-async function body(request) {
-  const chunks = [];
-  let size = 0;
-  for await (const chunk of request) { chunks.push(chunk); size += chunk.length; if (size > 2_000_000) return null; }
-  try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { return null; }
-}
-
-const server = createServer(async (request, response) => {
-  const url = new URL(request.url, "http://localhost");
-  const send = (status, type, content) => {
-    response.writeHead(status, { "Content-Type": type, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
-    response.end(request.method === "HEAD" ? undefined : content);
-  };
-  // Only this Mac's own pages talk to the server: a page elsewhere can't read the folder through the browser.
-  const host = (request.headers.host || "").replace(/:\d+$/, "");
-  if (!["localhost", "127.0.0.1"].includes(host)) return send(403, "text/plain", "Not this page's server");
-  if (url.pathname === "/__lamp/client.js") return send(200, TYPES[".js"], CLIENT);
-  if (url.pathname === "/__lamp/events") {
-    response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive" });
-    response.write(": lamp dev\n\n");
-    clients.add(response);
-    const beat = setInterval(() => response.write(": still here\n\n"), 20_000);
-    request.on("close", () => { clearInterval(beat); clients.delete(response); });
+    const server = await serve({ folder: layout.folder, port, lan: !!options.lan, quiet: !!options.quiet, idle: Number(options.idle) || 0 });
+    for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => server.close().then(() => process.exit(0)));
+    if (options.open) await server.openWindow();
     return;
   }
-  if (request.method === "POST" && url.pathname === "/__lamp/said") { const message = await body(request); if (message) said(message); return send(204, "text/plain", ""); }
-  if (request.method === "POST" && url.pathname === "/__lamp/log") {
-    const message = await body(request);
-    if (Array.isArray(message?.lines)) { try { appendFileSync(logFile, message.lines.map((line) => String(line) + "\n").join("")); } catch {} }
-    return send(204, "text/plain", "");
-  }
-  if (request.method !== "GET" && request.method !== "HEAD") return send(405, "text/plain", "Method not allowed");
 
-  let path;
-  try { path = decodeURIComponent(url.pathname); } catch { return send(400, "text/plain", "Bad path"); }
-  if (path.endsWith("/")) path += "index.html";
-  const file = resolve(join(root, path));
-  if (file !== root && !file.startsWith(root + sep)) return send(403, "text/plain", "Outside the page");
-  const name = relative(root, file).split(sep).join("/");
-  // Hidden files (.git, .lamp, .env) are no part of the page.
-  if (name.split("/").some((part) => part.startsWith("."))) return send(404, "text/plain", "Not found");
-  let content;
-  try {
-    const info = await stat(file);
-    if (info.isDirectory()) { response.writeHead(302, { Location: url.pathname + "/" }); return response.end(); }
-    content = await readFile(file);
-  } catch {
-    if (isGame && name === DEVICE_FILE) return send(200, TYPES[".js"], ANY_BROWSER);
-    if (isGame && name === BUILD_FILE) return send(200, TYPES[".js"], `export default "${buildName()}";\n`);
-    return send(404, "text/plain", "Not found");
+  if (command === "look") {
+    const { options, rest } = parse(args, ["wait"]);
+    const layout = layoutOf(rest[0] ?? ".");
+    const wait = options.wait === undefined ? 20 : Math.min(Math.max(Number(options.wait) || 0, 0), 120);
+    const seen = await ask(await serverFor(layout.folder), "look", { wait }, { timeout: (wait + 60) * 1000 });
+    console.log(options.json ? JSON.stringify(seen, null, 2) : report(seen));
+    return;
   }
-  const type = TYPES[extname(file).toLowerCase()] ?? "application/octet-stream";
-  if (type.startsWith("text/html")) {
-    // First in the page, before any script of its own.
-    const html = content.toString("utf8"), tag = '<script src="/__lamp/client.js"></script>';
-    content = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (found) => found + tag) : tag + html;
-  }
-  send(200, type, content);
-});
 
-server.on("error", (error) => {
-  console.error(error.code === "EADDRINUSE" ? `lamp: port ${port} is in use; pass --port with another` : `lamp: ${error.message}`);
-  process.exit(1);
-});
-server.listen(port, "127.0.0.1", () => {
-  const address = `http://localhost:${port}/`;
-  console.log(`lamp dev  ${isGame ? "a game" : "a page"} in ${root}`);
-  console.log(`  Open  ${address}`);
-  console.log(`  Log   ${logFile}`);
-  console.log(`  Each save goes into the open page.${isGame ? " A game keeps the player's place." : ""}\n`);
-  if (opens) spawn(process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open", [address], { stdio: "ignore", shell: process.platform === "win32", detached: true }).unref();
+  if (command === "use") {
+    const { options, rest } = parse(args, []);
+    const kinds = ["key", "click", "type", "wait"];
+    const folder = rest.length && !kinds.includes(rest[0]) ? rest.shift() : ".";
+    const [kind, ...values] = rest;
+    if (!kinds.includes(kind)) throw new Problem("use takes key <name> [seconds], click <x> <y>, type <text> or wait <seconds>");
+    const action = kind === "key" ? { kind, key: values[0], seconds: values[1] }
+      : kind === "click" ? { kind, x: values[0], y: values[1] }
+      : kind === "type" ? { kind, text: values.join(" ") }
+      : { kind, seconds: values[0] };
+    if (kind === "key" && !values[0]) throw new Problem("key takes a key's name: lamp use key w 2");
+    const layout = layoutOf(folder);
+    const seen = await ask(await serverFor(layout.folder), "use", action, { timeout: 120_000 });
+    console.log(options.json ? JSON.stringify(seen, null, 2) : report(seen));
+    return;
+  }
+
+  if (command === "reload" || command === "stop") {
+    const { rest } = parse(args, []);
+    const layout = layoutOf(rest[0] ?? ".");
+    const live = await running(layout.folder);
+    if (!live) { console.log("lamp dev isn't running for this folder."); return; }
+    const answer = await ask(live, command, {});
+    console.log(command === "stop" ? "Stopped." : answer.pages ? "The page is opening again." : "No page is open.");
+    return;
+  }
+
+  if (command === "guide") {
+    const { rest } = parse(args, []);
+    let log = ".lamp/runtime/log.txt in the folder (a plain site's is named by `lamp look`)";
+    try { log = logFileOf(layoutOf(rest[0] ?? ".")); } catch {}
+    console.log(GUIDE(log));
+    return;
+  }
+
+  if (command === "skills" || command === "skill") {
+    // Lamp's skills, where they are beside this command in Lamp's own folder: the one place that says which of
+    // Lamp's building blocks to use and how.
+    const skills = join(here, "..", "Resources", "skills");
+    if (!existsSync(skills)) throw new Problem("Lamp's skills aren't beside this copy of lamp");
+    const name = command === "skill" ? args[0] : null;
+    if (command === "skill" && !name) throw new Problem("skill takes a name: lamp skills lists them");
+    if (name) {
+      const file = join(skills, name, "SKILL.md");
+      if (!/^[\w-]+$/.test(name) || !existsSync(file)) throw new Problem(`there's no skill "${name}": lamp skills lists them`);
+      console.log(readFileSync(file, "utf8"));
+      return;
+    }
+    for (const entry of readdirSync(skills, { withFileTypes: true }).filter((entry) => entry.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
+      let text = "";
+      try { text = readFileSync(join(skills, entry.name, "SKILL.md"), "utf8"); } catch { continue; }
+      const description = /^description:\s*(.+)$/m.exec(text.split("\n---")[0] ?? "")?.[1] ?? "";
+      console.log(`${entry.name}: ${description}`);
+    }
+    return;
+  }
+
+  throw new Problem(`there's no "${command}"\n\n${USAGE}`);
+}
+
+main().catch((error) => {
+  if (error instanceof Problem) fail(error.message);
+  throw error;
 });
