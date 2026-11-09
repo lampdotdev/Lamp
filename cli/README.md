@@ -14,6 +14,7 @@ with an `index.html`; without one, the folder you're in.
 | Command | What it does |
 | --- | --- |
 | `lamp new <folder> [--name "Its Name"]` | Makes a new web game's folder from Lamp's starting files. |
+| `lamp init [--update]` | Puts Lamp's game runtime beside a page that's already there, changing none of the page's own files. |
 | `lamp dev [--open] [--lan] [--port N]` | Runs the page and says how each change went. Each save goes into every open copy of it. `--open` opens a window for it; `--lan` lets other devices on the network open it. |
 | `lamp open` | Shows the page in a window, running it in the background if it isn't running, and returns at once. |
 | `lamp look [--wait s] [--json]` | How the changes since the last look went, a picture of the page, its screen as text, new errors and the log. |
@@ -103,7 +104,8 @@ when it has no window.
 
 ## Where things are kept
 
-- **Nothing in the app's folder.** lamp reads the folder and never writes in it (`lamp new` aside), so nothing of
+- **Nothing in the app's folder.** lamp reads the folder and never writes in it (`lamp new` and `lamp init` aside,
+  which are asked to), so nothing of
   lamp's is committed or published with it, and a folder Lamp's app is running too keeps its own log.
 - **Everything lamp keeps** (the page's log, which `lamp look` names; the browser's files, so a game's saves last
   from one run to the next; the last few pictures; which server is running) is in

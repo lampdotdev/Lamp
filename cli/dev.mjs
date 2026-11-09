@@ -196,7 +196,10 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       return;
     }
     if (page) {
-      if ((READY.has(state) || (state === "page-loaded" && !layout.game)) && !page.ready) { page.ready = true; page.readyAt = Date.now(); }
+      // A page on Lamp's runtime says so as the runtime loads, and says when the game is playing; any other page is
+      // taken as open once it has loaded, which is all it can say.
+      if (state === "page-loading") page.runtime = true;
+      if ((READY.has(state) || (state === "page-loaded" && !page.runtime)) && !page.ready) { page.ready = true; page.readyAt = Date.now(); }
       if (DONE.has(state)) { page.at = typeof about === "number" ? Math.max(page.at, about) : gen; page.rerunning = 0; }
       if (state === "rerun") page.rerunning = Date.now() + 15_000;
       if (state === "reloading") reopening.set(page.tab, Date.now() + 30_000);
@@ -229,7 +232,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       // A page that logged an error and then went quiet isn't going to say more: what it shows is looked at as it is.
       const failed = (since) => lastErrorAt > since && now - lastErrorAt > 1500;
       // A game with an older runtime never says it's playing: it's taken as open after a while.
-      if (!page.ready && now - page.since < 25_000 && !failed(page.since)) return layout.game ? "the game was still loading" : "the page was still opening";
+      if (!page.ready && now - page.since < 25_000 && !failed(page.since)) return page.runtime ? "the game was still loading" : "the page was still opening";
       if (page.at < gen && now - page.told < 20_000 && !failed(page.told)) return "the page hadn't said how the last change went";
       if (page.rerunning > now && !failed(page.told)) return "the game's code was running again";
     }
@@ -305,8 +308,29 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     }
     const unfinished = await waitUntilSettled(Math.max(0, wait) * 1000, tab);
     // A page that has only just opened is still putting its loading screen away.
-    const opened = Math.max(0, ...[...pages.values()].filter((page) => !tab || page.tab === tab).map((page) => page.readyAt ?? 0));
+    const mine = [...pages.values()].filter((page) => !tab || page.tab === tab);
+    const opened = Math.max(0, ...mine.map((page) => page.readyAt ?? 0));
     if (Date.now() - opened < 1000) await sleep(1000 - (Date.now() - opened));
+    // A page that isn't on Lamp's runtime can't say when what it loads after opening is in: the first look at it
+    // waits for its screen to stop changing, for a while. A screen that's the same twice running has stopped; one
+    // where only numbers change may be a counter of what's loading or a game's own (its frame rate, a clock), so it's
+    // given a few seconds of that before it's taken as it is.
+    const plain = target && !unfinished ? mine.find((page) => !page.runtime && !page.calm) : null;
+    if (plain) {
+      const words = async () => String((await target.page.evaluate("window.__lampLook ? window.__lampLook().screen : ''")) ?? "");
+      const shape = (text) => text.replace(/[\d.,:%]+/g, "#");
+      const until = Date.now() + Math.min(12_000, Math.max(0, wait) * 1000);
+      let before = await words(), sameShapeSince = Date.now();
+      while (Date.now() < until) {
+        await sleep(700);
+        const now = await words();
+        if (now === before) break;
+        if (shape(now) !== shape(before)) sameShapeSince = Date.now();
+        else if (Date.now() - sameShapeSince > 5000) break;
+        before = now;
+      }
+      plain.calm = true;
+    }
     let seen = null, picture = null, where = target?.where ?? null;
     if (target) {
       // Two frames on, so what's pictured has the change drawn, and long enough for what the page just logged to come.

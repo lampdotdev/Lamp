@@ -22,6 +22,16 @@ runtime (`lamp-game.js`), three.js, and a page that shows a card until the game 
 skill before writing the game, then work on it as below. A plain web page needs no starting files: write its
 `index.html` in an empty folder.
 
+## A game that's already there
+
+A web game from somewhere else runs as it is: every command here works on it, and each change opens its page again
+from the start. Putting it on Lamp's runtime is what lets it take changes while it's played, tell `look` when it's
+really playing, and be played with a controller. `{{lamp}} init` puts Lamp's own files beside its page and changes
+none of the page's; taking the runtime up in the game's code is the work, and Lamp's `web-game` and `game-live`
+skills say how. Where Lamp's `github-projects` skill has Lamp's app keep the project's credit and licenses
+(`lampify`), nothing does here: keep its license file, its copyright headers and its author's credit on screen
+yourself.
+
 ## The loop
 
 1. **Show the person the app** once, when you start, unless they don't want to watch: `{{lamp}} open`. It opens a

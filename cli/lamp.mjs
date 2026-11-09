@@ -3,6 +3,7 @@
 // making it, a person or a coding agent. It needs no Mac app and no build step. No dependencies: Node 20 or later.
 //
 //   lamp new <folder>     a new web game's folder, from Lamp's starting files
+//   lamp init [folder]    Lamp's game runtime, beside a page that's already there
 //   lamp dev [folder]     run it, each save going into the open page
 //   lamp open [folder]    show it in a window, running it if it isn't
 //   lamp look [folder]    how the last change went, a picture, the screen as text and the log
@@ -26,6 +27,9 @@ const USAGE = `lamp runs the web app or game in a folder and puts each saved cha
 
   lamp new <folder> [--name "Its Name"]
       Make a new web game's folder from Lamp's starting files: the game runtime, three.js and a page to build on.
+  lamp init [folder] [--update]
+      Give a page that's already there Lamp's game runtime: its own files beside the page, none of the page's
+      changed. --update writes Lamp's files again, for a newer Lamp.
   lamp dev [folder] [--open] [--port N] [--lan]
       Run it, saying how each change went. --open opens a window for it; --lan lets other devices on the
       network open it too.
@@ -158,6 +162,32 @@ async function main() {
     writeFileSync(join(folder, DEVICE_FILE), ANY_BROWSER);
     writeFileSync(join(folder, "lamp.js"), LAMP_JS);
     console.log(`Made ${folder}: a new game, "${name}", on Lamp's game runtime with three.js.\nShow it with: lamp open ${/\s/.test(folder) ? JSON.stringify(folder) : folder}`);
+    return;
+  }
+
+  if (command === "init") {
+    const { options, rest } = parse(args, []);
+    const layout = layoutOf(rest[0] ?? ".");
+    const runtime = join(here, "..", "Resources", "GameKit", "web");
+    if (![runtime, CONTROLLERS].every(existsSync)) throw new Problem("Lamp's own files aren't beside this copy of lamp");
+    // Lamp's own files beside a game's page: the runtime, and what its app writes at every build. Only those: the
+    // page and its code are the project's, and taking up the runtime in them is the work that follows.
+    const files = [
+      ...readdirSync(runtime).map((name) => [name, () => readFileSync(join(runtime, name))]),
+      [CONTROLLERS_FILE, () => readFileSync(CONTROLLERS)], [DEVICE_FILE, () => ANY_BROWSER],
+    ];
+    const wrote = [], kept = [];
+    for (const [name, contents] of files) {
+      const file = join(layout.root, name);
+      if (existsSync(file) && !options.update) { kept.push(name); continue; }
+      writeFileSync(file, contents());
+      wrote.push(name);
+    }
+    // lamp.js is Lamp's building blocks, which only its app writes: a stand-in where there's none, never over one.
+    if (!existsSync(join(layout.root, "lamp.js"))) { writeFileSync(join(layout.root, "lamp.js"), LAMP_JS); wrote.push("lamp.js"); }
+    console.log(wrote.length ? `Lamp's own files are beside the page in ${layout.root}: ${wrote.join(", ")}.` : `Lamp's own files were beside the page already in ${layout.root}.`);
+    if (kept.length) console.log(`Left as they were: ${kept.join(", ")} (lamp init --update writes them again).`);
+    console.log("The game takes the runtime up in its own code: Lamp's `web-game` skill says how (lamp skill web-game).");
     return;
   }
 
