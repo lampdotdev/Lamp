@@ -406,7 +406,8 @@ email goes once): the sender's browser keeps each idea's number and a token the 
 next visit (`?mine=`), and an idea that's in says so once in a bar over the app, with See What's New; one dismissed
 says nothing. Making one's own with Lamp stays in the
 dialog under the idea sent, and is all it offers when the idea couldn't go. A new page leaves the one before it playable
-(`previousPage` in lib/shared-wishes.js), since a game open on it goes on loading files as it's played (a big city's map
+(`previousPage` in lib/shared-wishes.js; the play handler remembers a link's record a minute per instance,
+`PLAY_MEMORY`, rather than reading the store for each of a game's hundreds of files), since a game open on it goes on loading files as it's played (a big city's map
 as the player moves); the one before that goes. A file a game asks for through lamp-game.js's `asset` that doesn't come
 puts a bar with Reload on the page (`loadProblem`) rather than leaving the game on its loading screen: for a 404 only
 when the page itself is gone too, since a game may ask for a file it doesn't have. Keys reach a framed page only while its frame has
