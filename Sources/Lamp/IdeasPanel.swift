@@ -234,13 +234,13 @@ extension Gallery {
 
     private static func ideas(_ name: String, ideas: [WishLink.Idea]? = nil, width: CGFloat = 940) -> Entry {
         Entry(group: "Sent to you", name: name) {
-            let project = LampProject(id: "gallery-ann-arbor", name: "Go To Ann Arbor", exe: "GoToAnnArbor", dir: URL(fileURLWithPath: "/nonexistent"))
+            let project = LampProject(id: "gallery-harbor-racer", name: "Harbor Racer", exe: "HarborRacer", dir: URL(fileURLWithPath: "/nonexistent"))
             let now = Date()
             let at = { (hours: Double) in ISO8601DateFormatter().string(from: now.addingTimeInterval(-hours * 3600)) }
             let made = ideas ?? [
-                WishLink.Idea(n: 3, text: "Geese that chase you around the Diag", wantsNews: true, at: at(0.3)),
-                WishLink.Idea(n: 2, text: "Make the helicopters look like the Survival Flight ones, red and white with the U-M logo on the side.", wantsNews: nil, at: at(5)),
-                WishLink.Idea(n: 1, text: "More e-bikes downtown", wantsNews: nil, at: at(30)),
+                WishLink.Idea(n: 3, text: "Rain that makes the roads slippery", wantsNews: true, at: at(0.3)),
+                WishLink.Idea(n: 2, text: "Let me paint my car any color I want, with stripes and a number on the doors like a real race car.", wantsNews: nil, at: at(5)),
+                WishLink.Idea(n: 1, text: "More boats in the harbor", wantsNews: nil, at: at(30)),
             ]
             return AnyView(IdeasPanel(wish: project.id, back: {}, preview: (project, made, [3]))
                 .frame(width: width, height: 600)

@@ -405,8 +405,8 @@ test("ideas reach the link's maker, and only the maker reads them", async () => 
   }));
   const list = (key = secret) => ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}`, { headers: { authorization: `Bearer ${key}` } }));
 
-  assert.equal((await post({ text: "Add geese that chase you" })).status, 201);
-  const sent = await (await post({ text: "Survival Flight helicopters" })).json();
+  assert.equal((await post({ text: "Add a night mode" })).status, 201);
+  const sent = await (await post({ text: "Bigger waves" })).json();
   assert.equal(sent.n, 2);
   const email = (body, n = 2) => ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${n}`, {
     method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
@@ -422,7 +422,7 @@ test("ideas reach the link's maker, and only the maker reads them", async () => 
 
   assert.equal((await list("x".repeat(43))).status, 404, "only with the link's secret");
   const kept = (await (await list()).json()).ideas;
-  assert.deepEqual(kept.map((idea) => [idea.n, idea.text, idea.wantsNews]), [[1, "Add geese that chase you", undefined], [2, "Survival Flight helicopters", true]]);
+  assert.deepEqual(kept.map((idea) => [idea.n, idea.text, idea.wantsNews]), [[1, "Add a night mode", undefined], [2, "Bigger waves", true]]);
   assert.ok(kept.every((idea) => !("key" in idea) && !("email" in idea) && typeof idea.at === "string"), "never the keys or the addresses");
 
   const done = await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
@@ -440,11 +440,11 @@ test("ideas reach the link's maker, and only the maker reads them", async () => 
   assert.equal(mails.length, 1);
   assert.equal(mails[0][0], "https://api.resend.com/emails");
   assert.deepEqual(mails[0][1].to, ["someone@example.com"]);
-  assert.match(mails[0][1].text, /Survival Flight helicopters[\s\S]*https:\/\/lamp\.dev\/w\//);
+  assert.match(mails[0][1].text, /Bigger waves[\s\S]*https:\/\/lamp\.dev\/w\//);
   assert.deepEqual((await (await list()).json()).ideas.map((idea) => idea.n), [3]);
   assert.equal(mails.length, 1);
   // Two at once for one idea: one email.
-  const both = await post({ text: "Fireworks over the Big House" });
+  const both = await post({ text: "Fireworks at midnight" });
   const twice = await (await both.json());
   await email({ key: twice.key, email: "someone@example.com" }, twice.n).catch(() => {});
   const asked = () => built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${twice.n}&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
