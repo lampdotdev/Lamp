@@ -8,8 +8,10 @@ public enum SidebarWire {
     /// What this side reads and writes; see `SidebarCommand.hello`. 12: Put on GitHub's card (gone since: Release Update
     /// puts a wish on GitHub) showed the wish's picture and its box. 13: the GitHub cards fold the lines of sources only
     /// credited under their own terms (`SidebarContribute.terms`). 14: Send Changes Back's card says why it's blocked and
-    /// offers what settles it (`ContributeCard.Stage.blocked`, `SidebarContributeCommand.settle`).
-    public static let version = 14
+    /// offers what settles it (`ContributeCard.Stage.blocked`, `SidebarContributeCommand.settle`). 15: Send Changes Back's card shows
+    /// a screenshot of the app it can put in the pull request (`SidebarContribute.screenshot`), which goes only when the
+    /// chat names the one it showed (`SidebarContributeCommand.sendShowing`).
+    public static let version = 15
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -752,9 +754,11 @@ public struct SidebarContribute: Codable, Equatable {
     public var copied: Bool
     /// Send Changes Back can be pressed: it's ready, or a try failed and can be made again.
     public var canSend: Bool
+    /// The screenshot the pull request can show; nil from a Lamp before it could, and for a chat before it could show one.
+    public var screenshot: ContributeScreenshot?
 
     public init(name: String, icon: Data?, stage: ContributeCard.Stage, upstream: String?, fork: String?, credit: String?,
-                notes: [String], terms: [String]? = nil, size: String?, copied: Bool, canSend: Bool) {
+                notes: [String], terms: [String]? = nil, size: String?, copied: Bool, canSend: Bool, screenshot: ContributeScreenshot? = nil) {
         self.name = name
         self.icon = icon
         self.stage = stage
@@ -766,13 +770,21 @@ public struct SidebarContribute: Codable, Equatable {
         self.size = size
         self.copied = copied
         self.canSend = canSend
+        self.screenshot = screenshot
     }
 }
 
 public enum SidebarContributeCommand: Codable, Equatable {
+    /// `send` never takes the screenshot: it's what a chat from before the card showed one sends.
     case open, send, fix, openRequest, copy, close
     /// A blocked card's first button: Review Update…, Check Update History or Try Again (`ContributeBlock.Reason`).
     case settle
+    /// Send Changes Back, with the screenshot the chat showed ticked (`ContributeScreenshot.digest`), or nil to send
+    /// without one. A screenshot goes only when this names the one Lamp holds.
+    case sendShowing(String?)
+    /// Include Screenshot ticked for the screenshot the chat showed (its digest), or nil when it's cleared.
+    case includeScreenshot(String?)
+    case retakeScreenshot, removeScreenshot
 }
 
 /// Put on GitHub's card's commands, as a chat of an earlier Lamp sends them (`SidebarCommand.repo`).

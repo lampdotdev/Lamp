@@ -937,7 +937,7 @@ enum WishLink {
 
     /// The app whose front window a new picture is of, while it's open on this Mac: its Mac copy, wherever Try On points
     /// (a game for the Mac and the Xbox, pointed at the Xbox, is still pictured in its window here).
-    private static func pictured(_ project: LampProject) -> LampProject? {
+    static func pictured(_ project: LampProject) -> LampProject? {
         let app = Store.shared.chatApp(of: project)
         guard Store.shared.openOnMac.contains(app.id), app.destination == .mac || app.openPlaces.contains(.mac) else { return nil }
         return app.at(.mac)

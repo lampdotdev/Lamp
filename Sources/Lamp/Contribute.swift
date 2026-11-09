@@ -86,6 +86,27 @@ enum Contribute {
         let body: String
         /// Who the commit is made as, which the card says when its address goes out with it.
         let author: GitHubRepo.Author
+        /// This submission, which every try at sending it shares: its branch on the fork, and the screenshot's.
+        var submission = UUID().uuidString.lowercased()
+        var branch: String
+
+        /// The fork's branch holding the screenshot and nothing else, kept after the pull request closes so its
+        /// picture still shows.
+        var screenshotBranch: String { "lamp/screenshots/" + submission }
+    }
+
+    /// What one submission has done so far on GitHub, so trying again carries on rather than doing it twice: the fork
+    /// it goes through, and the screenshot's commit once it's made.
+    struct Progress: Equatable {
+        var fork: String?
+        var screenshotCommit: String?
+    }
+
+    /// The screenshot couldn't be uploaded, and nothing more went: the card offers Retry Upload or Send Without
+    /// Screenshot.
+    struct ScreenshotNotUploaded: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
     }
 
     /// The person's fork of `source`, when they have one: "login/name". Asked of GitHub.
@@ -177,7 +198,8 @@ enum Contribute {
             throw Failure(message: "GitHub didn't give back \(source.owner)/\(source.name): \((fetched.errors + fetched.output).trimmed.suffix(200))")
         }
         let tip = try must(await run(["rev-parse", "FETCH_HEAD"]))
-        let branch = "lamp/\(Publish.slug(project.name))-\(UUID().uuidString.prefix(6).lowercased())"
+        let submission = UUID().uuidString.lowercased()
+        let branch = "lamp/\(Publish.slug(project.name))-\(submission.prefix(8))"
         _ = try must(await run(["checkout", "-q", "-b", branch, tip]))
 
         var change = try await self.change(of: project, at: version, exported: exported, repository: clone, in: folder)
@@ -236,52 +258,131 @@ enum Contribute {
                                                  options: ["-c", "core.hooksPath=/dev/null"], in: clone)
         done = true
         return Prepared(folder: folder, clone: clone, version: version, tip: tip, baseBranch: baseBranch, commit: commit, changed: changed,
-                        title: summary.title, body: summary.body, author: author)
+                        title: summary.title, body: summary.body, author: author, submission: submission, branch: branch)
     }
 
-    /// Opens the pull request with what `prepare` made: the fork made when there's none, the commit pushed to a branch
-    /// of it, and the request on `source`; `step` hears what it's doing.
-    static func send(_ prepared: Prepared, of project: LampProject, to source: RepoImport.Source, fork: String?,
+    /// Opens the pull request with what `prepare` made: the fork made when there's none, the screenshot (when one goes)
+    /// put on a branch of the fork of its own, the commit pushed to the submission's branch of it, and the request on
+    /// `source`, unless one from that branch is open already; `step` hears what it's doing. `progress` keeps what's
+    /// done, even when it throws, so trying again carries on: the same fork, screenshot commit and branches.
+    static func send(_ prepared: Prepared, of project: LampProject, to source: RepoImport.Source, screenshot: Data?, progress: inout Progress,
                      gh: String, login: String, step: @escaping @Sendable (String) -> Void) async throws -> Request {
         let upstream = "\(source.owner)/\(source.name)"
         guard await Task.detached(operation: { sendableVersion(of: project) }).value == prepared.version else {
             throw Failure(message: "\(project.name) changed since Lamp looked. Close this and send the changes again.")
         }
-        var fork = fork
-        if fork == nil {
+        if progress.fork == nil {
             step("Forking \(upstream) to your account…")
             let forked = await Subprocess.run(gh, ["repo", "fork", upstream, "--clone=false", "--default-branch-only"], timeout: 120)
             guard forked.ok else { throw Failure(message: "GitHub didn't fork \(upstream): \(forked.output.trimmed.suffix(200))") }
             // A fork takes a moment to exist; one the person already had, under another name, is what gh names.
             let named = forked.output.split(whereSeparator: \.isWhitespace).map(String.init)
                 .first { $0.lowercased().hasPrefix(login.lowercased() + "/") }
-            fork = named ?? "\(login)/\(source.name)"
+            let fork = named ?? "\(login)/\(source.name)"
             var found = false
             for _ in 0..<20 where !found {
                 try? await Task.sleep(for: .seconds(3))
-                found = await Subprocess.run(gh, ["api", "repos/\(fork!)", "--jq", ".full_name"], mergeErrors: false, timeout: 30).ok
+                found = await Subprocess.run(gh, ["api", "repos/\(fork)", "--jq", ".full_name"], mergeErrors: false, timeout: 30).ok
             }
             guard found else { throw Failure(message: "The fork of \(upstream) isn't ready yet. Try again in a moment.") }
+            progress.fork = fork
         }
-        guard let fork else { throw Failure(message: "Lamp couldn't find your fork of \(upstream).") }
+        guard let fork = progress.fork else { throw Failure(message: "Lamp couldn't find your fork of \(upstream).") }
+        let remote = "https://github.com/\(fork).git", access = GitHubRepo.signedIn(gh: gh)
+
+        var picture: String? = nil
+        if let screenshot {
+            step("Uploading the screenshot…")
+            let commit = try await uploadScreenshot(screenshot, of: prepared, to: remote, git: GitHubRepo.git, access: access, progress: &progress)
+            picture = screenshotMarkdown(fork: fork, commit: commit)
+        }
 
         step("Uploading…")
-        let branch = "lamp/\(Publish.slug(project.name))-\(UUID().uuidString.prefix(6).lowercased())"
-        let pushed = await Subprocess.run(GitHubRepo.git, ["-c", "core.hooksPath=/dev/null"] + GitHubRepo.signedIn(gh: gh)
-                                          + ["push", "-q", "https://github.com/\(fork).git", "\(prepared.commit):refs/heads/\(branch)"],
+        let pushed = await Subprocess.run(GitHubRepo.git, ["-c", "core.hooksPath=/dev/null"] + access
+                                          + ["push", "-q", remote, "\(prepared.commit):refs/heads/\(prepared.branch)"],
                                           cwd: prepared.clone, timeout: 600)
         guard pushed.ok else { throw Failure(message: "GitHub didn't take it: \(pushed.output.trimmed.suffix(200))") }
 
-        step("Opening the pull request…")
-        let body = prepared.folder.appendingPathComponent("body.md")
-        try prepared.body.write(to: body, atomically: true, encoding: .utf8)
         let head = fork.split(separator: "/").first.map(String.init) ?? login
-        let opened = await Subprocess.run(gh, ["pr", "create", "--repo", upstream, "--head", "\(head):\(branch)", "--base", prepared.baseBranch,
+        step("Opening the pull request…")
+        // A try that opened it and then lost the answer has a request already: it's that one, never a second.
+        if let url = await existingRequest(on: upstream, head: head, branch: prepared.branch, gh: gh) {
+            return Request(url: url, branch: prepared.branch, fork: fork)
+        }
+        let body = prepared.folder.appendingPathComponent("body.md")
+        try Self.body(prepared.body, picture: picture).write(to: body, atomically: true, encoding: .utf8)
+        let opened = await Subprocess.run(gh, ["pr", "create", "--repo", upstream, "--head", "\(head):\(prepared.branch)", "--base", prepared.baseBranch,
                                                "--title", prepared.title, "--body-file", body.path], timeout: 120)
         guard opened.ok, let url = opened.output.split(whereSeparator: \.isWhitespace).map(String.init).last(where: { $0.hasPrefix("https://") }) else {
             throw Failure(message: "GitHub didn't open the pull request: \(opened.output.trimmed.suffix(200))")
         }
-        return Request(url: url, branch: branch, fork: fork)
+        return Request(url: url, branch: prepared.branch, fork: fork)
+    }
+
+    /// The pull request on `upstream` from `head`'s `branch`, open or not, when there's one.
+    static func existingRequest(on upstream: String, head: String, branch: String, gh: String) async -> String? {
+        let listed = await Subprocess.run(gh, ["pr", "list", "--repo", upstream, "--head", branch, "--state", "all",
+                                               "--json", "url,headRepositoryOwner"], mergeErrors: false, timeout: 60)
+        guard listed.ok, let requests = (try? JSONSerialization.jsonObject(with: Data(listed.output.utf8))) as? [[String: Any]] else { return nil }
+        return requests.first { (($0["headRepositoryOwner"] as? [String: Any])?["login"] as? String)?.lowercased() == head.lowercased() }?["url"] as? String
+    }
+
+    // MARK: The screenshot
+
+    /// Puts the screenshot on the submission's own branch of the fork (`Prepared.screenshotBranch`): a commit of its own
+    /// with no parent, holding the picture alone, made as the card said (`GitHubRepo.commit`), so it's never part of the
+    /// pull request's changes. A try after one that made the commit pushes that same commit. The commit, or
+    /// `ScreenshotNotUploaded`.
+    static func uploadScreenshot(_ png: Data, of prepared: Prepared, to remote: String, git: String, access: [String],
+                                 progress: inout Progress) async throws -> String {
+        func failed(_ why: String) -> ScreenshotNotUploaded { ScreenshotNotUploaded(message: "The screenshot couldn't be uploaded: \(why.trimmed.suffix(200))") }
+        let commit: String
+        if let made = progress.screenshotCommit {
+            commit = made
+        } else {
+            func run(_ arguments: [String], input: Data? = nil) async throws -> String {
+                let ran = await Subprocess.run(git, ["-c", "core.hooksPath=/dev/null"] + arguments, cwd: prepared.clone, mergeErrors: false,
+                                               timeout: 60, input: input)
+                guard ran.ok else { throw failed(ran.errors + ran.output) }
+                return ran.output.trimmed
+            }
+            let blob = try await run(["hash-object", "-w", "--stdin"], input: png)
+            let tree = try await run(["mktree"], input: Data("100644 blob \(blob)\t\(screenshotFile)\n".utf8))
+            do {
+                commit = try await GitHubRepo.commit(["commit-tree", tree, "-m", "Screenshot for a pull request sent from Lamp"], as: prepared.author,
+                                                     shown: [prepared.author], git: git, options: ["-c", "core.hooksPath=/dev/null"], in: prepared.clone)
+            } catch {
+                throw failed(error.localizedDescription)
+            }
+            progress.screenshotCommit = commit
+        }
+        let pushed = await Subprocess.run(git, ["-c", "core.hooksPath=/dev/null"] + access
+                                          + ["push", "-q", remote, "\(commit):refs/heads/\(prepared.screenshotBranch)"],
+                                          cwd: prepared.clone, timeout: 300)
+        guard pushed.ok else { throw failed(pushed.output) }
+        return commit
+    }
+
+    static let screenshotFile = "screenshot.png"
+
+    /// The screenshot in the pull request's text: its commit on the fork, by a path GitHub resolves from the request's own
+    /// page, so it shows to whoever can see the fork, with no token or address that expires.
+    static func screenshotMarkdown(fork: String, commit: String) -> String {
+        "![Screenshot of the app](../../../\(fork)/blob/\(commit)/\(screenshotFile)?raw=true)"
+    }
+
+    /// The pull request's text with the screenshot after its first paragraph, when there's one.
+    static func body(_ body: String, picture: String?) -> String {
+        guard let picture else { return body }
+        guard let end = body.range(of: "\n\n") else { return body + "\n\n" + picture }
+        return body[..<end.lowerBound] + "\n\n" + picture + "\n\n" + body[end.upperBound...]
+    }
+
+    /// Whether anyone can see `repo` (`owner/name`); nil when GitHub doesn't say.
+    static func isPublic(_ repo: String, gh: String) async -> Bool? {
+        let looked = await Subprocess.run(gh, ["api", "repos/\(repo)", "--jq", ".private"], mergeErrors: false, timeout: 30)
+        guard looked.ok else { return nil }
+        switch looked.output.trimmed { case "false": return true; case "true": return false; default: return nil }
     }
 
     // MARK: Recovering the update history
@@ -702,6 +803,19 @@ enum Contribute {
         var request: Contribute.Request?
         var copied = false
         var icon: Data?
+        /// The screenshot the pull request can show: the bytes that go, copied in when it was taken, so nothing the app
+        /// writes after changes what was shown.
+        var screenshot: Screenshot?
+        var includeScreenshot = false
+        var takingScreenshot = false
+        /// Which try at taking one counts: one Remove or a later Retake overtook is dropped when it lands.
+        var screenshotTry = UUID()
+        var screenshotFailed = false
+        var screenshotUploadFailed = false
+        /// Whether the fork is public (or will be, made from a public repository).
+        var forkIsPublic: Bool?
+        /// What this submission did on GitHub so far; set once a send begins, and the screenshot stays as it is from then.
+        var progress: Contribute.Progress?
 
         /// Ready, or failed with what would go still prepared, so Send Changes Back tries again.
         var canSend: Bool {
@@ -713,6 +827,13 @@ enum Contribute {
         }
     }
 
+    struct Screenshot: Equatable {
+        let png: Data
+        let digest: String
+        /// Smaller, for the chat to show.
+        let preview: Data
+    }
+
     @Published private(set) var cards: [String: Card] = [:]
 
     func card(for project: LampProject) -> Card? { cards[project.id] }
@@ -721,7 +842,80 @@ enum Contribute {
         guard cards[project.id] == nil else { return }
         cards[project.id] = Card()
         Task { cards[project.id]?.icon = await Sharing.sharedIcon(of: project) }
+        takeScreenshot(project)
         prepare(project)
+    }
+
+    /// A screenshot of the app's own window as it is now, asked of the running app as Retake on a link's card asks
+    /// (`WishLinkCards.retake`): only a picture it takes from now on, never one from before. Taking one clears Include
+    /// Screenshot, so a new picture is never sent without being looked at.
+    func takeScreenshot(_ project: LampProject) {
+        guard let card = cards[project.id], card.progress == nil else { return }
+        let attempt = UUID()
+        cards[project.id]?.screenshotTry = attempt
+        cards[project.id]?.includeScreenshot = false
+        cards[project.id]?.screenshotFailed = false
+        guard let app = WishLinkCards.pictured(project) else {
+            // A picture from before is never kept in place of the one asked for.
+            cards[project.id]?.screenshot = nil
+            cards[project.id]?.takingScreenshot = false
+            cards[project.id]?.screenshotFailed = true
+            return
+        }
+        cards[project.id]?.takingScreenshot = true
+        let asked = Date()
+        Runtime.requestScreenshots(of: app)
+        Task {
+            let taken = await Runtime.screenshots(of: app, since: asked).first
+            let shot = taken.flatMap { AppFile.read($0, in: project) }.flatMap(Self.screenshot(from:))
+            guard cards[project.id]?.screenshotTry == attempt else { return }
+            cards[project.id]?.takingScreenshot = false
+            cards[project.id]?.includeScreenshot = false
+            // A Retake that gives nothing drops the earlier picture, so the card never shows an old one as new.
+            cards[project.id]?.screenshot = shot
+            cards[project.id]?.screenshotFailed = shot == nil
+        }
+    }
+
+    /// The bytes as they'll go, with their digest and a smaller copy for the card; nil for what isn't a PNG picture.
+    static func screenshot(from data: Data) -> Screenshot? {
+        guard data.starts(with: [0x89, 0x50, 0x4E, 0x47]), let rep = NSBitmapImageRep(data: data), rep.pixelsWide > 0, rep.pixelsHigh > 0 else { return nil }
+        let longest = 1000.0, scale = min(1, longest / Double(max(rep.pixelsWide, rep.pixelsHigh)))
+        var preview = data
+        if scale < 1, let small = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(Double(rep.pixelsWide) * scale), pixelsHigh: Int(Double(rep.pixelsHigh) * scale),
+                                                   bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                                   bytesPerRow: 0, bitsPerPixel: 0) {
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: small)
+            NSGraphicsContext.current?.imageInterpolation = .high
+            rep.draw(in: NSRect(x: 0, y: 0, width: small.pixelsWide, height: small.pixelsHigh))
+            NSGraphicsContext.restoreGraphicsState()
+            preview = small.representation(using: .png, properties: [:]) ?? data
+        }
+        return Screenshot(png: data, digest: WishLinkCards.digest(data), preview: preview)
+    }
+
+    func removeScreenshot(_ project: LampProject) {
+        guard cards[project.id]?.progress == nil else { return }
+        cards[project.id]?.screenshotTry = UUID()
+        cards[project.id]?.takingScreenshot = false
+        cards[project.id]?.screenshot = nil
+        cards[project.id]?.includeScreenshot = false
+        cards[project.id]?.screenshotFailed = false
+    }
+
+    /// Include Screenshot, ticked for the picture the chat showed (`shown`, its digest) or cleared: ticked only when
+    /// that's the one held now, from a chat that could show it.
+    func includeScreenshot(_ project: LampProject, shown: String?, wire: Int) {
+        guard let card = cards[project.id], card.progress == nil else { return }
+        cards[project.id]?.includeScreenshot = Self.authorized(card.screenshot, included: true, shown: shown, wire: wire) != nil
+    }
+
+    /// The screenshot that goes with a send: the one held, ticked, and named by a chat that showed it. A chat from
+    /// before the card showed one (wire 14 and older) never sends one, whatever it says.
+    static func authorized(_ held: Screenshot?, included: Bool, shown: String?, wire: Int) -> Screenshot? {
+        guard wire >= 15, included, let held, let shown, shown == held.digest else { return nil }
+        return held
     }
 
     /// Finds gh, the sign-in and the fork, and works out what will go.
@@ -730,6 +924,9 @@ enum Contribute {
         cards[project.id]?.stage = .preparing
         if let old = cards[project.id]?.prepared { try? FileManager.default.removeItem(at: old.folder) }
         cards[project.id]?.prepared = nil
+        // Prepared again is a new submission: its own branches, and a screenshot that can change again.
+        cards[project.id]?.progress = nil
+        cards[project.id]?.screenshotUploadFailed = false
         Task {
             guard let source = Contribute.origin(of: project) else { return set(project, .refused("This app didn't come from a repository on GitHub.")) }
             guard let gh = await Publish.gh() else { return set(project, .needsGitHub(.install)) }
@@ -741,6 +938,8 @@ enum Contribute {
             cards[project.id]?.login = login
             cards[project.id]?.source = source
             let fork = await Contribute.fork(of: source, login: login, gh: gh)
+            // A fork is made as public as the repository it's made from.
+            let forkIsPublic = await Contribute.isPublic(fork ?? "\(source.owner)/\(source.name)", gh: gh)
             do {
                 let prepared = try await Contribute.prepare(project, from: source, gh: gh, login: login)
                 guard cards[project.id] != nil else {
@@ -751,6 +950,7 @@ enum Contribute {
                 cards[project.id]?.login = login
                 cards[project.id]?.source = source
                 cards[project.id]?.fork = fork
+                cards[project.id]?.forkIsPublic = forkIsPublic
                 cards[project.id]?.prepared = prepared
                 cards[project.id]?.stage = .ready
             } catch let blocked as Contribute.Blocked {
@@ -810,14 +1010,23 @@ enum Contribute {
 
     private func set(_ project: LampProject, _ stage: ContributeCard.Stage) { cards[project.id]?.stage = stage }
 
-    func send(_ project: LampProject) {
+    /// Send Changes Back (or Retry Upload), with the screenshot the chat showed ticked (`shown`) when it's the one held;
+    /// `shown` nil sends without one, and clears Include Screenshot so a later try doesn't take it either.
+    func send(_ project: LampProject, shown: String?, wire: Int) {
         guard let card = cards[project.id], card.canSend, let prepared = card.prepared, let source = card.source,
               let gh = card.gh, let login = card.login else { return }
+        if shown == nil { cards[project.id]?.includeScreenshot = false }
+        let screenshot = Self.authorized(card.screenshot, included: card.includeScreenshot, shown: shown, wire: wire)
+        let started = card.progress ?? Contribute.Progress(fork: card.fork)
+        cards[project.id]?.progress = started
+        cards[project.id]?.screenshotUploadFailed = false
         set(project, .working("Starting…"))
         Task {
+            let id = project.id
+            var progress = started
             do {
-                let id = project.id
-                let request = try await Contribute.send(prepared, of: project, to: source, fork: card.fork, gh: gh, login: login) { step in
+                let request = try await Contribute.send(prepared, of: project, to: source, screenshot: screenshot?.png, progress: &progress,
+                                                        gh: gh, login: login) { step in
                     Task { @MainActor in ContributeCards.shared.cards[id]?.stage = .working(step) }
                 }
                 try? FileManager.default.removeItem(at: prepared.folder)
@@ -826,7 +1035,10 @@ enum Contribute {
                 cards[project.id]?.request = request
                 set(project, .done(request.url))
             } catch {
-                // What would go stays prepared, so Send Changes Back can try again.
+                // What would go stays prepared, and what's done on GitHub is kept, so trying again carries on.
+                cards[project.id]?.progress = progress
+                if progress.fork != nil { cards[project.id]?.fork = progress.fork }
+                cards[project.id]?.screenshotUploadFailed = error is Contribute.ScreenshotNotUploaded
                 set(project, .failed(error.localizedDescription))
             }
         }
@@ -867,8 +1079,12 @@ enum Contribute {
         }
         if let note = card.prepared.flatMap({ GitHubRepo.note(for: [$0.author]) }) { notes.append(note) }
         let size = card.prepared.map { $0.changed.count == 1 ? "1 file changed" : "\($0.changed.count) files changed" }
+        let screenshot = ContributeScreenshot(picture: card.screenshot?.preview, digest: card.screenshot?.digest, include: card.includeScreenshot,
+                                              taking: card.takingScreenshot, failed: card.screenshotFailed, isPublic: card.forkIsPublic,
+                                              uploadFailed: card.screenshotUploadFailed, locked: card.progress != nil)
         return SidebarContribute(name: project.name, icon: card.icon, stage: card.stage,
                                  upstream: card.source.map { "\($0.owner)/\($0.name)" }, fork: card.fork ?? card.request?.fork,
-                                 credit: credits.basedOn, notes: notes, terms: terms, size: size, copied: card.copied, canSend: card.canSend)
+                                 credit: credits.basedOn, notes: notes, terms: terms, size: size, copied: card.copied, canSend: card.canSend,
+                                 screenshot: screenshot)
     }
 }

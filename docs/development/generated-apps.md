@@ -54,8 +54,8 @@ heading in its binary (`Store.screenTextMarker`): such an app is told to be rebu
 
 The pictures themselves (`LampRuntime.snapshot`, screenshot.png and up to two more) are the window server's, tried a
 few times in under half a second when it gives none, a clear one or one of one color (`LampRuntime.capture`). A window
-that pictures clear shows nothing and is left out, as are Lamp's own windows over the app (the chat beside it, the
-note pointing at the wand, a change's effect), so the app's window is the first picture. A clear window stays out of
+that pictures clear shows nothing and is left out, as are Lamp's own windows over the app (the chat beside it and what it shows over its panel, such as its Share
+popover, `LampRuntime.isChats`; the note pointing at the wand; a change's effect), so the app's window is the first picture. A clear window stays out of
 `windowsOnScreen` until a later picture shows something in it, so the first picture, the screen as text and `use_app`'s
 actions are of the same window; a front window that can't be pictured is never replaced by the one behind it. When the window server gives
 no picture, the app's own drawing (`cacheDisplay`) is used only for a window with nothing drawn outside the app
@@ -542,7 +542,23 @@ nothing to send. What would be pushed is
 checked for keys once more as it is (`ShareCheck.secrets`). The fork is made with `gh` when
 the person has none (`Contribute.fork`), and the one commit is pushed to a branch of it and a pull request opened on
 the repository (`Contribute.send`). The request's text (`Contribute.summary`) is the wish's line, the names its
-versions since it arrived were given (never the requests themselves, never the chat) and the files changed. The person's own repository is refused (a release on its link updates it, `GitHubRelease`). The request's text tells
+versions since it arrived were given (never the requests themselves, never the chat) and the files changed; it's
+written before any screenshot exists, so a picture never goes into it. The card can put a screenshot of the app in the
+request: the running app's own window, asked of it when the card opens and on Retake as a link's card retakes its
+picture (`Runtime.requestScreenshots`, `Runtime.screenshots(of:since:)`: only a picture taken from then on, never an
+older one or the desktop), its bytes copied into the card (`ContributeCards.Screenshot`) so the app writing a new one
+changes nothing. It goes only when Include Screenshot is ticked, which starts cleared and is cleared again by Retake, and
+only when the chat sends the digest of the picture it showed (`SidebarContributeCommand.sendShowing`,
+`ContributeCards.authorized`); a chat from before wire 15 never sends one. The card says the picture includes everything
+visible in it, and who sees it: anyone for a public fork, people with access to it for a private one. It goes on a
+branch of the fork of its own (`lamp/screenshots/<submission>`, `Prepared.screenshotBranch`), as a commit with no parent
+holding only `screenshot.png`, made through `GitHubRepo.commit` (signed as the person's git signs, under the address the
+card showed), so it's never in the request's changes, and is kept after the request closes so the picture still shows.
+The request embeds it by a path pinned to that commit and resolved from the request's page
+(`Contribute.screenshotMarkdown`), with no token or expiring address. If it can't be uploaded nothing more goes, and the
+card offers Retry Upload or Send Without Screenshot. Every try at one submission (`Prepared.submission`) uses the same
+branches, fork and screenshot commit (`Contribute.Progress`), and looks for a request from its branch before opening one
+(`Contribute.existingRequest`), so a request never opens twice; the screenshot can't change once a send has begun. The person's own repository is refused (a release on its link updates it, `GitHubRelease`). The request's text tells
 its owner to open the app in Lamp, where the desk shows the request and brings it in (`SuggestedChanges`, in
 [wishes](wishes.md)); one merged on GitHub instead makes their Share Link card offer Bring In Changes before their next
 release (`BringIn`).

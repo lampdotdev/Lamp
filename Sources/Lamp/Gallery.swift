@@ -1113,10 +1113,25 @@ enum Gallery {
         contribute("Sent", stage: .done("https://github.com/someone/new-york/pull/4")),
         contribute("Sent and copied", stage: .done("https://github.com/someone/new-york/pull/4"), copied: true),
         contribute("Sent, wide", stage: .done("https://github.com/someone/new-york/pull/4"), width: 480),
+        contribute("Screenshot, not included", stage: .ready, screenshot: shot(include: false)),
+        contribute("Screenshot included, public fork", stage: .ready, screenshot: shot(include: true, isPublic: true)),
+        contribute("Screenshot included, private fork", stage: .ready, screenshot: shot(include: true, isPublic: false)),
+        contribute("Taking a screenshot", stage: .ready, screenshot: ContributeScreenshot(picture: nil, digest: nil, include: false, taking: true)),
+        contribute("Couldn't take a screenshot", stage: .ready, screenshot: ContributeScreenshot(picture: nil, digest: nil, include: false, failed: true)),
+        contribute("Screenshot couldn't upload", stage: .failed("The screenshot couldn't be uploaded: the connection was lost."),
+                   screenshot: shot(include: true, isPublic: true, uploadFailed: true, locked: true)),
     ]
 
+    /// The New York starter's own picture, standing in for a screenshot of the app.
+    private static func shot(include: Bool, isPublic: Bool? = true, uploadFailed: Bool = false, locked: Bool = false) -> ContributeScreenshot {
+        // Lamp's own icon where a build has no starters' pictures.
+        let picture = Starters.folder.flatMap { try? Data(contentsOf: $0.appendingPathComponent("newyork/\(Starters.treeFolder)/\(Starters.picturesFolder)/preview.png")) }
+            ?? NSApp.applicationIconImage.tiffRepresentation.flatMap { NSBitmapImageRep(data: $0)?.representation(using: .png, properties: [:]) }
+        return ContributeScreenshot(picture: picture, digest: "0123456789ab", include: include, isPublic: isPublic, uploadFailed: uploadFailed, locked: locked)
+    }
+
     private static func contribute(_ name: String, stage: ContributeCard.Stage, fork: Bool = true, notes: [String] = [], terms: [String] = [],
-                                   copied: Bool = false, width: CGFloat? = nil) -> Entry {
+                                   copied: Bool = false, width: CGFloat? = nil, screenshot: ContributeScreenshot? = nil) -> Entry {
         Entry(group: "GitHub", name: "Send back: " + name) {
             let folder = Starters.folder?.appendingPathComponent("newyork")
             let ready = stage != .preparing && { if case .blocked = stage { false } else { true } }()
@@ -1124,7 +1139,7 @@ enum Gallery {
                                       stage: stage, upstream: ready ? "someone/new-york" : nil, fork: ready && fork ? "else/new-york" : nil,
                                       credit: "Based on Slop New York by Mr.doob", notes: notes, terms: terms, size: ready ? "38 files · 1.2 MB" : nil, copied: copied,
                                       canSend: stage == .ready || { if case .failed = stage { true } else { false } }(),
-                                      send: {}, fix: {}, openRequest: {}, copy: {}, close: {}, width: width)
+                                      send: {}, fix: {}, openRequest: {}, copy: {}, close: {}, screenshot: screenshot, width: width)
             return AnyView(card
                 .frame(width: width == nil ? 340 : nil)
                 .background(AnyShapeStyle(ChatLook.paper), in: RoundedRectangle(cornerRadius: 16))
