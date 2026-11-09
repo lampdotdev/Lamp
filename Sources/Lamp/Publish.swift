@@ -261,11 +261,11 @@ enum Publish {
         }
         // Where the Share Link plays it, the page opened on its own goes there. It stays, playing here as before, when it's
         // framed (something is showing it on purpose), when this browser has saves of it here (the link's page plays
-        // from its own address, which can't read them), and when the link's card doesn't answer within a few seconds
-        // (the link taken down since: its card is gone with it).
+        // from its own address, which can't read them), and when the link doesn't say it plays the page within a few
+        // seconds (`card.png?plays`: taken down since, or its page gone with a later release that didn't update GitHub).
         guard open.plays, let link = open.link, let host = link.host, let scheme = link.scheme,
               let id = link.lastPathComponent.split(separator: "-").first, !id.isEmpty else { return page }
-        let values = [link.absoluteString, "\(scheme)://\(host)/w/\(id)/card.png", "lamp:" + (open.saves.map { $0.isEmpty ? "" : $0 + ":" } ?? "")]
+        let values = [link.absoluteString, "\(scheme)://\(host)/w/\(id)/card.png?plays", "lamp:" + (open.saves.map { $0.isEmpty ? "" : $0 + ":" } ?? "")]
         guard let json = (try? JSONSerialization.data(withJSONObject: values, options: [.withoutEscapingSlashes])).flatMap({ String(data: $0, encoding: .utf8) })
         else { return page }
         let away = """

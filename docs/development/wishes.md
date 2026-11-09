@@ -332,8 +332,9 @@ it), else lamp.dev's remix of the repository; both it and Remix… name the repo
 so they start from the game that's played. Where the Share Link plays or opens the page itself (`WishLink.Shared.plays`,
 set as the link's page goes up), the GitHub page sends whoever opens it there (`OpenInLamp.plays`): lamp.dev shows the wish whole, with its ways to get it
 and change it, and a page too big for its link stays on GitHub. It stays, playing on GitHub, when it's framed, when the
-browser has saves of it there (`lamp:<repository>:`, which the link's own play address can't read), and when the link's
-card (`/w/<id>/card.png`) doesn't load within four seconds, as for a link taken down since. The bar is written as the page is pushed, once that commit is known
+browser has saves of it there (`lamp:<repository>:`, which the link's own play address can't read), and when the link
+doesn't say it plays the page within four seconds (`/w/<id>/card.png?plays`, a pixel never cached, 404 for a link taken
+down or one whose page went with a later release that didn't update GitHub). The bar is written as the page is pushed, once that commit is known
 (`GitHubRepo.upload`). The page goes up after the code, as one commit on top of what's on its branch, or none when it's
 the same (`Publish.pushPage`); Pages is turned on for that branch, or asked to build, and the card waits until GitHub says
 it built that very commit (an earlier build's "built" is the page as it was), saying so if it's still building after ten

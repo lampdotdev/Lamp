@@ -174,7 +174,7 @@ final class GitHubProjectsTests: XCTestCase {
         let away = Publish.withCreditBar("<html><head lang=\"en\"><title>Game</title></head><body></body></html>", credits: credits,
                                          open: Publish.OpenInLamp(link: URL(string: "https://lamp.dev/w/abc-a-game")!, plays: true, saves: "a-game"))
         XCTAssertTrue(away.contains("<head lang=\"en\">\n<script>(function(t){"))
-        XCTAssertTrue(away.contains("})([\"https://lamp.dev/w/abc-a-game\",\"https://lamp.dev/w/abc/card.png\",\"lamp:a-game:\"])</script><title>"))
+        XCTAssertTrue(away.contains("})([\"https://lamp.dev/w/abc-a-game\",\"https://lamp.dev/w/abc/card.png?plays\",\"lamp:a-game:\"])</script><title>"))
         XCTAssertFalse(Publish.withCreditBar("<html><body></body></html>", credits: credits, open: Publish.OpenInLamp(link: link)).contains("location.replace"))
 
         // Credits from before the mark: the first is what the wish is built on, as ever.
