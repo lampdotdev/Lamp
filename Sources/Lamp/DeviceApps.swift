@@ -212,20 +212,23 @@ enum DeviceApps {
 
     /// The app's folder as its package step takes it: a copy in Lamp's own folder (`buildFolder`), never the app's, so
     /// what Lamp adds for this device goes into the package alone, and nothing in the app's folder changes while the
-    /// package is made. What builds leave there (.build, build) and its history (.git) stay behind; the copy is made
-    /// under the app's sandbox, as a TV app's page is (`TVs.stage`).
+    /// package is made. What builds leave there (.build, build), its history (.git) and what the running app and Lamp
+    /// say to each other (.lamp/runtime: logs, pictures, the window's place) stay behind: none of it is the app's, and
+    /// the app writes and removes files there as it opens, which a Reload does while this copy is made. A file that
+    /// goes while it's being copied (rsync's 24) is no failure either. The copy is made under the app's sandbox, as a
+    /// TV app's page is (`TVs.stage`).
     static func packageSource(_ project: LampProject, in folder: URL? = nil) async throws -> URL {
         let fm = FileManager.default
         let source = (folder ?? buildFolder(for: project)).appendingPathComponent("source")
         try? fm.removeItem(at: source)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
-        let copy = "cd \"$LAMP_FROM\" && /usr/bin/rsync -a --exclude=/.build --exclude=/build --exclude=/.git ./ \"$LAMP_TO/\""
+        let copy = "cd \"$LAMP_FROM\" && /usr/bin/rsync -a --exclude=/.build --exclude=/build --exclude=/.git --exclude=/.lamp/runtime ./ \"$LAMP_TO/\""
         guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [source.path]) else {
             throw Failure(message: "Lamp couldn't copy the app's files to package it.")
         }
         var output: [String] = []
         let status = await Shell.run(confined, cwd: source, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": source.path], login: false) { output.append($0) }
-        guard status == 0 else { throw Failure(message: "Lamp couldn't copy the app's files to package it.\n\n" + output.suffix(4).joined(separator: "\n")) }
+        guard status == 0 || status == 24 else { throw Failure(message: "Lamp couldn't copy the app's files to package it.\n\n" + output.suffix(4).joined(separator: "\n")) }
         // Links stay links in the copy, and Lamp writes in it: one anywhere in it refuses the package, as it refuses the
         // page for a TV or a phone (`TVs.stage`, `Devices.checkUnlinked`).
         let linked = (fm.enumerator(at: source, includingPropertiesForKeys: [.isSymbolicLinkKey])?.allObjects as? [URL] ?? [])
