@@ -451,7 +451,7 @@ extension Template {
 
         /**
          * `data` is text from outside the app (a message, a web page, a file) for the AI to work on, not obey.
-         * `model` overrides the app's text model for one call, by Lamp's id ("sonnet", "opus", "haiku", "claude-fable-5-1").
+         * `model` overrides the app's text model for one call, by Lamp's id ("sonnet", "opus", "haiku", "claude-fable-5-2").
          */
         suspend fun ask(prompt: String, data: String? = null, images: List<Bitmap> = emptyList(),
                         system: String? = null, model: String? = null): String =

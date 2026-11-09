@@ -74,17 +74,33 @@ enum Builder {
     /// the account's default, since Lamp runs it without the person's settings). Claude Code starts on
     /// Opus, like Lamp's other builders.
     static func engineModel(_ engine: Engine) -> String {
-        UserDefaults.standard.string(forKey: "engineModel.\(engine.rawValue)") ?? (engine == .claude ? "opus" : "")
+        UserDefaults.standard.string(forKey: "engineModel.\(engine.rawValue)").map(currentModel) ?? (engine == .claude ? "opus" : "")
     }
 
     static func setEngineModel(_ model: String, for engine: Engine) {
         UserDefaults.standard.set(model.trimmed, forKey: "engineModel.\(engine.rawValue)")
     }
 
+    /// A model id an earlier Lamp saved or an app's code names, as today's: Fable has no short name that follows its
+    /// newest version, so its id is a full one, and the one before it is read as the one Lamp lists now. Inside a
+    /// route's id too ("engine:claude:claude-fable-5-1").
+    static func currentModel(_ id: String) -> String {
+        id.replacingOccurrences(of: "claude-fable-5-1", with: "claude-fable-5-2")
+            .replacingOccurrences(of: "anthropic/claude-fable-5.1", with: "anthropic/claude-fable-5.2")
+    }
+
+    /// Settings saved with a model's earlier id are moved to today's, once at launch, so the pickers show the choice.
+    static func moveSavedModels() {
+        let defaults = UserDefaults.standard
+        for key in ["engineModel.claude", "appModel", "awayModel", "piModel.openrouter", "model"] {
+            if let saved = defaults.string(forKey: key), currentModel(saved) != saved { defaults.set(currentModel(saved), forKey: key) }
+        }
+    }
+
     /// Claude Code's choices: its own short names, and the full ID for models without one.
     static let claudeModels: [(id: String, label: String)] = [
         ("", "Claude's default"),
-        ("claude-fable-5-1", "Fable"),
+        ("claude-fable-5-2", "Fable"),
         ("opus", "Opus"),
         ("sonnet", "Sonnet"),
         ("haiku", "Haiku"),
