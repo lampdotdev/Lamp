@@ -172,8 +172,8 @@ enum OutsideWork {
     /// the command line gets one short line; this is the one place the wording lives.
     static func switchSteps(_ copy: String) -> String {
         """
-        - Claude Code desktop: to keep this conversation, click + beside the prompt → Add folder, pick \(copy), and work only there. To make the copy the project, choose New → Local → Open folder… and pick \(copy).
-        - ChatGPT desktop (Work/Codex, local project): Edit project → Add folder and pick \(copy). To make it the main folder, point at it → Make primary, then start a new chat.
+        - Claude Code desktop app: click + → Add folder and pick \(copy), or choose New → Local → Open folder… and pick \(copy).
+        - ChatGPT desktop app: Edit project → Add folder and pick \(copy), or make \(copy) the project's primary folder and start a new chat.
         - Command line: start the agent again with `--add-dir \(copy)`.
         """
     }

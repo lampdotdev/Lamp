@@ -197,6 +197,12 @@ final class OutsideFolderTests: XCTestCase {
         XCTAssertTrue(notice.contains("at \(copy.path), because "), notice)
         XCTAssertTrue(notice.contains("\(worktree.path), is unchanged"), notice)
         XCTAssertTrue(notice.contains("Add folder"), notice)
+        // The desktop apps' steps first and the command line last, each naming the copy by its absolute path.
+        let steps = OutsideWork.switchSteps(copy.path).split(separator: "\n").map(String.init)
+        XCTAssertEqual(steps.count, 3)
+        XCTAssertTrue(steps[0].hasPrefix("- Claude Code desktop app") && steps[1].hasPrefix("- ChatGPT desktop app"), steps.joined(separator: "\n"))
+        XCTAssertTrue(steps[2].contains("--add-dir \(copy.path)"), steps[2])
+        XCTAssertTrue(steps.allSatisfy { $0.contains(copy.path) })
     }
 
     /// A folder the importer can't read says what it lacks.
