@@ -215,27 +215,41 @@ test("a part sent again while its first try is still storing keeps the parts sen
   const store = memoryStore();
   const handler = createShareHandler({ store, limited: false });
   const { id, secret } = await (await send(handler, "POST", share)).json();
-  // The first try at part 0 stores slowly, as one whose connection dropped can on the site.
-  let hold, first = true;
-  const putFile = store.putFile;
-  store.putFile = async (...args) => {
-    if (first) { first = false; await new Promise((resolve) => { hold = resolve; }); }
-    return putFile(...args);
+  // Parts kept as the site keeps them, each at an address of its own and gone once removed.
+  const blobs = new Map();
+  let count = 0, slowPut = true, holdPut, slowRead = false, holdRead;
+  store.putFile = async (_id, _name, bytes) => {
+    if (slowPut) { slowPut = false; await new Promise((resolve) => { holdPut = resolve; }); }
+    const url = `blob:${count++}`;
+    blobs.set(url, Buffer.from(bytes));
+    return url;
   };
+  store.readFile = async (url) => {
+    if (slowRead) { slowRead = false; await new Promise((resolve) => { holdRead = resolve; }); }
+    if (!blobs.has(url)) throw new Error("missing");
+    return blobs.get(url);
+  };
+  store.removeImages = async (urls) => { for (const url of urls) blobs.delete(url); };
   const files = createFileHandler({ store, limited: false });
   const file = zip("lamp-app.json", Buffer.alloc(5000, 7));
   const part = (n, bytes) => files(new Request(`https://lamp.dev/api/wish-file?id=${id}&part=${n}&of=2`, {
     method: "PUT", headers: { "content-type": "application/octet-stream", authorization: `Bearer ${secret}` }, body: bytes,
   }));
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
+  // The first try at part 0 stores slowly, as one whose connection dropped can; Lamp sends it again, then part 1.
   const late = part(0, file.subarray(0, 3000));
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await tick();
   assert.equal((await part(0, file.subarray(0, 3000))).status, 204);
   assert.equal((await part(1, file.subarray(3000))).status, 204);
-  hold();
+  // Putting them together reads the parts while the late first try lands.
+  slowRead = true;
+  const done = files(new Request(`https://lamp.dev/api/wish-file?id=${id}`, { method: "POST", headers: { authorization: `Bearer ${secret}` } }));
+  await tick();
+  holdPut();
   assert.equal((await late).status, 204);
-  assert.deepEqual(Object.keys(store.records.get(id).parts.urls).sort(), ["0", "1"]);
-  const done = await files(new Request(`https://lamp.dev/api/wish-file?id=${id}`, { method: "POST", headers: { authorization: `Bearer ${secret}` } }));
-  assert.equal(done.status, 200);
+  holdRead();
+  assert.equal((await done).status, 200);
+  assert.deepEqual(blobs.get(store.records.get(id).file.url), file);
 });
 
 test("the wish itself goes with its link in parts, only as a file Lamp made, and goes with the link", async () => {
