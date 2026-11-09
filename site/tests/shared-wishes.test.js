@@ -383,6 +383,17 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   assert.equal((await send_("&what=page", "PUT", zip("index.html", html), "&part=0&of=1")).status, 204);
   assert.equal((await send_("&what=page", "POST")).status, 200);
   assert.equal(store.records.get(id).page.version, 2);
+
+  // A new page leaves the one before it playable, for a game still open on it; the one before that goes.
+  const again = async () => {
+    assert.equal((await send_("&what=page", "PUT", zip("index.html", html), "&part=0&of=1")).status, 204);
+    assert.equal((await send_("&what=page", "POST")).status, 200);
+  };
+  const plays = async (v) => (await play(new Request(`https://${own}/api/wish-play?id=${id}&v=${v}&path=index.html`))).status;
+  await again();
+  assert.deepEqual([await plays(2), await plays(3)], [200, 200]);
+  await again();
+  assert.deepEqual([await plays(2), await plays(3), await plays(4)], [404, 200, 200]);
 });
 
 test("ideas reach the link's maker, and only the maker reads them", async () => {

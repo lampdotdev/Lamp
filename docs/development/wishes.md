@@ -396,7 +396,11 @@ with Back: Build It asks the wish's chat for one, in the sender's words, marked 
 lets it go and has the site write once to whoever asked to hear back, through Resend (`tellItsIn`: `RESEND_API_KEY` and
 `LAMP_IDEAS_FROM` in the site's environment); Dismiss lets it go quietly. The maker sees only that someone wants to hear
 back, never their address. Making one's own with Lamp stays in the
-dialog under the idea sent, and is all it offers when the idea couldn't go. Keys reach a framed page only while its frame has
+dialog under the idea sent, and is all it offers when the idea couldn't go. A new page leaves the one before it playable
+(`previousPage` in lib/shared-wishes.js), since a game open on it goes on loading files as it's played (Ann Arbor's map
+as the player moves); the one before that goes. A file a game asks for through lamp-game.js's `asset` that doesn't come
+puts a bar with Reload on the page (`loadProblem`) rather than leaving the game on its loading screen: for a 404 only
+when the page itself is gone too, since a game may ask for a file it doesn't have. Keys reach a framed page only while its frame has
 focus: the link's page focuses it as it loads and after its own buttons, and lamp.js in the page takes focus back on any
 press inside it, since a game that cancels pointerdown (to drag its camera) also cancels the press that would have. The version is what followers ask for (`latest` in
 lib/shared-wishes.js, `GET /api/wishes?id=`, `WishLink.latest`). The page's Open in Lamp is `lamp://wish?shared=<id>`

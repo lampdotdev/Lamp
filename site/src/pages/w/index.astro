@@ -364,6 +364,11 @@ import { DOWNLOAD_URL } from "../../lib/download";
       stage.hidden = false;
       focusPlay = () => { if (document.activeElement !== $<HTMLInputElement>("[data-change]")) frame.focus(); };
       frame.addEventListener("load", focusPlay);
+      // A game whose version was replaced while it was open asks for the page again, which plays the newest
+      // (lamp-game.js's `loadProblem`). Only from this frame, and it only reloads.
+      window.addEventListener("message", (event) => {
+        if (event.source === frame.contentWindow && event.data?.lamp === "reload-page") location.reload();
+      });
       frame.src = wish.play;
       // The same button takes the wish out of full screen, and shows which way it goes.
       const button = $<HTMLButtonElement>("[data-fullscreen]");
