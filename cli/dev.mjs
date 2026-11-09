@@ -133,7 +133,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
 
   function broadcast(changed, removed) {
     gen += 1;
-    const change = { gen, changed, removed, said: new Map() };
+    const change = { gen, changed, removed, said: new Map(), line: logCount };
     changes.push(change);
     if (changes.length > 40) changes.shift();
     const data = JSON.stringify({ gen, changed, removed, now: false, pill: true });
@@ -212,7 +212,13 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       // taken as open once it has loaded, which is all it can say.
       if (state === "page-loading") page.runtime = true;
       if ((READY.has(state) || (state === "page-loaded" && !page.runtime)) && !page.ready) { page.ready = true; page.readyAt = Date.now(); }
-      if (DONE.has(state)) { page.at = typeof about === "number" ? Math.max(page.at, about) : gen; page.rerunning = 0; }
+      if (DONE.has(state)) {
+        page.at = typeof about === "number" ? Math.max(page.at, about) : gen;
+        // The game's code has run again: its page was put back as it first was, loading screen and all, and is a
+        // moment putting that away, as a page just opened is.
+        if (page.rerunning) page.readyAt = Date.now();
+        page.rerunning = 0;
+      }
       if (state === "rerun") page.rerunning = Date.now() + 15_000;
       if (state === "reloading") reopening.set(page.tab, Date.now() + 30_000);
     }
@@ -391,14 +397,18 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
         : { files: named(change), outcome: "opened", means: "no page was open; it's in the one opened now", why: "" };
     }).filter(Boolean);
     const fresh = log.filter((line) => line.n > lastLookLine);
-    // An error said over and over is said once, with how many times.
-    const counts = new Map();
-    for (const line of fresh.filter(isError)) counts.set(line.text, (counts.get(line.text) ?? 0) + 1);
+    // An error said over and over is said once, with how many times. One logged before the last change went out may
+    // be of a save that change replaced, so it says which it is.
+    const lastChange = changes[changes.length - 1], counts = new Map();
+    for (const line of fresh.filter(isError)) {
+      const text = lastChange && lastChange.gen > lastLookGen && line.n <= lastChange.line ? `${line.text} (before the last change)` : line.text;
+      counts.set(text, (counts.get(text) ?? 0) + 1);
+    }
     const errors = [...counts].map(([text, times]) => (times > 1 ? `${text} (${times} times)` : text));
     lastLookGen = gen;
     lastLookLine = logCount;
     return {
-      where, opened: !!target?.fresh, address, picture, title: seen?.title ?? null, width: seen?.width ?? null, height: seen?.height ?? null,
+      where, opened: !!target?.fresh, playing: mine.some((page) => page.runtime && page.ready) ? true : mine.some((page) => page.runtime) ? false : null, address, picture, title: seen?.title ?? null, width: seen?.width ?? null, height: seen?.height ?? null,
       screen: seen?.screen ?? null, game: layout.game, unfinished, changes: since, errors: errors.slice(-20),
       // What the page logged since the last look: the end of it when there's a lot.
       log: collapsed(fresh).slice(-25), logLines: fresh.length, logFile, problem,

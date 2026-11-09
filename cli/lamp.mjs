@@ -137,7 +137,7 @@ const WHERE = {
 function report(seen) {
   const lines = [];
   if (seen.did) lines.push(seen.did);
-  if (seen.where) lines.push(`Looked at ${WHERE[seen.where]}${seen.title ? `: "${seen.title}"` : ""}${seen.width ? `, ${seen.width}×${seen.height}` : ""}.${seen.opened ? " It was opened just now, from the files as they are." : ""}`);
+  if (seen.where) lines.push(`Looked at ${WHERE[seen.where]}${seen.title ? `: "${seen.title}"` : ""}${seen.width ? `, ${seen.width}×${seen.height}` : ""}.${seen.opened ? " It was opened just now, from the files as they are." : ""}${seen.playing ? " The game says it's playing." : seen.playing === false ? " The game hasn't said it's playing yet." : ""}`);
   if (seen.problem) lines.push(seen.problem);
   if (seen.unfinished) lines.push(`Taken while ${seen.unfinished}: look again.`);
   if (seen.picture) lines.push(`Picture   ${seen.picture}`);
@@ -214,7 +214,7 @@ async function main() {
     wrote.push(...addLibraries(layout.root));
     console.log(wrote.length ? `Lamp's own files are beside the page in ${layout.root}: ${wrote.join(", ")}.` : `Lamp's own files were beside the page already in ${layout.root}.`);
     if (kept.length) console.log(`Left as they were: ${kept.join(", ")} (lamp init --update writes them again).`);
-    console.log("The game takes the runtime up in its own code: Lamp's `web-game` skill says how (lamp skill web-game).");
+    console.log(`The game takes the runtime up in its own code. Lamp's game-live skill says how (${lampCommand()} skill game-live), and lamp-game.js's own comments are the whole interface.`);
     return;
   }
 

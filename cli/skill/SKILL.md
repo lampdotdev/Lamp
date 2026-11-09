@@ -29,13 +29,25 @@ in an empty folder.
 
 ## A game that's already there
 
-A web game from somewhere else runs as it is: every command here works on it, and each change opens its page again
-from the start. Putting it on Lamp's runtime is what lets it take changes while it's played, tell `look` when it's
-really playing, and be played with a controller. `{{lamp}} init` puts Lamp's own files beside its page and changes
-none of the page's; taking the runtime up in the game's code is the work, and Lamp's `web-game` and `game-live`
-skills say how. Where Lamp's `github-projects` skill has Lamp's app keep the project's credit and licenses
-(`lampify`), nothing does here: keep its license file, its copyright headers and its author's credit on screen
-yourself.
+A web game from somewhere else runs as it is: every command here works on it, each change opens its page again from
+the start, and `look` can't know when it has finished loading. Putting it on Lamp's runtime is what lets it take
+changes while it's played and say when it's really playing. `{{lamp}} init` puts Lamp's own files beside its page and
+changes none of the page's; taking the runtime up in the game's code is the work. It goes in steps, each worth having
+by itself:
+
+1. **The runtime runs the game's loop** (`game()` in place of the game's own), with its renderer kept and the
+   player's place given and taken back. A change then runs the game's code again in place, where before it opened
+   the page again. A page laid out at the window's size that reads its own keys and touches says so to `game()`:
+   the options are in `lamp-game.js`'s comments on the frame.
+2. **The modules that get tuned accept their changes**, and those go in live.
+3. **What's slow to build is kept**, so running the code again doesn't build it again.
+
+Lamp's `game-live` skill says how each is done (its "A game from before this, or one brought in" is step 1), and
+`lamp-game.js`'s comments are the whole interface: read those, not `web-game`, which is for a new game. A game
+brought in reads its own input until its code reads the runtime's, so try it with keys, not Lamp's controller.
+
+Where Lamp's `github-projects` skill has Lamp's app keep the project's credit and licenses (`lampify`), nothing does
+here: keep its license file, its copyright headers and its author's credit on screen yourself.
 
 ## The loop
 
@@ -94,8 +106,9 @@ Each answers with a look. With the window open it happens in the person's own wi
   then: a later look says so. Or for Reload to be pressed in the page, because the page must open again for it:
   `{{lamp}} reload` presses it, so with a window open ask the person first.
 
-A game that takes changes live is written for it. When a change won't go in, needs Reload or loses the player's
-place, read Lamp's `game-live` skill before working around it.
+The reason given after one names the module that would have had to accept the change: the changed file itself, or
+the one that imports it. A game that takes changes live is written for it. When a change won't go in, needs Reload
+or loses the player's place, read Lamp's `game-live` skill before working around it.
 
 ## Lamp's skills
 
@@ -115,7 +128,7 @@ change, as above, and that comes first. Where one names a tool of Lamp's:
 - `delete_file` is deleting the file, and putting a change in needs no tool.
 - `assets`, `make_art` and `lampify` aren't here: make what's needed in code, or say what's missing.
 
-A plain site, with no `lamp.js`, uses none of them: skip the skills there.
+A plain site, on neither `lamp.js` nor Lamp's runtime, uses none of them: skip the skills there.
 
 ## Rules
 
