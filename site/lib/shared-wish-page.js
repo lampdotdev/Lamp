@@ -1,12 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { cacheTags, findWish, isID } from "./shared-wishes.js";
+import { cacheTags, findWish, isID, linkFor, playOrigin as playOriginFor, wishIDFrom } from "./shared-wishes.js";
 
-// The page a shared wish's link opens (lamp.dev/w/<id>): the ideas page with that wish's card open on it, the same
-// card the ideas page's wishes open in (WishDialog.astro), so a shared wish takes the site's one
-// way into Lamp: Download copies it with Lamp's mark, and on a Mac the link under it opens Lamp with it. Closed, the card leaves the visitor among more ideas. The site is static
-// and the wish is only known when the page is asked for, so the page is the built ideas page (vercel.json bundles
-// it with the function) with the wish and its preview put in here.
+// The page a shared wish's link opens (lamp.dev/w/<id>): a page of its own (src/pages/w/index.astro) with the wish
+// itself as big as the window allows, playing when Lamp sent its page, else its picture, under its name, and a slim
+// band for making one's own: Open in Lamp on a Mac, and Get Lamp, which copies it with Lamp's mark. The site is
+// static and the wish is only known when the page is asked for, so the page is the built one (vercel.json bundles it
+// with the function) with the wish and its preview put in here.
 
 const escape = (text) => String(text ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
@@ -17,20 +17,21 @@ export function summary(wish) {
   return words.length > 160 ? `${words.slice(0, 157).replace(/\s+\S*$/, "")}…` : words;
 }
 
-/** The built ideas page, read once. Null where there's none (`npm run dev` asks its own server instead). */
+/** The built shared wish's page, read once. Null where there's none (`npm run dev` asks its own server instead). */
 let built;
-export function builtIdeasPage() {
+export function builtWishPage() {
   if (built === undefined) {
-    try { built = readFileSync(new URL("../dist/ideas/index.html", import.meta.url), "utf8"); } catch { built = null; }
+    try { built = readFileSync(new URL("../dist/w/index.html", import.meta.url), "utf8"); } catch { built = null; }
   }
   return built;
 }
 
-/** What X, iMessage and Slack read for the link's preview, in place of the ideas page's own. */
+/** What X, iMessage and Slack read for the link's preview, in place of the built page's own. */
 function previewTags(wish, origin) {
-  const link = `${origin}/w/${wish.id}`;
+  const link = linkFor(origin, wish.id, wish.name);
   const card = `${origin}/w/${wish.id}/card.png?v=${encodeURIComponent(wish.updated ?? "")}`;
-  const title = `${wish.name} · A wish for Lamp`;
+  // Only the app: the preview shows lamp.dev beside it already.
+  const title = wish.name;
   const description = summary(wish);
   return [
     `<title>${escape(title)}</title>`,
@@ -54,8 +55,11 @@ function previewTags(wish, origin) {
   ].join("");
 }
 
-/** The ideas page with the shared wish's card open on it. Null when the page isn't the shape this expects. */
-export function wishPage(template, wish, { origin }) {
+/** The shared wish's page with the wish put in it, and where its page plays from when it has one: the link's own
+ * play host (`playOrigin` in shared-wishes.js), the page's folder rather than its index.html, since the site's clean
+ * URLs send a .html address to its name without .html, which would put the page's own files one folder up. Without a
+ * play host, nothing is played. Null when the page isn't the shape this expects. */
+export function wishPage(template, wish, { origin, playOrigin = null }) {
   if (!template || !template.includes("</head>") || !template.includes("</body>")) return null;
   // Only the head's own: the page's icons carry titles of their own.
   const end = template.indexOf("</head>");
@@ -63,11 +67,13 @@ export function wishPage(template, wish, { origin }) {
     .replace(/<title>[\s\S]*?<\/title>/, "")
     .replace(/<meta (?:name|property)="(?:description|og:[^"]*|twitter:[^"]*)"[^>]*>/g, "")
     .replace(/<link rel="canonical"[^>]*>/, "") + template.slice(end);
-  // The card's own shape (WishDialog's Idea), its words kept from closing the script early.
+  const plays = Boolean(wish.page && wish.file?.url && playOrigin);
+  // What the page reads (src/pages/w/index.astro), its words kept from closing the script early.
   const card = JSON.stringify({
-    id: wish.id, name: wish.name, about: wish.line, wish: wish.words,
-    picture: wish.picture?.url ?? "", icon: wish.icon?.url ?? "",
-    ...(wish.file?.url ? { file: wish.file.url, fileSize: wish.file.size } : {}),
+    id: wish.id, name: wish.name, by: wish.by ?? "", about: wish.line, wish: wish.words, ideas: wish.ideas ?? [], asks: wish.asks ?? [],
+    releases: wish.releases ?? [], picture: wish.picture?.url ?? "", icon: wish.icon?.url ?? "",
+    ...(wish.file?.url ? { file: wish.file.url, fileSize: wish.file.size, shared: wish.id } : {}),
+    ...(plays ? { play: `${playOrigin}/w/${wish.id}/play/${wish.page.version}/`, ...(wish.shape ? { shape: wish.shape } : {}) } : {}),
   }).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   return head
     .replace("</head>", () => `${previewTags(wish, origin)}</head>`)
@@ -99,9 +105,9 @@ a:hover { text-decoration-color: rgb(0 0 0 / 0.6); }
 <body>
 <main>
   <img src="/apple-touch-icon.png" alt="" width="96" height="96">
-  <h1>${unavailable ? "This wish can't be shown right now." : "This wish isn't shared any more."}</h1>
+  <h1>${unavailable ? "This app can't be shown right now." : "This app isn't shared any more."}</h1>
   <p>${unavailable ? "Try again in a moment." : "The link may be mistyped, or whoever shared it took it down."}</p>
-  <a href="/ideas">See ideas for wishes</a>
+  <a href="/ideas">See ideas</a>
 </main>
 </body>
 </html>
@@ -111,16 +117,18 @@ a:hover { text-decoration-color: rgb(0 0 0 / 0.6); }
 const gonePolicy = (nonce) => `default-src 'none'; style-src 'nonce-${nonce}'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`;
 
 /**
- * `template` gives the ideas page as built: by default the one bundled with the function; `npm run dev` passes its
- * own server's.
+ * `template` gives the shared wish's page as built: by default the one bundled with the function; `npm run dev` passes
+ * its own server's.
  */
-export function createPageHandler({ env = process.env, fetcher = fetch, store, template = async () => builtIdeasPage() } = {}) {
+export function createPageHandler({ env = process.env, fetcher = fetch, store, template = async () => builtWishPage(),
+  playOrigin = (_url, id) => playOriginFor(env.LAMP_PLAY_ORIGIN, id) } = {}) {
   return async (request) => {
     if (request.method !== "GET" && request.method !== "HEAD") return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
     const url = new URL(request.url);
-    const id = url.searchParams.get("id");
-    const wish = isID(id) ? await findWish(id, { env, fetcher, store }) : null;
-    const page = wish && wishPage(await template(url.origin), wish, { origin: url.origin });
+    // The link's last part: the id, and the wish's name after it only for reading.
+    const id = wishIDFrom(url.searchParams.get("id"));
+    const wish = id ? await findWish(id, { env, fetcher, store }) : null;
+    const page = wish && wishPage(await template(url.origin), wish, { origin: url.origin, playOrigin: playOrigin(url, id) });
     if (!page) {
       const nonce = randomBytes(16).toString("base64");
       const unavailable = wish !== null;

@@ -211,7 +211,7 @@ final class SharingScreenTests: XCTestCase {
         XCTAssertFalse(changed.truncated)
     }
 
-    /// Put on GitHub, a screen's repository holds its page and Native.swift with Lamp's files around them, so it builds as
+    /// On GitHub, a screen's repository holds its page and Native.swift with Lamp's files around them, so it builds as
     /// it is; opened from there, only the sender's code is read, and Lamp's files are the ones an update leaves out.
     func testAScreensRepositoryBuildsOnItsOwnAndOpensAsAScreen() throws {
         let fm = FileManager.default
@@ -226,7 +226,7 @@ final class SharingScreenTests: XCTestCase {
         }
         XCTAssertFalse(has(ScreenKit.webAppPage.swift))
         XCTAssertFalse(has(".lamp"))
-        XCTAssertTrue(try fm.contentsOfDirectory(atPath: staged.folder.path).contains { $0.hasSuffix(".lampapp") })
+        XCTAssertFalse(try fm.contentsOfDirectory(atPath: staged.folder.path).contains { $0.hasSuffix(".lampapp") })
 
         let package = try Sharing.open(staged.folder)
         defer { try? fm.removeItem(at: package.folder) }

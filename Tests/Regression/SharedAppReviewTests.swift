@@ -1,5 +1,6 @@
 import XCTest
 @testable import Lamp
+@testable import LampRelayKit
 
 /// The review of a shared app holds up when the app is written to talk its way past it: what the AI says
 /// counts only when it's a usable answer from a reviewer Lamp vouches for, and the app's own text can't
@@ -260,19 +261,41 @@ final class SharedAppReviewTests: XCTestCase {
     /// On a short screen the scrolling parts share what the fixed ones leave, eight features of two lines and an
     /// update's note among them, so the sheet stays within its room and the buttons in view.
     func testTheSheetsListsFitAShortScreen() {
-        let fixed: [CGFloat] = [92, 130, 54, 28]   // name, a five-line summary, an update's note, the buttons
-        // From where the fixed parts leave the scrolling ones their 48-point floor (488 here) upward.
+        let fixed: [CGFloat] = [92, 130, 54], buttons: CGFloat = 28   // name, a five-line summary, an update's note
         for room: CGFloat in [488, 520, 560, 640, 900] {
-            let heights = ImportReviewCard.heights(room: room, fixed: fixed, considering: 110, featuring: 8 * 40 + 7 * 8)
-            let used = fixed.reduce(0, +) + 48 + 16 * 6 - 8 + heights.considering + heights.featuring + heights.capabilities
+            let heights = ImportReviewCard.heights(room: room, fixed: fixed, buttons: buttons, considering: 110, featuring: 8 * 40 + 7 * 8)
+            if heights.compact {
+                // Too short for the lists to scroll apart: everything above the buttons scrolls as one.
+                XCTAssertLessThan(room, 560, "\(room)")
+                XCTAssertLessThanOrEqual(heights.whole + buttons + 48 + 16, room, "\(room)")
+                continue
+            }
+            let used = fixed.reduce(0, +) + buttons + 48 + 16 * 6 - 8 + heights.considering + heights.featuring + heights.capabilities
             XCTAssertLessThanOrEqual(used, room, "\(room)")
             XCTAssertGreaterThan(heights.capabilities, 0, "\(room)")
             XCTAssertGreaterThan(heights.featuring, 0, "\(room)")
         }
         // With room to spare, each is shown whole.
-        let tall = ImportReviewCard.heights(room: 1400, fixed: fixed, considering: 110, featuring: 200)
+        let tall = ImportReviewCard.heights(room: 1400, fixed: fixed, buttons: buttons, considering: 110, featuring: 200)
         XCTAssertEqual(tall.considering, 110)
         XCTAssertEqual(tall.featuring, 200)
+    }
+
+    /// A sheet can't hang below Lamp's window: in a short window on a tall screen its room is the window's.
+    func testTheSheetIsNoTallerThanLampsWindow() {
+        let screen = CGRect(x: 0, y: 70, width: 1440, height: 805)   // the usable area, above the Dock
+        XCTAssertEqual(ImportReviewView.room(below: 700, on: screen, inside: 480), 468)
+        // A tall window still stops at the Dock.
+        XCTAssertEqual(ImportReviewView.room(below: 700, on: screen, inside: 900), 618)
+    }
+
+    /// The parts that never scroll can fill a short window by themselves (an update's lead, the sender's
+    /// description, a long summary): the sheet still fits its room, so the buttons stay on it.
+    func testTheButtonsStayInAShortWindow() {
+        let fixed: [CGFloat] = [150, 100, 36], buttons: CGFloat = 28   // title with lead and description, summary, the separate-app line
+        let heights = ImportReviewCard.heights(room: 468, fixed: fixed, buttons: buttons, considering: 80, featuring: 5 * 20 + 4 * 8)
+        XCTAssertTrue(heights.compact)
+        XCTAssertLessThanOrEqual(heights.whole + buttons + 48 + 16, 468)
     }
 
     /// A model on this Mac gets the parts one at a time (each request starts its server, and a second start alongside
@@ -375,5 +398,39 @@ final class SharedAppReviewTests: XCTestCase {
         let said = ImportReviewCard.considerations(unanswered)
         XCTAssertEqual(said.map(\.weight), [.caution, .warning])
         XCTAssertEqual(said.last?.detail, "No credit left.")
+    }
+
+    // MARK: What an update applies
+
+    /// An update applies what each app may reach from its review's own reading of the package, rather than reading it
+    /// again on the main actor; that reading has to be the one the app would otherwise be held to. Two of Lamp's own
+    /// starters: one that reaches nothing, and Home HQ, whose page reaches sites and has Swift of its own.
+    func testTheReadingAnUpdateAppliesIsTheOneTheReviewMade() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let stock = try String(contentsOf: root.appendingPathComponent("Resources/GameKit/apple/Native.swift"), encoding: .utf8)
+        let native = Sharing.stockNative
+        defer { Sharing.stockNative = native }
+        Sharing.stockNative = stock
+        for name in ["thelittlehouse", "homehq"] {
+            let package = try RepoImport.open(folder: StarterTrees.tree(name))
+            addTeardownBlock { try? FileManager.default.removeItem(at: package.folder) }
+            let found = Sharing.inspect(package)
+            XCTAssertTrue(found.finished, name)
+            XCTAssertEqual(found.readings, SharedNetwork.readings(of: package), name)
+            XCTAssertEqual(found.readings[SharedNetwork.readingKey("")], SharedNetwork.reading(of: package, stock: stock), name)
+        }
+    }
+
+    /// A review cancelled, replaced or out of time while Lamp reads the code stops reading, and what it read never
+    /// counts as checked.
+    func testAReadingStoppedPartWayIsNeverAReview() async throws {
+        let package = try RepoImport.open(folder: StarterTrees.tree("homehq"))
+        addTeardownBlock { try? FileManager.default.removeItem(at: package.folder) }
+        let found = await Task.detached { () -> Sharing.Inspection in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return Sharing.inspect(package)
+        }.value
+        XCTAssertFalse(found.finished)
+        XCTAssertTrue(found.readings.isEmpty, "nothing of a stopped reading is applied")
     }
 }

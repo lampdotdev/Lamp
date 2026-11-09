@@ -20,7 +20,7 @@ enum Starters {
     struct Starter: Equatable {
         /// Resources/Starters/<folder>: starter.md, and the fetched tree.
         let folder: URL
-        /// The repository as fetched at `commit`, laid out as Put on GitHub lays a wish out: what's copied to the desk.
+        /// The repository as fetched at `commit`, laid out as Lamp lays a wish out on GitHub: what's copied to the desk.
         var tree: URL
         let name: String
         /// The first thing the app's chat offers: a line inviting a change, and three changes to choose from: a new look,
@@ -29,7 +29,7 @@ enum Starters {
         let tweaks: [Tweak]
         /// What kind of wish it is (`kind:` in starter.md): a Mac app unless it says otherwise, as a game does.
         var kind: Platform = .mac
-        /// Where the starter lives on GitHub (`repository:`), laid out as Put on GitHub lays a wish out
+        /// Where the starter lives on GitHub (`repository:`), laid out as Lamp lays a wish out on GitHub
         /// (`StarterRepos`), and the commit there this Lamp ships (`commit:`).
         var repository: String? = nil
         var commit: String? = nil
@@ -297,7 +297,7 @@ enum Starters {
     /// (`RepoImport.open`: the code the review would read, never Lamp's own files) and installed as the import installs
     /// one (`Sharing.install`: code, files, notes, description, credits, licenses, the icon's design and artwork), with
     /// the starter named where it lives and at the commit this Lamp ships on the chain's link (what Update from GitHub…
-    /// merges against and Send Changes Back… goes on top of). starter.md goes into .lamp; the drawn icon and the
+    /// merges against). starter.md goes into .lamp; the drawn icon and the
     /// preview come from the tree's pictures. `package` stands in for the tree when given (a wish on this Mac being
     /// made a starter, `StarterRepos`). The tree must be here: the bundle's starters are fetched first
     /// (`StarterDownloads.fetch`).

@@ -336,21 +336,24 @@ enum DeviceApps {
 
     /// The app's folder as its package step takes it: a copy in Lamp's own folder (`buildFolder`), never the app's, so
     /// what Lamp adds for this device goes into the package alone, and nothing in the app's folder changes while the
-    /// package is made. What builds leave there (.build, build) and its history (.git) stay behind; the copy is made
-    /// under the app's sandbox, as a TV app's page is (`TVs.stage`).
+    /// package is made. What builds leave there (.build, build), its history (.git) and what the running app and Lamp
+    /// say to each other (.lamp/runtime: logs, pictures, the window's place) stay behind: none of it is the app's, and
+    /// the app writes and removes files there as it opens, which a Reload does while this copy is made. A file that
+    /// goes while it's being copied (rsync's 24) is no failure either. The copy is made under the app's sandbox, as a
+    /// TV app's page is (`TVs.stage`).
     static func packageSource(_ project: LampProject, in folder: URL? = nil) async throws -> URL {
         let fm = FileManager.default
         let source = (folder ?? buildFolder(for: project)).appendingPathComponent("source")
         try? fm.removeItem(at: source)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
-        let left = (ignored(project) + [".build", "build", ".git"]).map { " --exclude=" + Sandbox.quoted("/" + $0) }.joined()
+        let left = (ignored(project) + [".build", "build", ".git", ".lamp/runtime"]).map { " --exclude=" + Sandbox.quoted("/" + $0) }.joined()
         let copy = "cd \"$LAMP_FROM\" && /usr/bin/rsync -a\(left) ./ \"$LAMP_TO/\""
         guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [source.path]) else {
             throw Failure(message: "Lamp couldn't copy the app's files to package it.")
         }
         var output: [String] = []
         let status = await Shell.run(confined, cwd: source, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": source.path], login: false) { output.append($0) }
-        guard status == 0 else { throw Failure(message: "Lamp couldn't copy the app's files to package it.\n\n" + output.suffix(4).joined(separator: "\n")) }
+        guard status == 0 || status == 24 else { throw Failure(message: "Lamp couldn't copy the app's files to package it.\n\n" + output.suffix(4).joined(separator: "\n")) }
         // Links stay links in the copy, and Lamp writes in it: one anywhere in it refuses the package, as it refuses the
         // page for a TV or a phone (`TVs.stage`, `Devices.checkUnlinked`).
         let linked = (fm.enumerator(at: source, includingPropertiesForKeys: [.isSymbolicLinkKey])?.allObjects as? [URL] ?? [])
@@ -574,9 +577,11 @@ enum DeviceApps {
     }
 
     /// What the app's own log on the device holds now, through the bridge's `log`; nil when the integration has none.
+    /// Read from the copy Lamp last put there, which a newer build that hasn't gone on yet doesn't name.
     static func log(_ project: LampProject, on device: Device) async throws -> String? {
         guard let integration = integration(for: project), let log = integration.bridge?.log, !log.isEmpty else { return nil }
-        return try await IntegrationRunner(integration: integration, device: device).run(log, extra: values(project)).log
+        let extra = installedValues(project, on: device) ?? values(project)
+        return try await IntegrationRunner(integration: integration, device: device).run(log, extra: extra).log
     }
 
     /// Notes which package is on which device once its install went through, for the next install to end it first.
@@ -748,11 +753,11 @@ extension Agent.Rules {
     /// and what does work today.
     static let deviceAmongApps = """
 
-    - The {{DEVICE}} app is one of this wish's apps, in its own folder, but it can't reach the wish's other apps yet and \
-    they can't reach it: the link between a wish's apps doesn't run on {{A_DEVICE}} yet. Its `LampWish` (in its building \
+    - The {{DEVICE}} app is one of this project's apps, in its own folder, but it can't reach the project's other apps yet and \
+    they can't reach it: the link between a project's apps doesn't run on {{A_DEVICE}} yet. Its `LampWish` (in its building \
     blocks, beside LampAI) always says it's away, with that reason. So write each app to stand on its own: the \
     {{DEVICE}} app keeps its own data with LampStore and gets what's new from the web or with LampAI, not from the other \
-    apps. Another app of the wish on the Mac or an iPhone can still drive it as a remote from the same network where Lamp \
+    apps. Another app of the project on the Mac or an iPhone can still drive it as a remote from the same network where Lamp \
     has a block for the device (`LampRoku` for a Roku: its keys, and opening the app by launching "dev"), which needs no \
     link. Tell the person in a sentence, once, that the two don't share data yet, and what each does meanwhile.
     """
@@ -806,7 +811,7 @@ extension Agent.Rules {
                     + "with Lamp open. Text from outside the app goes in `options.data`, never into the prompt. Keep the package step zipping that folder. "
                     + "Read Lamp.brs's opening comment before using it; never call an AI service yourself. "
                 if let wish = DeviceSupport.wishFile(for: project) {
-                    rule += "\(wish) is `LampWish`, the wish's other apps: on this device it always says it's away, so show its reason "
+                    rule += "\(wish) is `LampWish`, the project's other apps: on this device it always says it's away, so show its reason "
                         + "where the app would show them, and keep the app whole without them. "
                 }
             case .typescript:
@@ -818,7 +823,7 @@ extension Agent.Rules {
                     + "(`makeImage` fails with a message to show). Read \(entry.path)/index.ts's opening comment before using it; never call an AI "
                     + "service yourself. "
                 if let wish = DeviceSupport.wishFile(for: project) {
-                    rule += "\(wish) is `LampWish`, the wish's other apps: on this device it always says it's away, so show its reason "
+                    rule += "\(wish) is `LampWish`, the project's other apps: on this device it always says it's away, so show its reason "
                         + "where the app would show them, and keep the app whole without them. "
                 }
             case .three:

@@ -82,7 +82,7 @@ final class WaitingImportTests: XCTestCase {
     }
 
     /// A repository fetched for one copy's Update from GitHub… while setup isn't done keeps that copy as its target
-    /// through the wait and a relaunch. Two copies of one repository (Keep Both) asking at once are both kept, each
+    /// through the wait and a relaunch. Two copies of one repository (Keep as Separate App) asking at once are both kept, each
     /// with its own target, even though what was fetched is the same.
     func testTheWishToUpdateWaitsWithItsRepository() throws {
         func fetched() throws -> URL {

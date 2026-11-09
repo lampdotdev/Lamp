@@ -42,7 +42,7 @@ struct LampApp: App {
     }
 }
 
-/// The menu bar's commands. They observe the store themselves, so whether Duplicate… or Copy Wish File can be chosen
+/// The menu bar's commands. They observe the store themselves, so whether Duplicate… or Copy App File can be chosen
 /// follows the wish they act on without the scene around them being built again for every change (see `LampApp.store`).
 struct LampCommands: Commands {
     @ObservedObject var store: Store
@@ -55,11 +55,11 @@ struct LampCommands: Commands {
         CheckForUpdatesCommand()
         LampHelpCommands()
         CommandGroup(replacing: .newItem) {
-            Button("New Wish") { store.newWish() }
+            Button("New App") { store.newWish() }
                 .keyboardShortcut("n")
         }
         CommandGroup(after: .newItem) {
-            Button("Import Shared Wish…") { store.chooseImport() }
+            Button("Import Shared App…") { store.chooseImport() }
                 .keyboardShortcut("o")
             Button("Open from GitHub…") { store.chooseRepository() }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
@@ -67,8 +67,8 @@ struct LampCommands: Commands {
                 .disabled(target.map { !store.canDuplicate($0) } ?? true)
         }
         CommandGroup(after: .pasteboard) {
-            // The same as Share ▸ Copy Wish File in the toolbar; here so the shortcut the Help lists exists.
-            Button("Copy Wish File") { if let project = target { store.copyAppFile(project) } }
+            // The same as Share ▸ Copy App File in the toolbar; here so the shortcut the Help lists exists.
+            Button("Copy App File") { if let project = target { store.copyAppFile(project) } }
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 .disabled(target.map { !store.canShare($0) } ?? true)
         }
@@ -149,9 +149,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             // A Stop a moment ago may still have processes on their two seconds' notice; they go now.
             Subprocess.killStopping()
+            guard Self.unsavedWorkLetsQuit() else { return .terminateCancel }
             guard Store.shared.isWorking else { return .terminateNow }
             let alert = NSAlert()
-            alert.messageText = "A wish is still being worked on. Quit anyway?"
+            alert.messageText = "An app is still being worked on. Quit anyway?"
             alert.informativeText = "Quitting stops the work. Any changes made so far are kept; you can undo them later."
             alert.addButton(withTitle: "Quit")
             alert.addButton(withTitle: "Cancel")
@@ -168,12 +169,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Work that couldn't be saved is only in memory, and quitting loses it: Lamp writes everything now, and asks only
+    /// when something still won't go. Retry writes again and quits only once it's all on disk; Quit Anyway loses it.
+    @MainActor private static func unsavedWorkLetsQuit() -> Bool {
+        let store = Store.shared
+        while !store.saveAllNow() {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = ErrorMessages.quitUnsaved
+            alert.informativeText = store.saveTrouble?.diskFull == true ? ErrorMessages.quitUnsavedDiskFull : ErrorMessages.quitUnsavedOther
+            alert.addButton(withTitle: "Retry")
+            alert.addButton(withTitle: "Quit Anyway")
+            alert.addButton(withTitle: "Cancel")
+            switch alert.runModal() {
+            case .alertFirstButtonReturn: continue
+            case .alertSecondButtonReturn: return true
+            default: return false
+            }
+        }
+        return true
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated {
             _ = Store.shared.stopAll()   // for a quit that didn't go through the question above
             Subprocess.killStopping()
             Store.shared.flushDrafts()
             Store.shared.flushChats()
+            Store.shared.endTrialsNow()
             LocalModels.shared.stopServer()
             Adb.stopServer()
         }

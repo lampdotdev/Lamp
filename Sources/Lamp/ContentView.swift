@@ -34,8 +34,9 @@ struct ContentView: View {
 
     private var main: some View {
         VStack(spacing: 0) {
-            // While they install, or while a request waits for them: games and screens are made without them.
-            if store.setup.checked && !store.setup.hasBuildTools && (store.setup.installRequested || (store.setup.hasBuilder && store.waitsForAppleTools)) { BuildToolsBanner() }
+            // While they install, while a request waits for them, or while they need repair: games and screens are made without them.
+            if store.setup.checked && !store.setup.hasBuildTools
+                && (store.setup.repair != nil || store.setup.installRequested || (store.setup.hasBuilder && store.waitsForAppleTools)) { BuildToolsBanner() }
             WishDesk()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -266,7 +267,7 @@ struct AppMenu: View {
         }
         Divider()
         if store.canShare(project) {
-            Button("Copy Wish File") { store.copyAppFile(project) }
+            Button("Copy App File") { store.copyAppFile(project) }
             Button { Sharing.share(project, from: .app(project.id)) } label: {
                 Label("Share…", systemImage: "square.and.arrow.up")
             }
@@ -283,14 +284,17 @@ struct BuildToolsBanner: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            ProgressView().controlSize(.small)
-            Text("Installing Apple's app-building tools. Apps that need them start as soon as they're in.")
-                .font(.callout)
-            Spacer()
-            Button(store.setup.installRequested ? "Show Installer" : "Install…") {
-                if store.setup.installRequested { SetupCheck.showInstaller() } else { store.requestBuildTools() }
+            if let repair = store.setup.repair {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Text(repair.text).font(.callout)
+            } else {
+                ProgressView().controlSize(.small)
+                Text("Installing Apple's app-building tools. Apps that need them start as soon as they're in.")
+                    .font(.callout)
             }
-            .controlSize(.small)
+            Spacer()
+            Button(store.setup.repair?.button ?? (store.setup.installRequested ? "Show Installer" : "Install…"), action: store.fixBuildTools)
+                .controlSize(.small)
         }
         .padding(.horizontal, 16).padding(.vertical, 8)
         .background(.bar)
@@ -331,7 +335,8 @@ struct ImportReviewView: View {
     /// The app's own icon, once drawn from the file; the plain app icon until then, and for a file without one.
     @State private var icon: NSImage?
     /// How tall the sheet may be where it hangs: from its top down to the bottom of the screen's usable area
-    /// (above the Dock). Unlimited until the sheet is on screen.
+    /// (above the Dock), and no taller than Lamp's window, which cuts off whatever of a sheet goes past it.
+    /// Unlimited until the sheet is on screen.
     @State private var room = CGFloat.infinity
     @State private var sheet: NSWindow?
 
@@ -341,23 +346,34 @@ struct ImportReviewView: View {
                          cancel: store.cancelImport, open: store.confirmImport, update: store.confirmUpdate,
                          android: pending.package.platform.target.recipe.language == .kotlin, prepared: pending.prepared != nil,
                          mixWaits: mixing.stage == .mixing,
-                         mix: pending.mixFile.map { file in { store.cancelImport(); openWindow(id: "mix"); MixModel.shared.open(file, store: store) } })
+                         mix: pending.mixable ? { if store.mixPendingImport() { openWindow(id: "mix") } } : nil,
+                         trying: pending.trying, tryIt: store.confirmTrial,
+                         progress: work?.failed == false ? work?.line : nil, failure: work?.failed == true ? work?.line : nil,
+                         retry: store.retryReview)
             .task { icon = await Sharing.icon(of: pending.package) }
             .background(WindowFinder { sheet = $0; fit() })
-            // The window can be moved with the sheet down, and the Dock can come and go.
+            // The window can be moved or resized with the sheet down, and the Dock can come and go.
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMoveNotification)) { _ in fit() }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { _ in fit() }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in fit() }
+    }
+
+    /// This sheet's review while it's made: its stage, or why it couldn't be.
+    private var work: Store.ReviewWork? {
+        store.reviewWork.flatMap { $0.sheet == pending.id ? $0 : nil }
     }
 
     private func fit() {
         guard let window = sheet?.sheetParent, let screen = window.screen else { return }
-        room = Self.room(below: window.frame.minY + window.contentLayoutRect.maxY, on: screen.visibleFrame)
+        room = Self.room(below: window.frame.minY + window.contentLayoutRect.maxY, on: screen.visibleFrame,
+                         inside: window.contentLayoutRect.height)
     }
 
     /// The height a sheet can take when its top edge sits at `top` (screen coordinates, y up) on a screen
-    /// whose usable area is `visible`: down to the bottom of that area, less a margin.
-    nonisolated static func room(below top: CGFloat, on visible: CGRect) -> CGFloat {
-        (top - visible.minY - 12).rounded(.down)
+    /// whose usable area is `visible`, hanging in a window whose content is `inside` tall: down to the bottom of
+    /// that area or of the window, whichever comes first, less a margin.
+    nonisolated static func room(below top: CGFloat, on visible: CGRect, inside window: CGFloat = .infinity) -> CGFloat {
+        (min(top - visible.minY, window) - 12).rounded(.down)
     }
 }
 
@@ -387,6 +403,16 @@ struct ImportReviewCard: View {
     /// Another mix is being saved, which the window finishes first: Mix… waits for it.
     var mixWaits = false
     var mix: (() -> Void)? = nil
+    /// Someone's suggested change, to try in a copy of `existing` (`SuggestionTrial`): Try It is the one choice, held to
+    /// the same checks as opening.
+    var trying = false
+    var tryIt: () -> Void = {}
+    /// While the review is made: the stage it's at (`Store.ReviewWork`).
+    var progress: String? = nil
+    /// The review couldn't be made (it ran out of time, or Lamp couldn't read the code through): said in place of it,
+    /// with Try Again. Nothing is checked, so nothing opens or updates.
+    var failure: String? = nil
+    var retry: () -> Void = {}
 
     /// The heights of what stays put, measured as laid out: the app's name and description at the top, the
     /// review's summary, the line about the copy already here when there is one, and the buttons.
@@ -397,7 +423,8 @@ struct ImportReviewCard: View {
     /// The height of the features under What it does as laid out in full; nil when the reviewer named none.
     @State private var featuring: CGFloat?
     private var heights: Heights {
-        Self.heights(room: room, fixed: Array(fixed.values), considering: considering, featuring: featuring)
+        Self.heights(room: room, fixed: fixed.filter { $0.key != .buttons }.map(\.value), buttons: fixed[.buttons] ?? 0,
+                     considering: considering, featuring: featuring)
     }
 
     /// How tall each part that scrolls may be.
@@ -405,6 +432,10 @@ struct ImportReviewCard: View {
         var considering: CGFloat
         var featuring: CGFloat
         var capabilities: CGFloat
+        /// The window is too short for each list to scroll on its own: everything above the buttons scrolls as
+        /// one, up to `whole`, and the buttons stay under it.
+        var compact = false
+        var whole = CGFloat.infinity
     }
 
     /// What the scrolling parts share: the room under the sheet's top less the fixed parts, the sheet's padding (48)
@@ -413,11 +444,16 @@ struct ImportReviewCard: View {
     /// otherwise scrolls, leaving the rest a few rows, or half when there isn't room for that; the features then
     /// take what they need of that the same way, and what the app can do the rest. A long list of concerns or
     /// features never pushes the buttons off the screen, and Lamp's verdict, its first lines, is what stays in view.
-    /// Below 48 points nothing could be read, so that's the floor.
-    static func heights(room: CGFloat, fixed: [CGFloat], considering: CGFloat?, featuring: CGFloat?) -> Heights {
+    /// Below 48 points nothing could be read, so that's the floor. In a window too short to leave the lists a few
+    /// rows between them (120 points), the fixed parts and the lists scroll together instead, and only the buttons
+    /// (`buttons` tall) stay put.
+    static func heights(room: CGFloat, fixed: [CGFloat], buttons: CGFloat, considering: CGFloat?, featuring: CGFloat?) -> Heights {
         let scrolling = 1 + (considering == nil ? 0 : 1) + (featuring == nil ? 0 : 1)
-        let budget = room - fixed.reduce(0, +) - 48 - 16 * CGFloat(fixed.count + scrolling - 1) + (featuring == nil ? 0 : 8)
-        let shared = max(48, budget)
+        let budget = room - fixed.reduce(0, +) - buttons - 48 - 16 * CGFloat(fixed.count + scrolling) + (featuring == nil ? 0 : 8)
+        if budget < 120 {
+            return Heights(considering: 0, featuring: 0, capabilities: 0, compact: true, whole: max(48, room - buttons - 48 - 16))
+        }
+        let shared = budget
         func part(_ height: CGFloat?, of room: CGFloat) -> CGFloat { min(height ?? 0, max(room - 120, room / 2)) }
         let consider = part(considering, of: shared)
         let feature = part(featuring, of: shared - consider)
@@ -426,6 +462,35 @@ struct ImportReviewCard: View {
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if heights.compact {
+                ScrollView { parts.frame(maxWidth: .infinity, alignment: .leading) }
+                    .frame(maxHeight: heights.whole)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                parts
+            }
+            buttons
+                .cardButtons()
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.buttons] = $0 }
+        }
+        .padding(24)
+        .frame(width: 500)
+    }
+
+    /// A list that scrolls on its own up to `limit`, or, in a compact sheet, laid out whole in the one scroll.
+    @ViewBuilder private func list<Content: View>(_ limit: CGFloat, @ViewBuilder _ content: () -> Content) -> some View {
+        if heights.compact {
+            content()
+        } else {
+            ScrollView { content() }
+                .frame(maxHeight: limit)
+                .fixedSize(horizontal: false, vertical: true)   // no taller than its content, up to the limit
+        }
+    }
+
+    /// Everything above the buttons.
+    private var parts: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 14) {
                 // Lamp's icons carry their own margin, so one fills a larger frame to sit like the plain icon
@@ -438,10 +503,15 @@ struct ImportReviewCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     // The name is the sender's: shown as written, never as formatting, and on one line whose
                     // end (the closing quote and the question mark) stays in view however long it is.
-                    Text(verbatim: prepared ? "Your update is ready" : "Open “\(name)”?").font(.title2.bold())
+                    Text(verbatim: title).font(.title2.bold())
                         .lineLimit(1).truncationMode(.middle)
+                    // What Update This App does to the app already here, before what the review found.
+                    if let lead {
+                        Text(verbatim: lead).font(.callout).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     // The sender's words, said to be theirs.
-                    if let description, !prepared {
+                    if let description, !prepared, !trying {
                         Text(verbatim: "Described by the person who shared it with you as: \(description)")
                             .font(.callout).foregroundStyle(.secondary).lineLimit(5)
                             .fixedSize(horizontal: false, vertical: true)
@@ -451,8 +521,9 @@ struct ImportReviewCard: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.name] = $0 }
 
             if let review {
-                // What it does and the start of what to weigh stay in view, however short the screen, so Lamp's
-                // verdict is never scrolled away beside the button that opens the app.
+                // What it does and the start of what to weigh stay in view on any screen with room for a few rows
+                // of the lists, so Lamp's verdict is never scrolled away beside the button that opens the app.
+                // A window shorter than that scrolls it all together (`Heights.compact`), but keeps the buttons.
                 if !review.summary.isEmpty {
                     section("What it does") {
                         // The reviewer is asked for a sentence or two: a few lines here, the whole of it on hover.
@@ -463,7 +534,7 @@ struct ImportReviewCard: View {
                 if !review.capabilities.isEmpty {
                     // What the reviewer saw it do for the person: features, said with what the app is, not as
                     // permissions beside what Lamp's own checks found in the code. Up to eight, so they scroll.
-                    ScrollView {
+                    list(heights.featuring) {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(review.capabilities, id: \.self) { feature in
                                 Label {
@@ -478,13 +549,11 @@ struct ImportReviewCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { featuring = $0 }
                     }
-                    .frame(maxHeight: heights.featuring)
-                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, review.summary.isEmpty ? 0 : -8)
                 }
                 let considerations = Self.considerations(review, prepared: prepared)
                 if !considerations.isEmpty {
-                    ScrollView {
+                    list(heights.considering) {
                         section("Things to consider") {
                             VStack(alignment: .leading, spacing: 8) {
                                 ForEach(considerations) { consideration($0) }
@@ -493,35 +562,42 @@ struct ImportReviewCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { considering = $0 }
                     }
-                    .frame(maxHeight: heights.considering)
-                    .fixedSize(horizontal: false, vertical: true)
                 }
-                ScrollView {
+                list(heights.capabilities) {
                     // An Android app runs on the emulator or the person's phone, never on the Mac itself.
                     section(android ? "What it can do" : "What it can do on your Mac") { capabilities(review) }
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: heights.capabilities)
-                .fixedSize(horizontal: false, vertical: true)   // no taller than its content, up to the limit
+            } else if let failure {
+                Label {
+                    Text(verbatim: failure).fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                }
+                .padding(.vertical, 20)
             } else {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
-                    Text("Checking what this wish does…").foregroundStyle(.secondary)
+                    Text(verbatim: progress ?? "Checking what this app does…").foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 20)
             }
 
-            if let existing {
-                // The buttons say what each does; this is what someone would worry about before choosing Update.
+            if let existing, trying {
+                Label {
+                    Text(verbatim: "Lamp opens a copy of “\(existing)” with these changes and none of your data. Your app stays as it is, and the copy goes when you quit it.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "square.on.square").foregroundStyle(.secondary)
+                }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.existing] = $0 }
+            } else if let existing, mix != nil || !prepared {
+                // What the other choice does: the update's own lead is under the title. A prepared update says both there.
                 Label {
                     Text(verbatim: mix != nil
-                         ? "You already have this wish\(existing == name ? "" : ", as “\(existing)”"). Mix lets you pick which of its changes to bring into yours. Keep Both keeps it as a separate app."
-                         : prepared
-                         ? "Update puts it in place of “\(existing)” and keeps your data, and you can go back if you change your mind. Keep Both keeps it as a separate app."
-                         : "You already have this wish\(existing == name ? "" : ", as “\(existing)”")"
-                         + (changedHere ? ", and you've changed it since. Updating brings in what's new and keeps your changes; Lamp asks you about anything it can't settle itself"
-                                        : ". Updating keeps your data")
-                         + ", and you can go back if you change your mind.")
+                         ? "You already have this app\(existing == name ? "" : ", as “\(existing)”"). Mix lets you pick which of its changes to bring into yours. \(Self.separateLine)"
+                         : Self.separateLine)
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } icon: {
@@ -529,14 +605,30 @@ struct ImportReviewCard: View {
                 }
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.existing] = $0 }
             }
-
-            buttons
-                .cardButtons()
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.buttons] = $0 }
         }
-        .padding(24)
-        .frame(width: 500)
     }
+
+    /// The sheet's title: an update of the app already here says so, and one prepared in a copy says it's ready.
+    private var title: String {
+        if prepared { return "Your update to “\(existing ?? name)” is ready" }
+        if trying { return "Try these changes to “\(name)”?" }
+        if let existing, mix == nil { return "Update “\(existing)”?" }
+        return "Open “\(name)”?"
+    }
+
+    /// What updating does to the app already here, under the title.
+    private var lead: String? {
+        guard existing != nil, mix == nil, !trying else { return nil }
+        if prepared {
+            return "This copy includes the update and your changes. Update This App replaces your current app's code and keeps its saved data. "
+                + "Keep as Separate App keeps the prepared copy alongside your current app."
+        }
+        return changedHere
+            ? "Bring in the update and keep your changes. Lamp will ask you about conflicts it can't resolve. Your saved data stays, and you can undo the update."
+            : "Replace this app's code with the update. Your saved data stays, and you can undo the update."
+    }
+
+    static let separateLine = "Keep as Separate App adds the incoming version to your library and leaves your current app unchanged."
 
     private var buttons: some View {
         HStack {
@@ -545,10 +637,26 @@ struct ImportReviewCard: View {
             // (`ImportReview.opening`); anything less takes a deliberate click.
             Button("Cancel", role: .cancel, action: cancel)
                 .keyboardShortcut(.cancelAction)
-            if existing != nil, let mix {
+            if failure != nil {
+                // Nothing was checked: the one thing to do is check again.
+                Button("Try Again", action: retry)
+                    .keyboardShortcut(.defaultAction)
+            } else if trying {
+                // The copy's code runs as an opened app's does, so it follows the same rule.
                 switch review?.opening {
-                case .anyway: Button("Keep Both Anyway", role: .destructive, action: open)
-                case .byReturn, .byClick, nil: Button("Keep Both", action: open).disabled(review == nil)
+                case .byReturn:
+                    Button("Try It", action: tryIt)
+                        .keyboardShortcut(.defaultAction)
+                case .anyway:
+                    Button("Try It Anyway", role: .destructive, action: tryIt)
+                case .byClick, nil:
+                    Button("Try It", action: tryIt)
+                        .disabled(review == nil)
+                }
+            } else if existing != nil, let mix {
+                switch review?.opening {
+                case .anyway: Button("Keep Separate App Anyway", role: .destructive, action: open)
+                case .byReturn, .byClick, nil: Button("Keep as Separate App", action: open).disabled(review == nil)
                 }
                 Button("Mix…", action: mix)
                     .keyboardShortcut(.defaultAction)
@@ -556,19 +664,19 @@ struct ImportReviewCard: View {
             } else if existing != nil {
                 // The app is already here: the file either becomes its next version or a second app.
                 // Either way its code runs, so both follow the same rule as opening does. Return is
-                // only ever Update: keeping both is the choice someone makes on purpose.
+                // only ever Update This App: a separate app is the choice someone makes on purpose.
                 switch review?.opening {
                 case .byReturn:
-                    Button("Keep Both", action: open)
-                    Button("Update", action: update)
+                    Button("Keep as Separate App", action: open)
+                    Button("Update This App", action: update)
                         .keyboardShortcut(.defaultAction)
                 case .anyway:
-                    Button("Keep Both Anyway", role: .destructive, action: open)
+                    Button("Keep Separate App Anyway", role: .destructive, action: open)
                     Button("Update Anyway", role: .destructive, action: update)
                 case .byClick, nil:
-                    Button("Keep Both", action: open)
+                    Button("Keep as Separate App", action: open)
                         .disabled(review == nil)
-                    Button("Update", action: update)
+                    Button("Update This App", action: update)
                         .disabled(review == nil)
                 }
             } else {

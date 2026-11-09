@@ -74,17 +74,33 @@ enum Builder {
     /// the account's default, since Lamp runs it without the person's settings). Claude Code starts on
     /// Opus, like Lamp's other builders.
     static func engineModel(_ engine: Engine) -> String {
-        UserDefaults.standard.string(forKey: "engineModel.\(engine.rawValue)") ?? (engine == .claude ? "opus" : "")
+        UserDefaults.standard.string(forKey: "engineModel.\(engine.rawValue)").map(currentModel) ?? (engine == .claude ? "opus" : "")
     }
 
     static func setEngineModel(_ model: String, for engine: Engine) {
         UserDefaults.standard.set(model.trimmed, forKey: "engineModel.\(engine.rawValue)")
     }
 
+    /// A model id an earlier Lamp saved or an app's code names, as today's: Fable has no short name that follows its
+    /// newest version, so its id is a full one, and the one before it is read as the one Lamp lists now. Inside a
+    /// route's id too ("engine:claude:claude-fable-5-1").
+    static func currentModel(_ id: String) -> String {
+        id.replacingOccurrences(of: "claude-fable-5-1", with: "claude-fable-5-2")
+            .replacingOccurrences(of: "anthropic/claude-fable-5.1", with: "anthropic/claude-fable-5.2")
+    }
+
+    /// Settings saved with a model's earlier id are moved to today's, once at launch, so the pickers show the choice.
+    static func moveSavedModels() {
+        let defaults = UserDefaults.standard
+        for key in ["engineModel.claude", "appModel", "awayModel", "piModel.openrouter", "model"] {
+            if let saved = defaults.string(forKey: key), currentModel(saved) != saved { defaults.set(currentModel(saved), forKey: key) }
+        }
+    }
+
     /// Claude Code's choices: its own short names, and the full ID for models without one.
     static let claudeModels: [(id: String, label: String)] = [
         ("", "Claude's default"),
-        ("claude-fable-5-1", "Fable"),
+        ("claude-fable-5-2", "Fable"),
         ("opus", "Opus"),
         ("sonnet", "Sonnet"),
         ("haiku", "Haiku"),
@@ -134,11 +150,13 @@ enum Builder {
         return Provider.defaultModel
     }
 
+    static let piMissing = "Lamp's AI builder is missing from the app. Download Lamp again."
+
     /// Whether the current choice can build right now, and if not, why.
     static func problem() -> String? {
         switch engine {
         case .pi:
-            if Agent.executable == nil { return "Lamp's AI builder is missing from the app. Download Lamp again." }
+            if Agent.executable == nil { return piMissing }
             switch piProvider {
             case localProvider:
                 let installed = LocalModels.scan()
@@ -300,6 +318,8 @@ extension Agent {
             env["LAMP_ICON_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/icon"
             env["LAMP_CONNECTORS_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/connectors"
             env["LAMP_LAMPIFY_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/lampify"
+            env["LAMP_SHARED_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/shared"
+            env["LAMP_SUGGESTED_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/suggested"
             env["LAMP_NETWORK_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/network"
             env["LAMP_INTEGRATION_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/integration"
             env["LAMP_TALK_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/talk"
@@ -354,7 +374,7 @@ extension Agent {
                         "command": "/usr/bin/curl -sf --max-time 3540 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\" || printf '%s' '\(fallback)'"]
             }
             var permissionMode = "acceptEdits"
-            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__assets,mcp__lamp__offer_setup,mcp__lamp__make_app_for,mcp__lamp__remove_app,mcp__lamp__rename_app,mcp__lamp__use_icon_picture,mcp__lamp__connectors,mcp__lamp__lampify,mcp__lamp__network_devices,mcp__lamp__device_integration,mcp__lamp__device_permission,mcp__lamp__ask,mcp__lamp__progress,mcp__lamp__write_wish,mcp__lamp__read_skill"
+            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__assets,mcp__lamp__offer_setup,mcp__lamp__make_app_for,mcp__lamp__remove_app,mcp__lamp__rename_app,mcp__lamp__use_icon_picture,mcp__lamp__connectors,mcp__lamp__lampify,mcp__lamp__shared_copy,mcp__lamp__suggested_changes,mcp__lamp__network_devices,mcp__lamp__device_integration,mcp__lamp__device_permission,mcp__lamp__ask,mcp__lamp__progress,mcp__lamp__write_wish,mcp__lamp__read_skill"
             if Memory.isOn { allowed += ",mcp__lamp__read_notes,mcp__lamp__save_notes" }
             // look_at_app and use_app come from Lamp's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
             // it the only server. The config is a file that reads the token from the environment, so the
@@ -794,14 +814,24 @@ enum EngineSignIn {
     private static func ask(_ engine: Engine) async -> Bool? {
         guard let tool = EngineInstall.path(for: engine) else { return nil }
         switch engine {
+        case .claude: return verdict(engine, await result(engine, tool, ["auth", "status"], timeout: 20))
+        case .codex: return verdict(engine, await result(engine, tool, ["login", "status"], timeout: 20))
+        default: return nil
+        }
+    }
+
+    /// What a status command's answer says of the sign-in. nil when it didn't answer: it ran out of time or couldn't
+    /// start (a Mac busy at launch, a copy mid-update). That is "couldn't check", never "signed out", which would hold
+    /// back the person's request for a sign-in they have.
+    static func verdict(_ engine: Engine, _ answer: Subprocess.Result) -> Bool? {
+        guard !answer.timedOut, answer.status != -1 else { return nil }
+        switch engine {
         case .claude:
-            let (status, output) = await run(engine, tool, ["auth", "status"], timeout: 20)
-            guard status == 0, let info = try? JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any]
-            else { return status == 0 ? nil : false }
-            return info["loggedIn"] as? Bool
+            guard answer.status == 0 else { return false }
+            let info = try? JSONSerialization.jsonObject(with: Data(answer.output.utf8)) as? [String: Any]
+            return info?["loggedIn"] as? Bool
         case .codex:
-            let (status, output) = await run(engine, tool, ["login", "status"], timeout: 20)
-            return status == 0 && output.localizedCaseInsensitiveContains("logged in")
+            return answer.status == 0 && answer.output.localizedCaseInsensitiveContains("logged in")
         default:
             return nil
         }
@@ -816,7 +846,7 @@ enum EngineSignIn {
         }, login: { started in
             guard let tool = EngineInstall.path(for: engine) else { return 1 }
             let arguments = engine == .claude ? ["auth", "login"] : ["login"]
-            return await run(engine, tool, arguments, timeout: 600, started: started).status
+            return await result(engine, tool, arguments, timeout: 600, started: started).status
         }, settle: {
             _ = await isSignedIn(engine)
             // Setup counts the sign-in (`SetupCheck.run`), so requests waiting for it start wherever it was made from.
@@ -865,10 +895,9 @@ enum EngineSignIn {
     nonisolated(unsafe) private static var signIns: [Engine: [UUID: (process: Process?, cancelled: Bool)]] = [:]
     private static let lock = NSLock()
 
-    private static func run(_ engine: Engine, _ tool: String, _ arguments: [String], timeout: TimeInterval,
-                            started: (@Sendable (Process) -> Void)? = nil) async -> (status: Int32, output: String) {
+    private static func result(_ engine: Engine, _ tool: String, _ arguments: [String], timeout: TimeInterval,
+                               started: (@Sendable (Process) -> Void)? = nil) async -> Subprocess.Result {
         let env = EngineInstall.environment(for: engine).merging(["PATH": ToolLocator.userPath]) { $1 }
-        let result = await Subprocess.run(tool, arguments, env: env, timeout: timeout, started: started)
-        return (result.status, result.output)
+        return await Subprocess.run(tool, arguments, env: env, timeout: timeout, started: started)
     }
 }

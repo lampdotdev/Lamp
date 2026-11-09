@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { deflateSync, crc32 } from "node:zlib";
-import { createShareHandler, createFileHandler, memoryStore, readShare, imageInfo, isID, isWishFile, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
+import { createShareHandler, createFileHandler, createIdeasHandler, IDEA_LIMITS, createPlayHandler, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, slugFor, wishIDFrom, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
 import { createPageHandler } from "../lib/shared-wish-page.js";
 import { createCardHandler } from "../lib/wish-card.js";
 
@@ -47,6 +47,19 @@ test("only a checked wish is taken: known fields, plain words within their limit
   assert.equal(readShare({ ...share, name: "Plant\u0000\nPal" }).name, "Plant Pal");
   assert.equal(readShare({ ...share, extra: 1 }), null);
   assert.equal(readShare({ ...share, name: "x".repeat(LIMITS.name + 1) }), null);
+  assert.equal(readShare(share).by, "", "nobody named, with no byline");
+  assert.equal(readShare({ ...share, by: "  A  Maker " }).by, "A Maker");
+  assert.equal(readShare({ ...share, by: "x".repeat(LIMITS.by + 1) }), null);
+  assert.deepEqual(readShare(share).ideas, [], "no suggestions");
+  assert.deepEqual(readShare({ ...share, ideas: ["Water them by the weather", " Add a fern "] }).ideas, ["Water them by the weather", "Add a fern"]);
+  assert.equal(readShare({ ...share, ideas: ["a", "b", "c", "d"] }), null, "at most three");
+  assert.equal(readShare({ ...share, ideas: ["x".repeat(LIMITS.idea + 1)] }), null);
+  assert.equal(readShare({ ...share, ideas: "Add a fern" }), null);
+  assert.equal(readShare(share).shape, null, "a link that says no shape");
+  assert.equal(readShare({ ...share, shape: 16 / 9 }).shape, 1.7778);
+  assert.equal(readShare({ ...share, shape: "fill" }).shape, "fill");
+  assert.equal(readShare({ ...share, shape: 9 }), null, "no shape that thin or wide");
+  assert.equal(readShare({ ...share, shape: "16:9" }), null);
   assert.equal(readShare({ ...share, name: "e\u0301".repeat(LIMITS.name) }).name.length, LIMITS.name * 2, "counted as Lamp counts");
   assert.equal(readShare({ ...share, words: "  " }), null);
   assert.equal(readShare({ ...share, picture: Buffer.from("<svg></svg>").toString("base64") }), null);
@@ -63,7 +76,7 @@ test("a wish is shared, changed and taken down only with its secret", async () =
   assert.equal(created.status, 201);
   const { id, url, secret } = await created.json();
   assert.ok(isID(id));
-  assert.equal(url, `https://lamp.dev/w/${id}`);
+  assert.equal(url, `https://lamp.dev/w/${id}-plant-pal`, "the link carries the wish's name, only for reading");
   assert.ok(!JSON.stringify([...store.records.values()]).includes(secret), "only the secret's hash is kept");
 
   assert.equal((await send(handler, "PUT", { ...share, name: "Thief" }, { id, secret: "x".repeat(43) })).status, 404);
@@ -74,6 +87,28 @@ test("a wish is shared, changed and taken down only with its secret", async () =
   assert.equal((await send(handler, "DELETE", undefined, { id })).status, 404);
   assert.equal((await send(handler, "DELETE", undefined, { id, secret })).status, 204);
   assert.equal(store.records.has(id), false);
+});
+
+test("what's new in each release is checked, kept newest first, and kept by a change that doesn't say", async () => {
+  const older = { date: "2026-10-01T09:00:00Z", lines: ["Plants have names now"] };
+  const newer = { date: "2026-11-02T10:30:00.000Z", lines: ["Reminders come at dawn", " Ferns  are in "] };
+  assert.deepEqual(readShare({ ...share, releases: [older, newer] }).releases.map((r) => r.lines[0]), ["Reminders come at dawn", "Plants have names now"]);
+  assert.equal(readShare(share).releases, undefined, "a Lamp from before them says nothing");
+  assert.equal(readShare({ ...share, releases: [{ ...older, lines: [] }] }), null, "a release says something");
+  assert.equal(readShare({ ...share, releases: [{ ...older, lines: Array(LIMITS.releaseLines + 1).fill("a") }] }), null);
+  assert.equal(readShare({ ...share, releases: [{ ...older, lines: ["x".repeat(LIMITS.releaseLine + 1)] }] }), null);
+  assert.equal(readShare({ ...share, releases: [{ ...older, date: "2999-01-01T00:00:00Z" }] }), null, "never far ahead");
+  assert.equal(readShare({ ...share, releases: [{ ...older, extra: 1 }] }), null);
+  assert.equal(readShare({ ...share, releases: Array(LIMITS.releases + 1).fill(older) }), null);
+
+  const store = memoryStore();
+  const handler = createShareHandler({ store, limited: false });
+  const { id, secret } = await (await send(handler, "POST", { ...share, releases: [older] })).json();
+  await send(handler, "PUT", share, { id, secret });
+  assert.deepEqual(store.records.get(id).releases.map((r) => r.date), ["2026-10-01T09:00:00.000Z"]);
+  await send(handler, "PUT", { ...share, releases: [older, newer] }, { id, secret });
+  const page = await createPageHandler({ store, template: async () => "<html><head></head><body></body></html>" })(new Request(`https://lamp.dev/w/${id}?id=${id}`));
+  assert.match(await page.text(), /"releases":\[\{"date":"2026-11-02T10:30:00.000Z","lines":\["Reminders come at dawn","Ferns are in"\]\}/);
 });
 
 test("pictures that went up are taken back when the wish can't be kept", async () => {
@@ -91,7 +126,8 @@ test("browsers on other sites, other kinds of body and oversized ones are refuse
   assert.equal((await send(handler, "POST", JSON.stringify(share), { type: "text/plain" })).status, 415);
   assert.equal((await send(handler, "POST", "{")).status, 400);
   assert.equal((await send(handler, "POST", { ...share, words: "x".repeat(3_000_000) })).status, 413);
-  assert.equal((await send(handler, "GET")).status, 405);
+  assert.equal((await send(handler, "PATCH")).status, 405);
+  assert.equal((await send(handler, "GET")).status, 404, "a follower asks by id");
 });
 
 test("without its store or quota it answers unavailable rather than sharing", async () => {
@@ -99,32 +135,41 @@ test("without its store or quota it answers unavailable rather than sharing", as
   assert.equal((await send(handler, "POST", share)).status, 503);
 });
 
-test("the page is the ideas page with the shared wish's card, its words escaped, and its own preview", async () => {
+test("the page is the shared wish's own, with the wish in it, its words escaped, and its own preview", async () => {
   const store = memoryStore();
   const { id } = await (await send(createShareHandler({ store, limited: false }), "POST", share)).json();
-  const ideas = `<!DOCTYPE html><html><head><title>Ideas · Lamp</title><meta name="description" content="Ideas"><link rel="canonical" href="https://lamp.dev/ideas"><meta property="og:title" content="Ideas · Lamp"><meta name="twitter:card" content="summary"></head><body><dialog data-wish></dialog></body></html>`;
-  const response = await createPageHandler({ store, template: async () => ideas })(new Request(`https://lamp.dev/api/wish-page?id=${id}`));
+  const built = `<!DOCTYPE html><html><head><title>An app · Lamp</title><meta name="description" content="An app made with Lamp."><link rel="canonical" href="https://lamp.dev/w/"><meta property="og:title" content="An app · Lamp"><meta name="twitter:card" content="summary"></head><body><section data-stage></section></body></html>`;
+  const response = await createPageHandler({ store, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}`));
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.ok(html.includes("<dialog data-wish>"), "the ideas page's card");
-  assert.ok(!html.includes("Ideas · Lamp") && !html.includes('content="summary"'), "the ideas page's own preview is gone");
+  assert.ok(html.includes("<section data-stage>"), "the built page");
+  assert.ok(!html.includes("An app · Lamp") && !html.includes('content="summary"'), "the built page's own preview is gone");
   assert.ok(html.includes(`<meta property="og:image" content="https://lamp.dev/w/${id}/card.png?v=`));
   assert.ok(html.includes(`<meta name="twitter:card" content="summary_large_image">`));
   const card = JSON.parse(/<script type="application\/json" id="shared-wish">(.*?)<\/script>/.exec(html)[1]);
   assert.equal(card.wish, store.records.get(id).words);
   assert.equal(card.about, "Reminds me when each plant needs water.");
+  assert.equal(card.by, "", "a wish shared with no name has no byline");
   assert.ok(!html.includes("<watered>"), "nothing the sharer wrote can close the script");
   assert.equal(response.headers.get("x-robots-tag"), "noindex");
 
-  const gone = await createPageHandler({ store, template: async () => ideas })(new Request("https://lamp.dev/api/wish-page?id=2345678922"));
+  // The name after the id is only for reading: an old one, or none, finds the same wish.
+  for (const part of [`${id}-old-name`, `${id}-`]) {
+    assert.equal((await createPageHandler({ store, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${part}`))).status, 200);
+  }
+  assert.equal(wishIDFrom(`${id}x`), null, "the id ends at a dash");
+  assert.equal(slugFor("Café  Crème!"), "cafe-creme");
+  assert.equal(slugFor("東京"), "", "a name with nothing plain to spell has no slug");
+
+  const gone = await createPageHandler({ store, template: async () => built })(new Request("https://lamp.dev/api/wish-page?id=2345678922"));
   assert.equal(gone.status, 404);
 });
 
-test("the ideas page the function serves is the one the site builds", () => {
+test("the page the function serves is the one the site builds", () => {
   const config = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
-  assert.equal(config.functions["api/wish-page.js"].includeFiles, "dist/ideas/index.html");
-  const dialog = readFileSync(new URL("../src/components/WishDialog.astro", import.meta.url), "utf8");
-  assert.ok(dialog.includes('getElementById("shared-wish")'));
+  assert.equal(config.functions["api/wish-page.js"].includeFiles, "dist/w/index.html");
+  const page = readFileSync(new URL("../src/pages/w/index.astro", import.meta.url), "utf8");
+  assert.ok(page.includes('getElementById("shared-wish")'));
 });
 
 test("the card is a 1200×630 PNG, with or without a picture", async () => {
@@ -140,6 +185,22 @@ test("the card is a 1200×630 PNG, with or without a picture", async () => {
   }
 });
 
+/** A zip holding stored files. */
+function zipOf(entries) {
+  const locals = [], centrals = [];
+  let offset = 0;
+  for (const [name, data] of entries) {
+    const nameBytes = Buffer.from(name), local = Buffer.alloc(30), central = Buffer.alloc(46);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt32LE(crc32(data), 14); local.writeUInt32LE(data.length, 18); local.writeUInt32LE(data.length, 22); local.writeUInt16LE(nameBytes.length, 26);
+    central.writeUInt32LE(0x02014b50, 0); central.writeUInt32LE(crc32(data), 16); central.writeUInt32LE(data.length, 20); central.writeUInt32LE(data.length, 24); central.writeUInt16LE(nameBytes.length, 28); central.writeUInt32LE(offset, 42);
+    locals.push(local, nameBytes, data); centrals.push(central, nameBytes);
+    offset += local.length + nameBytes.length + data.length;
+  }
+  const directory = Buffer.concat(centrals), end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(entries.length, 8); end.writeUInt16LE(entries.length, 10); end.writeUInt32LE(directory.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, directory, end]);
+}
+
 /** A zip holding one stored file, as Lamp's shared files are zips with lamp-app.json at their root. */
 function zip(name, data) {
   const nameBytes = Buffer.from(name), local = Buffer.alloc(30), central = Buffer.alloc(46), end = Buffer.alloc(22);
@@ -149,6 +210,47 @@ function zip(name, data) {
   end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10); end.writeUInt32LE(central.length + nameBytes.length, 12); end.writeUInt32LE(offset, 16);
   return Buffer.concat([local, nameBytes, data, central, nameBytes, end]);
 }
+
+test("a part sent again while its first try is still storing keeps the parts sent meanwhile", async () => {
+  const store = memoryStore();
+  const handler = createShareHandler({ store, limited: false });
+  const { id, secret } = await (await send(handler, "POST", share)).json();
+  // Parts kept as the site keeps them, each at an address of its own and gone once removed.
+  const blobs = new Map();
+  let count = 0, slowPut = true, holdPut, slowRead = false, holdRead;
+  store.putFile = async (_id, _name, bytes) => {
+    if (slowPut) { slowPut = false; await new Promise((resolve) => { holdPut = resolve; }); }
+    const url = `blob:${count++}`;
+    blobs.set(url, Buffer.from(bytes));
+    return url;
+  };
+  store.readFile = async (url) => {
+    if (slowRead) { slowRead = false; await new Promise((resolve) => { holdRead = resolve; }); }
+    if (!blobs.has(url)) throw new Error("missing");
+    return blobs.get(url);
+  };
+  store.removeImages = async (urls) => { for (const url of urls) blobs.delete(url); };
+  const files = createFileHandler({ store, limited: false });
+  const file = zip("lamp-app.json", Buffer.alloc(5000, 7));
+  const part = (n, bytes) => files(new Request(`https://lamp.dev/api/wish-file?id=${id}&part=${n}&of=2`, {
+    method: "PUT", headers: { "content-type": "application/octet-stream", authorization: `Bearer ${secret}` }, body: bytes,
+  }));
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
+  // The first try at part 0 stores slowly, as one whose connection dropped can; Lamp sends it again, then part 1.
+  const late = part(0, file.subarray(0, 3000));
+  await tick();
+  assert.equal((await part(0, file.subarray(0, 3000))).status, 204);
+  assert.equal((await part(1, file.subarray(3000))).status, 204);
+  // Putting them together reads the parts while the late first try lands.
+  slowRead = true;
+  const done = files(new Request(`https://lamp.dev/api/wish-file?id=${id}`, { method: "POST", headers: { authorization: `Bearer ${secret}` } }));
+  await tick();
+  holdPut();
+  assert.equal((await late).status, 204);
+  holdRead();
+  assert.equal((await done).status, 200);
+  assert.deepEqual(blobs.get(store.records.get(id).file.url), file);
+});
 
 test("the wish itself goes with its link in parts, only as a file Lamp made, and goes with the link", async () => {
   const store = memoryStore();
@@ -176,6 +278,20 @@ test("the wish itself goes with its link in parts, only as a file Lamp made, and
   const page = await createPageHandler({ store, template: async () => "<html><head></head><body></body></html>" })(new Request(`https://lamp.dev/api/wish-page?id=${id}`));
   assert.match(await page.text(), /"file":"data:application\/octet-stream;base64,[^"]+","fileSize":\d+/);
 
+  // Lamps that follow the link see the file's version, and each file sent again counts up; never the secret.
+  const latest = async () => (await handler(new Request(`https://lamp.dev/api/wishes?id=${id}`))).json();
+  assert.deepEqual(Object.keys(await latest()).sort(), ["by", "file", "format", "id", "name", "version"]);
+  assert.equal((await latest()).version, 1);
+  assert.equal((await part(0, 1, file)).status, 204);
+  assert.equal((await finish()).status, 200);
+  assert.equal((await latest()).version, 2);
+  // Taken away and sent again, it's still newer than any before.
+  assert.equal((await files(new Request(`https://lamp.dev/api/wish-file?id=${id}`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }))).status, 204);
+  assert.equal((await latest()).version, 0);
+  assert.equal((await part(0, 1, file)).status, 204);
+  assert.equal((await finish()).status, 200);
+  assert.equal((await latest()).version, 3);
+
   // A word-only update keeps the file; taking the link down takes it too.
   assert.equal((await send(handler, "PUT", { ...share, name: "Plant Friend" }, { id, secret })).status, 200);
   assert.ok(store.records.get(id).file);
@@ -199,7 +315,187 @@ test("the site and Lamp agree on the limits", () => {
   const swift = readFileSync(new URL("../../Sources/Lamp/WishLink.swift", import.meta.url), "utf8");
   assert.ok(swift.includes(`static let filePart = ${FILE_LIMITS.part.toLocaleString("en").replaceAll(",", "_")}`), "filePart");
   assert.ok(swift.includes(`static let fileTotal = ${FILE_LIMITS.total.toLocaleString("en").replaceAll(",", "_")}`), "fileTotal");
-  for (const [name, value] of Object.entries({ name: LIMITS.name, line: LIMITS.line, words: LIMITS.words })) {
+  for (const [name, value] of Object.entries({ name: LIMITS.name, by: LIMITS.by, line: LIMITS.line, words: LIMITS.words, ideas: LIMITS.ideas, idea: LIMITS.idea, asks: LIMITS.asks, ask: LIMITS.ask,
+    releases: LIMITS.releases, releaseLines: LIMITS.releaseLines, releaseLine: LIMITS.releaseLine })) {
     assert.ok(swift.includes(`static let ${name} = ${value}`), name);
   }
+});
+
+test("a link's page plays only from the play host, framed by the site, and Remix… waits behind it", async () => {
+  const store = memoryStore();
+  const handler = createShareHandler({ store, limited: false });
+  const files = createFileHandler({ store, limited: false });
+  const { id, secret } = await (await send(handler, "POST", share)).json();
+  const send_ = (what, method, body, query = "") => files(new Request(`https://lamp.dev/api/wish-file?id=${id}${what}${query}`, {
+    method, headers: { authorization: `Bearer ${secret}`, ...(body ? { "content-type": "application/octet-stream" } : {}) }, ...(body ? { body } : {}),
+  }));
+  assert.equal((await send_("", "PUT", zip("lamp-app.json", Buffer.alloc(10, 1)), "&part=0&of=1")).status, 204);
+  assert.equal((await send_("", "POST")).status, 200);
+  assert.equal(readZip(zip("../index.html", Buffer.from("x"))), null, "never a path that steps up");
+  assert.equal((await send_("&what=page", "PUT", zip("other.html", Buffer.from("x")), "&part=0&of=1")).status, 204);
+  assert.equal((await send_("&what=page", "POST")).status, 400, "a page has index.html at its root");
+  const html = Buffer.from("<!doctype html><title>Plant Pal</title><script src=lamp.js></script>");
+  assert.equal((await send_("&what=page", "PUT", zipOf([["index.html", html], ["dir/index.html", html], ["lamp.js", Buffer.from("// the kit")]]), "&part=0&of=1")).status, 204);
+  assert.equal((await send_("&what=page", "POST")).status, 200);
+
+  const env = { LAMP_PLAY_ORIGIN: "https://play.lamp.dev", LAMP_SITE_ORIGIN: "https://lamp.dev" };
+  const play = createPlayHandler({ store, env });
+  const own = `${Buffer.from(id).toString("hex")}.play.lamp.dev`;
+  const served = await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=index.html`));
+  assert.equal(served.status, 200);
+  assert.match(served.headers.get("content-type"), /^text\/html/);
+  assert.equal(served.headers.get("content-security-policy"), "frame-ancestors https://lamp.dev");
+  assert.deepEqual(Buffer.from(await served.arrayBuffer()), html);
+  assert.equal((await play(new Request(`https://lamp.dev/api/wish-play?id=${id}&v=1&path=index.html`))).status, 404, "never on the site's own host");
+  assert.equal((await play(new Request(`https://play.lamp.dev/api/wish-play?id=${id}&v=1&path=index.html`))).status, 404, "only on the link's own host");
+  const gone = await play(new Request(`https://${own}/api/wish-play?id=${id}&v=2&path=index.html`));
+  assert.equal(gone.status, 404, "only the version it has");
+  assert.equal(gone.headers.get("origin-agent-cluster"), "?1", "a cluster of its own on every answer, errors too");
+
+  const built = "<html><head><title>A wish</title></head><body></body></html>";
+  const page = await (await createPageHandler({ store, env, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
+  assert.match(page, new RegExp(`"play":"https://${own}/w/${id}/play/1/"`), "it plays from the link's own host, from its folder");
+  assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=`))).status, 200, "the folder is its index.html");
+  assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=index`))).status, 200, "a .html file by its clean name");
+  const folder = await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=dir`));
+  assert.match(await folder.text(), new RegExp(`<base href="/w/${id}/play/1/dir/">`), "a folder without its slash keeps its own files in place");
+  assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=dir/`))).status, 200);
+  // A big file is played straight from the store, where it's kept as what it is: not a page's HTML, not a worker's own
+  // script, and not from a store a browser can't reach.
+  // Each ask a minute apart, so it reads the record as this test changes it.
+  let later = 0;
+  const direct = createPlayHandler({ store, env, direct: 5, now: () => (later += 61_000) });
+  const ask = (path, dest) => direct(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=${path}`, dest ? { headers: { "sec-fetch-dest": dest } } : {}));
+  assert.equal((await ask("lamp.js")).status, 200, "the dev server's memory isn't a browser's to reach");
+  const stored = store.records.get(id).page.files, kept = stored["lamp.js"];
+  stored["lamp.js"] = "https://store.example/lamp.js";
+  const big = await ask("lamp.js", "script");
+  assert.equal(big.status, 302);
+  assert.equal(big.headers.get("location"), "https://store.example/lamp.js");
+  assert.equal(big.headers.get("vary"), "Sec-Fetch-Dest");
+  assert.notEqual((await ask("lamp.js", "worker")).status, 302, "a worker's script stays on the page's origin");
+  assert.equal((await ask("index.html")).status, 200, "never a page's HTML");
+  stored["lamp.js"] = kept;
+  const without = await (await createPageHandler({ store, env: {}, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
+  assert.doesNotMatch(without, /"play"/, "with no play host, nothing plays");
+
+  // The page goes with the wish itself, and one sent again later plays at a new address.
+  assert.equal((await send_("", "DELETE")).status, 204);
+  assert.equal(store.records.get(id).page, undefined);
+  assert.equal((await send_("&what=page", "PUT", zip("index.html", html), "&part=0&of=1")).status, 204);
+  assert.equal((await send_("&what=page", "POST")).status, 200);
+  assert.equal(store.records.get(id).page.version, 2);
+
+  // A game's files are served from the link's record as remembered for a minute, not read from the store for each;
+  // a version the memory doesn't have is read afresh.
+  let reads = 0, clock = 0;
+  const counted = { ...store, get: async (id) => { reads += 1; return store.get(id); } };
+  const remembering = createPlayHandler({ store: counted, env, now: () => clock });
+  const v = store.records.get(id).page.version;
+  for (let i = 0; i < 5; i++) assert.equal((await remembering(new Request(`https://${own}/api/wish-play?id=${id}&v=${v}&path=index.html`))).status, 200);
+  assert.equal(reads, 1);
+  await remembering(new Request(`https://${own}/api/wish-play?id=${id}&v=${v + 1}&path=index.html`));
+  assert.equal(reads, 2, "a version it doesn't have");
+  clock += 61_000;
+  await remembering(new Request(`https://${own}/api/wish-play?id=${id}&v=${v}&path=index.html`));
+  assert.equal(reads, 3, "after a minute");
+  clock += 61_000;
+  await Promise.all(Array.from({ length: 20 }, () => remembering(new Request(`https://${own}/api/wish-play?id=${id}&v=${v}&path=index.html`))));
+  assert.equal(reads, 4, "files asked for at once share one read");
+
+  // A new page leaves the one before it playable, for a game still open on it; the one before that goes.
+  const again = async () => {
+    assert.equal((await send_("&what=page", "PUT", zip("index.html", html), "&part=0&of=1")).status, 204);
+    assert.equal((await send_("&what=page", "POST")).status, 200);
+  };
+  // A handler of its own each time: one remembers a link's record for a minute.
+  const plays = async (v) => (await createPlayHandler({ store, env })(new Request(`https://${own}/api/wish-play?id=${id}&v=${v}&path=index.html`))).status;
+  await again();
+  assert.deepEqual([await plays(2), await plays(3)], [200, 200]);
+  await again();
+  assert.deepEqual([await plays(2), await plays(3), await plays(4)], [404, 200, 200]);
+});
+
+test("a link's questions go to its page, and only as questions within the limits", async () => {
+  const store = memoryStore();
+  const handler = createShareHandler({ store, limited: false });
+  const asks = ["Found a bug?", "Something in town we're missing?"];
+  const { id } = await (await send(handler, "POST", { ...share, asks })).json();
+  const page = await (await createPageHandler({ store, template: async () => "<html><head></head><body></body></html>" })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
+  assert.match(page, /"asks":\["Found a bug\?","Something in town we're missing\?"\]/);
+  assert.equal((await send(handler, "POST", { ...share, asks: ["a", "b", "c", "d"] })).status, 400, "three at most");
+  assert.equal((await send(handler, "POST", { ...share, asks: ["x".repeat(81)] })).status, 400);
+});
+
+test("ideas reach the link's maker, and only the maker reads them", async () => {
+  const store = memoryStore();
+  const { id, secret } = await (await send(createShareHandler({ store, limited: false }), "POST", share)).json();
+  const ideas = createIdeasHandler({ store, limited: false });
+  const post = (body, at = id) => ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${at}`, {
+    method: "POST", headers: { "content-type": "application/json", origin: "https://lamp.dev" }, body: JSON.stringify(body),
+  }));
+  const list = (key = secret) => ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}`, { headers: { authorization: `Bearer ${key}` } }));
+
+  assert.equal((await post({ text: "Add a night mode" })).status, 201);
+  assert.equal((await post({ text: "Bigger waves", email: "not an address" })).status, 400);
+  const sent = await (await post({ text: "Bigger waves", email: "someone@example.com" })).json();
+  assert.equal(sent.n, 2);
+  assert.equal((await post({ text: "  " })).status, 400, "words required");
+  assert.equal((await post({ text: "x".repeat(1001) })).status, 400);
+  assert.equal((await post({ text: "hi" }, "zzzzzzzzzz")).status, 404, "only for a link that's out");
+  assert.equal((await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}`, {
+    method: "POST", headers: { "content-type": "application/json", origin: "https://elsewhere.example" }, body: "{}" }))).status, 403);
+
+  assert.equal((await list("x".repeat(43))).status, 404, "only with the link's secret");
+  const kept = (await (await list()).json()).ideas;
+  assert.deepEqual(kept.map((idea) => [idea.n, idea.text, idea.wantsNews]), [[1, "Add a night mode", undefined], [2, "Bigger waves", true]]);
+  assert.ok(kept.every((idea) => !("email" in idea) && typeof idea.at === "string"), "never the addresses");
+
+  const done = await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
+  assert.equal(done.status, 200);
+  assert.deepEqual((await (await list()).json()).ideas.map((idea) => idea.n), [2]);
+  assert.equal((await post({ text: "Night mode" })).status, 201);
+  assert.deepEqual((await (await list()).json()).ideas.map((idea) => idea.n), [2, 3], "numbers never come back");
+
+  // Built: the site writes to whoever asked, once, through Resend, and the maker never sees where.
+  const mails = [];
+  const fetcher = async (url, init) => { mails.push([url, JSON.parse(init.body)]); return new Response("{}", { status: 200 }); };
+  const built = createIdeasHandler({ store, limited: false, fetcher, env: { RESEND_API_KEY: "re_test", LAMP_IDEAS_FROM: "Lamp <ideas@lamp.dev>" } });
+  const answer = await (await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=2&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }))).json();
+  assert.equal(answer.notified, true);
+  assert.equal(mails.length, 1);
+  assert.equal(mails[0][0], "https://api.resend.com/emails");
+  assert.deepEqual(mails[0][1].to, ["someone@example.com"]);
+  assert.match(mails[0][1].text, /Bigger waves[\s\S]*https:\/\/lamp\.dev\/w\//);
+  assert.deepEqual((await (await list()).json()).ideas.map((idea) => idea.n), [3]);
+  assert.equal(mails.length, 1);
+  // Two at once for one idea: one email.
+  const twice = await (await post({ text: "Fireworks at midnight", email: "someone@example.com" })).json();
+  const asked = () => built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${twice.n}&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
+  const answers = await Promise.all([asked(), asked()]);
+  assert.deepEqual((await Promise.all(answers.map((one) => one.json()))).map((one) => one.notified).sort(), [false, true]);
+  assert.equal(mails.length, 2);
+  assert.equal(mails[1][1].to[0], "someone@example.com");
+  // The sender's browser asks after its own ideas, by number and token, and hears only their outcome.
+  const kept1 = await (await post({ text: "A lighthouse on the point" })).json();
+  const kept2 = await (await post({ text: "Fog in the mornings" })).json();
+  const mine = async (pairs) => (await (await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&mine=${pairs}`))).json()).ideas;
+  assert.deepEqual(await mine(`${kept1.n}.${kept1.token},${kept2.n}.${kept2.token}`), [{ n: kept1.n, status: "open" }, { n: kept2.n, status: "open" }]);
+  assert.deepEqual(await mine(`${kept1.n}.${"x".repeat(16)}`), [], "only with its token");
+  await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${kept1.n}&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
+  await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${kept2.n}`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
+  assert.deepEqual((await mine(`${kept1.n}.${kept1.token},${kept2.n}.${kept2.token}`)).map((one) => one.status), ["in", "dismissed"]);
+  assert.ok(!(await (await list()).json()).ideas.some((one) => one.n === kept1.n || one.n === kept2.n), "the maker sees only those still open");
+  // Dealing with ideas makes room for more: the cap counts those still open.
+  const full = memoryStore();
+  const { id: fullID, secret: fullSecret } = await (await send(createShareHandler({ store: full, limited: false }), "POST", share)).json();
+  const fullIdeas = createIdeasHandler({ store: full, limited: false });
+  for (let i = 0; i < IDEA_LIMITS.kept; i++) await full.addIdea(fullID, { text: `idea ${i}`, at: new Date().toISOString() });
+  const postFull = () => fullIdeas(new Request(`https://lamp.dev/api/wish-ideas?id=${fullID}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "one more" }) }));
+  assert.equal((await postFull()).status, 429);
+  await fullIdeas(new Request(`https://lamp.dev/api/wish-ideas?id=${fullID}&n=1`, { method: "DELETE", headers: { authorization: `Bearer ${fullSecret}` } }));
+  assert.equal((await postFull()).status, 201);
+  const quiet = await (await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=3&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }))).json();
+  assert.equal(quiet.notified, false, "nobody asked");
+  assert.equal(mails.length, 2);
 });

@@ -64,14 +64,27 @@ enum SharedNetwork {
     /// its requests go to, and whether it may connect where Lamp couldn't tell. An app of a kind with no page is kept as
     /// shared too, with nothing in it to hold, so a page the wish makes for it later (`isShared`) is held as the rest.
     /// The libraries Lamp knows by their contents (three.js) are left out, as the sheet leaves them out (`Sharing.inspect`).
-    static func reading(of package: Sharing.Package, stock: String? = Sharing.stockNative) -> NetworkPolicy {
+    /// `reach` is the reading the review already made of the same files (`Sharing.inspect`), when there is one.
+    static func reading(of package: Sharing.Package, reach: WebReach.Result? = nil, stock: String? = Sharing.stockNative) -> NetworkPolicy {
         guard applies(to: package.platform) else { return NetworkPolicy() }
-        let sources = package.sources.filter { file in
+        let reach = reach ?? TVFiles.reach(in: package.sources.filter { file in
             (try? String(contentsOf: file, encoding: .utf8)).map { !Sharing.knownLibraries.contains(Sharing.fingerprint($0)) } ?? true
-        }
-        let reach = TVFiles.reach(in: sources, data: package.webData)
+        }, data: package.webData)
         return NetworkPolicy(origins: Array(reach.origins), mayConnect: reach.unknown || reach.unnamed,
                              ownSwift: hasOwnSwift(package, stock: stock))
+    }
+
+    /// The key of one app's reading in a wish's (`readings`): its folder, as a part's folder is matched, "" for the root.
+    static func readingKey(_ folder: String) -> String {
+        folder.hasSuffix("/") ? String(folder.dropLast()).lowercased() : folder.lowercased()
+    }
+
+    /// The readings of a package and each of its apps, as its review makes them. Reading a large page takes a while, so
+    /// it's never done on the main actor: an update made without a review (an original, a pull-in) reads them here, off it.
+    static func readings(of package: Sharing.Package) -> [String: NetworkPolicy] {
+        var readings = [readingKey(""): reading(of: package)]
+        for part in package.parts { readings[readingKey(part.folder)] = reading(of: part.package) }
+        return readings
     }
 
     /// Whether a wish came from someone else: it, or one of its apps, has a policy.
@@ -109,10 +122,11 @@ enum SharedNetwork {
     /// Records what a shared file's app may reach, as it goes into `project`. A fresh import (`arriving`) records it; an
     /// update records it again only for an app that already has one, so an app of the person's own, or a starter, never
     /// comes to have one. The person's own choice to let it reach every site stays through an update.
-    static func arrive(_ package: Sharing.Package, in project: LampProject, arriving: Bool) {
+    /// `reading` is the one already made of `package` (`readings`); without it the package is read here.
+    static func arrive(_ package: Sharing.Package, in project: LampProject, arriving: Bool, reading made: NetworkPolicy? = nil) {
         let had = policy(for: project)
         guard arriving || had != nil else { return }
-        var policy = reading(of: package)
+        var policy = made ?? reading(of: package)
         policy.unrestricted = had?.unrestricted ?? false
         do { try save(policy, for: project) } catch { print("Couldn't keep what \(project.name) may reach: \(error)") }
     }

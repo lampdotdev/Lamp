@@ -30,6 +30,10 @@
  *   needs none, or says how to build on one.
  * - `lampify`: gives an app made from someone's project on GitHub its credit at one pinned commit, the project's
  *   license and notice files and its manifest, and answers with what the Lamp app still lacks.
+ * - `shared_copy`: fetches someone's shared Lamp app from its link, checked as any shared file, into a folder the agent
+ *   may only read, and answers with where it is and what Lamp's checks found.
+ * - `suggested_changes`: lists the requests someone opened on the app's repository on GitHub, lays one out for the agent
+ *   to read, or has Lamp show the person its review to bring it in once the turn ends.
  * - `network_devices`: lists the devices on the person's home network as Lamp's own look finds them now, with what
  *   Lamp already has for each.
  * - `device_integration`: hands Lamp a device's integration as data; Lamp checks it and answers with what's wrong,
@@ -768,6 +772,42 @@ const lampify = defineTool({
 	},
 });
 
+/** `shared_copy`: Lamp fetches someone's shared app from its link and lays it out for reading (SharedCopies). */
+const sharedCopy = defineTool({
+	...spec("shared_copy"),
+	async execute(_toolCallId, params, signal) {
+		const url = process.env.LAMP_SHARED_URL;
+		if (!url) throw new Error("Lamp isn't available to get that shared app.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(300_000)]) : AbortSignal.timeout(300_000),
+		});
+		const reply = (await response.json()) as { text?: string; error?: string };
+		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't get that shared app.");
+		return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
+	},
+});
+
+/** `suggested_changes`: someone's requests on the app's repository on GitHub (Suggestions). */
+const suggestedChanges = defineTool({
+	...spec("suggested_changes"),
+	async execute(_toolCallId, params, signal) {
+		const url = process.env.LAMP_SUGGESTED_URL;
+		if (!url) throw new Error("Lamp isn't available to get suggested changes.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(300_000)]) : AbortSignal.timeout(300_000),
+		});
+		const reply = (await response.json()) as { text?: string; error?: string };
+		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't get the suggested changes.");
+		return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
+	},
+});
+
 const networkDevices = defineTool({
 	...spec("network_devices"),
 	async execute(_toolCallId, params, signal) {
@@ -865,6 +905,8 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(useIconPicture);
 	pi.registerTool(connectors);
 	pi.registerTool(lampify);
+	pi.registerTool(sharedCopy);
+	pi.registerTool(suggestedChanges);
 	pi.registerTool(networkDevices);
 	pi.registerTool(deviceIntegration);
 	for (const name of ["ask", "progress", "write_wish", "device_permission"]) pi.registerTool(talkTool(name));

@@ -131,8 +131,8 @@ final class WishWithoutItsFirstAppTests: XCTestCase {
     func testTheOnlyAppIsToldNothingOfOtherApps() throws {
         let wish = try replacedWish()
         let prompt = Agent.wishPrompt(for: wish, parts: Parts.load(wish))
-        XCTAssertTrue(prompt.contains("the part of the wish in TV/"))
-        XCTAssertFalse(prompt.contains("The apps of this wish can share data"), "the rules for reaching the wish's other apps")
+        XCTAssertTrue(prompt.contains("the part of the project in TV/"))
+        XCTAssertFalse(prompt.contains("The apps of this project can share data"), "the rules for reaching the wish's other apps")
         XCTAssertFalse(prompt.contains("LampController"))
     }
 

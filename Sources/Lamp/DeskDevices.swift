@@ -307,13 +307,13 @@ struct DeskDevices: View {
         case .here:
             return DeviceTip(title: name, lines: lines, status: ("Ready", .green), hint: nil)
         case .ready:
-            return DeviceTip(title: name, lines: lines, status: ("Ready", .green), hint: "Click to wish for something for it.")
+            return DeviceTip(title: name, lines: lines, status: ("Ready", .green), hint: "Click to make something for it.")
         case .setUp:
             var step = "Not set up yet"
             if device.isSetUp, case .needs(let next) = device.setup(team: team) { step = next }
             return DeviceTip(title: name, lines: lines, status: (step, DeviceDot.amber), hint: "Click to set it up.")
         case .found:
-            return DeviceTip(title: name, lines: lines, status: nil, hint: "Click to wish for something for it.")
+            return DeviceTip(title: name, lines: lines, status: nil, hint: "Click to make something for it.")
         case .away:
             return DeviceTip(title: name, lines: lines, status: ("Not on this network just now", .secondary), hint: nil)
         }

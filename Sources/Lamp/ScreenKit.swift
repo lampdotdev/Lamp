@@ -337,9 +337,9 @@ extension Agent.Rules {
     emulator or device, a TV or the Xbox), so don't run a build, a server or a browser yourself, and leave .lamp/ alone. \
     The page fills the screen it's on, whatever its shape (the design rule below). Where else it's shown is the \
     person's to ask for: when they want it somewhere else, call make_app_for with its folder in `app` ("." when it's the \
-    wish's own folder), `kind` "app", `made` "web" and `devices` every device it's to be on ("mac", "ipad", "android", \
+    project's own folder), `kind` "app", `made` "web" and `devices` every device it's to be on ("mac", "ipad", "android", \
     "android-tv", "tv"…: a page goes wherever the table of devices gives a web host); it stays the same app, with its \
-    saves, and the wish's other apps stay as they are.
+    saves, and the project's other apps stay as they are.
     \(pageCopies)
     """ }
 

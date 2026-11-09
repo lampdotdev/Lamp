@@ -18,7 +18,7 @@ const { place } = Astro.props;
   data-wish
   data-place={place}
   aria-labelledby="wish-name"
-  class="m-auto max-h-[calc(100dvh-2rem)] w-[min(36rem,calc(100vw-2rem))] overflow-y-auto rounded-[28px] bg-page p-0 text-ink shadow-[0_30px_80px_-20px_rgba(0,0,0,0.45)] backdrop:bg-black/40 backdrop:backdrop-blur-sm lg:w-[min(70rem,calc(100vw-4rem))] lg:grid-cols-[1.3fr_1fr] lg:overflow-hidden lg:open:grid"
+  class="m-auto max-h-[calc(100dvh-2rem)] w-[min(36rem,calc(100vw-2rem))] overflow-y-auto rounded-[10px] bg-page p-0 text-ink shadow-[0_30px_80px_-20px_rgba(0,0,0,0.45)] backdrop:bg-black/40 backdrop:backdrop-blur-sm lg:w-[min(70rem,calc(100vw-4rem))] lg:grid-cols-[1.3fr_1fr] lg:overflow-hidden lg:open:grid"
 >
   <!-- The picture: across the top on narrower screens; from lg, the left of two columns, shown whole on a soft,
        blurred copy of itself however tall the wish beside it is. -->
@@ -42,38 +42,37 @@ const { place } = Astro.props;
         <p data-about class="mt-1.5 text-[15px] leading-snug text-muted"></p>
       </div>
     </div>
-    <label for="wish-text" class="mt-6 mb-2.5 block text-[15px] font-semibold">Make it yours, then give it to Lamp:</label>
-    <textarea
-      id="wish-text"
-      data-text
-      rows="5"
-      class="w-full resize-none rounded-xl bg-page p-3.5 text-[17px] leading-relaxed ring-1 ring-[#d2d2d7] transition focus:ring-2 focus:ring-[#cf620c]/40 focus:outline-none"
-    ></textarea>
+    <!-- It's an idea, not an app that exists yet: Lamp makes it. What Lamp is asked isn't shown, unless the link brought
+         the person's own words, which they may want to change. -->
+    <p data-line class="mt-5 text-[15px] leading-snug text-muted">An idea for Lamp to make on your Mac. Get Lamp, and it'll be waiting when Lamp opens.</p>
+    <div data-edit hidden class="mt-5">
+      <label for="wish-text" class="mb-2 block font-mono text-xs font-bold tracking-[0.06em] text-muted">YOUR IDEA</label>
+      <textarea
+        id="wish-text"
+        data-text
+        rows="5"
+        class="w-full resize-none rounded-xl bg-page p-3.5 text-[17px] leading-relaxed ring-1 ring-rule transition focus:ring-2 focus:ring-ink/40 focus:outline-none"
+      ></textarea>
+    </div>
     <!-- A wish carries only its words to Lamp, which starts a Mac app unless told otherwise, so an iPhone or
          iPad idea says which to choose. -->
-    <p data-device hidden class="mt-3 text-[14px] text-muted"></p>
-    <div data-finish class="mt-6 flex flex-col items-center lg:items-start lg:[&>div]:items-start">
+    <p data-device hidden class="mt-2 text-[14px] text-muted"></p>
+    <div data-finish class="mt-5 flex flex-col items-center lg:items-start lg:[&>div]:items-start">
       <DownloadButton place={place} />
       <button
         type="button"
         data-open
         hidden
-        class="mt-3.5 cursor-pointer text-[15px] font-medium text-[#b04e0a] underline decoration-[#b04e0a]/40 underline-offset-4 transition hover:decoration-[#b04e0a]"
+        class="mt-3.5 cursor-pointer text-[15px] font-medium text-ink underline decoration-ink/40 underline-offset-4 transition hover:decoration-ink"
       >
-        Already have Lamp? Open it with this wish
+        Already have Lamp? Open it there
       </button>
-      <!-- A wish shared with its file: the exact one, for someone who has Lamp, which reviews it before it opens. -->
-      <a
-        data-file
-        hidden
-        class="mt-2.5 text-[15px] font-medium text-[#b04e0a] underline decoration-[#b04e0a]/40 underline-offset-4 transition hover:decoration-[#b04e0a]"
-      ></a>
     </div>
   </div>
 </dialog>
 
 <script>
-  import { askFrom, copyWish, exactWishLink, withAsk, wishLink } from "../../lib/wish.js";
+  import { askFrom, copyWish, withAsk, wishLink } from "../../lib/wish.js";
   import { track } from "../lib/analytics";
 
   const dialog = document.querySelector<HTMLDialogElement>("[data-wish]")!;
@@ -91,21 +90,22 @@ const { place } = Astro.props;
   openLink.hidden = !(/Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2);
 
   const fit = () => { text.style.height = "auto"; text.style.height = `${text.scrollHeight + 2}px`; };
+  const edit = dialog.querySelector<HTMLElement>("[data-edit]")!;
+  const line = dialog.querySelector<HTMLElement>("[data-line]")!;
   text.addEventListener("input", fit);
 
   // A wish whose words name its device (the TV, a watch) needs no platform: Lamp goes by the words.
-  type Idea = { name: string; about: string; wish: string; platform?: string; picture: string; icon: string; file?: string; fileSize?: number };
-  const fileLink = dialog.querySelector<HTMLAnchorElement>("[data-file]")!;
+  type Idea = { name: string; about: string; wish: string; platform?: string; picture: string; icon: string };
   const device = dialog.querySelector<HTMLElement>("[data-device]")!;
   const stage = dialog.querySelector<HTMLElement>("[data-stage]")!;
   const picture = dialog.querySelector<HTMLImageElement>("[data-picture]")!;
   const backdrop = dialog.querySelector<HTMLImageElement>("[data-backdrop]")!;
   const icon = dialog.querySelector<HTMLImageElement>("[data-icon]")!;
   let current: Idea | null = null;
-  // Where the wish came from, for the site's analytics: this page's ideas, or a wish someone shared as a link.
+  // Where the wish came from, for the site's analytics: this page's ideas, or a request a link brought.
   let from = place;
   // A request brought by a link from an app's remix panel (the chat beside an app on a Mac without Lamp, or a published
-  // page's Remix…), as `ask`: it goes after the shared wish's words, and with the exact wish's link.
+  // page's Remix…), as `ask`.
   const asked = askFrom(location.search);
   const open = (idea: Idea, shown: string, opened: string) => {
     current = idea;
@@ -113,7 +113,7 @@ const { place } = Astro.props;
     // The card's own picture straight away, already loaded, so the last wish's never lingers; the larger one
     // takes its place once it has arrived.
     stage.hidden = !current.picture;
-    // Every idea has a picture; a shared wish may not, and then the card is as narrow as on a phone, in one column.
+    // Every idea has a picture; a request a link brought has none, and then the card is as narrow as on a phone, in one column.
     dialog.style.width = current.picture ? "" : "min(36rem, calc(100vw - 2rem))";
     dialog.style.gridTemplateColumns = current.picture ? "" : "1fr";
     picture.src = backdrop.src = shown || current.picture;
@@ -127,25 +127,18 @@ const { place } = Astro.props;
     name.textContent = current.name;
     about.textContent = current.about;
     device.hidden = !current.platform || current.platform === "Mac";
-    device.textContent = `In Lamp, choose ${current.platform} before you send this wish.`;
+    device.textContent = `In Lamp, choose ${current.platform} before you send it.`;
     text.value = current.wish;
-    // The exact wish, as a file Lamp opens, on a Mac (where Lamp runs) and only when the sharer sent it.
-    fileLink.hidden = !current.file || openLink.hidden;
-    if (current.file) {
-      const size = current.fileSize ? ` (${Math.max(1, Math.round(current.fileSize / 1_000_000))} MB)` : "";
-      // A request that came with the link goes with the exact wish: Lamp opens on the link, fetches the file itself,
-      // reviews it as any shared file, and has the request in the box (`Wish.Exact` in Lamp).
-      const direct = asked ? exactWishLink(current.file, asked) : null;
-      fileLink.href = direct ?? current.file;
-      fileLink.textContent = direct ? `Or open this exact one in Lamp, with your request${size}` : `Or get this exact one, to open in Lamp${size}`;
-    }
     go.textContent = "Download Lamp";
     if (requirement) requirement.hidden = true;
+    // Only words the link brought are shown, to change; an idea's own request is Lamp's business.
+    edit.hidden = from !== "remix";
+    line.hidden = from === "remix";
     dialog.showModal();
     fit();
-    // Ready to change straight away, with the cursor at the end, where there's a pointer and a keyboard; on a
-    // touch screen the keyboard would cover the wish before it's been read.
-    if (matchMedia("(hover: hover) and (pointer: fine)").matches) {
+    // When they're open, ready to change straight away, with the cursor at the end, where there's a pointer and a
+    // keyboard; on a touch screen the keyboard would cover the wish before it's been read.
+    if (!edit.hidden && matchMedia("(hover: hover) and (pointer: fine)").matches) {
       text.focus({ preventScroll: true });
       text.setSelectionRange(text.value.length, text.value.length);
     }
@@ -155,14 +148,10 @@ const { place } = Astro.props;
     card.addEventListener("click", () => open(JSON.parse(card.dataset.idea!) as Idea, card.querySelector("img")?.currentSrc ?? "", place)),
   );
 
-  // A wish shared as a link (lamp.dev/w/<id>) is this page with that wish's card open on it: the server puts it in
-  // the page as #shared-wish (lib/shared-wish-page.js). Lamp opens with it from the card's own link, as for any idea.
-  // With no shared wish, the request is the wish itself.
-  const shared = document.getElementById("shared-wish")?.textContent;
-  if (shared || asked) {
-    const idea: Idea = shared ? (JSON.parse(shared) as Idea) : { name: "Your wish", about: "From an app made with Lamp", wish: "", picture: "", icon: "" };
-    if (asked) idea.wish = withAsk(idea.wish, asked);
-    open(idea, "", shared ? "shared" : "remix");
+  // A request brought by a link (an app's remix panel) opens the card on it: the request is the wish itself. A wish
+  // shared as a link has a page of its own (src/pages/w/index.astro).
+  if (asked) {
+    open({ name: "Your idea", about: "From an app made with Lamp", wish: withAsk("", asked), picture: "", icon: "" }, "", "remix");
     // Opened while the page is still loading, the box is sized again once it has its width.
     requestAnimationFrame(fit);
     addEventListener("load", fit, { once: true });
@@ -178,13 +167,12 @@ const { place } = Astro.props;
     copyWish(text.value).then((copied) => {
       go.textContent = "Downloading…";
       if (requirement) requirement.hidden = false;
-      if (requirement) requirement.textContent = copied === "marked" ? "Open Lamp when it's ready. Your wish will be there."
-        : copied === "plain" ? "Your wish is copied. Paste it into Lamp when it's ready."
-        : "Copy your wish, and paste it into Lamp when it's ready.";
+      if (requirement) requirement.textContent = copied === "marked" ? "Open Lamp when it's ready. It'll be there."
+        : copied === "plain" ? "It's copied. Paste it into Lamp when it's ready."
+        : "Copy it, and paste it into Lamp when it's ready.";
     });
   });
 
-  fileLink.addEventListener("click", () => { if (current) track("idea_file", { idea: current.name, place: from }); });
 
   openLink.addEventListener("click", () => {
     const link = wishLink(text.value);

@@ -274,7 +274,7 @@ final class SidebarServer {
         // The chat, and how far an open card has been answered in Lamp's window, which isn't the Store's.
         watching = Store.shared.objectWillChange.merge(with: AskProgresses.shared.objectWillChange)
             .merge(with: WishLinkCards.shared.objectWillChange)
-            .merge(with: GitHubRepoCards.shared.objectWillChange).merge(with: ContributeCards.shared.objectWillChange).sink { [weak self] _ in
+            .merge(with: ContributeCards.shared.objectWillChange).sink { [weak self] _ in
             DispatchQueue.main.async { self?.scheduleUpdate() }
         }
         // A key, a model chosen in Settings or for the app, or Not Now changes what an offer's card says.
@@ -454,6 +454,9 @@ final class SidebarServer {
             var toolbar = SidebarToolbar(canUndo: !busy && (history?.undoable ?? false), canShare: store.canShare(project) && made,
                                          hasVersions: history?.saved ?? false, details: details)
             toolbar.canContribute = Contribute.canContribute(project) && made ? true : nil
+            // A chat of an earlier Lamp then leaves its Put on GitHub… out: Release Update puts the wish there now.
+            toolbar.onGitHub = true
+            toolbar.shareLink = WishLink.kept(for: project)?.url.absoluteString
             // Play and Stop where the wish isn't a Mac window beside this chat (that one is open, and quits as a window does).
             // Only once there's something to play: a first build opens the app itself.
             // A wish with no app at all has nothing to play.
@@ -465,9 +468,15 @@ final class SidebarServer {
             state.tryOn = tryOn(for: project, busy: busy)
         }
         state.intro = log.isEmpty && (store.queued[project.id] ?? []).isEmpty ? intro(for: project, busy: busy, draft: draft.text) : nil
-        // Only for a wish that needs them, once they're asked for: a wish that's only being used doesn't, nor is a game
-        // or a screen made with them.
-        if store.setup.checked && !store.setup.hasBuildTools && store.needsAppleTools(project)
+        // Work that couldn't be saved comes first: what's at risk is the person's, and Try Again is what keeps it.
+        // Apple's tools only for a wish that needs them, once they're asked for: a wish that's only being used doesn't,
+        // nor is a game or a screen made with them. Tools that need repair are said before anything is asked: nothing
+        // would build until they're put right.
+        if let trouble = store.saveTrouble {
+            state.banner = SidebarBanner(text: trouble.text, button: Store.SaveTrouble.button, needsYou: true)
+        } else if store.setup.checked, let repair = store.setup.repair, store.needsAppleTools(project) {
+            state.banner = SidebarBanner(text: repair.text + " Anything you ask for starts once they can.", button: repair.button, needsYou: true)
+        } else if store.setup.checked && !store.setup.hasBuildTools && store.needsAppleTools(project)
             && (store.setup.installRequested || (store.setup.hasBuilder && store.waitsForAppleTools)) {
             state.banner = SidebarBanner(text: "Installing Apple's app-building tools. Anything you ask for starts as soon as they're in.",
                                          button: store.setup.installRequested ? "Show Installer" : "Install…")
@@ -482,8 +491,7 @@ final class SidebarServer {
         case nil: break
         }
         state.sharing = sharing.removeValue(forKey: project.id)
-        if let card = WishLinkCards.shared.card(for: project), card.inSidebar { state.wishLink = wishLink(card, of: project) }
-        if let card = GitHubRepoCards.shared.card(for: project) { state.repo = GitHubRepoCards.shared.wire(card, of: project) }
+        state.shareFailures = shareFailures[project.id]
         if let card = ContributeCards.shared.card(for: project) { state.contribute = ContributeCards.shared.wire(card, of: project) }
         return state
     }
@@ -567,32 +575,11 @@ final class SidebarServer {
             icon: introIcons[project.id]?.data,
             name: asks ? nil : project.untitled ? "" : project.name,
             namePrompt: !project.untitled ? project.name : project.fromWish ? project.title : "Name it, or Lamp will",
-            line: project.untitled && project.fromWish ? "Here's your wish. Change anything you like."
+            line: project.untitled && project.fromWish ? "Here it is. Change anything you like."
                 : project.untitled ? "Say it in your own words: a chore to take off your hands, a habit to keep, a game to play. Lamp makes it for you."
                 : "Describe what \(project.name) should do. Lamp builds it and opens it for you.",
             ideas: ideas, canRename: !busy)
     }
-
-    /// The Share Link card as the chat beside the app draws it, its picture made small once for each picture.
-    private func wishLink(_ card: WishLinkCards.Card, of project: LampProject) -> SidebarWishLink {
-        if wishLinkPictures[project.id]?.digest != card.pictureDigest {
-            wishLinkPictures[project.id] = (card.pictureDigest, card.picture.flatMap(Self.smallPicture))
-        }
-        let shown = card.shared?.shown
-        return SidebarWishLink(
-            name: card.values.name, line: card.values.line, words: card.values.words, includePicture: card.values.includePicture,
-            includeFile: card.values.includeFile, canIncludeFile: WishLinkCards.canIncludeFile(project),
-            revision: card.revision, picture: wishLinkPictures[project.id]?.data, icon: card.icon,
-            link: card.shared?.url.absoluteString,
-            shown: shown.map { SidebarWishLinkValues(name: $0.name, line: $0.line, words: $0.words, includePicture: $0.picture != nil, includeFile: $0.file == true) },
-            newPicture: shown?.picture != nil && shown?.picture != card.pictureDigest,
-            sending: card.stage == .sending, problem: { if case .failed(let message) = card.stage { message } else { nil } }(),
-            copied: card.copied, canRetake: WishLinkCards.shared.canRetake(project), retaking: card.retaking,
-            limits: [WishLink.Limit.name, WishLink.Limit.line, WishLink.Limit.words],
-            noLicense: ShareCheck.warningLine(Credits.load(project)))
-    }
-
-    private var wishLinkPictures: [String: (digest: String?, data: Data?)] = [:]
 
     /// Agent Details, one setting for both chats as in Lamp's window.
     private static var details: Bool { UserDefaults.standard.bool(forKey: "showDetails") }
@@ -610,8 +597,9 @@ final class SidebarServer {
         scheduleUpdate()
         Store.shared.showChat(project.id)
     }
-    /// The wish's file after Share…, until it's been sent.
+    /// The wish's file after Share…, until it's been sent, and how many times making it failed.
     private var sharing: [String: SidebarSharing] = [:]
+    private var shareFailures: [String: Int] = [:]
 
     /// What the toolbar knows of each app's history, read again as Lamp's window reads it: when a turn starts or ends
     /// and when the chat changes.
@@ -675,8 +663,6 @@ final class SidebarServer {
         Versions.showsNothing(url) ? nil : NSImage(contentsOf: url).flatMap(smallPicture)
     }
 
-    private nonisolated static func smallPicture(_ data: Data) -> Data? { NSImage(data: data).flatMap(smallPicture) }
-
     private nonisolated static func smallPicture(_ image: NSImage) -> Data? {
         let width: CGFloat = 360
         let scale = min(width / max(image.size.width, 1), 1)
@@ -691,7 +677,11 @@ final class SidebarServer {
 
     /// Share…: the file is made here, where the wish is, and handed to the sidebar, which shows the share menu.
     private func share(_ project: LampProject) {
-        guard Sharing.askToShare(project) else { return }
+        // Not shared after all (Cancel to the question about work with no license) ends the share button's wait too.
+        guard Sharing.askToShare(project) else {
+            shareFailures[project.id, default: 0] += 1
+            return scheduleUpdate()
+        }
         Task { [weak self] in
             do {
                 let file = try await Task.detached(priority: .userInitiated) { () -> SidebarFile in
@@ -702,8 +692,10 @@ final class SidebarServer {
                 self?.sharing[project.id] = SidebarSharing(id: UUID(), file: file, wish: project.id)
                 self?.scheduleUpdate()
             } catch {
-                // What's wrong and what to do about it, as an alert would show both.
+                // What's wrong and what to do about it, as an alert would show both; and the share button stops waiting.
                 Store.shared.log(project, .error, WishLinkCards.problem(error))
+                self?.shareFailures[project.id, default: 0] += 1
+                self?.scheduleUpdate()
             }
         }
     }
@@ -906,7 +898,7 @@ final class SidebarServer {
                     out.append(card)
                 case .needsBuilder:
                     let offered = BuilderLine.engines(in: line.text)
-                    var card = SidebarLine(id: line.id, kind: .offer, text: BuilderLine.title, gap: gap)
+                    var card = SidebarLine(id: line.id, kind: .offer, text: BuilderLine.missing(in: line.text) ?? BuilderLine.title, gap: gap)
                     card.symbol = "sparkles"
                     card.status = BuilderLine.status(offered)
                     card.choices = offered.map { SidebarChoice(id: $0.rawValue, title: BuilderLine.choice($0)) }
@@ -1338,41 +1330,23 @@ final class SidebarServer {
                 guard let version = await Versions.list(project).first(where: { $0.id == id }) else { return }
                 await store.name(version, of: project, as: name.trimmingCharacters(in: .whitespacesAndNewlines))
             }
-        case .wishLink(let command):
-            let cards = WishLinkCards.shared
-            switch command {
-            case .open: cards.open(project, inSidebar: true)
-            case .share(let values):
-                cards.update(project, values: WishLinkCard.Values(name: values.name, line: values.line, words: values.words,
-                                                                  includePicture: values.includePicture, includeFile: values.includeFile ?? false))
-                cards.share(project)
-            case .copy: cards.copy(project)
-            case .stop: cards.stop(project)
-            case .retake: cards.retake(project)
-            case .close: cards.close(project)
-            }
+        case .wishLink(.open):
+            WishLinkCards.shared.open(project)
         case .repo(let command):
-            let cards = GitHubRepoCards.shared
-            switch command {
-            // A chat that can't show the picture never sends it up: the person would publish what they never saw.
-            case .open: cards.open(project, canShowPicture: wire >= 12)
-            case .put: cards.put(project)
-            case .fix: cards.fix(project)
-            case .openRepo: cards.openRepo(project)
-            case .play: cards.play(project)
-            case .copy: cards.copy(project)
-            case .close: cards.close(project)
-            case .makeLink: cards.makeLink(project)
-            case .setPrivate(let value): cards.setPrivate(project, value)
-            case .setLicense(let value): cards.setLicense(project, value)
-            case .setPicture(let value): cards.setPicture(project, value)
-            }
+            // From a chat of an earlier Lamp, whose Put on GitHub… is Release Update's now.
+            if command == .open { WishLinkCards.shared.open(project) }
         case .contribute(let command):
             let cards = ContributeCards.shared
             switch command {
             case .open: cards.open(project)
-            case .send: cards.send(project)
+            // A chat from before the card showed a screenshot sends without one.
+            case .send: cards.send(project, shown: nil, wire: wire)
+            case .sendShowing(let shown): cards.send(project, shown: shown, wire: wire)
+            case .includeScreenshot(let shown): cards.includeScreenshot(project, shown: shown, wire: wire)
+            case .retakeScreenshot: cards.takeScreenshot(project)
+            case .removeScreenshot: cards.removeScreenshot(project)
             case .fix: cards.fix(project)
+            case .settle: cards.settle(project)
             case .openRequest: cards.openRequest(project)
             case .copy: cards.copy(project)
             case .close: cards.close(project)
@@ -1417,7 +1391,7 @@ final class SidebarServer {
         case .moreIdeas:
             ideaDecks[project.id]?.more()
         case .banner:
-            if store.setup.installRequested { SetupCheck.showInstaller() } else { store.requestBuildTools() }
+            if store.saveTrouble != nil { store.retrySaving() } else { store.fixBuildTools() }
         case .scrolled(let line):
             readingAt[project.id] = line
         case .hello:
@@ -1559,6 +1533,19 @@ final class SidebarServer {
                     return steps
                 }
             }
+            // A sidebar from before Send Changes Back folded its sources' own terms would leave those lines out: it
+            // gets them among the notes, where it showed them.
+            if version < 13 {
+                if var card = state.contribute, let terms = card.terms { card.notes = terms + card.notes; card.terms = nil; state.contribute = card }
+            }
+            // Nor one from before a blocked card could say why and offer what settles it, which would drop the whole
+            // chat: it gets why, with Done.
+            if version < 14, var card = state.contribute, case .blocked(let block) = card.stage {
+                card.stage = .refused(block.text)
+                state.contribute = card
+            }
+            // Nor one from before the card showed a screenshot: it never sees one, so it's never sent one to show.
+            if version < 15 { state.contribute?.screenshot = nil }
             // A sidebar from before the summary line can't read one, and would drop the whole chat.
             if version < 2 { state.lines.removeAll { $0.kind == .summary } }
             // Nor one from before the notes receipt a receipt.

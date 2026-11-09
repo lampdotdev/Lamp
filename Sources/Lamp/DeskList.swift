@@ -397,6 +397,22 @@ struct DeskListRow: View {
                     } else if let about = item.entry?.about {
                         Text(about).font(.system(size: 12.5)).foregroundStyle(Paper.muted).lineLimit(1).truncationMode(.tail)
                     }
+                    // Changes people sent that haven't been seen: plain words in the row's own gray, which open them.
+                    if !opening, let project, case let new = store.newSuggestions(project), new > 0 {
+                        Button { store.suggestionsOpen = project.id } label: {
+                            Text("\(new) new \(new == 1 ? "change" : "changes") sent").font(.system(size: 12)).foregroundStyle(Paper.muted)
+                                .underline(true, color: Paper.rule)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    // Ideas sent from its link that haven't been seen, the same way.
+                    if !opening, let project, case let new = store.newIdeas(project), new > 0 {
+                        Button { store.ideasOpen = project.id } label: {
+                            Text("\(new) new \(new == 1 ? "idea" : "ideas") sent").font(.system(size: 12)).foregroundStyle(Paper.muted)
+                                .underline(true, color: Paper.rule)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if !compact {
@@ -468,7 +484,7 @@ struct DeskListRow: View {
         if store.busy.contains(project.id) { return store.progress[project.id]?.newApp == true || project.untitled ? "Coming true…" : "Changing…" }
         if Talk.waiting(in: store.logs[project.id] ?? []) != nil { return "Has a question" }
         if store.queued[project.id]?.isEmpty == false { return "Waiting to start" }
-        if project.finding { return "Finding a wish" }
+        if project.finding { return "Finding an idea" }
         if store.unread.contains(project.id) { return "Ready" }
         return ""
     }
@@ -500,6 +516,9 @@ struct DeskListRow: View {
 /// Duplicate…. A starter not on the desk yet shows the same, and is copied as it opens or its remix is sent.
 struct DeskDetail: View {
     @EnvironmentObject private var store: Store
+    /// The Send Changes Back cards publish on their own: the line beside the wish follows them as they're prepared and
+    /// closed (`AppUpdates.DeskLine`).
+    @ObservedObject private var contributeCards = ContributeCards.shared
     let item: DeskList.Item
     var kept = false
     let remixes: [LampProject]
@@ -546,9 +565,28 @@ struct DeskDetail: View {
                                   : "Bring in the newer \(project.title). Undo takes it back.")
                     }
                 }
-                // Where it came from on GitHub: what was last heard of its updates, with the one button that checks or
-                // reviews them. Asking for it checks by itself when the last check is a day old.
-                if let project, row.entry?.followsRepository == true, let update = store.updateAvailability(of: project) {
+                // Its update's review, from the click until its sheet is up: the stage it's at, with Cancel, or why it
+                // couldn't be made, with Try Again (`Store.ReviewWork`).
+                if let project, let work = store.deskReview(of: project.id) {
+                    ReviewWorkLine(work: work, retry: store.retryReview, cancel: { store.cancelReview(of: project.id) })
+                }
+                // Its update, or the changes it sends back, while under way or just done: said in a few words, with the
+                // one button that goes to it (`AppUpdates.DeskLine`).
+                if let project, store.deskReview(of: project.id) == nil, let line = store.deskUpdateLine(of: project) {
+                    DeskUpdateLineView(line: line) { store.go(to: line) }
+                }
+                // The copies it follows, the one it started from first: what was last heard of each, with the one button
+                // that checks it again or pulls in what's new (`Following`). Asking checks by itself when the last check is
+                // a day old.
+                else if let project, !kept, !store.followingRows(of: project).isEmpty {
+                    FollowingList(rows: store.followingRows(of: project), busy: store.busy.contains(project.id),
+                                  pullIn: { store.pullIn($0, into: project) }, check: { store.checkFollowing($0, of: project) },
+                                  unfollow: { store.unfollow($0, for: project) })
+                }
+                // Where someone's project it was made from lives on GitHub: what was last heard of its updates, with the
+                // one button that checks or reviews them.
+                else if let project, row.entry?.followsRepository == true, store.deskReview(of: project.id) == nil,
+                        let update = store.updateAvailability(of: project) {
                     HStack(spacing: 8) {
                         Text(update.line).font(.system(size: 13)).foregroundStyle(Paper.muted)
                         Button(update.reviews ? "Review" : "Check Again") {
@@ -708,11 +746,21 @@ struct DeskWishMenu: View {
         // Review Update… brings it in (`AppUpdates`). A starter's copy follows the starter this Lamp ships instead
         // (Update from the Original, above).
         if entry?.followsRepository == true {
-            let reviews = store.updateAvailability(of: project)?.reviews == true
-            Button(Self.updateTitle(reviews: reviews)) {
-                if reviews { store.reviewUpdate(project) } else { store.checkForUpdates(project) }
+            // While its review is fetched or unpacked, the item stops it: what it's doing is said beside the wish.
+            if let work = store.deskReview(of: project.id), !work.failed {
+                Button("Stop Fetching Update") { store.cancelReview(of: project.id) }
+            } else {
+                let reviews = store.updateAvailability(of: project)?.reviews == true
+                Button(Self.updateTitle(reviews: reviews)) {
+                    if reviews { store.reviewUpdate(project) } else { store.checkForUpdates(project) }
+                }
+                .disabled(busy)
             }
-            .disabled(busy)
+        }
+        // Following someone's copy of it, by the link they shared.
+        if project.scaffolded {
+            Divider()
+            Button("Follow a Copy…") { store.askToFollow(for: project) }
         }
         Divider()
         AppMenu(project: project)
@@ -720,6 +768,44 @@ struct DeskWishMenu: View {
 
     /// The one item for a wish's updates: it checks, and once there's one (being prepared, or ready), reviews it.
     static func updateTitle(reviews: Bool) -> String { reviews ? "Review Update…" : "Check for Updates…" }
+}
+
+/// A wish's update, or the changes it sends back, while under way or just done, beside the wish: what's going on, with
+/// the one button that goes to it (`AppUpdates.DeskLine`). Drawn from plain values, so the gallery shows it.
+struct DeskUpdateLineView: View {
+    let line: AppUpdates.DeskLine
+    let go: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(line.text).font(.system(size: 13)).foregroundStyle(Paper.muted)
+            Button(line.button, action: go).buttonStyle(PaperButtonStyle(.outline, height: 26))
+        }
+    }
+}
+
+/// A wish's update review while it's made, beside the wish: the stage it's at with Cancel, or why it couldn't be made
+/// with Try Again. Drawn from plain values, so the gallery shows it.
+struct ReviewWorkLine: View {
+    let work: Store.ReviewWork
+    let retry: () -> Void
+    let cancel: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if work.failed {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).font(.system(size: 12))
+            } else {
+                ProgressView().controlSize(.small)
+            }
+            Text(verbatim: work.line).font(.system(size: 13)).foregroundStyle(work.failed ? Paper.ink : Paper.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            if work.failed {
+                Button("Try Again", action: retry).buttonStyle(PaperButtonStyle(.outline, height: 26))
+            }
+            Button(work.failed ? "Dismiss" : "Cancel", action: cancel).buttonStyle(PaperButtonStyle(.outline, height: 26))
+        }
+    }
 }
 
 /// The changes a starter suggests, as small buttons that put one in the change box.
@@ -766,6 +852,39 @@ struct StarterIcon: View {
         .task(id: url) {
             guard let url else { return }
             image = await Task.detached { NSImage(contentsOf: url) }.value
+        }
+    }
+}
+
+/// The copies a wish follows, in its side panel (`Store.followingRows`): each one's name, what was last heard of it, and
+/// Pull In once it has something new, else Check Again. The one it started from says so; any other can be unfollowed
+/// from its right-click.
+struct FollowingList: View {
+    let rows: [Following.Row]
+    let busy: Bool
+    let pullIn: (String) -> Void
+    let check: (String) -> Void
+    let unfollow: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Following").font(.system(size: 13, weight: .semibold))
+            ForEach(rows) { row in
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(row.title).font(.system(size: 13)).lineLimit(1)
+                        Text([row.startedFrom ? "Started from" : nil, row.state?.line].compactMap { $0 }.joined(separator: " · "))
+                            .font(.system(size: 12)).foregroundStyle(Paper.muted)
+                    }
+                    Spacer(minLength: 4)
+                    if row.state != .unreachable {
+                        Button(row.state == .new ? "Pull In" : "Check Again") { row.state == .new ? pullIn(row.id) : check(row.id) }
+                            .buttonStyle(PaperButtonStyle(.outline, height: 26))
+                            .disabled(busy || row.state == .checking)
+                    }
+                }
+                .contextMenu { if !row.startedFrom { Button("Stop Following") { unfollow(row.id) } } }
+            }
         }
     }
 }

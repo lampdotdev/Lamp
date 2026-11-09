@@ -60,13 +60,18 @@ fi
 # The macOS 27 SDK makes @State a macro, and its compiler plugin only ships with full Xcode.
 # With just the Command Line Tools, build against the newest installed SDK that doesn't need it.
 # (Lamp does the same for the apps it builds: Shell.compatibleSDK in Sources/Lamp/Agent.swift.)
+# An SDKROOT already set is kept unless it's one of those SDKs (Apple's /usr/bin/python3 sets it to the newest).
 dev="${DEVELOPER_DIR:-$(xcode-select -p 2>/dev/null)}"
-if [ -z "${SDKROOT:-}" ] && [ -d "$dev/SDKs" ] && [ ! -e "$dev/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]; then
-  for sdk in "$dev"/SDKs/MacOSX*.sdk(/NnOn); do
-    if ! grep -qs StateMacro /dev/null "$sdk"/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/*-macos.swiftinterface(N); then
-      export SDKROOT="$sdk"; break
-    fi
-  done
+if [ -d "$dev/SDKs" ] && [ ! -e "$dev/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]; then
+  given_sdk="${SDKROOT:-}"
+  case "$given_sdk" in ""|/*) ;; *) given_sdk="$(xcrun --sdk "$given_sdk" --show-sdk-path 2>/dev/null)" ;; esac
+  if [ -z "${SDKROOT:-}" ] || grep -qs StateMacro /dev/null "$given_sdk"/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/*-macos.swiftinterface(N); then
+    for sdk in "$dev"/SDKs/MacOSX*.sdk(/NnOn); do
+      if ! grep -qs StateMacro /dev/null "$sdk"/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/*-macos.swiftinterface(N); then
+        export SDKROOT="$sdk"; break
+      fi
+    done
+  fi
 fi
 
 # Which Lamp this is (see Sources/Lamp/Edition.swift). A build from source is "Lamp Dev": its own name,

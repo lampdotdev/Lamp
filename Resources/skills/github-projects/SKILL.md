@@ -12,7 +12,7 @@ person with `ask` (explain it, make it into an app or game, something else) befo
 
 ## Reading it
 
-Clone it shallowly into the wish's reference folder and read it there:
+Clone it shallowly into the reference folder and read it there:
 
     git clone --depth 1 https://github.com/owner/name .lamp/reference/name
 
@@ -22,9 +22,9 @@ which fetches it with the person's GitHub sign-in and credits nothing, and read 
 
 Asked to explain it: read it and answer. Nothing is credited and nothing is made.
 
-## A Lamp wish someone put on GitHub
+## A Lamp app someone put on GitHub
 
-When the project has `lamp-app.json` or a `.lampapp` file at its top, it's a Lamp wish already: don't rebuild it. Tell
+When the project has `lamp-app.json` or a `.lampapp` file at its top, it's made with Lamp already: don't rebuild it. Tell
 the person to open it with File → Open from GitHub… and paste its address. Lamp reviews it there.
 
 ## Making a Lamp app or game from it
@@ -34,7 +34,7 @@ its credit and licenses in place, and the rest of what a Lamp app has.
 
 1. Clone it and read enough to know what it is: a page drawn with canvas or WebGL, a three.js or Phaser game, native
    code, an engine Lamp's devices can't run.
-2. Give the wish its structure with `make_app_for` (a game or an app, the devices, web or native), and read the skill
+2. Give the app its structure with `make_app_for` (a game or an app, the devices, web or native), and read the skill
    for that kind (`game`, `web-app`, `2d-game`, `3d-game`). The structure is Lamp's: its page or its Swift package,
    `build.sh`, `Package.swift`, Lamp's own files, `icon.json`, `APP.md`.
 3. Before using any of its code or assets, call `lampify` with its address and the commit your clone is at
@@ -56,4 +56,4 @@ its credit and licenses in place, and the rest of what a Lamp app has.
    nothing is.
 8. Tell the person what it's based on, its license, and when it came with none, that whether to share or publish it
    is their call, and Lamp will remind them when they do. When the address named a tag or a branch, say its updates will come from the project's
-   default branch. Putting it on GitHub is theirs to choose, with Put on GitHub…; never do it for them.
+   default branch. Putting it on GitHub is theirs to choose, with Also put on GitHub on its link's Release Update; never do it for them.

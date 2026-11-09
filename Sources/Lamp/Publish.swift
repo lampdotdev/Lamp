@@ -7,7 +7,7 @@ import LampSidebarKit
 /// own command-line tool (`gh`) and their sign-in there. Nothing goes through Lamp's servers: the person's account holds
 /// the page, under GitHub's terms, and Lamp pays nothing for its plays.
 ///
-/// Put on GitHub puts it up beside the wish's code, on the same repository's `gh-pages` branch (`GitHubRepo.stage`,
+/// Putting the wish on GitHub puts it up beside the wish's code, on the same repository's `gh-pages` branch (`GitHubRepo.stage`,
 /// `GitHubRepo.upload`), and a starter's repository gets its page the same way (`StarterRepos.stagePage`). The page
 /// carries Lamp's runtime (lamp.js, and a game's lamp-game.js), which is MIT-licensed, so its license goes beside it.
 /// What in the page needs Lamp (its AI, the wish's other apps, `LampNative`) isn't there, and lamp.js says so to the
@@ -23,8 +23,30 @@ enum Publish {
     static func hasPage(_ project: LampProject) -> Bool { pageUse(project) != nil }
 
     static func pageUse(_ project: LampProject) -> PageUse? {
-        guard project.holdsApp, Parts.folders(in: project.dir).isEmpty else { return nil }
-        return project.platform.target.publishedPage(project)
+        pageApp(project).flatMap { $0.platform.target.publishedPage($0) }
+    }
+
+    /// The app whose page is played or used: the wish's own, or its one app when that's in a part of its own (a wish
+    /// laid out with its game in a folder). Nil for a wish of several apps, whose pages would each need a home.
+    static func pageApp(_ project: LampProject) -> LampProject? {
+        var wish = project
+        wish.partFolders = Parts.folders(in: project.dir)
+        if project.isPart || wish.partFolders.isEmpty { return project.holdsApp ? project : nil }
+        let apps = (wish.holdsApp ? [wish] : []) + Parts.load(wish)
+        return apps.count == 1 ? apps[0] : nil
+    }
+
+    /// The shape a page plays in, sent with its link: a web game is drawn on its fixed stage (`GameKit.width` by
+    /// `height`, fitted to any window with bars around it); a web app or a screen lays itself out for whatever room it
+    /// has. The link's page gives either all the room it has, as the app's window on a Mac does, so a game's controls
+    /// reach its edges with its scene fitted inside. Nil without a page.
+    enum PageShape: Equatable { case ratio(Double), fill }
+    static func pageShape(_ project: LampProject) -> PageShape? {
+        switch pageUse(project) {
+        case .play: .ratio(Double(GameKit.width) / Double(GameKit.height))
+        case .use: .fill
+        case nil: nil
+        }
     }
 
     struct Failure: LocalizedError {
@@ -35,7 +57,7 @@ enum Publish {
     // MARK: GitHub
 
     /// Where `gh` is: Homebrew's, or wherever the person's shell finds it. Lamp Dev takes `LAMP_GH` from its environment
-    /// in its place, a stand-in to try Put on GitHub with against a local repository (git's own `insteadOf` sends the
+    /// in its place, a stand-in to try putting a wish on GitHub with against a local repository (git's own `insteadOf` sends the
     /// pushes there), so nothing reaches GitHub itself.
     static func gh() async -> String? {
         if Edition.isDev, let path = ProcessInfo.processInfo.environment["LAMP_GH"], path.hasPrefix("/"),
@@ -65,16 +87,19 @@ enum Publish {
 
     /// Where the page's Open in Lamp goes. Its Share Link first (`WishLink`), once the person has made one (the card offers
     /// to, through Share Link's own card, where they see and change what it shows): that page works for someone without
-    /// Lamp (Download Lamp carries the wish into its welcome) and with it ("Open it with this wish"). Else `file`, the wish
-    /// as a shared file beside the page, when there is one. `origin` is what the page is a copy of, when that's somewhere
+    /// Lamp (Download Lamp carries the wish into its welcome) and with it ("Open Lamp with it"). `origin` is what the page is a copy of, when that's somewhere
     /// Lamp can copy it from again: the starter a starter's own page is (`StarterRepos.stagePage`), or the repository the
     /// page was put up with, at the commit pushed with it (`GitHubRepo.upload`). The Remix panel's request goes with it
     /// (`RemixLink.Origin`), so Lamp starts from a copy rather than its own version, and with no Share Link, Open in Lamp
     /// goes there too.
+    /// `plays` is that the Share Link plays or opens the page itself (`WishLink.Shared.plays`): the page on GitHub then
+    /// sends whoever opens it there, where the wish is shown whole with its ways to get it and change it, unless they
+    /// have saves under `saves` (the page's `LAMP_PAGE_SCOPE`) on GitHub, which the link's own page can't read.
     struct OpenInLamp: Equatable {
         var link: URL?
-        var file: String?
         var origin: RemixLink.Origin? = nil
+        var plays = false
+        var saves: String? = nil
     }
 
     /// Gives a published copy of lamp.js the repository's name to keep what the page saves under (`LAMP_PAGE_SCOPE`).
@@ -95,7 +120,7 @@ enum Publish {
     static func copyPage(of project: LampProject, into site: URL, scope: String) throws -> String {
         let fm = FileManager.default
         try fm.createDirectory(at: site, withIntermediateDirectories: true)
-        let web = project.dir.appendingPathComponent(GameKit.webFolder)
+        let web = (pageApp(project) ?? project).dir.appendingPathComponent(GameKit.webFolder)
         let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey]
         guard let items = fm.enumerator(at: web, includingPropertiesForKeys: keys) else { throw Failure(message: "\(project.name) has no page to play.") }
         for case let file as URL in items {
@@ -126,7 +151,7 @@ enum Publish {
         var text = "# \(project.name), \(plays ? "to play" : "to use")\n\n"
         if let line = AppDescription.description(of: project) { text += line + "\n\n" }
         text += "**\(plays ? "Play" : "Open") it:** \(pageURL(repo))\n\n"
-        text += "The wish itself, to open in [Lamp](https://lamp.dev) and change, is on the [main branch](\(GitHubRepo.url(repo))).\n\n"
+        text += "The app itself, to open in [Lamp](https://lamp.dev) and change, is on the [main branch](\(GitHubRepo.url(repo))).\n\n"
         text += creditsSection(credits)
         let runtime = ["lamp-game.js", "lamp-phaser.js", "lamp-controllers.js", GamePage.deviceFile, GamePage.buildFile, "lamp.js"].filter(has)
         if !runtime.isEmpty {
@@ -160,10 +185,6 @@ enum Publish {
         if !credits.generated.isEmpty { parts.append(escaped(Credits.generatedLine(credits.generated.count))) }
         if let link = open.link {
             parts.append("<a href=\"\(escaped(link.absoluteString))\" target=\"_blank\" rel=\"noopener\">Open in Lamp</a>")
-        } else if let file = open.file {
-            // The file means nothing without Lamp, so Lamp's site is beside it.
-            parts.append("<a href=\"\(escaped(file))\" download>Open in Lamp</a>")
-            parts.append("<a href=\"https://lamp.dev\" target=\"_blank\" rel=\"noopener\">Get Lamp</a>")
         } else if let origin = open.origin {
             // Lamp's site opens Lamp on a fresh copy of what the page is.
             parts.append("<a href=\"\(escaped(RemixLink.site(for: origin, from: "page").absoluteString))\" target=\"_blank\" rel=\"noopener\">Open in Lamp</a>")
@@ -233,10 +254,30 @@ enum Publish {
             <script>setTimeout(function(){var c=document.getElementById('lamp-credit');if(c)c.className='settled'},8000)</script>
 
             """
-        if let end = html.range(of: "</body>", options: [.caseInsensitive, .backwards]) {
-            return html.replacingCharacters(in: end.lowerBound..<end.lowerBound, with: bar)
+        var page = html
+        if let end = page.range(of: "</body>", options: [.caseInsensitive, .backwards]) {
+            page.replaceSubrange(end.lowerBound..<end.lowerBound, with: bar)
+        } else {
+            page += bar
         }
-        return html + bar
+        // Where the Share Link plays it, the page opened on its own goes there. It stays, playing here as before, when it's
+        // framed (something is showing it on purpose), when this browser has saves of it here (the link's page plays
+        // from its own address, which can't read them), and when the link doesn't say it plays the page within a few
+        // seconds (`card.png?plays`: taken down since, or its page gone with a later release that didn't update GitHub).
+        guard open.plays, let link = open.link, let host = link.host, let scheme = link.scheme,
+              let id = link.lastPathComponent.split(separator: "-").first, !id.isEmpty else { return page }
+        let values = [link.absoluteString, "\(scheme)://\(host)/w/\(id)/card.png?plays", "lamp:" + (open.saves.map { $0.isEmpty ? "" : $0 + ":" } ?? "")]
+        guard let json = (try? JSONSerialization.data(withJSONObject: values, options: [.withoutEscapingSlashes])).flatMap({ String(data: $0, encoding: .utf8) })
+        else { return page }
+        let away = """
+            <script>(function(t){if(window.top!==window)return;try{for(var i=0;i<localStorage.length;i++)if((localStorage.key(i)||'').indexOf(t[2])===0)return;}catch(e){return}
+            var c=new Image(),s=0;c.onload=function(){if(!s){s=1;location.replace(t[0])}};c.onerror=function(){s=1};setTimeout(function(){s=1},4000);c.src=t[1];})(\(json.replacingOccurrences(of: "<", with: "\\u003c")))</script>
+            """
+        if let head = page.range(of: "<head[^>]*>", options: [.regularExpression, .caseInsensitive]) {
+            page.insert(contentsOf: "\n" + away, at: head.upperBound)
+            return page
+        }
+        return away + "\n" + page
     }
 
     /// What a README says of the wish's credits: what it's based on and under which licenses, what else it uses, the
@@ -281,7 +322,7 @@ enum Publish {
     /// Gets what a card needs from GitHub: gh's site to install it from, or a sign-in. gh signs in on github.com in the
     /// browser, from a terminal it asks a question in, so Terminal comes to the front with it; once the sign-in is seen
     /// (checked every few seconds for up to five minutes, while `stillNeeded`), `signedIn` is called.
-    @MainActor static func obtain(_ need: RepoCard.Need, stillNeeded: @escaping @MainActor () -> Bool, signedIn: @escaping @MainActor () -> Void) {
+    @MainActor static func obtain(_ need: GitHubNeed, stillNeeded: @escaping @MainActor () -> Bool, signedIn: @escaping @MainActor () -> Void) {
         switch need {
         case .install: NSWorkspace.shared.open(URL(string: "https://cli.github.com")!)
         case .signIn:
@@ -307,7 +348,7 @@ enum Publish {
     /// Puts `site` on `repo`'s page branch as one commit of the difference on top of what's there, or none when it's the
     /// same, signed in through gh for these commands alone. Returns the branch's commit, which Pages builds, and whether
     /// it's a new one.
-    static func pushPage(_ site: URL, to repo: String, gh: String, login: String, message: String) async throws -> (commit: String, changed: Bool) {
+    static func pushPage(_ site: URL, to repo: String, gh: String, login: String, authors shown: [GitHubRepo.Author]? = nil, message: String) async throws -> (commit: String, changed: Bool) {
         let git = GitHubRepo.git
         let signedIn = GitHubRepo.signedIn(gh: gh)
         let remote = "https://github.com/\(repo).git"
@@ -327,7 +368,9 @@ enum Publish {
             if try await run(["rev-parse", "FETCH_HEAD^{tree}"]) == tree { return (head, false) }
             parent = head
         }
-        let commit = try await run(GitHubRepo.identity(login: login) + ["commit-tree", tree] + (parent.map { ["-p", $0] } ?? []) + ["-m", message])
+        let author = try await GitHubRepo.author(login: login, git: git, in: site)
+        let commit = try await GitHubRepo.commit(["commit-tree", tree] + (parent.map { ["-p", $0] } ?? []) + ["-m", message], as: author, shown: shown,
+                                                 git: git, in: site)
         let pushed = await Subprocess.run(git, signedIn + ["push", "-q", remote, "\(commit):refs/heads/\(pageBranch)"], cwd: site, timeout: 600)
         guard pushed.ok else { throw Failure(message: "GitHub didn't take the page: \(pushed.output.trimmed.suffix(200))") }
         return (commit, true)
@@ -378,7 +421,7 @@ enum Publish {
             default: continue
             }
         }
-        throw Failure(message: "GitHub is still putting the page up. It should be at \(url) in a few minutes; Put on GitHub again if it isn't.")
+        throw Failure(message: "GitHub is still putting the page up. It should be at \(url) in a few minutes; try again if it isn't.")
     }
 
     /// Where GitHub Pages serves `repo` ("owner/name"): an account's own site, a repository named owner.github.io in any

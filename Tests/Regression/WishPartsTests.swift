@@ -136,7 +136,7 @@ final class WishPartsKeptTests: XCTestCase {
         let (status, answer) = Skills.read(["name": Parts.skill(for: .universal)], from: Skills.readable(parts: parts))
         XCTAssertEqual(status, 200)
         let rules = try XCTUnwrap(answer["text"] as? String)
-        XCTAssertTrue(rules.contains("the part of the wish in iPhone/"), rules.prefix(400) + "…")
+        XCTAssertTrue(rules.contains("the part of the project in iPhone/"), rules.prefix(400) + "…")
         XCTAssertFalse(rules.contains("Apple/"))
     }
 

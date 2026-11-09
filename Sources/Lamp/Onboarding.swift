@@ -140,7 +140,7 @@ struct OnboardingView: View {
     /// Download button left on the clipboard. That one look is all Lamp takes by itself.
     /// A remix (a starter's, with a request) is there to be tried, so it goes straight to the desk and opens; one of a
     /// repository goes to the store, which keeps it for after the welcome as any repository opened then. So does a shared
-    /// app (`Store.importApp`): the hello gives way to its review, and only setup under way for a wish keeps it waiting.
+    /// app, from its link or its page's Get Lamp (`Store.importApp`): the hello gives way to its review, and only setup under way for a wish keeps it waiting.
     private func arrive(animated: Bool) {
         var found = store.arrivedWish
         if found != nil { store.arrivedWish = nil }
@@ -154,6 +154,8 @@ struct OnboardingView: View {
                 case .wish(let text): found = text
                 case .remix(let copied) where Store.starter(named: copied) != nil: remix = copied
                 case .remix(let copied): store.take(remix: copied)
+                // Brought in as its link would bring it (`Store.importApp`): the hello gives way to its review.
+                case .shared(let copied): store.takeShared(copied)
                 default: break
                 }
             }
@@ -351,7 +353,7 @@ private struct SetupStep: View {
         }
         .onAppear {
             if store.setup.hasBuildTools { Analytics.capture(.welcomeToolsReady, ["already_installed": true]) }
-            if !store.setup.hasBuildTools && !store.setup.installRequested {
+            if !store.setup.hasBuildTools && store.setup.repair == nil && !store.setup.installRequested {
                 store.requestBuildTools()
                 Analytics.capture(.welcomeToolsInstall, ["by": "automatic"])
             }
@@ -438,6 +440,9 @@ private struct ToolsCard: View {
                 case .failed:
                     Image(systemName: "exclamationmark.circle.fill")
                         .font(.system(size: 20)).foregroundStyle(.white, .orange)
+                case .needsRepair:
+                    Button(store.setup.repair?.button ?? "Reinstall…", action: store.fixBuildTools)
+                        .buttonStyle(PaperButtonStyle(.ink))
                 case .notAsked:
                     Button("Install") {
                         store.requestBuildTools()
@@ -471,6 +476,8 @@ private struct ToolsCard: View {
             }
         case .installed:
             Text("Installed.")
+        case .needsRepair:
+            Text(store.setup.repair?.text ?? "")
         }
     }
 }

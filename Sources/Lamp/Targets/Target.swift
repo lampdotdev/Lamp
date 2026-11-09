@@ -75,7 +75,7 @@ struct Target {
     /// A change of its app is new web files (a screen's, a web app's, a web game's, a TV app's page): each copy open
     /// takes it as it's made (`PageLive` on this Mac and in the simulator, `PageCopies` everywhere else), with no build.
     var changesAreWeb: (LampProject) -> Bool = { _ in false }
-    /// Its page is the whole app and runs in any browser, so Put on GitHub puts it up as a page anyone opens without Lamp
+    /// Its page is the whole app and runs in any browser, so putting it on GitHub puts it up as a page anyone opens without Lamp
     /// (`Publish.hasPage`), played (a game) or used (any other app); nil for a kind whose app isn't such a page.
     var publishedPage: (LampProject) -> Publish.PageUse? = { _ in nil }
     /// The folder of the apps folder its Mac copy is installed in, when it isn't the apps folder itself: a wish's apps

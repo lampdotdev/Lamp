@@ -84,9 +84,10 @@ enum TVFiles {
         return WebReach.analyze(code: code, data: models)
     }
 
-    static func detected(in sources: [URL], data: [URL] = []) -> [Sharing.Capability] {
+    /// `reach` is the reading already made of the same files, when there is one.
+    static func detected(in sources: [URL], data: [URL] = [], reach: WebReach.Result? = nil) -> [Sharing.Capability] {
         let everything = sources.compactMap { try? String(contentsOf: $0, encoding: .utf8) }.joined(separator: "\n")
-        let reach = reach(in: sources, data: data)
+        let reach = reach ?? self.reach(in: sources, data: data)
         var found = checks.filter { item in item.patterns.contains { everything.contains($0) } }
         if reach.remoteCode, !found.contains(remoteCode) { found.append(remoteCode) }
         if let connects = connects(reach) { found.insert(connects, at: min(1, found.count)) }
@@ -146,7 +147,7 @@ extension Sharing {
         guard !parts.isEmpty else { return "" }
         return """
 
-        This file is a wish of more than one app, made to work together (a TV app with the iPhone app that controls \
+        This file is a project of more than one app, made to work together (a TV app with the iPhone app that controls \
         it, a Mac app with an Android app): beside the app at the root, \(parts.joined(separator: ", ")), each in its own \
         folder, whose files are named with the folder first. Judge each as you would the app at the root, and what \
         they share between them as data going from one to the other.

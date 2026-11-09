@@ -23,6 +23,12 @@ enum Upstream {
     static let ref = "refs/lamp/upstream"
     static let remote = "upstream"
 
+    /// What an update from where the wish came from brought in (the staged tree `ref` named then), kept by the commit
+    /// of it the wish's credits moved on to with it. A version's credits.json names that commit only while the version
+    /// has what the update brought, so a contribution measures the wish's own changes against the snapshot its credits
+    /// name (`Contribute.base`), and an update taken back with Undo is no longer counted.
+    static func snapshot(_ commit: String) -> String { "refs/lamp/snapshot/" + commit }
+
     struct Failure: LocalizedError {
         let message: String
         var errorDescription: String? { message }
@@ -36,6 +42,18 @@ enum Upstream {
         /// The wish's other apps the package brings that aren't here yet, to be made as an update makes them
         /// (`Store.installParts`): the merge put nothing of theirs in place.
         var newParts: [Sharing.Package.Part]
+        /// The base as a commit in the wish's git, staged as the merge read it.
+        var baseMark: String? = nil
+    }
+
+    /// A base the caller has settled on, used as it is or not at all: nothing else stands in for it (`BringIn`).
+    enum Given: Equatable {
+        /// A commit of the repository's, already in the wish's git, staged as the import would install it.
+        case commit(String)
+        /// A tree staged before, kept at this ref (`BringIn.snapshot`).
+        case staged(String)
+        /// A version of this wish's own history.
+        case own(String)
     }
 
     enum Base: Equatable {
@@ -52,8 +70,12 @@ enum Upstream {
     /// Merges `package` (the review's, from `source` when the wish came from a repository) into the wish's files and
     /// index, unsaved. `commit` is the commit of the repository the wish has; `arrival` the version that arrived. The
     /// wish's files are expected saved: a merge that fails leaves them as they were.
+    /// `ref` is where the staged latest is kept: `Upstream.ref` for where the wish came from, one of its own for each
+    /// other copy it follows (`Following.incomingRef`). `accepted` is where what was last brought in is read from, the
+    /// same ref unless the caller promotes the staged one only once the pull-in has succeeded (`Following.accepted`).
+    /// `given` is a base settled on by the caller, in place of all of these; one that can't be read stops the merge.
     static func merge(_ package: Sharing.Package, into project: LampProject, from source: RepoImport.Source?, commit: String?,
-                      arrival: String?) async throws -> Merged {
+                      arrival: String?, ref: String = Upstream.ref, accepted: String? = nil, given: Given? = nil) async throws -> Merged {
         let fm = FileManager.default
         // The merge's own indexes, in Lamp's folder in the wish, so the wish's index is never touched before the result
         // goes in; cleared with the staged folders when it's done, whichever way it went.
@@ -67,14 +89,32 @@ enum Upstream {
             if fm.fileExists(atPath: indexes.path) { try? fm.removeItem(at: indexes) }
         }
         let signed = "git -c user.name=Lamp -c user.email=lamp@localhost"
-        let lastBrought = Credits.validCommit((await run("git rev-parse --verify -q \(ref)", in: project)).output)
+        let lastBrought = Credits.validCommit((await run("git rev-parse --verify -q \(accepted ?? ref)", in: project)).output)
 
         // The base: the repository's commit, fetched from it as a remote (fetched from, never pushed to); else the
         // version of this wish's own history the file was made from; else what the last update brought in; else the
         // version that arrived.
         var base = Base.none
         var baseMark: String? = nil
-        if let source {
+        let unreadable = Failure(message: "Lamp couldn't read what this app last took in from there.")
+        switch given {
+        case .commit(let commit)?:
+            guard let tree = try await stagedTree(of: commit, for: project, in: work, indexes: indexes) else { throw unreadable }
+            let made = await run("\(signed) commit-tree \(tree) -p \(commit) -m 'Upstream as Lamp read it'", in: project)
+            guard made.status == 0, let mark = Credits.validCommit(made.output) else { throw unreadable }
+            base = .upstream(commit)
+            baseMark = mark
+        case .staged(let kept)?:
+            guard let mark = Credits.validCommit((await run("git rev-parse --verify -q \(kept)^{commit}", in: project)).output) else { throw unreadable }
+            base = .lastBrought
+            baseMark = mark
+        case .own(let version)?:
+            guard let own = await ownVersion(version, in: project) else { throw unreadable }
+            baseMark = try await ownMark(own, in: project, indexes: indexes)
+            base = .own(own)
+        case nil: break
+        }
+        if given == nil, let source {
             let url = Sandbox.quoted(source.url + ".git")
             _ = await run("git remote set-url \(remote) \(url) 2>/dev/null || git remote add \(remote) \(url)", in: project)
             if let commit = Credits.validCommit(commit), await fetch(commit, in: project),
@@ -88,7 +128,7 @@ enum Upstream {
         // The version the file was made from, unless the last update brought in was made from that same version (a
         // file that comes back again names the version it was first given): what it brought is the base then, so a
         // change it took back isn't kept by mistake.
-        if baseMark == nil, let own = await ownVersion(named: package.credits, in: project) {
+        if given == nil, baseMark == nil, let own = await ownVersion(named: package.credits, in: project) {
             var repeated = false
             if let lastBrought { repeated = await ownBase(of: lastBrought, in: project) == own }
             if !repeated {
@@ -96,11 +136,11 @@ enum Upstream {
                 base = .own(own)
             }
         }
-        if baseMark == nil, let lastBrought {
+        if given == nil, baseMark == nil, let lastBrought {
             base = .lastBrought
             baseMark = lastBrought
         }
-        if baseMark == nil, let own = await ownVersion(arrival, in: project) {
+        if given == nil, baseMark == nil, let own = await ownVersion(arrival, in: project) {
             baseMark = try await ownMark(own, in: project, indexes: indexes)
             base = .own(own)
         }
@@ -173,6 +213,24 @@ enum Upstream {
             throw Failure(message: "Lamp couldn't put the merged files in place.")
         }
         if keptMark != theirsMark { _ = await run("git update-ref \(ref) \(keptMark)", in: project) }
+        if ref == Upstream.ref, let commit = Credits.validCommit(package.credits?.origin(own: GitHubRepo.kept(for: project)?.url)?.commit) {
+            // With the manifest and credits that came with it beside the files (a version's tree as a shared file
+            // carries it leaves them out), so a change of the line, the kind or the apps since, and work credited since,
+            // are measured from what the update said.
+            var mark = keptMark
+            let kept = ["lamp-app.json", Credits.file].filter { FileManager.default.fileExists(atPath: package.folder.appendingPathComponent($0).path) }
+            if !kept.isEmpty {
+                let index = Sandbox.quoted(indexes.appendingPathComponent("snapshot").path)
+                var command = "rm -f \(index) && GIT_INDEX_FILE=\(index) git read-tree \(keptMark)"
+                for name in kept {
+                    command += " && blob=$(git hash-object -w -- \(Sandbox.quoted(package.folder.appendingPathComponent(name).path)))"
+                        + " && GIT_INDEX_FILE=\(index) git update-index --add --cacheinfo 100644,$blob,\(name)"
+                }
+                let made = await run(command + " && \(signed) commit-tree $(GIT_INDEX_FILE=\(index) git write-tree) -p \(keptMark) -m 'With its manifest and credits'", in: project)
+                if made.status == 0, let withThem = Credits.validCommit(made.output.split(separator: "\n").last.map(String.init)) { mark = withThem }
+            }
+            _ = await run("git update-ref \(snapshot(commit)) \(mark)", in: project)
+        }
         // The icon's pictures live outside the versions: the package's go in when its icon changed upstream, for the
         // design as git merged it (icon.json is in the files), never in place of a design changed here. The
         // description the same way, from the shared file's manifest.
@@ -194,7 +252,7 @@ enum Upstream {
                 try? AppDescription.write(description, for: project)
             }
         }
-        return Merged(conflicts: conflicts, base: base, newParts: newParts)
+        return Merged(conflicts: conflicts, base: base, newParts: newParts, baseMark: baseMark)
     }
 
     /// Fetches one commit of the upstream remote, one deep, with nothing of the person's (git never asks for a
@@ -234,9 +292,43 @@ enum Upstream {
     /// A version of this wish's own history as a merge base: its tree as a shared file carries it, committed on its own.
     private static func ownMark(_ version: String, in project: LampProject, indexes: URL) async throws -> String {
         let tree = try await filteredTree(of: version, in: project, indexes: indexes)
-        let made = await run("git -c user.name=Lamp -c user.email=lamp@localhost commit-tree \(tree) -m 'This wish as it was shared'", in: project)
+        let made = await run("git -c user.name=Lamp -c user.email=lamp@localhost commit-tree \(tree) -m 'This app as it was shared'", in: project)
         guard made.status == 0, let mark = Credits.validCommit(made.output) else { throw Failure(message: "Lamp couldn't prepare the merge.") }
         return mark
+    }
+
+    /// The repository's files at `commit`, unpacked in `folder`, kept as that commit's snapshot (`snapshot`) as an update
+    /// taken in keeps one: staged as the import would install them, with the manifest and credits they came with beside
+    /// them. What Check Update History puts back when nothing says what a wish's changes are measured from
+    /// (`Contribute.recover`). False when they can't be read as a wish or git couldn't keep them.
+    static func keepSnapshot(of folder: URL, commit: String, in project: LampProject) async -> Bool {
+        guard let commit = Credits.validCommit(commit), let package = try? RepoImport.open(folder: folder) else { return false }
+        let fm = FileManager.default
+        defer { try? fm.removeItem(at: package.folder) }
+        // Indexes of its own, never the merge's (`.lamp/merge`): nothing holds the wish meanwhile, so an update may be
+        // merging at the same time, and neither may clear the other's.
+        let indexes = project.dir.appendingPathComponent(".lamp/recover-\(UUID().uuidString)")
+        let work = Sharing.workFolder.appendingPathComponent("lamp-upstream-\(UUID().uuidString)")
+        defer {
+            try? fm.removeItem(at: work)
+            try? fm.removeItem(at: indexes)
+        }
+        do {
+            try fm.createDirectory(at: indexes, withIntermediateDirectories: true)
+            let staged = work.appendingPathComponent("named")
+            try stage(package, for: project, into: staged)
+            let kept = ["lamp-app.json", Credits.file].filter { fm.fileExists(atPath: package.folder.appendingPathComponent($0).path) }
+            for name in kept {
+                try? fm.removeItem(at: staged.appendingPathComponent(name))
+                try fm.copyItem(at: package.folder.appendingPathComponent(name), to: staged.appendingPathComponent(name))
+            }
+            let tree = try await tree(of: staged, in: project, indexes: indexes)
+            let made = await run("git -c user.name=Lamp -c user.email=lamp@localhost commit-tree \(tree) -m 'Upstream as Lamp read it, recovered'", in: project)
+            guard made.status == 0, let mark = Credits.validCommit(made.output) else { return false }
+            return await run("git update-ref \(snapshot(commit)) \(mark)", in: project).status == 0
+        } catch {
+            return false
+        }
     }
 
     /// The repository's commit as the import would install it: its tree read as a repository is (`RepoImport.open`)
@@ -376,7 +468,7 @@ enum Upstream {
     }
 
     /// A git command in the wish's folder, as Lamp's git runs (`Versions.git`), with what it printed.
-    private static func run(_ command: String, in project: LampProject) async -> (status: Int32, output: String) {
+    static func run(_ command: String, in project: LampProject) async -> (status: Int32, output: String) {
         let said = Said()
         let status = await Versions.git(command, cwd: project.dir) { said.add($0) }
         return (status, said.lines.joined(separator: "\n"))

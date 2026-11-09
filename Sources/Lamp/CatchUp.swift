@@ -76,7 +76,9 @@ enum CatchUp {
         var kept: [String] = []
         var size = 0
         for line in lines.reversed() {
-            var text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            // A card is told from the card, which has the line under each question that its text logged by an
+            // earlier Lamp may not.
+            var text = (line.ask?.text ?? line.text).trimmingCharacters(in: .whitespacesAndNewlines)
             if text.count > messageLimit { text = String(text.prefix(messageLimit)) + "…" }
             let who = line.kind == .user ? "The person" : line.kind == .ask ? "The agent asked" : "The agent"
             var entry = "\(who): \(text)"

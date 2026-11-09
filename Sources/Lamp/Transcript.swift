@@ -4,7 +4,7 @@ import LampSidebarKit
 /// A tool call as logged by the engines ("Read App.swift", "Bash: ./build.sh", "Run: ls"), split into
 /// what the agent did and what it did it to.
 struct ToolCall {
-    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, learn, remember, art, assets, offer, kind, remove, rename, icon, connectors, network, ask, progress, result, wish, other }
+    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, learn, remember, art, assets, offer, kind, remove, rename, icon, connectors, shared, suggested, network, ask, progress, result, wish, other }
 
     let name: String
     let argument: String
@@ -36,7 +36,7 @@ struct ToolCall {
         "ls": .list, "list": .list,
         "webfetch": .web, "web_fetch": .web, "websearch": .web,
         "todowrite": .plan, "plan": .plan, "task": .delegate,
-        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "read_skill": .learn, "tool_search": .learn, "save_notes": .remember, "make_art": .art, "assets": .assets, "offer_setup": .offer, "make_app_for": .kind, "remove_app": .remove, "rename_app": .rename, "use_icon_picture": .icon, "connectors": .connectors, "lampify": .kind, "network_devices": .network, "device_permission": .ask, "ask": .ask, "progress": .progress, "show_result": .result, "write_wish": .wish,
+        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "read_skill": .learn, "tool_search": .learn, "save_notes": .remember, "make_art": .art, "assets": .assets, "offer_setup": .offer, "make_app_for": .kind, "remove_app": .remove, "rename_app": .rename, "use_icon_picture": .icon, "connectors": .connectors, "lampify": .kind, "shared_copy": .shared, "suggested_changes": .suggested, "network_devices": .network, "device_permission": .ask, "ask": .ask, "progress": .progress, "show_result": .result, "write_wish": .wish,
     ]
 
     var icon: String {
@@ -64,6 +64,8 @@ struct ToolCall {
         case .rename: "character.cursor.ibeam"
         case .icon: "app.badge"
         case .connectors: "link"
+        case .shared: "square.on.square"
+        case .suggested: "arrow.triangle.pull"
         case .network: "wifi"
         case .ask: "questionmark.bubble"
         case .progress: "text.bubble"
@@ -98,11 +100,13 @@ struct ToolCall {
         case .rename: "Renamed it"
         case .icon: "Changed the icon"
         case .connectors: "Looked up a connector"
+        case .shared: "Looked at a shared copy"
+        case .suggested: "Looked at suggested changes"
         case .network: "Looked around your network"
         case .ask: "Asked you"
         case .progress: "Said how it's going"
         case .result: "Summed it up"
-        case .wish: "Wrote your wish"
+        case .wish: "Wrote it down"
         case .other: name
         }
     }
@@ -134,11 +138,13 @@ struct ToolCall {
         case .rename: "renamed it"
         case .icon: "changed the icon"
         case .connectors: "looked up \(n("connector", "connectors"))"
+        case .shared: "looked at \(n("shared copy", "shared copies"))"
+        case .suggested: "looked at suggested changes"
         case .network: "looked around your network"
         case .ask: "asked you"
         case .progress: "said how it's going"
         case .result: "summed it up"
-        case .wish: "wrote your wish"
+        case .wish: "wrote it down"
         case .other: n("step", "steps")
         }
     }
@@ -180,26 +186,15 @@ extension LogLine {
         // what Lamp is doing.
         let hidden = Talk.cardMessages(in: lines).union(lines.filter { $0.byLamp == true }.map(\.id))
         if details { return lines.filter { !hidden.contains($0.id) }.map(\.withOutcome) }
-        // After the agent's questions its card is the answer: whatever it says on the way out ("Waiting for
-        // your answers.") would sit under the card saying the same.
-        var afterAsk: Set<UUID> = []
-        var asked = false
-        for line in lines {
-            switch line.kind {
-            case .agent where asked: afterAsk.insert(line.id)
-            case .ask: asked = true
-            case .user: asked = false
-            default: break
-            }
-        }
+        // What the agent says after its card shows like anything else it says: it may be what the question is
+        // about, and no list of words tells that apart from a line that only points at the card.
         let retrying = refusedAskRetries(in: lines)
         // A result card saved by an earlier Lamp isn't shown: the agent's last message says what it did. A turn's summary
         // stays, for how long it worked (`ChatItem.items`), and isn't drawn as a line of its own. A tool call is a step
         // in the words the live line said while it ran (`steps(said:)`).
         return said(lines.map(\.withOutcome).filter {
             !hidden.contains($0.id) && !retrying.contains($0.id)
-                && ($0.kind == .agent ? !afterAsk.contains($0.id)
-                    : $0.kind == .summary || $0.kind == .tool || !$0.isDetail && $0.kind != .result)
+                && ($0.kind == .agent || $0.kind == .summary || $0.kind == .tool || !$0.isDetail && $0.kind != .result)
         })
     }
 

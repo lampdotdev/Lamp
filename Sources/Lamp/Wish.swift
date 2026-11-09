@@ -44,6 +44,25 @@ enum Wish {
         let text: String?
     }
 
+    /// A wish shared as a link with its file, named by the link (`lamp://wish?shared=<id>&text=…`, from its page on
+    /// lamp.dev, `sharedWishLink` in lib/wish.js): Lamp asks the site for the file's latest and reviews it as any shared
+    /// file, and the copy follows the link (`Following`). The id only as the site makes one.
+    struct Shared: Equatable {
+        let id: String
+        let text: String?
+    }
+
+    static func shared(from url: URL, scheme: String = Edition.urlScheme) -> Shared? {
+        guard url.scheme?.lowercased() == scheme, url.host?.lowercased() == "wish", case let items = items(of: url),
+              let id = items.first(where: { $0.name == "shared" })?.value, isSharedID(id) else { return nil }
+        return Shared(id: id, text: tidy(items.first { $0.name == "text" }?.value))
+    }
+
+    /// A link's id as lamp.dev makes one (`newID` in lib/shared-wishes.js): ten of its letters and digits.
+    static func isSharedID(_ id: String) -> Bool {
+        id.count == 10 && id.allSatisfy { "23456789abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ".contains($0) }
+    }
+
     static func exact(from url: URL, scheme: String = Edition.urlScheme) -> Exact? {
         guard url.scheme?.lowercased() == scheme, url.host?.lowercased() == "wish",
               case let items = items(of: url),
@@ -134,8 +153,18 @@ enum Wish {
         return remix(starter: named("starter"), repo: named("repo"), commit: named("commit"), text: plain)
     }
 
+    /// An app shared as a link, copied with Lamp's mark by its page's Get Lamp (`data-lamp-wish="shared=<id>"`), with
+    /// the change asked for it, if any, as the words. Nil for any other copy.
+    static func markedShared(html: String?, plain: String?) -> Shared? {
+        guard let html, let found = html.range(of: #"\#(mark)="shared=([^"&]*)""#, options: .regularExpression) else { return nil }
+        let id = String(html[found].dropFirst(mark.count + 2 + "shared=".count).dropLast())
+        return isSharedID(id) ? Shared(id: id, text: tidy(plain)) : nil
+    }
+
     enum Look: Equatable {
         case wish(String)
+        /// An app shared as a link, copied by its page's Get Lamp: opened as the link would open it.
+        case shared(Shared)
         /// A remix copied by the site's Download: a copy of a starter or a repository, with the request.
         case remix(Remix)
         /// A browser's copy is waiting, but reading it would make macOS ask the person first.
@@ -155,6 +184,7 @@ enum Wish {
             }
         }
         let html = pasteboard.string(forType: .html), plain = pasteboard.string(forType: .string)
+        if let shared = markedShared(html: html, plain: plain) { return .shared(shared) }
         if let remix = markedRemix(html: html, plain: plain) { return .remix(remix) }
         return marked(html: html, plain: plain).map(Look.wish) ?? .nothing
     }

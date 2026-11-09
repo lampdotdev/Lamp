@@ -7,12 +7,16 @@
     "api/first-idea.js": { "maxDuration": 30 },
     "api/idea-event.js": { "maxDuration": 5 },
     "api/wishes.js": { "maxDuration": 15 },
-    "api/wish-file.js": { "maxDuration": 30 },
-    "api/wish-page.js": { "maxDuration": 10, "includeFiles": "dist/ideas/index.html" },
+    "api/wish-file.js": { "maxDuration": 60 },
+    "api/wish-ideas.js": { "maxDuration": 10 },
+    "api/wish-page.js": { "maxDuration": 10, "includeFiles": "dist/w/index.html" },
+    "api/wish-play.js": { "maxDuration": 60 },
     "api/wish-card.js": { "maxDuration": 15, "includeFiles": "{lib/fonts/*.ttf,public/apple-touch-icon.png}" }
   },
   "rewrites": [
     { "source": "/w/:id/card.png", "destination": "/api/wish-card?id=:id" },
+    { "source": "/w/:id/play/:version/", "destination": "/api/wish-play?id=:id&v=:version" },
+    { "source": "/w/:id/play/:version/:path*", "destination": "/api/wish-play?id=:id&v=:version&path=:path*" },
     { "source": "/w/:id", "destination": "/api/wish-page?id=:id" }
   ],
   "headers": [
@@ -21,7 +25,7 @@
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
     },
     {
-      "source": "/(.*)",
+      "source": "/((?!w/[^/]+/play/).*)",
       "headers": [
         { "key": "X-Content-Type-Options", "value": "nosniff" },
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },

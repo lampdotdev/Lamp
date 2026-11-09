@@ -1,27 +1,63 @@
 import AppKit
 import Foundation
+import LampFileLook
 import LampSidebarKit
 
-/// Sending a wish's changes back to the repository it came from (`Credits.origin`: the chain's last link naming a
-/// repository that isn't the wish's own, with the commit the wish has of it): a pull request on that repository from
-/// the person's own fork, made with GitHub's command-line tool (`gh`) and their sign-in, as Put on GitHub puts a
-/// repository up (`GitHubRepo`). What goes is what Put on GitHub would put (`GitHubRepo.stage`: the shared file's
-/// contents with the same checks, Lamp's own files, the shared file), as one commit on top of that commit in a clone
-/// of the fork, with the repository's README and license left as its owner wrote them and its credits.json taking
-/// only what the wish newly uses. Nothing of the wish's own history goes, and never the chat: the pull request says
-/// where the wish came from, what its versions were called and which files changed.
+/// Sending a wish's changes back to the repository it came from (`AppUpdates.origin`: the chain's last link naming a
+/// repository that isn't the wish's own): a pull request on that repository from the person's own fork, made with
+/// GitHub's command-line tool (`gh`) and their sign-in, as a release puts a wish's repository up (`GitHubRepo`, `GitHubRelease`).
+///
+/// What goes is only what the wish changed, on top of where the repository is now. The change is measured in the wish's
+/// own history (`change`): from what it last took in from there (`base`: the snapshot of its last update, else the
+/// version it arrived as) to the version the card was made from, each side as a shared file carries it, so Lamp's own
+/// files, written afresh by each Lamp, are never part of it (`Upstream.filteredTree`). Git then replays that change on
+/// the repository's latest commit three ways (`replay`): a file the wish didn't touch stays as its owner has it, and a
+/// file both changed in the same place stops the request (`Blocked`, for the reason Lamp can establish: their update,
+/// an update history it can't verify, or changes that don't combine with an unmoved repository). The manifest keeps
+/// the repository's identity and dates and takes only what the change says (`manifest`), credits.json keeps its chain
+/// and takes only work the change newly uses, and a shared file an older Lamp put beside the code is taken away
+/// (`removeSharedFile`). Everything is worked out before the card offers to send, as one commit in a
+/// clone of Lamp's, and that commit is what goes: nothing of the wish's own history, and never the chat.
 enum Contribute {
     struct Failure: LocalizedError {
         let message: String
         var errorDescription: String? { message }
     }
 
-    /// Where the changes would go, and the commit they're on top of. Nil for a wish that didn't come from a repository
-    /// on GitHub, or came from one before Lamp recorded the commit (open it from there again to get one).
-    static func origin(of project: LampProject) -> (source: RepoImport.Source, commit: String)? {
-        guard let link = AppUpdates.origin(of: project), let source = link.url.flatMap(RepoImport.source(from:)),
-              let commit = link.commit else { return nil }
-        return (source, commit)
+    /// Nothing can go until something is settled, for the reason Lamp could establish (`ContributeBlock`): the
+    /// repository moved since the commit the version's credits name and changed the same parts (`theyChanged`, which
+    /// reviewing the update settles); nothing says which version of theirs the changes are measured from
+    /// (`unverified`, which `recover` may settle); or the repository is still at that commit and the changes don't
+    /// combine with it (`couldNotCombine`).
+    struct Blocked: LocalizedError, Equatable {
+        let block: ContributeBlock
+        /// The repository's latest commit, when it's known: an update to review.
+        var tip: String? = nil
+        var errorDescription: String? { block.text }
+    }
+
+    /// The commit of the repository a version's credits say it's on top of: what its last accepted update brought, or
+    /// what it arrived as.
+    static func namedCommit(of project: LampProject, at version: String) async -> String? {
+        let named = await Upstream.run("git show \(version):\(Credits.file)", in: project)
+        guard named.status == 0 else { return nil }
+        return Credits.validCommit(Credits.decoded(Data(named.output.utf8))?.origin(own: GitHubRepo.kept(for: project)?.url)?.commit)
+    }
+
+    /// Why the change doesn't go on `tip`, from what Lamp can establish: the commit the version names (nil when it
+    /// names none) against the repository's latest.
+    static func blocked(_ files: [String], named: String?, tip: String) -> Blocked {
+        guard let named = named?.lowercased() else { return Blocked(block: ContributeBlock(.unverified)) }
+        let latest = tip.lowercased()
+        guard latest.hasPrefix(named) || named.hasPrefix(latest) else { return Blocked(block: ContributeBlock(.theyChanged, files: files), tip: tip) }
+        return Blocked(block: ContributeBlock(.couldNotCombine))
+    }
+
+    /// Where the changes would go. Nil for a wish that didn't come from a repository on GitHub. The commit its credits
+    /// name says only what the wish is on top of: a shared file names the commit before the one it went up in, so it's
+    /// never what the change is measured against.
+    static func origin(of project: LampProject) -> RepoImport.Source? {
+        AppUpdates.origin(of: project)?.url.flatMap(RepoImport.source(from:))
     }
 
     static func canContribute(_ project: LampProject) -> Bool { origin(of: project) != nil }
@@ -33,6 +69,46 @@ enum Contribute {
         let fork: String
     }
 
+    /// What will go, worked out before the person confirms: one commit on the repository's latest, in a clone in a
+    /// folder of Lamp's (`folder`, removed with the card).
+    struct Prepared {
+        let folder: URL
+        let clone: URL
+        /// The wish's version it was made from: one that's changed since isn't what the card showed.
+        let version: String
+        /// The repository's commit it goes on top of, and its branch.
+        let tip: String
+        let baseBranch: String
+        let commit: String
+        /// The files it changes, by their paths in the repository.
+        let changed: [String]
+        let title: String
+        let body: String
+        /// Who the commit is made as, which the card says when its address goes out with it.
+        let author: GitHubRepo.Author
+        /// This submission, which every try at sending it shares: its branch on the fork, and the screenshot's.
+        var submission = UUID().uuidString.lowercased()
+        var branch: String
+
+        /// The fork's branch holding the screenshot and nothing else, kept after the pull request closes so its
+        /// picture still shows.
+        var screenshotBranch: String { "lamp/screenshots/" + submission }
+    }
+
+    /// What one submission has done so far on GitHub, so trying again carries on rather than doing it twice: the fork
+    /// it goes through, and the screenshot's commit once it's made.
+    struct Progress: Equatable {
+        var fork: String?
+        var screenshotCommit: String?
+    }
+
+    /// The screenshot couldn't be uploaded, and nothing more went: the card offers Retry Upload or Send Without
+    /// Screenshot.
+    struct ScreenshotNotUploaded: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
     /// The person's fork of `source`, when they have one: "login/name". Asked of GitHub.
     static func fork(of source: RepoImport.Source, login: String, gh: String) async -> String? {
         let candidate = "\(login)/\(source.name)"
@@ -41,113 +117,640 @@ enum Contribute {
         return candidate
     }
 
-    /// Opens the pull request: the fork made when there's none, the parent commit fetched into a folder of Lamp's, the
-    /// staged tree put over it, one commit, pushed to a branch of the fork, and the request on `source`; `step` hears
-    /// what it's doing.
-    static func send(_ staged: GitHubRepo.Staged, of project: LampProject, to source: RepoImport.Source, parent: String, fork: String?,
-                     gh: String, login: String, step: @escaping @Sendable (String) -> Void) async throws -> Request {
-        let fm = FileManager.default
+    /// The version that goes: the wish's saved version, with only Lamp's own files (`GitHubRepo.isOwned`, an app's in its
+    /// folder) allowed to differ from it. A rebuild for a newer Lamp writes those afresh without saving a version
+    /// (`Store.updateForThisForge`), and they never go (`Upstream.isLeftOut`), so they mustn't hold the changes back.
+    /// Nil while anything else is unsaved, since then the files are no version at all.
+    nonisolated static func sendableVersion(of project: LampProject) -> String? {
+        let status = Versions.gitBlocking("git status --porcelain -z --untracked-files=all -- . ':!\(Attachments.folder)'", cwd: project.dir)
+        guard status.ok else { return nil }
+        let entries = status.output.split(separator: "\0").map(String.init)
+        if !entries.isEmpty {
+            // Each app with the folder its files are in, from the wish's: none for an app at the top, its own for one
+            // in a folder, which the root app is too when every app of the wish is in one (`Sharing.layout`).
+            let (root, parts) = Sharing.layout(of: project)
+            let top = project.dir.standardizedFileURL.path
+            let apps: [(folder: String, app: LampProject)] = ([root] + parts).compactMap { app in
+                let dir = app.dir.standardizedFileURL.path
+                if dir == top { return ("", app) }
+                return dir.hasPrefix(top + "/") ? (String(dir.dropFirst(top.count + 1)) + "/", app) : nil
+            }
+            for entry in entries {
+                // A rename or copy names two paths and is never one of Lamp's own rewrites.
+                guard entry.count > 3, !entry.prefix(2).contains(where: { $0 == "R" || $0 == "C" }) else { return nil }
+                let path = String(entry.dropFirst(3))
+                // A path in an app's folder is that app's; any other is the app at the top's, when there is one.
+                let owner = apps.first { !$0.folder.isEmpty && path.hasPrefix($0.folder) } ?? apps.first { $0.folder.isEmpty }
+                guard let owner, GitHubRepo.isOwned(String(path.dropFirst(owner.folder.count)), in: owner.app) else { return nil }
+            }
+        }
+        let head = Versions.gitBlocking("git rev-parse HEAD", cwd: project.dir)
+        return head.ok ? Credits.validCommit(head.output.trimmed) : nil
+    }
+
+    /// Works out what would go: the wish's change since it last took anything in, replayed on the repository's latest
+    /// commit (fetched with the person's sign-in, so a private repository they can read works too), committed in their
+    /// name (`GitHubRepo.author`). Throws, saying why, when nothing would go or it can't go as it is.
+    static func prepare(_ project: LampProject, from source: RepoImport.Source, gh: String, login: String) async throws -> Prepared {
         let upstream = "\(source.owner)/\(source.name)"
-        var fork = fork
-        if fork == nil {
+        let base = await Subprocess.run(gh, ["repo", "view", upstream, "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"], mergeErrors: false, timeout: 30)
+        let baseBranch = base.ok && !base.output.trimmed.isEmpty ? base.output.trimmed : "main"
+        return try await prepare(project, remote: "https://github.com/\(upstream).git", baseBranch: baseBranch, source: source,
+                                 git: GitHubRepo.git, access: GitHubRepo.signedIn(gh: gh), login: login)
+    }
+
+    /// The same from any remote, with `access` the options git fetches it with: what tests give a repository on disk.
+    static func prepare(_ project: LampProject, remote: String, baseBranch: String, source: RepoImport.Source, git: String,
+                        access: [String], login: String) async throws -> Prepared {
+        let fm = FileManager.default
+        // What's sent is a version of the wish: files changed since its last version are no version at all.
+        guard let version = await Task.detached(operation: { sendableVersion(of: project) }).value else {
+            throw Failure(message: "\(project.name) has changes that aren't saved yet. Try again once Lamp has saved them.")
+        }
+        let folder = Sharing.workFolder.appendingPathComponent("lamp-contribute-\(UUID().uuidString)")
+        var done = false
+        defer { if !done { try? fm.removeItem(at: folder) } }
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+
+        // The wish as a shared file, with the same checks (licenses, keys): only what that carries can go.
+        let exported = folder.appendingPathComponent("export")
+        let file = try await Task.detached { try Sharing.export(project) }.value
+        defer { try? fm.removeItem(at: file.deletingLastPathComponent()) }
+        guard Subprocess.runBlocking("/usr/bin/ditto", ["-x", "-k", file.path, exported.path], timeout: 120).ok else {
+            throw Failure(message: "Couldn't read \(project.name)'s files.")
+        }
+        guard await Task.detached(operation: { sendableVersion(of: project) }).value == version else {
+            throw Failure(message: "\(project.name) changed while Lamp was looking. Try again.")
+        }
+        let clone = folder.appendingPathComponent("clone")
+        try fm.createDirectory(at: clone, withIntermediateDirectories: true)
+        func run(_ arguments: [String], in cwd: URL = clone, env: [String: String]? = nil, input: Data? = nil, timeout: TimeInterval = 120) async -> Subprocess.Result {
+            await Subprocess.run(git, ["-c", "core.hooksPath=/dev/null"] + arguments, cwd: cwd, env: env, mergeErrors: false, timeout: timeout, input: input)
+        }
+        func must(_ result: Subprocess.Result) throws -> String {
+            guard result.ok else { throw Failure(message: "Couldn't prepare the pull request: \((result.errors + result.output).trimmed.suffix(200))") }
+            return result.output.trimmed
+        }
+        _ = try must(await run(["init", "-q"]))
+        _ = try must(await run(["remote", "add", "upstream", remote]))
+        let fetched = await run(access + ["fetch", "-q", "--depth", "1", "upstream", "refs/heads/\(baseBranch)"], timeout: 600)
+        guard fetched.ok else {
+            throw Failure(message: "GitHub didn't give back \(source.owner)/\(source.name): \((fetched.errors + fetched.output).trimmed.suffix(200))")
+        }
+        let tip = try must(await run(["rev-parse", "FETCH_HEAD"]))
+        let submission = UUID().uuidString.lowercased()
+        let branch = "lamp/\(Publish.slug(project.name))-\(submission.prefix(8))"
+        _ = try must(await run(["checkout", "-q", "-b", branch, tip]))
+
+        var change = try await self.change(of: project, at: version, exported: exported, repository: clone, in: folder)
+        // A wish that arrived before Lamp kept the manifest it came with is measured against the repository's at the
+        // commit its credits name, else at its latest (only what differs from that goes).
+        if change.manifest == nil {
+            var said: Data? = nil
+            if let commit = change.namedCommit, await run(access + ["fetch", "-q", "--depth", "1", "upstream", commit], timeout: 120).ok {
+                let shown = await run(["show", "\(commit):\(change.meta)lamp-app.json"])
+                if shown.ok { said = Data(shown.output.utf8) }
+            }
+            said = said ?? (try? Data(contentsOf: clone.appendingPathComponent(change.meta + "lamp-app.json")))
+            change.manifest = said.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        }
+        let ours = manifestOf(exported)
+        guard !change.paths.isEmpty || !manifestChanges(ours: ours, base: change.manifest ?? [:]).isEmpty else {
+            throw Failure(message: "\(project.name) has no changes of its own to send since it last took anything from \(source.owner)/\(source.name).")
+        }
+
+        func stopped(_ files: [String]) -> Blocked { blocked(files, named: change.namedCommit, tip: tip) }
+        let replayed = try await replay(change, in: clone, tip: tip, git: git)
+        guard replayed.conflicts.isEmpty else { throw stopped(replayed.conflicts) }
+        _ = try must(await run(["read-tree", "--reset", "-u", replayed.tree]))
+        var touched = Set(change.paths)
+        guard let finished = try finish(change, in: clone, exported: exported) else { throw stopped([change.meta + "lamp-app.json"]) }
+        touched.formUnion(finished)
+
+        // Nothing to send when the repository's files are all as they were: an older Lamp's shared file is taken away only
+        // with a change, never sent on its own.
+        _ = try must(await run(["add", "-A"]))
+        guard !(try must(await run(["diff", "--cached", "--no-renames", "--name-only", "-z", tip]))).isEmpty else {
+            throw Failure(message: "\(source.owner)/\(source.name) already has everything this app changed: there's nothing to send.")
+        }
+        // And nothing that goes holds a key: the files as they'll be pushed, checked as the export checks its own.
+        let (root, parts) = Sharing.layout(of: project)
+        let outgoing = folder.appendingPathComponent("outgoing")
+        for path in touched where fm.fileExists(atPath: clone.appendingPathComponent(path).path) {
+            let to = outgoing.appendingPathComponent(path)
+            try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: clone.appendingPathComponent(path), to: to)
+        }
+        let leaks = ShareCheck.secrets(in: outgoing, known: Array(Set(([project, root] + parts).flatMap { Sharing.knownSecrets($0) })))
+        try? fm.removeItem(at: outgoing)
+        if let first = leaks.first {
+            throw Failure(message: "\(project.name)'s changes can't go: \(first) holds a key or a password. Ask Lamp to take it out and keep it out of the code.")
+        }
+        removeSharedFile(in: clone, meta: change.meta)
+        _ = try must(await run(["add", "-A"]))
+        let changed = try must(await run(["diff", "--cached", "--no-renames", "--name-only", "-z", tip])).split(separator: "\0").map(String.init)
+        let summary = await summary(of: project, from: source, changed: changed)
+        // The summary is the commit's message and the pull request's text, from files: it's prose, never arguments.
+        let message = folder.appendingPathComponent("message.txt")
+        try (summary.title + "\n\n" + summary.body).write(to: message, atomically: true, encoding: .utf8)
+        let author = try await GitHubRepo.author(login: login, git: git, in: clone)
+        let commit = try await GitHubRepo.commit(["commit", "-q", "-F", message.path], as: author, shown: nil, git: git,
+                                                 options: ["-c", "core.hooksPath=/dev/null"], in: clone)
+        done = true
+        return Prepared(folder: folder, clone: clone, version: version, tip: tip, baseBranch: baseBranch, commit: commit, changed: changed,
+                        title: summary.title, body: summary.body, author: author, submission: submission, branch: branch)
+    }
+
+    /// Opens the pull request with what `prepare` made: the fork made when there's none, the screenshot (when one goes)
+    /// put on a branch of the fork of its own, the commit pushed to the submission's branch of it, and the request on
+    /// `source`, unless one from that branch is open already; `step` hears what it's doing. `progress` keeps what's
+    /// done, even when it throws, so trying again carries on: the same fork, screenshot commit and branches.
+    static func send(_ prepared: Prepared, of project: LampProject, to source: RepoImport.Source, screenshot: Data?, progress: inout Progress,
+                     gh: String, login: String, step: @escaping @Sendable (String) -> Void) async throws -> Request {
+        let upstream = "\(source.owner)/\(source.name)"
+        guard await Task.detached(operation: { sendableVersion(of: project) }).value == prepared.version else {
+            throw Failure(message: "\(project.name) changed since Lamp looked. Close this and send the changes again.")
+        }
+        if progress.fork == nil {
             step("Forking \(upstream) to your account…")
             let forked = await Subprocess.run(gh, ["repo", "fork", upstream, "--clone=false", "--default-branch-only"], timeout: 120)
             guard forked.ok else { throw Failure(message: "GitHub didn't fork \(upstream): \(forked.output.trimmed.suffix(200))") }
             // A fork takes a moment to exist; one the person already had, under another name, is what gh names.
             let named = forked.output.split(whereSeparator: \.isWhitespace).map(String.init)
                 .first { $0.lowercased().hasPrefix(login.lowercased() + "/") }
-            fork = named ?? "\(login)/\(source.name)"
+            let fork = named ?? "\(login)/\(source.name)"
             var found = false
             for _ in 0..<20 where !found {
                 try? await Task.sleep(for: .seconds(3))
-                found = await Subprocess.run(gh, ["api", "repos/\(fork!)", "--jq", ".full_name"], mergeErrors: false, timeout: 30).ok
+                found = await Subprocess.run(gh, ["api", "repos/\(fork)", "--jq", ".full_name"], mergeErrors: false, timeout: 30).ok
             }
             guard found else { throw Failure(message: "The fork of \(upstream) isn't ready yet. Try again in a moment.") }
+            progress.fork = fork
         }
-        guard let fork else { throw Failure(message: "Lamp couldn't find your fork of \(upstream).") }
+        guard let fork = progress.fork else { throw Failure(message: "Lamp couldn't find your fork of \(upstream).") }
+        let remote = "https://github.com/\(fork).git", access = GitHubRepo.signedIn(gh: gh)
 
-        step("Reading what's there…")
-        let git = GitHubRepo.git
-        let signedIn = GitHubRepo.signedIn(gh: gh)
-        let work = staged.folder.deletingLastPathComponent().appendingPathComponent("clone")
-        try? fm.removeItem(at: work)
-        try fm.createDirectory(at: work, withIntermediateDirectories: true)
-        let branch = "lamp/\(Publish.slug(project.name))-\(UUID().uuidString.prefix(6).lowercased())"
-        for arguments in [["init", "-q"], ["remote", "add", "upstream", "https://github.com/\(upstream).git"]] {
-            let ran = await Subprocess.run(git, arguments, cwd: work, timeout: 60)
-            guard ran.ok else { throw Failure(message: "Couldn't prepare the pull request: \(ran.output.trimmed.suffix(200))") }
+        var picture: String? = nil
+        if let screenshot {
+            step("Uploading the screenshot…")
+            let commit = try await uploadScreenshot(screenshot, of: prepared, to: remote, git: GitHubRepo.git, access: access, progress: &progress)
+            picture = screenshotMarkdown(fork: fork, commit: commit)
         }
-        let fetched = await Subprocess.run(git, signedIn + ["fetch", "-q", "--depth", "1", "upstream", parent], cwd: work, timeout: 600)
-        guard fetched.ok else {
-            throw Failure(message: "GitHub didn't give back the version of \(upstream) this wish came from: \(fetched.output.trimmed.suffix(200))")
-        }
-        let checkedOut = await Subprocess.run(git, ["checkout", "-q", "-b", branch, "FETCH_HEAD"], cwd: work, timeout: 60)
-        guard checkedOut.ok else { throw Failure(message: "Couldn't prepare the pull request: \(checkedOut.output.trimmed.suffix(200))") }
-
-        // The wish as it is now in the parent's place, but for what's the repository's own: its README, the pictures
-        // the README shows (`.github/`, a starter's) and its license stay its owner's (a license the wish's credits
-        // name at the root is that one), and its credits, read before anything goes, keep their chain and take only
-        // what the wish newly uses.
-        let theirs = Credits.read(work.appendingPathComponent(Credits.file)) ?? Credits()
-        // And the identity its wish has there: a copy here may have its own (a starter's copy, or one kept beside
-        // another), which a contribution must never put in its place.
-        let theirApp = (try? JSONSerialization.jsonObject(with: Data(contentsOf: work.appendingPathComponent("lamp-app.json"))) as? [String: Any])?["app"] as? String
-        let kept: Set<String> = [".git", ".github", "README.md", "LICENSE"]
-        // A repository with no shared file beside its code (a starter's) gets none from a contribution either.
-        let hadFile = ((try? fm.contentsOfDirectory(at: work, includingPropertiesForKeys: nil)) ?? []).contains { $0.pathExtension == "lampapp" }
-        for item in try fm.contentsOfDirectory(at: work, includingPropertiesForKeys: nil) where !kept.contains(item.lastPathComponent) {
-            try fm.removeItem(at: item)
-        }
-        for item in try fm.contentsOfDirectory(at: staged.folder, includingPropertiesForKeys: nil)
-        where !["README.md", Credits.file].contains(item.lastPathComponent) && !fm.fileExists(atPath: work.appendingPathComponent(item.lastPathComponent).path)
-            && (hadFile || item.pathExtension != "lampapp") {
-            try fm.copyItem(at: item, to: work.appendingPathComponent(item.lastPathComponent))
-        }
-        try theirs.merged(with: Credits(upstream: staged.credits.upstream, generated: staged.credits.generated)).encoded()
-            .write(to: work.appendingPathComponent(Credits.file), options: .atomic)
-        let manifestURL = work.appendingPathComponent("lamp-app.json")
-        if let theirApp, var manifest = try? JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any] {
-            manifest["app"] = theirApp
-            try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-                .write(to: manifestURL, options: .atomic)
-        }
-
-        let added = await Subprocess.run(git, ["add", "-A"], cwd: work, timeout: 120)
-        guard added.ok else { throw Failure(message: "Couldn't prepare the pull request: \(added.output.trimmed.suffix(200))") }
-        // Nothing to send when only the export's own marks differ, as Put on GitHub tells an unchanged wish.
-        if await Subprocess.run(git, ["diff", "--cached", "--quiet", "--", ".", ":(exclude)lamp-app.json", ":(exclude)*.lampapp"], cwd: work, timeout: 60).ok {
-            let before = await Subprocess.run(git, ["show", "HEAD:lamp-app.json"], cwd: work, mergeErrors: false, timeout: 30)
-            if before.ok, let after = try? Data(contentsOf: work.appendingPathComponent("lamp-app.json")),
-               GitHubRepo.manifestsMatch(Data(before.output.utf8), after) {
-                throw Failure(message: "\(upstream) already has everything this wish has: there's nothing to send.")
-            }
-        }
-        var changed: [String] = []
-        let listed = await Subprocess.run(git, ["diff", "--cached", "--name-only"], cwd: work, mergeErrors: false, timeout: 60)
-        if listed.ok { changed = listed.output.split(separator: "\n").map(String.init) }
-        let summary = await summary(of: project, from: source, changed: changed)
-        // The summary is the commit's message and the pull request's text, from files: it's prose, never arguments.
-        let message = work.deletingLastPathComponent().appendingPathComponent("message.txt")
-        let body = work.deletingLastPathComponent().appendingPathComponent("body.md")
-        try (summary.title + "\n\n" + summary.body).write(to: message, atomically: true, encoding: .utf8)
-        try summary.body.write(to: body, atomically: true, encoding: .utf8)
-        let committed = await Subprocess.run(git, GitHubRepo.identity(login: login) + ["commit", "-q", "-F", message.path], cwd: work, timeout: 120)
-        guard committed.ok else { throw Failure(message: "Couldn't prepare the pull request: \(committed.output.trimmed.suffix(200))") }
 
         step("Uploading…")
-        let pushed = await Subprocess.run(git, signedIn + ["push", "-q", "https://github.com/\(fork).git", "HEAD:refs/heads/\(branch)"], cwd: work, timeout: 600)
+        let pushed = await Subprocess.run(GitHubRepo.git, ["-c", "core.hooksPath=/dev/null"] + access
+                                          + ["push", "-q", remote, "\(prepared.commit):refs/heads/\(prepared.branch)"],
+                                          cwd: prepared.clone, timeout: 600)
         guard pushed.ok else { throw Failure(message: "GitHub didn't take it: \(pushed.output.trimmed.suffix(200))") }
 
-        step("Opening the pull request…")
-        let base = await Subprocess.run(gh, ["repo", "view", upstream, "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"], mergeErrors: false, timeout: 30)
-        let baseBranch = base.ok && !base.output.trimmed.isEmpty ? base.output.trimmed : "main"
         let head = fork.split(separator: "/").first.map(String.init) ?? login
-        let opened = await Subprocess.run(gh, ["pr", "create", "--repo", upstream, "--head", "\(head):\(branch)", "--base", baseBranch,
-                                               "--title", summary.title, "--body-file", body.path], timeout: 120)
+        step("Opening the pull request…")
+        // A try that opened it and then lost the answer has a request already: it's that one, never a second.
+        if let url = await existingRequest(on: upstream, head: head, branch: prepared.branch, gh: gh) {
+            return Request(url: url, branch: prepared.branch, fork: fork)
+        }
+        let body = prepared.folder.appendingPathComponent("body.md")
+        try Self.body(prepared.body, picture: picture).write(to: body, atomically: true, encoding: .utf8)
+        let opened = await Subprocess.run(gh, ["pr", "create", "--repo", upstream, "--head", "\(head):\(prepared.branch)", "--base", prepared.baseBranch,
+                                               "--title", prepared.title, "--body-file", body.path], timeout: 120)
         guard opened.ok, let url = opened.output.split(whereSeparator: \.isWhitespace).map(String.init).last(where: { $0.hasPrefix("https://") }) else {
             throw Failure(message: "GitHub didn't open the pull request: \(opened.output.trimmed.suffix(200))")
         }
-        return Request(url: url, branch: branch, fork: fork)
+        return Request(url: url, branch: prepared.branch, fork: fork)
+    }
+
+    /// The pull request on `upstream` from `head`'s `branch`, open or not, when there's one.
+    static func existingRequest(on upstream: String, head: String, branch: String, gh: String) async -> String? {
+        let listed = await Subprocess.run(gh, ["pr", "list", "--repo", upstream, "--head", branch, "--state", "all",
+                                               "--json", "url,headRepositoryOwner"], mergeErrors: false, timeout: 60)
+        guard listed.ok, let requests = (try? JSONSerialization.jsonObject(with: Data(listed.output.utf8))) as? [[String: Any]] else { return nil }
+        return requests.first { (($0["headRepositoryOwner"] as? [String: Any])?["login"] as? String)?.lowercased() == head.lowercased() }?["url"] as? String
+    }
+
+    // MARK: The screenshot
+
+    /// Puts the screenshot on the submission's own branch of the fork (`Prepared.screenshotBranch`): a commit of its own
+    /// with no parent, holding the picture alone, made as the card said (`GitHubRepo.commit`), so it's never part of the
+    /// pull request's changes. A try after one that made the commit pushes that same commit. The commit, or
+    /// `ScreenshotNotUploaded`.
+    static func uploadScreenshot(_ png: Data, of prepared: Prepared, to remote: String, git: String, access: [String],
+                                 progress: inout Progress) async throws -> String {
+        func failed(_ why: String) -> ScreenshotNotUploaded { ScreenshotNotUploaded(message: "The screenshot couldn't be uploaded: \(why.trimmed.suffix(200))") }
+        let commit: String
+        if let made = progress.screenshotCommit {
+            commit = made
+        } else {
+            func run(_ arguments: [String], input: Data? = nil) async throws -> String {
+                let ran = await Subprocess.run(git, ["-c", "core.hooksPath=/dev/null"] + arguments, cwd: prepared.clone, mergeErrors: false,
+                                               timeout: 60, input: input)
+                guard ran.ok else { throw failed(ran.errors + ran.output) }
+                return ran.output.trimmed
+            }
+            let blob = try await run(["hash-object", "-w", "--stdin"], input: png)
+            let tree = try await run(["mktree"], input: Data("100644 blob \(blob)\t\(screenshotFile)\n".utf8))
+            do {
+                commit = try await GitHubRepo.commit(["commit-tree", tree, "-m", "Screenshot for a pull request sent from Lamp"], as: prepared.author,
+                                                     shown: [prepared.author], git: git, options: ["-c", "core.hooksPath=/dev/null"], in: prepared.clone)
+            } catch {
+                throw failed(error.localizedDescription)
+            }
+            progress.screenshotCommit = commit
+        }
+        let pushed = await Subprocess.run(git, ["-c", "core.hooksPath=/dev/null"] + access
+                                          + ["push", "-q", remote, "\(commit):refs/heads/\(prepared.screenshotBranch)"],
+                                          cwd: prepared.clone, timeout: 300)
+        guard pushed.ok else { throw failed(pushed.output) }
+        return commit
+    }
+
+    static let screenshotFile = "screenshot.png"
+
+    /// The screenshot in the pull request's text: its commit on the fork, by a path GitHub resolves from the request's own
+    /// page, so it shows to whoever can see the fork, with no token or address that expires.
+    static func screenshotMarkdown(fork: String, commit: String) -> String {
+        "![Screenshot of the app](../../../\(fork)/blob/\(commit)/\(screenshotFile)?raw=true)"
+    }
+
+    /// The pull request's text with the screenshot after its first paragraph, when there's one.
+    static func body(_ body: String, picture: String?) -> String {
+        guard let picture else { return body }
+        guard let end = body.range(of: "\n\n") else { return body + "\n\n" + picture }
+        return body[..<end.lowerBound] + "\n\n" + picture + "\n\n" + body[end.upperBound...]
+    }
+
+    /// Whether anyone can see `repo` (`owner/name`); nil when GitHub doesn't say.
+    static func isPublic(_ repo: String, gh: String) async -> Bool? {
+        let looked = await Subprocess.run(gh, ["api", "repos/\(repo)", "--jq", ".private"], mergeErrors: false, timeout: 30)
+        guard looked.ok else { return nil }
+        switch looked.output.trimmed { case "false": return true; case "true": return false; default: return nil }
+    }
+
+    // MARK: Recovering the update history
+
+    /// Check Update History: whether Lamp can tell what the saved version's changes are measured from (`base`), and when
+    /// it can't, that put right from the repository itself: the commit the version's credits name, fetched with the
+    /// person's sign-in and staged as the import would install it, kept as that commit's snapshot (`Upstream.snapshot`),
+    /// which is what an update taken in leaves. False when there's no saved version, its credits name no commit, or the
+    /// repository won't give that commit.
+    static func recover(_ project: LampProject, from source: RepoImport.Source, gh: String) async -> Bool {
+        let upstream = "\(source.owner)/\(source.name)"
+        return await recover(project, remote: "https://github.com/\(upstream).git", git: GitHubRepo.git, access: GitHubRepo.signedIn(gh: gh))
+    }
+
+    /// The same from any remote, with `access` the options git fetches it with: what tests give a repository on disk.
+    static func recover(_ project: LampProject, remote: String, git: String, access: [String]) async -> Bool {
+        guard let version = await Task.detached(operation: { sendableVersion(of: project) }).value else { return false }
+        guard let named = await namedCommit(of: project, at: version) else { return false }
+        if await base(of: project, at: version) != nil { return true }
+        let fm = FileManager.default
+        let folder = Sharing.workFolder.appendingPathComponent("lamp-contribute-history-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: folder) }
+        let clone = folder.appendingPathComponent("clone"), unpacked = folder.appendingPathComponent("named")
+        guard (try? fm.createDirectory(at: clone, withIntermediateDirectories: true)) != nil,
+              (try? fm.createDirectory(at: unpacked, withIntermediateDirectories: true)) != nil else { return false }
+        func run(_ arguments: [String], timeout: TimeInterval = 120) async -> Bool {
+            await Subprocess.run(git, ["-c", "core.hooksPath=/dev/null"] + arguments, cwd: clone, mergeErrors: false, timeout: timeout).ok
+        }
+        guard await run(["init", "-q"]), await run(["remote", "add", "upstream", remote]),
+              await run(access + ["fetch", "-q", "--depth", "1", "upstream", named], timeout: 600),
+              await Subprocess.run("/bin/sh", ["-c", "\(Sandbox.quoted(git)) archive --format=tar \(Sandbox.quoted(named)) | /usr/bin/tar -x -C \(Sandbox.quoted(unpacked.path))"],
+                                   cwd: clone, mergeErrors: false, timeout: 300).ok else { return false }
+        guard await Upstream.keepSnapshot(of: unpacked, commit: named, in: project) else { return false }
+        return await base(of: project, at: version) != nil
+    }
+
+    // MARK: The wish's own change
+
+    /// The version of the wish's own history its change is measured from, given the version being sent: the snapshot of
+    /// the update whose commit that version's credits name (`Upstream.snapshot`), so an update taken back with Undo
+    /// isn't counted; else the version it last arrived as (opened, or updated by replacing its files). A wish whose
+    /// updates were all brought in before snapshots were kept measures from what the last one brought
+    /// (`Upstream.ref`) when its credits moved on since it arrived. Nil when nothing says what it arrived as.
+    static func base(of project: LampProject, at version: String) async -> String? {
+        func run(_ command: String) async -> (status: Int32, output: String) { await Upstream.run(command, in: project) }
+        func commit(at version: String) async -> String? {
+            let file = await run("git show \(version):\(Credits.file)")
+            guard file.status == 0 else { return nil }
+            return Credits.decoded(Data(file.output.utf8))?.origin(own: GitHubRepo.kept(for: project)?.url)?.commit
+        }
+        let named = await commit(at: version)
+        if let named = Credits.validCommit(named) {
+            let snapshot = await run("git rev-parse --verify -q \(Upstream.snapshot(named))^{commit}")
+            if snapshot.status == 0, let found = Credits.validCommit(snapshot.output) { return found }
+        }
+        let arrival = await Versions.list(project).first { Store.arrivalMessages.contains($0.message) }?.id
+        let snapshots = await run("git for-each-ref --count=1 --format=%(refname) refs/lamp/snapshot/")
+        let last = await run("git rev-parse --verify -q \(Upstream.ref)^{commit}")
+        if snapshots.status == 0, snapshots.output.trimmed.isEmpty, last.status == 0, let last = Credits.validCommit(last.output) {
+            guard let arrival else { return last }
+            let dates = await run("git log --no-walk=unsorted -2 --format=%ct \(last) \(arrival)").output.split(separator: "\n").compactMap { Int(String($0).trimmed) }
+            let moved = await commit(at: arrival) != named
+            if dates.count == 2, dates[0] > dates[1], moved { return last }
+        }
+        return arrival
+    }
+
+    /// The wish's change since `base`, for the version being sent: two folders laid out as its repository is
+    /// (`Sharing.layout`, as the export lays it out), each holding the files the change touches as they were then
+    /// (`base`) and as they are now (`ours`), with a file the change adds or takes out missing from one. Only what a
+    /// shared file carries counts (`exported`, the export of this version): never Lamp's own files, the chat's
+    /// attachments or anything the wish keeps for itself; and a file of Lamp's settings written in another layout
+    /// (`icon.json`, `capabilities.json`) is changed only when what it says changed.
+    struct Change {
+        var base: URL
+        var ours: URL
+        /// The paths it touches in the repository, in order.
+        var paths: [String]
+        /// The manifest the change is measured from (`baseManifest`); nil when Lamp didn't keep it, and the
+        /// repository's stands in.
+        var manifest: [String: Any]?
+        /// The commit of the repository the version's credits name, for the repository's manifest to stand in.
+        var namedCommit: String?
+        /// Where the repository keeps Lamp's files (the manifest, credits, icon, and an older Lamp's shared file): its root, or a site's
+        /// folder of Lamp's (`StaticSite.folder`).
+        var meta = ""
+        /// Credits for work the change newly uses, as the repository will name it.
+        var credits = Credits()
+    }
+
+    static func change(of project: LampProject, at version: String, exported: URL, repository: URL, in folder: URL) async throws -> Change {
+        let fm = FileManager.default
+        let indexes = project.dir.appendingPathComponent(".lamp/contribute")
+        try? fm.removeItem(at: indexes)
+        try fm.createDirectory(at: indexes, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: indexes) }
+        guard let base = await base(of: project, at: version) else { throw Blocked(block: ContributeBlock(.unverified)) }
+        let baseTree = try await Upstream.filteredTree(of: base, in: project, indexes: indexes)
+        let oursTree = try await Upstream.filteredTree(of: version, in: project, indexes: indexes)
+        let listed = await Upstream.run("git diff-tree -r -z --no-renames --name-status \(baseTree) \(oursTree)", in: project)
+        guard listed.status == 0 else { throw Failure(message: "Lamp couldn't read what changed in \(project.name).") }
+        let fields = listed.output.split(separator: "\0").map { String($0).trimmingCharacters(in: .newlines) }
+        var statuses: [(status: Character, path: String)] = []
+        var index = 0
+        while index + 1 < fields.count {
+            if let status = fields[index].first { statuses.append((status, fields[index + 1])) }
+            index += 2
+        }
+        let raw = folder.appendingPathComponent("trees")
+        for (name, tree) in [("base", baseTree), ("ours", oursTree)] {
+            let out = raw.appendingPathComponent(name)
+            try fm.createDirectory(at: out, withIntermediateDirectories: true)
+            guard await Upstream.run("git archive --format=tar \(tree) | /usr/bin/tar -x -C \(Sandbox.quoted(out.path))", in: project).status == 0 else {
+                throw Failure(message: "Lamp couldn't read what changed in \(project.name).")
+            }
+        }
+        defer { try? fm.removeItem(at: raw) }
+
+        // The wish's paths as the repository has them: the app at the file's root loses its folder (`Sharing.export`).
+        let (root, parts) = Sharing.layout(of: project)
+        let moved = root.dir.standardizedFileURL == project.dir.standardizedFileURL ? nil : root.dir.lastPathComponent + "/"
+        func inRepository(_ path: String) -> String { moved.map { path.hasPrefix($0) ? String(path.dropFirst($0.count)) : path } ?? path }
+        let carried = Set(regularFiles(in: exported))
+        // A plain site's repository has the page at its root and the rest in Lamp's folder (`StaticSite.layOut`).
+        let site = parts.isEmpty && ScreenKit.isSite(root)
+        func laidOut(_ path: String) -> String {
+            guard site else { return path }
+            let web = TVTemplate.webFolder + "/"
+            return path.hasPrefix(web) ? String(path.dropFirst(web.count)) : path == "LICENSE" ? path : StaticSite.folder + "/" + path
+        }
+
+        // An Android app's code here is in this Mac's package for it (`AndroidFiles.install`), and the repository's in
+        // the one its build file names: each touched file goes back to that one, its path and the package in it, with
+        // the id Lamp set for this Mac taken out of the build file.
+        var androids: [(prefix: String, ours: String, theirs: String)] = []
+        for app in [root] + parts where app.platform.target.recipe.language == .kotlin {
+            let prefix = app.id == root.id ? "" : app.dir.lastPathComponent + "/"
+            let build = repository.appendingPathComponent(prefix + Template.androidAppFolder + "/build.gradle.kts")
+            guard let text = try? String(contentsOf: build, encoding: .utf8), let theirs = AndroidFiles.namespace(in: text) else { continue }
+            androids.append((prefix, Template.androidPackage(for: app), theirs))
+        }
+        func toRepository(_ target: String, _ file: URL?) throws -> (path: String, text: String?) {
+            guard let android = androids.first(where: { target.hasPrefix($0.prefix + Template.androidAppFolder + "/") }),
+                  AndroidFiles.codeExtensions.contains((target as NSString).pathExtension.lowercased()) else { return (laidOut(target), nil) }
+            let inApp = String(target.dropFirst(android.prefix.count))
+            let path = android.prefix + AndroidFiles.movedPath(inApp, from: android.ours, to: android.theirs)
+            guard let file, let text = try? String(contentsOf: file, encoding: .utf8) else { return (path, nil) }
+            var renamed = text
+            if inApp == Template.androidAppFolder + "/build.gradle.kts" {
+                renamed = renamed.replacingOccurrences(of: AndroidFiles.applicationIDBlock(android.ours), with: "")
+            }
+            return (path, AndroidFiles.renamePackage(in: renamed, from: android.ours, to: android.theirs))
+        }
+
+        var change = Change(base: folder.appendingPathComponent("base"), ours: folder.appendingPathComponent("ours"), paths: [],
+                            meta: site ? StaticSite.folder + "/" : "")
+        var added: Set<String> = []
+        for (status, path) in statuses {
+            // The line travels in the manifest, which the export of this version says (`manifest`).
+            if path == AppDescription.file { continue }
+            let target = inRepository(path)
+            let removed = status == "D"
+            guard removed || carried.contains(target) else { continue }
+            // What goes is the export's file, never the version's own bytes: the export is what passed the checks for
+            // keys, and what it rewrites (capabilities.json, written from what passed its checks) goes as written.
+            let from = raw.appendingPathComponent("base/" + path), to = removed ? raw.appendingPathComponent("ours/" + path) : exported.appendingPathComponent(target)
+            if status == "M", let before = try? Data(contentsOf: from), let after = try? Data(contentsOf: to) {
+                if before == after { continue }
+                if ["icon.json", Template.Capabilities.file].contains((path as NSString).lastPathComponent),
+                   let one = try? JSONSerialization.jsonObject(with: before) as? NSObject,
+                   let other = try? JSONSerialization.jsonObject(with: after) as? NSObject, one.isEqual(other) {
+                    continue
+                }
+            }
+            if !removed { added.insert(target) }
+            var mapped = target
+            for (side, file) in [(change.base, from), (change.ours, to)] {
+                let present = (try? file.checkResourceIsReachable()) == true || (try? fm.destinationOfSymbolicLink(atPath: file.path)) != nil
+                let back = try toRepository(target, present ? file : nil)
+                mapped = back.path
+                guard present else { continue }
+                let place = side.appendingPathComponent(back.path)
+                try fm.createDirectory(at: place.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? fm.removeItem(at: place)
+                if let text = back.text { try text.write(to: place, atomically: false, encoding: .utf8) } else { try fm.copyItem(at: file, to: place) }
+            }
+            change.paths.append(mapped)
+        }
+        change.paths = Array(Set(change.paths)).sorted()
+
+        // Credits for work the change newly uses: what the export names that the base didn't, as the export names it in
+        // the repository's layout. The base's are what it had then (the credits.json of the version it arrived as, or
+        // the one kept with the update's snapshot), never Lamp's running record, which takes in work added here too.
+        let based = await Upstream.run("git show \(base):\(Credits.file)", in: project)
+        let theirs = based.status == 0 ? Credits.decoded(Data(based.output.utf8)) ?? Credits() : Credits()
+        let ours = Credits.read(exported.appendingPathComponent(Credits.file)) ?? Credits()
+        change.credits = Credits(upstream: ours.upstream.filter { source in !theirs.upstream.contains { $0.sameWork(as: source) } },
+                                 generated: ours.generated.filter { added.contains($0.file) })
+        change.manifest = await baseManifest(of: project, base: base)
+        change.namedCommit = await namedCommit(of: project, at: version)
+        return change
+    }
+
+    /// The manifest the wish's change is measured from: the one its last update came with (kept beside the update's
+    /// snapshot, `Upstream.snapshot`), or the one it last arrived with (`Sharing.arrivedManifest`) when it's measured
+    /// from its arrival. Nil when Lamp kept neither.
+    static func baseManifest(of project: LampProject, base: String) async -> [String: Any]? {
+        let kept = await Upstream.run("git show \(base):lamp-app.json", in: project)
+        if kept.status == 0, let manifest = try? JSONSerialization.jsonObject(with: Data(kept.output.utf8)) as? [String: Any] { return manifest }
+        let arrival = await Versions.list(project).first { Store.arrivalMessages.contains($0.message) }?.id
+        guard base == arrival, let data = try? Data(contentsOf: project.dir.appendingPathComponent(Sharing.arrivedManifest)) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    /// What a manifest says of the app that a change can change: its line, its kind, the device it opens on first, its
+    /// other apps and whether it's a plain site. Its identity, name, format and date are the file's own.
+    static let manifestKeys = ["description", "platform", "family", "parts", "site"]
+
+    static func manifestOf(_ folder: URL) -> [String: Any] {
+        (try? Data(contentsOf: folder.appendingPathComponent("lamp-app.json"))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+    }
+
+    private static func same(_ one: Any?, _ other: Any?) -> Bool {
+        switch (one, other) {
+        case (nil, nil): true
+        case let (one?, other?): (one as AnyObject).isEqual(other)
+        default: false
+        }
+    }
+
+    /// The keys the wish changed since `base`.
+    static func manifestChanges(ours: [String: Any], base: [String: Any]) -> [String] {
+        manifestKeys.filter { !same(ours[$0], base[$0]) }
+    }
+
+    /// Every regular file in a folder, by its path in it.
+    static func regularFiles(in folder: URL) -> [String] {
+        let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey]
+        guard let items = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: keys) else { return [] }
+        var paths: [String] = []
+        for case let file as URL in items {
+            let values = try? file.resourceValues(forKeys: Set(keys))
+            if values?.isRegularFile == true || values?.isSymbolicLink == true { paths.append(Sharing.relativePath(of: file, in: folder)) }
+        }
+        return paths.sorted()
+    }
+
+    // MARK: Replaying it on the repository
+
+    /// The change replayed on `tip` in a clone: the tip's tree with the touched files as they were (the base side) and
+    /// as they are now (ours), merged three ways by git against the first (`git merge-tree`), so only what the wish
+    /// changed moves, and a file the repository changed elsewhere since keeps that. The merged tree, or the files both
+    /// changed in the same place.
+    static func replay(_ change: Change, in clone: URL, tip: String, git: String) async throws -> (tree: String, conflicts: [String]) {
+        let gitDir = clone.appendingPathComponent(".git")
+        func run(_ arguments: [String], in cwd: URL = clone, index: String? = nil, input: Data? = nil) async throws -> String {
+            let env = index.map { ["GIT_INDEX_FILE": gitDir.appendingPathComponent($0).path] }
+            let ran = await Subprocess.run(git, ["--git-dir=\(gitDir.path)", "--work-tree=."] + arguments, cwd: cwd, env: env, mergeErrors: false,
+                                           timeout: 300, input: input)
+            guard ran.ok else { throw Failure(message: "Couldn't prepare the pull request: \((ran.errors + ran.output).trimmed.suffix(200))") }
+            return ran.output.trimmed
+        }
+        let paths = Data(change.paths.map { $0 + "\0" }.joined().utf8)
+        var sides: [String] = []
+        for (name, folder) in [("lamp-base", change.base), ("lamp-ours", change.ours)] {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            _ = try await run(["read-tree", tip], index: name)
+            _ = try await run(["update-index", "--add", "--remove", "--replace", "-z", "--stdin"], in: folder, index: name, input: paths)
+            sides.append(try await run(["write-tree"], index: name))
+            try? FileManager.default.removeItem(at: gitDir.appendingPathComponent(name))
+        }
+        // Each side as a commit of its own, as the upstream merge passes them (`Upstream.merge`): a git from before
+        // merge-tree took trees takes only commits. Lamp's own, never pushed, so they're never signed.
+        let lamp = ["-c", "user.name=Lamp", "-c", "user.email=lamp@localhost", "-c", "commit.gpgSign=false"]
+        let baseMark = try await run(lamp + ["commit-tree", sides[0], "-m", "As the change began"])
+        let oursMark = try await run(lamp + ["commit-tree", sides[1], "-p", baseMark, "-m", "As the change is"])
+        let merged = await Subprocess.run(git, ["--git-dir=\(gitDir.path)", "merge-tree", "--write-tree", "--name-only", "-z", "--merge-base=\(baseMark)", tip, oursMark],
+                                          cwd: clone, mergeErrors: false, timeout: 300)
+        guard [0, 1].contains(merged.status) else { throw Failure(message: "Git couldn't put the changes on the latest: \(merged.errors.trimmed.suffix(200))") }
+        let parts = merged.output.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
+        guard let tree = parts.first.flatMap({ Credits.validCommit($0.trimmed) }) else { throw Failure(message: "Git couldn't put the changes on the latest.") }
+        var conflicts: [String] = []
+        if merged.status == 1 {
+            for part in parts.dropFirst() {
+                if part.isEmpty { break }
+                if !conflicts.contains(part) { conflicts.append(part) }
+            }
+        }
+        return (tree, conflicts)
+    }
+
+    /// What the change says beyond its files, written into the clone's tree: the manifest's line, format and apps; the
+    /// credits for work it newly uses; and the icon's pictures when its design changed. Each file is left as the
+    /// repository has it unless something in it changes. The paths written.
+    /// Nil when the repository changed something in the manifest the wish changed too, to something else.
+    static func finish(_ change: Change, in clone: URL, exported: URL) throws -> Set<String>? {
+        let fm = FileManager.default
+        var written: Set<String> = []
+        let meta = clone.appendingPathComponent(change.meta)
+        // A site opened as it is may have no folder of Lamp's in its repository yet (`StaticSite.unpack`): the credits
+        // or the icon's pictures the change brings make it.
+        try fm.createDirectory(at: meta, withIntermediateDirectories: true)
+        let manifestURL = meta.appendingPathComponent("lamp-app.json")
+        if let data = try? Data(contentsOf: manifestURL), let theirs = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            guard let updated = manifest(theirs, ours: manifestOf(exported), change: change) else { return nil }
+            if !(updated as NSDictionary).isEqual(to: theirs) {
+                try JSONSerialization.data(withJSONObject: updated, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+                    .write(to: manifestURL, options: .atomic)
+                written.insert(change.meta + "lamp-app.json")
+            }
+        }
+        let creditsURL = meta.appendingPathComponent(Credits.file)
+        let theirs = Credits.read(creditsURL) ?? Credits()
+        let new = Credits(upstream: change.credits.upstream.filter { source in !theirs.upstream.contains { $0.sameWork(as: source) } },
+                          generated: change.credits.generated.filter { !theirs.generated.contains($0) })
+        if !new.isEmpty {
+            var credits = theirs
+            credits.upstream += new.upstream
+            credits.generated += new.generated
+            try credits.checked.encoded().write(to: creditsURL, options: .atomic)
+            written.insert(change.meta + Credits.file)
+        }
+        // The icon's pictures live outside the versions; they go with a design the change made.
+        if change.paths.contains(change.meta + "icon.json") {
+            for name in [LampFile.iconEntry, "icon-art.png", Sharing.glassEntry] {
+                let from = exported.appendingPathComponent(name), to = meta.appendingPathComponent(name)
+                let had = fm.fileExists(atPath: to.path)
+                guard had || fm.fileExists(atPath: from.path) else { continue }
+                try? fm.removeItem(at: to)
+                if fm.fileExists(atPath: from.path) { try fm.copyItem(at: from, to: to) }
+                written.insert(change.meta + name)
+            }
+        }
+        return written
+    }
+
+    /// The repository's manifest with what the wish changed in it since the change's base (`manifestKeys`: its line,
+    /// kind, device, apps), each taken as the wish has it, and the format the code now needs. Its identity, name and
+    /// date stay the repository's. Nil when the repository changed one of those keys since, to something other than
+    /// the wish did.
+    static func manifest(_ theirs: [String: Any], ours: [String: Any], change: Change) -> [String: Any]? {
+        let base = change.manifest ?? theirs
+        var updated = theirs
+        let changed = manifestChanges(ours: ours, base: base)
+        for key in changed {
+            guard same(theirs[key], base[key]) || same(theirs[key], ours[key]) else { return nil }
+            if let value = ours[key] { updated[key] = value } else { updated.removeValue(forKey: key) }
+        }
+        if !change.paths.isEmpty || !changed.isEmpty, let format = ours["format"] as? Int, format > (theirs["format"] as? Int ?? 0) {
+            updated["format"] = format
+        }
+        return updated
+    }
+
+    /// Takes away the shared file an older Lamp put beside the repository's code, as Lamp's own release now does
+    /// (`GitHubRepo.upload`): the code is what Lamp opens from a repository, and remaking the file would put an unreadable
+    /// binary in the request. Only Lamp's: the one named for the wish (`Publish.slug` of the repository's manifest name),
+    /// or any in Lamp's folder of a site's repository (`meta`), which is all Lamp's.
+    static func removeSharedFile(in clone: URL, meta: String = "") {
+        let fm = FileManager.default
+        let folder = clone.appendingPathComponent(meta)
+        let manifest = (try? Data(contentsOf: folder.appendingPathComponent("lamp-app.json")))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let named = (manifest?["name"] as? String).map { Publish.slug($0) + ".lampapp" }
+        for file in (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        where file.pathExtension == "lampapp" && (!meta.isEmpty || file.lastPathComponent == named) {
+            try? fm.removeItem(at: file)
+        }
     }
 
     /// What the pull request says: where the wish came from and what changed, in plain words, from the wish's chain,
@@ -161,7 +764,7 @@ enum Contribute {
             if names.last != name { names.append(name) }
         }
         var body = "\(project.name) was remixed with [Lamp](https://lamp.dev) from \(source.owner)/\(source.name) and changed there; "
-            + "this is the remix's version of it, sent back from Lamp.\n\n"
+            + "these are the remix's own changes, on top of the latest here, sent back from Lamp.\n\n"
         if let line = AppDescription.description(of: project) { body += line + "\n\n" }
         if !names.isEmpty { body += "Line: " + names.joined(separator: " → ") + ".\n\n" }
         let versions = await Versions.list(project)
@@ -177,37 +780,58 @@ enum Contribute {
         if !changed.isEmpty {
             body += "Files changed: " + changed.prefix(40).map { "`\($0)`" }.joined(separator: ", ") + (changed.count > 40 ? ", and \(changed.count - 40) more" : "") + ".\n\n"
         }
-        body += "To try it, open the remix with Lamp (File → Open from GitHub…), or build it with `./build.sh`."
+        // The owner brings it in from Lamp, where their agent hears of it, rather than with GitHub's merge button.
+        body += "If this is your Lamp app, open Lamp to see these changes, try them and bring them in.\n\n"
+        body += "To try it, open this repository with Lamp (File → Open from GitHub…) once it has the changes, or build it with `./build.sh`."
         return ("\(project.name): changes from a remix", body)
     }
 }
 
 /// The Send Changes Back card of each wish while it's open, in the chat's place. Preparing it finds `gh` and the
-/// person's sign-in, looks for their fork and stages what would go with its checks, so the card shows exactly what will
-/// go before the person confirms.
+/// person's sign-in, looks for their fork and works out what would go with its checks (`Contribute.prepare`), so the
+/// card shows exactly what will go before the person confirms.
 @MainActor final class ContributeCards: ObservableObject {
     static let shared = ContributeCards()
 
     struct Card {
         var stage: ContributeCard.Stage = .preparing
         var source: RepoImport.Source?
-        var parent: String?
         var fork: String?
         var login: String?
         var gh: String?
-        var staged: GitHubRepo.Staged?
+        var prepared: Contribute.Prepared?
         var request: Contribute.Request?
         var copied = false
         var icon: Data?
+        /// The screenshot the pull request can show: the bytes that go, copied in when it was taken, so nothing the app
+        /// writes after changes what was shown.
+        var screenshot: Screenshot?
+        var includeScreenshot = false
+        var takingScreenshot = false
+        /// Which try at taking one counts: one Remove or a later Retake overtook is dropped when it lands.
+        var screenshotTry = UUID()
+        var screenshotFailed = false
+        var screenshotUploadFailed = false
+        /// Whether the fork is public (or will be, made from a public repository).
+        var forkIsPublic: Bool?
+        /// What this submission did on GitHub so far; set once a send begins, and the screenshot stays as it is from then.
+        var progress: Contribute.Progress?
 
-        /// Ready, or failed with the tree still staged, so Send Changes Back tries again.
+        /// Ready, or failed with what would go still prepared, so Send Changes Back tries again.
         var canSend: Bool {
             switch stage {
             case .ready: true
-            case .failed: staged != nil
+            case .failed: prepared != nil
             default: false
             }
         }
+    }
+
+    struct Screenshot: Equatable {
+        let png: Data
+        let digest: String
+        /// Smaller, for the chat to show.
+        let preview: Data
     }
 
     @Published private(set) var cards: [String: Card] = [:]
@@ -218,63 +842,203 @@ enum Contribute {
         guard cards[project.id] == nil else { return }
         cards[project.id] = Card()
         Task { cards[project.id]?.icon = await Sharing.sharedIcon(of: project) }
+        takeScreenshot(project)
         prepare(project)
     }
 
-    /// Finds gh, the sign-in and the fork, and stages what will go.
+    /// A screenshot of the app's own window as it is now, asked of the running app as Retake on a link's card asks
+    /// (`WishLinkCards.retake`): only a picture it takes from now on, never one from before. Taking one clears Include
+    /// Screenshot, so a new picture is never sent without being looked at.
+    func takeScreenshot(_ project: LampProject) {
+        guard let card = cards[project.id], card.progress == nil else { return }
+        let attempt = UUID()
+        cards[project.id]?.screenshotTry = attempt
+        cards[project.id]?.includeScreenshot = false
+        cards[project.id]?.screenshotFailed = false
+        guard let app = WishLinkCards.pictured(project) else {
+            // A picture from before is never kept in place of the one asked for.
+            cards[project.id]?.screenshot = nil
+            cards[project.id]?.takingScreenshot = false
+            cards[project.id]?.screenshotFailed = true
+            return
+        }
+        cards[project.id]?.takingScreenshot = true
+        let asked = Date()
+        Runtime.requestScreenshots(of: app)
+        Task {
+            let taken = await Runtime.screenshots(of: app, since: asked).first
+            let shot = taken.flatMap { AppFile.read($0, in: project) }.flatMap(Self.screenshot(from:))
+            guard cards[project.id]?.screenshotTry == attempt else { return }
+            cards[project.id]?.takingScreenshot = false
+            cards[project.id]?.includeScreenshot = false
+            // A Retake that gives nothing drops the earlier picture, so the card never shows an old one as new.
+            cards[project.id]?.screenshot = shot
+            cards[project.id]?.screenshotFailed = shot == nil
+        }
+    }
+
+    /// The bytes as they'll go, with their digest and a smaller copy for the card; nil for what isn't a PNG picture.
+    static func screenshot(from data: Data) -> Screenshot? {
+        guard data.starts(with: [0x89, 0x50, 0x4E, 0x47]), let rep = NSBitmapImageRep(data: data), rep.pixelsWide > 0, rep.pixelsHigh > 0 else { return nil }
+        let longest = 1000.0, scale = min(1, longest / Double(max(rep.pixelsWide, rep.pixelsHigh)))
+        var preview = data
+        if scale < 1, let small = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(Double(rep.pixelsWide) * scale), pixelsHigh: Int(Double(rep.pixelsHigh) * scale),
+                                                   bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                                   bytesPerRow: 0, bitsPerPixel: 0) {
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: small)
+            NSGraphicsContext.current?.imageInterpolation = .high
+            rep.draw(in: NSRect(x: 0, y: 0, width: small.pixelsWide, height: small.pixelsHigh))
+            NSGraphicsContext.restoreGraphicsState()
+            preview = small.representation(using: .png, properties: [:]) ?? data
+        }
+        return Screenshot(png: data, digest: WishLinkCards.digest(data), preview: preview)
+    }
+
+    func removeScreenshot(_ project: LampProject) {
+        guard cards[project.id]?.progress == nil else { return }
+        cards[project.id]?.screenshotTry = UUID()
+        cards[project.id]?.takingScreenshot = false
+        cards[project.id]?.screenshot = nil
+        cards[project.id]?.includeScreenshot = false
+        cards[project.id]?.screenshotFailed = false
+    }
+
+    /// Include Screenshot, ticked for the picture the chat showed (`shown`, its digest) or cleared: ticked only when
+    /// that's the one held now, from a chat that could show it.
+    func includeScreenshot(_ project: LampProject, shown: String?, wire: Int) {
+        guard let card = cards[project.id], card.progress == nil else { return }
+        cards[project.id]?.includeScreenshot = Self.authorized(card.screenshot, included: true, shown: shown, wire: wire) != nil
+    }
+
+    /// The screenshot that goes with a send: the one held, ticked, and named by a chat that showed it. A chat from
+    /// before the card showed one (wire 14 and older) never sends one, whatever it says.
+    static func authorized(_ held: Screenshot?, included: Bool, shown: String?, wire: Int) -> Screenshot? {
+        guard wire >= 15, included, let held, let shown, shown == held.digest else { return nil }
+        return held
+    }
+
+    /// Finds gh, the sign-in and the fork, and works out what will go.
     func prepare(_ project: LampProject) {
         guard cards[project.id] != nil else { return }
         cards[project.id]?.stage = .preparing
-        if let old = cards[project.id]?.staged { try? FileManager.default.removeItem(at: old.folder.deletingLastPathComponent()) }
-        cards[project.id]?.staged = nil
+        if let old = cards[project.id]?.prepared { try? FileManager.default.removeItem(at: old.folder) }
+        cards[project.id]?.prepared = nil
+        // Prepared again is a new submission: its own branches, and a screenshot that can change again.
+        cards[project.id]?.progress = nil
+        cards[project.id]?.screenshotUploadFailed = false
         Task {
-            guard let origin = Contribute.origin(of: project) else { return set(project, .refused("This wish didn't come from a repository on GitHub.")) }
+            guard let source = Contribute.origin(of: project) else { return set(project, .refused("This app didn't come from a repository on GitHub.")) }
             guard let gh = await Publish.gh() else { return set(project, .needsGitHub(.install)) }
             guard let login = await Publish.login(gh: gh) else { return set(project, .needsGitHub(.signIn)) }
-            guard login.lowercased() != origin.source.owner.lowercased() else {
-                return set(project, .refused("github.com/\(origin.source.owner)/\(origin.source.name) is your own repository: Put on GitHub updates it."))
+            guard login.lowercased() != source.owner.lowercased() else {
+                return set(project, .refused("github.com/\(source.owner)/\(source.name) is your own repository: Release Update on its link puts your changes there."))
             }
-            let fork = await Contribute.fork(of: origin.source, login: login, gh: gh)
+            cards[project.id]?.gh = gh
+            cards[project.id]?.login = login
+            cards[project.id]?.source = source
+            let fork = await Contribute.fork(of: source, login: login, gh: gh)
+            // A fork is made as public as the repository it's made from.
+            let forkIsPublic = await Contribute.isPublic(fork ?? "\(source.owner)/\(source.name)", gh: gh)
             do {
-                let staged = try await Task.detached(priority: .userInitiated) {
-                    try GitHubRepo.stage(project, repo: "\(origin.source.owner)/\(origin.source.name)", link: nil)
-                }.value
+                let prepared = try await Contribute.prepare(project, from: source, gh: gh, login: login)
                 guard cards[project.id] != nil else {
-                    try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent())
+                    try? FileManager.default.removeItem(at: prepared.folder)
                     return
                 }
                 cards[project.id]?.gh = gh
                 cards[project.id]?.login = login
-                cards[project.id]?.source = origin.source
-                cards[project.id]?.parent = origin.commit
+                cards[project.id]?.source = source
                 cards[project.id]?.fork = fork
-                cards[project.id]?.staged = staged
+                cards[project.id]?.forkIsPublic = forkIsPublic
+                cards[project.id]?.prepared = prepared
                 cards[project.id]?.stage = .ready
+            } catch let blocked as Contribute.Blocked {
+                // Their update is known now: the menu and the card both say Review Update…, and it reviews that one.
+                if let tip = blocked.tip { Store.shared.knowUpdate(of: project, tip: tip) }
+                set(project, .blocked(blocked.block))
             } catch {
                 set(project, .refused(((error as? LocalizedError)?.recoverySuggestion).map { "\(error.localizedDescription) \($0)" } ?? error.localizedDescription))
             }
         }
     }
 
+    static let checkingHistory = "Checking the update history…"
+
+    /// Wishes whose card was put aside to review their update: once it's applied, the card is prepared again for them.
+    private var waitingForUpdate: Set<String> = []
+
+    /// A blocked card's first button. Review Update… puts the card aside and reviews the update; once it's in, the card
+    /// is prepared again (`updateApplied`). Check Update History checks what the changes are measured from, puts it right
+    /// when it can, and prepares the card again. Try Again prepares it again. Nothing is ever sent from here.
+    func settle(_ project: LampProject) {
+        guard case .blocked(let block) = cards[project.id]?.stage else { return }
+        switch block.reason {
+        case .theyChanged:
+            close(project)
+            waitingForUpdate.insert(project.id)
+            // Their repository's changes, even for a starter's copy, whose updates otherwise follow the starter this Lamp
+            // ships: those may never have what blocked the send.
+            Store.shared.reviewUpdate(project, ofRepository: true)
+        case .unverified, .notRecovered:
+            guard let source = cards[project.id]?.source ?? Contribute.origin(of: project) else { return set(project, .blocked(ContributeBlock(.notRecovered))) }
+            set(project, .working(Self.checkingHistory))
+            Task {
+                let recovered: Bool
+                if let gh = await Publish.gh() { recovered = await Contribute.recover(project, from: source, gh: gh) } else { recovered = false }
+                guard cards[project.id] != nil else { return }
+                if recovered { prepare(project) } else { set(project, .blocked(ContributeBlock(.notRecovered))) }
+            }
+        case .couldNotCombine:
+            prepare(project)
+        }
+    }
+
+    /// An update is in the wish: a card put aside for it comes back, prepared afresh. It isn't sent.
+    func updateApplied(_ project: LampProject) {
+        guard waitingForUpdate.remove(project.id) != nil else { return }
+        open(project)
+    }
+
+    /// Whether the card is still working out what would go: the desk says so beside the wish.
+    func isPreparing(_ project: LampProject) -> Bool {
+        guard let stage = cards[project.id]?.stage else { return false }
+        if case .preparing = stage { return true }
+        if case .working(Self.checkingHistory) = stage { return true }
+        return false
+    }
+
     private func set(_ project: LampProject, _ stage: ContributeCard.Stage) { cards[project.id]?.stage = stage }
 
-    func send(_ project: LampProject) {
-        guard let card = cards[project.id], card.canSend, let staged = card.staged, let source = card.source, let parent = card.parent,
+    /// Send Changes Back (or Retry Upload), with the screenshot the chat showed ticked (`shown`) when it's the one held;
+    /// `shown` nil sends without one, and clears Include Screenshot so a later try doesn't take it either.
+    func send(_ project: LampProject, shown: String?, wire: Int) {
+        guard let card = cards[project.id], card.canSend, let prepared = card.prepared, let source = card.source,
               let gh = card.gh, let login = card.login else { return }
+        if shown == nil { cards[project.id]?.includeScreenshot = false }
+        let screenshot = Self.authorized(card.screenshot, included: card.includeScreenshot, shown: shown, wire: wire)
+        let started = card.progress ?? Contribute.Progress(fork: card.fork)
+        cards[project.id]?.progress = started
+        cards[project.id]?.screenshotUploadFailed = false
         set(project, .working("Starting…"))
         Task {
+            let id = project.id
+            var progress = started
             do {
-                let id = project.id
-                let request = try await Contribute.send(staged, of: project, to: source, parent: parent, fork: card.fork, gh: gh, login: login) { step in
+                let request = try await Contribute.send(prepared, of: project, to: source, screenshot: screenshot?.png, progress: &progress,
+                                                        gh: gh, login: login) { step in
                     Task { @MainActor in ContributeCards.shared.cards[id]?.stage = .working(step) }
                 }
-                try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent())
-                cards[project.id]?.staged = nil
+                try? FileManager.default.removeItem(at: prepared.folder)
+                cards[project.id]?.prepared = nil
                 cards[project.id]?.fork = request.fork
                 cards[project.id]?.request = request
                 set(project, .done(request.url))
             } catch {
-                // The tree stays staged, so Send Changes Back can try again.
+                // What would go stays prepared, and what's done on GitHub is kept, so trying again carries on.
+                cards[project.id]?.progress = progress
+                if progress.fork != nil { cards[project.id]?.fork = progress.fork }
+                cards[project.id]?.screenshotUploadFailed = error is Contribute.ScreenshotNotUploaded
                 set(project, .failed(error.localizedDescription))
             }
         }
@@ -299,22 +1063,28 @@ enum Contribute {
     }
 
     func close(_ project: LampProject) {
-        if let staged = cards[project.id]?.staged { try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent()) }
+        if let prepared = cards[project.id]?.prepared { try? FileManager.default.removeItem(at: prepared.folder) }
         cards[project.id] = nil
+        waitingForUpdate.remove(project.id)
     }
 
     /// The card as the chat draws it.
     func wire(_ card: Card, of project: LampProject) -> SidebarContribute {
-        let credits = card.staged?.credits ?? Credits.load(project)
-        var notes = ShareCheck.notes(for: credits)
+        let credits = Credits.load(project)
+        var (notes, terms) = ShareCheck.cardNotes(for: credits)
         if !credits.generated.isEmpty { notes.append(Credits.generatedLine(credits.generated.count) + ", marked as such.") }
         if let line = ShareCheck.warningLine(credits) { notes.append(line) }
         if card.stage == .ready, card.fork == nil, let login = card.login, let source = card.source {
             notes.append("You have no fork of \(source.owner)/\(source.name) yet: Lamp makes one on your account (\(login)/\(source.name)) first.")
         }
-        let size = card.staged.map { "\($0.files) files · " + ByteCountFormatter.string(fromByteCount: Int64($0.bytes), countStyle: .file) }
+        if let note = card.prepared.flatMap({ GitHubRepo.note(for: [$0.author]) }) { notes.append(note) }
+        let size = card.prepared.map { $0.changed.count == 1 ? "1 file changed" : "\($0.changed.count) files changed" }
+        let screenshot = ContributeScreenshot(picture: card.screenshot?.preview, digest: card.screenshot?.digest, include: card.includeScreenshot,
+                                              taking: card.takingScreenshot, failed: card.screenshotFailed, isPublic: card.forkIsPublic,
+                                              uploadFailed: card.screenshotUploadFailed, locked: card.progress != nil)
         return SidebarContribute(name: project.name, icon: card.icon, stage: card.stage,
                                  upstream: card.source.map { "\($0.owner)/\($0.name)" }, fork: card.fork ?? card.request?.fork,
-                                 credit: credits.basedOn, notes: notes, size: size, copied: card.copied, canSend: card.canSend)
+                                 credit: credits.basedOn, notes: notes, terms: terms, size: size, copied: card.copied, canSend: card.canSend,
+                                 screenshot: screenshot)
     }
 }

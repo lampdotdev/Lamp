@@ -38,6 +38,14 @@ enum Runtime {
         PageCopies.record(project, as: fingerprint)
     }
 
+    /// What a game's last Mac build that succeeded was compiled from (`GameKit.swiftStamp`), in Lamp's own folder.
+    private static func swiftBuiltURL(_ project: LampProject) -> URL { macFolder(project).appendingPathComponent("swift-built") }
+    static func swiftBuilt(_ project: LampProject) -> String? { AppFile.text(swiftBuiltURL(project), in: project) }
+    static func markSwiftBuilt(_ project: LampProject, from stamp: String?) {
+        guard let stamp else { return AppFolder.remove(swiftBuiltURL(project), in: project.dir) }
+        try? AppFolder.write(stamp, to: swiftBuiltURL(project), in: project.dir)
+    }
+
     /// A build that hasn't been installed because the person kept the app open when it was asked to quit. The
     /// copy that's open, and the one in the apps folder, are older than the build until it closes. Kept on
     /// disk, so the build still goes in after Lamp itself has been quit and opened again.
@@ -399,10 +407,31 @@ enum Runtime {
             ["screenshot.png", "screenshot-2.png", "screenshot-3.png"].map { folder(project).appendingPathComponent($0) }
                 .filter { (try? $0.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast > date }
         }
-        for _ in 0..<Int(seconds * 4) where fresh().isEmpty {
+        // An app that couldn't picture its windows says so (`missedPictures`), and nothing more is coming.
+        for _ in 0..<Int(seconds * 4) where fresh().isEmpty && missedPictures(of: project, since: date) == nil {
             try? await Task.sleep(for: .milliseconds(250))
         }
         return fresh()
+    }
+
+    /// What the app said it couldn't picture in its latest pictures since `date` (`LampRuntime.snapshot` writes
+    /// capture.txt): a window the system gave no picture of, which the app's own drawing would show without its page,
+    /// game or video, so it's left out. Said to the agent in a sentence; nil when every window was pictured. The
+    /// windows' titles say what's on screen, so they go only where pictures may (`Privacy.sharesPictures`): with pictures
+    /// kept from the agent, the sentence is a fixed one, said before anything in the file is read.
+    static func missedPictures(of project: LampProject, since date: Date = .distantPast) -> String? {
+        let url = folder(project).appendingPathComponent("capture.txt")
+        guard let size = AppFile.attributes(url, in: project).flatMap({ $0.modified > date ? $0.size : nil }), size > 0 else { return nil }
+        let after = "so it's left out rather than shown without what the system draws in it (a page, a game or video). "
+            + "Look again in a moment; if it stays, ask the person to bring the window into view."
+        guard Privacy.sharesPictures else { return "Lamp couldn't take a picture of the app's window, " + after }
+        guard let data = AppFile.read(url, in: project), data.count <= 4000,
+              let report = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return "Lamp couldn't take a picture of the app's window, " + after
+        }
+        let windows = (report["windows"] as? [String] ?? []).filter { !$0.isEmpty }
+        let why = (report["why"] as? String).map { " (\($0))" } ?? ""
+        return "Lamp couldn't take a picture of \(windows.isEmpty ? "the app's window" : windows.joined(separator: ", "))\(why), " + after
     }
 
     /// What the app says happened when it carried out a `use_app` request (see `LampDriver` in the app), and
@@ -482,9 +511,26 @@ enum Runtime {
     /// The last lines of the latest launch's output.
     static func logTail(_ project: LampProject, lines: Int = 30) -> String? {
         guard let data = AppFile.read(logURL(project), in: project, last: 8_000) else { return nil }
-        let tail = String(decoding: data.suffix(8_000), as: UTF8.self)
-            .split(separator: "\n", omittingEmptySubsequences: false).suffix(lines).joined(separator: "\n").trimmed
+        let tail = newestOfEach(String(decoding: data.suffix(8_000), as: UTF8.self)
+            .split(separator: "\n", omittingEmptySubsequences: false).suffix(lines)).joined(separator: "\n").trimmed
         return tail.isEmpty ? nil : tail
+    }
+
+    /// What a log tail repeats without saying anything new, kept once, the newest, where it stands: Lamp's own report of
+    /// how the game kept to its frames, written every ten seconds (lamp-game.js's "Lamp: N frames a second"), and a line
+    /// printed again word for word, its time aside. The agent reads every look's log tail again with each request, and
+    /// thirty lines of the same report said nothing the last one didn't. Any other line is kept, whatever it repeats:
+    /// lines that differ in their numbers (statuses, missing files, places in the code) are each evidence.
+    static func newestOfEach<Lines: Collection>(_ lines: Lines) -> [Substring] where Lines.Element == Substring {
+        let stamp = #"^\[[0-9]+(\.[0-9]+)? s\] "#
+        let shapes = lines.map { line -> String in
+            let text = line.replacingOccurrences(of: stamp, with: "", options: .regularExpression)
+            return text.hasPrefix("Lamp: ") && text.contains(" frames a second") ? "Lamp: frames a second" : text
+        }
+        var seen = Set<String>()
+        var kept: [Substring] = []
+        for (line, shape) in zip(lines, shapes).reversed() where line.isEmpty || seen.insert(shape).inserted { kept.append(line) }
+        return kept.reversed()
     }
 
     /// How much the app has printed so far, to tell later what's new.
@@ -495,8 +541,8 @@ enum Runtime {
     /// What the app has printed since its log was `offset` bytes long, at most the last 30 lines. nil if nothing.
     static func log(of project: LampProject, from offset: Int) -> String? {
         guard let data = AppFile.read(logURL(project), in: project), data.count > offset else { return nil }
-        let lines = String(decoding: data.dropFirst(offset).suffix(8_000), as: UTF8.self)
-            .split(separator: "\n", omittingEmptySubsequences: false).suffix(30).joined(separator: "\n").trimmed
+        let lines = newestOfEach(String(decoding: data.dropFirst(offset).suffix(8_000), as: UTF8.self)
+            .split(separator: "\n", omittingEmptySubsequences: false).suffix(30)).joined(separator: "\n").trimmed
         return lines.isEmpty ? nil : lines
     }
 

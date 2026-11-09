@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 /// only the index (Resources/asset-catalog.json, written by scripts/update-assets.py, which reads every license from
 /// where the work is published and pins every file by its SHA-256), never the files: one is fetched into the app's
 /// folder when the agent chooses it, checked against its hash, and credited in the wish's credits.json, so sharing,
-/// publishing and Put on GitHub carry its credit as they carry any other.
+/// publishing and putting the wish on GitHub carry its credit as they carry any other.
 ///
 /// Lamp itself fetches and writes the files, as data: nothing fetched is run, opened or made executable, and only the
 /// files the index names (a .glb, a picture, an atlas's XML, a sound) are taken out of an archive, by Lamp's own reading of it.

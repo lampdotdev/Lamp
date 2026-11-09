@@ -278,6 +278,12 @@ game is written to keep the player's place through one:
     }, { from: ['js/elevation.js'], background: true });
     ```
 
+    Data the person asked to come live from the network (today's weather, road closures, a feed) is fetched inside the
+    build of the part made from it, and declared in its `from` when a file stands in for it offline, never awaited on its
+    own in the module that starts the game: a part keeps what it fetched when the code runs again, while a fetch outside
+    every part is waited for again at each change, with the game standing still. The log after each run says how long
+    the game's own start took outside its kept parts.
+
     The first build, as the game starts, is built whole. A part built from one being built (its `inputs`) is built
     again from the new one once that's in, so parts that must change together are one part. Keep a part's three.js
     objects in the value it returns (one object, or a plain object of them, as `{ group }`), so Lamp can compile them
@@ -377,7 +383,10 @@ single picture hides.
 `use_app` plays the game in front of the person, so play it only when they ask you to try, play or test it; then play it
 the way they would, since a game that only looks right isn't done. For a request to change it, build and look, and say
 in your report what you didn't play rather than calling it checked. On Lamp's game runtime, `use_app` plays the game in its window on this Mac, the one the person has open, with Lamp's own controller (`stick`,
-`button` and `wait`), in plain sight and from wherever the game is: a menu, a pause screen, the middle of a level. Read
+`button` and `wait`), in plain sight and from wherever the game is: a menu, a pause screen, the middle of a level. A
+button or field the game's page shows (a menu, a mode switch, a name) is used with `click`, `double_click` or `type` by
+its id from the screen as text; `key` isn't taken there, so what a key does in play is a `button` or a `stick`. A click
+is only sent: the next picture and the log say whether the game took it. Read
 the last picture first and get to what you mean to check; to begin again, look with `reopen` (which asks the person
 first while they play). Play a whole round: start, learn the controls, score, get hit, lose, win, pause. Ask of each
 stretch whether it's fun: is there always something to do, does each action answer, is it too easy or too hard, does
@@ -391,7 +400,7 @@ A C++ game (played on the Xbox), SpriteKit in a Swift app and a page with a loop
 `use_app` there acts as that place takes it, where the person sees it, so it waits for them to ask. Without that, keep to
 what `look_at_app` shows, and say what you didn't play rather than calling it checked.
 
-## A game and the wish's other apps
+## A game and the project's other apps
 
 When the person wants an app to become a game ("actually, make it a game"), change its code in place: the same app,
 now played. If they might want both (the app they use and a game beside it), ask once whether to keep the app as well
@@ -401,5 +410,5 @@ keeping its folder and data, and its code changed into a
 game. A game beside
 the app is one more app, only when they say they want both and the game is of another kind than the app:
 `make_app_for` with `another` and `kind` "game", in a folder of its own, once they chose that when you asked. Two apps
-of one kind can't be in one wish yet (the `more-apps` skill), and a game is never made web only to get around that. A
+of one kind can't be in one project yet (the `more-apps` skill), and a game is never made web only to get around that. A
 game that becomes an app again is the same in reverse.

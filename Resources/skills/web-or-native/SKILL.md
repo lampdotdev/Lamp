@@ -1,6 +1,6 @@
 ---
 name: web-or-native
-description: Choosing how an app or game is made - as a web page Lamp's host shows on each device, or in the device's own code - from the default the table of devices gives (web wherever Lamp has a host for a page), the few things only native code does (a menu bar icon, widgets, Siri and Shortcuts, Health, share sheets), and on which devices, when to ask the person and what to tell them. Read before the first make_app_for of a wish, and before changing how an app is made or adding a device.
+description: Choosing how an app or game is made - as a web page Lamp's host shows on each device, or in the device's own code - from the default the table of devices gives (web wherever Lamp has a host for a page), the few things only native code does (a menu bar icon, widgets, Siri and Shortcuts, Health, share sheets), and on which devices, when to ask the person and what to tell them. Read before the first make_app_for of a project, and before changing how an app is made or adding a device.
 ---
 
 # Web or native
@@ -23,7 +23,7 @@ Xbox. Where there's none (an Apple TV, an Apple Watch, a Roku), it's native. A g
 skill says what it's drawn with). One app across several devices is web where every one of them takes a page.
 
 A web app is one page that goes anywhere: the person can open it on another device later without it being written
-again, and Put on GitHub gives it a link anyone can open in a browser without Lamp. On a Mac, an iPhone or an iPad the app around the page still reaches
+again, and putting it on GitHub gives it a link anyone can open in a browser without Lamp. On a Mac, an iPhone or an iPad the app around the page still reaches
 the person's mail, calendar, reminders, contacts, photos and location (`LampNative`, the web-app skill).
 
 Make it **native** only when it needs something a page can't be:
@@ -48,11 +48,11 @@ The default is where you start, not a limit:
   can build it; say in a sentence what that costs only when it matters.
 - **Nothing switches silently.** Devices found on the network aren't a request for one app across them: add a device
   only once the person has said that's what they want, or answered so when you asked.
-- **An app the wish has is never converted to follow the default.** It's for a new app, and for a change the person
+- **An app the project has is never converted to follow the default.** It's for a new app, and for a change the person
   asks for. An app made native before keeps its make.
-- **Separate apps that talk don't need the same make.** The wish's apps reach each other through `LampWish` on
+- **Separate apps that talk don't need the same make.** The project's apps reach each other through `LampWish` on
   whichever devices they're on, however each is made (the wish-links skill).
-- **Never choose a make to get around a limit of Lamp's**: two apps of one code in one wish, say (the more-apps
+- **Never choose a make to get around a limit of Lamp's**: two apps of one code in one project, say (the more-apps
   skill). Say what the limit is instead, and offer what can be done.
 - **Never refuse a make that works only because it isn't the default.** Only the table, and the refusal it gives,
   says what can't be built.
@@ -70,8 +70,8 @@ The default is where you start, not a limit:
 - **What it's played or used with.** A remote, a controller, touch, phones in the room: the game skill and the
   phone-controllers skill say what each takes.
 
-When the app needs several devices, it can be one app on all of them, or several of the wish's apps, each made for its
-device, that talk through `LampWish`. Adding one more app to a wish that has one is the person's to choose: the
+When the app needs several devices, it can be one app on all of them, or several of the project's apps, each made for its
+device, that talk through `LampWish`. Adding one more app to a project that has one is the person's to choose: the
 more-apps skill says how to ask.
 
 ## When to ask
@@ -89,7 +89,7 @@ Tell the person how the build reaches each device, as `make_app_for` answers it 
 ## Away from home
 
 Each way of connecting has its own reach, said where it's described: phones joining a TV app's page do it on the same
-Wi‑Fi with Lamp open on this Mac, and a game's on the Mac with Lamp open or closed (the phone-controllers skill); the wish's own apps find each other on the home
+Wi‑Fi with Lamp open on this Mac, and a game's on the Mac with Lamp open or closed (the phone-controllers skill); the project's own apps find each other on the home
 network, and once Lamp has introduced them go on talking with Lamp closed (the wish-links skill, which also says what
 reaching each other away from home takes). Lamp runs no relay of its own for players in other homes: when that's what
 the person wants, say so plainly, and offer what works (playing on one Wi‑Fi, or another way of connecting, as the

@@ -91,17 +91,19 @@ struct WishDesk: View {
     var body: some View {
         HStack(spacing: 0) {
             sidebar
-            VStack(alignment: .leading, spacing: 14) {
-                header
-                list.onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { listWidth = $0 }
-            }
-            .padding(.top, Self.top).padding(.horizontal, 20)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            if panelShown, panelFits, let item = items(sections).first(where: { $0.id == current }) {
-                DeskDetail(item: item, kept: sections.kept.contains(item.id), remixes: remixes(of: item)) { open(item, asking: $0) }
-                    .frame(width: Self.panelWidth)
-                    .overlay(alignment: .leading) { Self.separator }
-                    .transition(.move(edge: .trailing))
+            // Changes people sent, when the person goes to them: in place of the list, with Back.
+            if let wish = store.suggestionsOpen {
+                // Its own for each app: what's picked, searched and filtered in one isn't carried to another.
+                SuggestionsPanel(wish: wish) { store.suggestionsOpen = nil }
+                    .id(wish)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let wish = store.ideasOpen {
+                // Ideas sent from a link, the same way.
+                IdeasPanel(wish: wish) { store.ideasOpen = nil }
+                    .id(wish)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                deskList
             }
         }
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { deskWidth = $0 }
@@ -112,11 +114,11 @@ struct WishDesk: View {
         .navigationTitle("Lamp")
         .toolbar {
             // Only where the panel has room to show: in a narrower window the list keeps the space.
-            if panelFits { ToolbarItem(placement: .primaryAction) {
+            if panelFits, store.suggestionsOpen == nil, store.ideasOpen == nil { ToolbarItem(placement: .primaryAction) {
                 Button { withAnimation(Self.slide) { panelShown.toggle() } } label: {
                     Label(panelShown ? "Hide Details" : "Show Details", systemImage: "sidebar.right")
                 }
-                .help(panelShown ? "Hide what the picked wish is" : "Show what the picked wish is")
+                .help(panelShown ? "Hide what the picked app is" : "Show what the picked app is")
             } }
         }
         .modifier(ClearToolbar())
@@ -142,6 +144,12 @@ struct WishDesk: View {
         .task { starters = await Task.detached { Starters.bundled.map(DeskList.Fresh.read) }.value }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in lookForDevices() }
         .onChange(of: store.deskFocusRequest) { barFocused = true }
+        // Show Separate App beside a wish: the app it was kept as, picked.
+        .onChange(of: store.deskPickRequest) {
+            guard let id = store.deskPickRequest else { return }
+            picked = id
+            store.deskPickRequest = nil
+        }
         .onDisappear {
             dictation.cancel()
             DeskPick.shared.wish = nil
@@ -162,6 +170,29 @@ struct WishDesk: View {
         }
     }
 
+    @ViewBuilder private var deskList: some View {
+            VStack(alignment: .leading, spacing: 14) {
+                // Above every chat too, so it's seen wherever the person is, not only in the chat that couldn't save.
+                if let trouble = store.saveTrouble {
+                    ChatLook.Banner(banner: SidebarBanner(text: trouble.text, button: Store.SaveTrouble.button, needsYou: true)) {
+                        store.retrySaving()
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                header
+                list.onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { listWidth = $0 }
+            }
+            .padding(.top, Self.top).padding(.horizontal, 20)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            if panelShown, panelFits, let item = items(sections).first(where: { $0.id == current }) {
+                DeskDetail(item: item, kept: sections.kept.contains(item.id), remixes: remixes(of: item)) { open(item, asking: $0) }
+                    .frame(width: Self.panelWidth)
+                    .overlay(alignment: .leading) { Self.separator }
+                    .transition(.move(edge: .trailing))
+            }
+    }
+
+
     /// The person's devices: what a new wish can be for. Settings at the foot. Its first line starts
     /// where the bar does beside it.
     private var sidebar: some View {
@@ -172,6 +203,7 @@ struct WishDesk: View {
                 }
                 .padding(.horizontal, 12).padding(.top, Self.top).padding(.bottom, 20)
             }
+            sentToYou
             HStack(spacing: 4) {
                 SettingsLink {
                     Image(systemName: "gearshape")
@@ -202,6 +234,44 @@ struct WishDesk: View {
         .frame(width: 220)
         .background(Paper.panel)
         .overlay(alignment: .trailing) { Self.separator }
+    }
+
+    /// The ways to what people sent: changes, and ideas from people playing a link, each a line of its own, as quiet as the
+    /// rest of the column, there only once someone has sent some, with how many are new. Each opens at the app with the
+    /// most new, and from either the other is a click away, seen or not.
+    @ViewBuilder private var sentToYou: some View {
+        let wishes = store.wishesWithSuggestions
+        let withIdeas = store.wishesWithIdeas
+        if !wishes.isEmpty {
+            sentLine("Sent to you", symbol: "tray.and.arrow.down", new: store.newSuggestionsInAll, open: store.suggestionsOpen != nil) {
+                store.ideasOpen = nil
+                store.suggestionsOpen = store.suggestionsOpen == nil ? (wishes.max { store.newSuggestions($0) < store.newSuggestions($1) } ?? wishes[0]).id : nil
+            }
+        }
+        if !withIdeas.isEmpty {
+            sentLine("Ideas", symbol: "lightbulb", new: store.newIdeasInAll, open: store.ideasOpen != nil) {
+                store.suggestionsOpen = nil
+                store.ideasOpen = store.ideasOpen == nil ? withIdeas[0].id : nil
+            }
+        }
+    }
+
+    private func sentLine(_ title: String, symbol: String, new: Int, open: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: symbol).font(.system(size: 13))
+                Text(title).font(.system(size: 13))
+                Spacer()
+                if new > 0 { Text("\(new) new").font(.system(size: 12)).foregroundStyle(Paper.muted) }
+            }
+            .foregroundStyle(Paper.ink)
+            .padding(.horizontal, 10).frame(height: 30)
+            .background(Paper.ink.opacity(open ? 0.1 : 0.05), in: RoundedRectangle(cornerRadius: 7))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12).padding(.bottom, 8)
+        .accessibilityLabel(new > 0 ? "\(title), \(new) new" : title)
     }
 
     private var list: some View {
@@ -322,7 +392,7 @@ struct WishDesk: View {
                 Label("Not sure?", systemImage: "lightbulb")
             }
             .buttonStyle(PaperButtonStyle(.outline, height: 40))
-            .help("Show some ideas, or have Lamp help you find your wish")
+            .help("Show some ideas, or have Lamp help you find one")
             .popover(isPresented: $showingIdeas, arrowEdge: .bottom) {
                 DeskIdeas(ideas: ideas, choose: choose, find: { showingIdeas = false; store.findWish() })
                     .padding(20)
@@ -391,8 +461,8 @@ struct WishDesk: View {
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.return, modifiers: .command)
-                .help("Make this wish (Return)")
-                .accessibilityLabel("Make this wish")
+                .help("Make it (Return)")
+                .accessibilityLabel("Make it")
                 .transition(.scale.combined(with: .opacity))
             }
         }
@@ -551,14 +621,14 @@ struct DeskIdeas: View {
                             .font(.system(size: 24, weight: .medium))
                             .foregroundStyle(Color.accentColor)
                             .frame(width: 32, height: 32)
-                        Text("Help me find my wish")
+                        Text("Help me find one")
                             .font(.title3.weight(.semibold))
                             .lineLimit(4, reservesSpace: true)
                     }
                 }
                 .buttonStyle(.plain)
                 .onHover { hovered = $0 ? Self.finder : (hovered == Self.finder ? nil : hovered) }
-                .help("Lamp asks a few questions about your days and writes a wish with you")
+                .help("Lamp asks a few questions about your days and writes it with you")
             }
         }
         .frame(maxWidth: 760)
@@ -620,8 +690,8 @@ struct TalkButton: View {
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: hovered)
-        .help(listening ? "Stop listening" : "Say your wish")
-        .accessibilityLabel(listening ? "Stop listening" : "Say your wish")
+        .help(listening ? "Stop listening" : "Say it")
+        .accessibilityLabel(listening ? "Stop listening" : "Say it")
     }
 
     /// The colors of the wish icon's dusk, going round.
@@ -927,7 +997,7 @@ struct WishDrag: NSViewRepresentable {
     }
 
     /// What a drag hands over: the wish's shared file, or the app itself where an app belongs. The file is made again
-    /// as the drag starts, in the background, and is the one Share… and Copy Wish File hand on: it takes the old one's
+    /// as the drag starts, in the background, and is the one Share… and Copy App File hand on: it takes the old one's
     /// place whole, in one step, so an app given it by this drag or an earlier one finds a file there whenever it
     /// reads it, and dragging again and again leaves one file per wish.
     final class Payload: @unchecked Sendable {
@@ -1397,11 +1467,12 @@ extension Store {
         }
     }
 
-    /// Send Changes Back… from the desk: the wish's chat, with the card that sends them (`ContributeCards`), as the
-    /// chat's Share menu opens it.
+    /// Send Changes Back… from the desk: the wish's chat in front, wherever it is now, with the card that sends them
+    /// (`ContributeCards`) in the chat's place, as the chat's Share menu opens it. A card already open comes to the front
+    /// as it is.
     func sendChangesBack(_ project: LampProject) {
-        open(fromDesk: project)
         ContributeCards.shared.open(project)
+        showChat(project.id)
     }
 
     /// Change… on a wish: its chat beside it in its own window, opening it when it's closed, for a Mac app with

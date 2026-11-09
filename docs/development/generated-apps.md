@@ -52,6 +52,19 @@ stepper takes a number or a step, and what has no action of its own, or isn't li
 is clicked at a point, pixels in the picture. Lamp tells an app built before the list existed by a line of the
 heading in its binary (`Store.screenTextMarker`): such an app is told to be rebuilt when a target is used.
 
+The pictures themselves (`LampRuntime.snapshot`, screenshot.png and up to two more) are the window server's, tried a
+few times in under half a second when it gives none, a clear one or one of one color (`LampRuntime.capture`). A window
+that pictures clear shows nothing and is left out, as are Lamp's own windows over the app (the chat beside it and what it shows over its panel, such as its Share
+popover, `LampRuntime.isChats`; the note pointing at the wand; a change's effect), so the app's window is the first picture. A clear window stays out of
+`windowsOnScreen` until a later picture shows something in it, so the first picture, the screen as text and `use_app`'s
+actions are of the same window; a front window that can't be pictured is never replaced by the one behind it. When the window server gives
+no picture, the app's own drawing (`cacheDisplay`) is used only for a window with nothing drawn outside the app
+(`LampRuntime.drawsElsewhere`: a web page, Metal, video), since it would show such a window without its page or game.
+Otherwise the window is left out and named in capture.txt with why, which Lamp tells the agent
+(`Runtime.missedPictures`) instead of sending a picture that looks like the window but isn't. The windows' titles in
+it go where the pictures go: with pictures kept from the agent, the file is refused (`Privacy.verdict`) and the
+sentence leaves the titles out.
+
 **Showcase mode.** An app opened with `LAMP_SHOWCASE` set to a folder holding a showcase.json is being recorded for
 a reel (`LampShowcase`; "A starter's reel" in the desk guide): it keeps its data in that folder, starting empty
 (LampStore imports any `data/<name>.json` there), LampAI's calls are answered from the script (every route, through
@@ -161,7 +174,10 @@ puts no picture of the window in its place meanwhile: a copy that opens no windo
 until it timed out.
 While Lamp builds a change for a Mac app that's open, smoke in Lamp's stripe colors curls up from the bottom of the app's
 windows, with a faint glow round their edges, and as the change goes in the stripes roll up across them on the slant, covering the window at the middle of the roll (`AppTransition`, drawn by
-`LampTransition` in LampSupport.swift). It starts in `Store.build`,
+`LampTransition` in LampSupport.swift). A web game stands still while it takes a change by running its code again or
+opening its page again; from the page's word that it's doing so (`rerun`, `reloading`, in `PageLive`) until its new code
+draws (`shown`), the stripes roll up its window every few seconds, the window clear between rolls (`AppTransition.turn`, the `turn` phase), and the turn
+under way then finishes as the change lands, so the frame held there never reads as a game that hung. It starts in `Store.build`,
 lands in `reloadInPlace` (or, after a reopen, once the new copy's window is on screen, `landWhenShown`), and fades after `install` otherwise (held for Reload,
 kept open, failed); Lamp renews it while the turn goes on and the app lets it go after 90 seconds unrenewed. The app
 draws it in clear child windows that let clicks through and are left out of its pictures (`windowsOnScreen`), so the
@@ -201,7 +217,9 @@ window's, which asks the app to close the chat (`closeChat`), "Customize" and th
 Share (the file is made by Lamp and handed over whole, `SidebarState.sharing`, since the extension can't read it; sent
 once, so the extension keeps it as it's read, `Link.sharing`, as one lasting file per wish in a folder of its own under
 its caches folder, since Lamp's process draws every wish's chat and one wish's share mustn't remove another's; each share
-replaces it in one step, `SharedCopy`, as Lamp's own Share… does), Agent Details and Delete, then Undo Last Change and Versions.
+replaces it in one step, `SharedCopy`, as Lamp's own Share… does; its popover, `SharePopover`, leads with the wish's link
+(`SidebarToolbar.shareLink`) and sends the link with AirDrop, Messages, Mail or More, or the file when there's no link),
+Agent Details and Delete, then Undo Last Change and Versions.
 A wish that opens anywhere but this Mac alone (a game, a screen, an app for both) has Try On's device button before
 Undo, which stays with it: where it opens, a tick on where Play puts it, and for a game or a screen "… Too" for each
 place it hasn't got. Its choices are one list, `TryOnMenu`, which the desk's menu draws as well (`SidebarState.tryOn`, a
@@ -239,7 +257,14 @@ about unsaved work first: Lamp sends the quit request itself and reads the reply
 waits, with the app in front and "Waiting for … to close…" in the chat. Kept open, the app isn't replaced: the
 chat says so, the build waits like a held icon (`HeldInstalls`) and goes in when the app closes, and a look tells
 the agent that what's on screen isn't its change and `use_app` is refused (`Turn.keptOpen`,
-`Runtime.holdsBuild`); a turn asks the app once. Lamp ends an app itself in one case only: it agreed to quit and
+`Runtime.holdsBuild`); a turn asks the app once. Whatever made the install, the swap itself (`Store.swapIn`)
+asks the kernel last for processes running from inside the installed copy (`RunningFromBundle`), since
+NSWorkspace's list of running apps lags behind a launch: with the app open, or a share extension from it (its sheet
+may be in the person's hands with the app closed), the build is held for its next quit, and the chat's or widget's
+extension left from a copy that quit is ended. Nothing is awaited between that look and the replace. While an install quits and reopens an app (`installingOnMac`)
+nothing else installs it: a wish's turn holds the wish, not the part it installs, so the old copy quitting would
+otherwise let a held install take the part and swap a second copy in under the one just opened, leaving its chat
+refused (its program's path gone). Lamp ends an app itself in one case only: it agreed to quit and
 is still there. One that doesn't answer may be stuck or in the middle of a long save, and from outside the two
 look the same, so Lamp never ends it: a copy that answers Lamp's "still there?" (`LampRuntime` answers on the
 main thread, and says it listens by leaving its process id in its runtime folder) is asked that before it is
@@ -249,11 +274,11 @@ that ends it. A build that waits for an app for both
 goes in only while Try On points at this Mac. Don't add a time limit after which an app is ended anyway: that
 is what lost people's work.
 
-A wish goes on GitHub as a repository on the person's own account (`GitHubRepo`, its card `GitHubRepoCards` and
-`RepoCard`, from the chat's Share menu): the shared file's contents (`Sharing.export`, so the same checks and the same
+A wish goes on GitHub as a repository on the person's own account (`GitHubRepo`), from its link's Release Update
+(`GitHubRelease`, "Releases" in the wishes guide), the one way it goes there: the shared file's contents (`Sharing.export`, so the same checks and the same
 credits chain) unpacked, Lamp's own files for each of the wish's apps beside them (`GitHubRepo.ownedPaths`: the files
 the builder can't delete, laid out as the shared file lays the apps out, `Sharing.layout`; for a page, the app around it,
-`ScreenKit.paths`), the shared file itself, a
+`ScreenKit.paths`), a
 README, an MIT license by choice (never offered when something the wish is based on is share-alike), and for a web game
 or a web app in a public repository its page to play or use, on the `gh-pages` branch (`Staged.Page`, "Publishing a page"
 in the wishes guide). The README promises `zsh build.sh` only for a kind whose script builds
@@ -264,36 +289,58 @@ before changing it: in a public repository, an Open in Lamp button (`GitHubRepo.
 for a wish with one, to lamp.dev's remix link
 (`GitHubRepo.remixLink`, `RemixLink.site`: the repository without a commit, so it's always the latest, and `from=readme`
 for the site's counts); then the wish's ideas (`RemixSuggestions`, a starter's tweaks), each that link with its request.
-A private repository, which Lamp can't fetch without a sign-in, offers the Share Link and the shared file instead; the
-card stages again when a new repository is made private (`setPrivate`). A public repository with no website of its own
-gets the remix link as its website, or its page once it's up (`offerWebsite`, `from=github`); one the person set is left alone. One commit per Put on GitHub, on top of
-what's there (a shallow clone, the tree replaced; unchanged when only the export's own marks differ), never the wish's
-own history, which holds every version and the chat's attachments. The repository is remembered by the wish's instance
+The shared file itself never goes up: the tree is what Lamp opens (`RepoImport`), and a zip beside it would double the
+code and grow the repository by its whole size with every release, since git keeps each one. An update takes away one
+an older Lamp put at the top (it's no hidden file, so the tree replaces it, and its going counts as a change), and Send
+Changes Back takes it away too (`Contribute.removeSharedFile`: only the one named for the wish, or any in a site's
+folder of Lamp's), so a pull request never carries a binary.
+A private repository, which Lamp can't fetch without a sign-in, offers the Share Link and a clone to open instead; the
+card stages again when a new repository is made private (`WishLinkCards.setGitHubPrivate`). A public repository with no website of its own
+gets the remix link as its website, or its page once it's up (`offerWebsite`, `from=github`); one the person set is left alone.
+The first time, the release card's Also put on GitHub (unticked unless the person ticks it) shows what goes up and
+asks what GitHub takes once (public or private, the license, the README's picture: `GitHubRelease.FirstPush`). There
+was a Put on GitHub… of its own under Share; a chat of an older Lamp that still offers it opens Share Link's card
+(`SidebarCommand.repo`), and Lamp tells such a chat the wish is on GitHub (`SidebarToolbar.onGitHub`) so it leaves it
+out. A repository a first push made before failing, with nothing up yet (`GitHubRepo.isUp` false), is gone on with,
+its choices settled. Once the wish is up, as for the person's own repository a wish was opened from (`ownOrigin`), a
+release updates GitHub too, staged and uploaded as the first time with the choices made then (`Repo.license`, `Repo.picture`). One commit per update, on top of
+what's there (a shallow clone, the tree replaced; unchanged when only the export's own marks differ; never over commits
+the wish hasn't brought in, nor undoing a README or other file edited there: Bring In Changes, `BringIn`, in
+[wishes](wishes.md)), never the wish's
+own history, which holds every version and the chat's attachments. Its commits, the page's and Send Changes Back's
+are made as `GitHubRepo.author` says: someone whose git signs commits (`commit.gpgSign`, read where the commit is made, so
+conditional settings for a folder, branch or remote count) gets them as their git makes them, their name, address and
+key, since GitHub verifies a signature only under an address its key names (signed under the private address, it reads
+`bad_email`); everyone else gets their GitHub name and private address, unsigned. A signature that fails, or a commit
+that comes out unsigned, stops it (`GitHubRepo.commit`). The author's and the committer's addresses, which git can set
+apart, are said on the card before anything goes when they aren't the private one: the release card asks in a
+folder set up as each commit's will be (`GitHubRepo.authors`: the repository's branch and remote, the page branch). An
+address the card didn't say, beforehand or as written in the commit, stops it too. The repository is remembered by the wish's instance
 in Lamp's own folder (`GitHub Repositories.json`, with whether it carries the license, which an update keeps to, and where its page
 plays, `Repo.page`). `gh`, the sign-in, the repository name and the page come from `Publish`, which shares them. The file's credits
 name the repository on the chain's last link (`Credits.Remix.url`, `Sharing.export(repository:)`), so a remix opened
 from there links where it came from.
 
 A repository opens in Lamp as a shared file does (`RepoImport`): File → Open from GitHub… takes its address (owner and
-name, with a branch, tag or commit after `/tree/` or `/commit/`; `RepoImport.source`), Import Shared Wish… takes a
+name, with a branch, tag or commit after `/tree/` or `/commit/`; `RepoImport.source`), Import Shared App… takes a
 folder it was cloned into, and a wish's link may name it (`lamp://wish?file=https://github.com/…`, `Store.take(exact:)`).
 The tree is fetched one commit deep with Lamp's own git, confined as every git command of Lamp's is (`Versions.git`, in
 a folder of Lamp's with the network open, never asking for a sign-in), or with no git on the Mac from GitHub's archive
 (`RepoArchive`, below), then copied into an import folder without the
-repository's records (`.git`, builds) and the shared file beside the code, held to a shared file's limits, and read as
+repository's records (`.git`, builds) and any shared file an older Lamp put beside the code, held to a shared file's limits, and read as
 a shared file's contents are (`Sharing.open(unpacked:)`): the same review, the same checks, Lamp's own files written
 afresh and never read from the tree (`Sharing.read` leaves LampSupport.swift and LampScene.swift out of the code, as
-the install does). A folder holding only a shared file opens that file.
+the install does). A folder holding only a shared file (a repository an older Lamp made with no lamp-app.json) opens that file.
 
 A plain site (`StaticSite`: `index.html` at the root, no package.json, Jekyll config or Gemfile to build it first) opens
 the same way, as a web app that's a site (`ScreenKit.isSite`: `layout: site` in its mark, `site` in a shared file's
 manifest): the repository's root is its Web/, it's named after its page's title, and its APP.md says what it is. The
 wish keeps a web app's layout inside, so building, live changes (a page with no Lamp runtime is opened again, not
 swapped in place), Reload and the agent's rules are a web app's, with one rule of its own (`Rules.siteLayout`: keep the
-layout and its own ways of loading what it uses). Put on GitHub lays it out as it came (`StaticSite.layOut`): Web/ at
+layout and its own ways of loading what it uses). On GitHub it's laid out as it came (`StaticSite.layOut`): Web/ at
 the tree's root, so its own README is the repository's and GitHub Pages serves it from main as before (`Staged.site`,
 `Publish.servePage` with the repository's own branch, no page branch and no credit bar over the person's page), and everything
-else (lamp-app.json, credits.json, APP.md, Native.swift, the shared file, Lamp's README and buttons) in one hidden
+else (lamp-app.json, credits.json, APP.md, Native.swift, Lamp's README and buttons) in one hidden
 folder, `.lamp-wish/`, which neither clutters the site's root nor is served by Pages' Jekyll build. None of Lamp's own
 files go up (the Lamp that opens it writes them afresh) but lamp.js, with its license and the repository's name to keep
 its saves under (`LAMP_PAGE_SCOPE`), when the page loads it. Of a site's hidden files only those a web server reads at
@@ -304,12 +351,12 @@ there (`GitHubRepo.ownOrigin`, so its Pages address keeps working; any wish open
 with no license added, and only while GitHub has nothing the wish doesn't: otherwise the card asks for Check for
 Updates… first. The upload checks it again as it clones (`upload`'s `expected`: the commit the wish was opened at, or
 the one Lamp last pushed for any wish it keeps a record of), since a commit pushed on top of a newer tip would quietly
-undo what's there. A site keeps every folder it checked in, a `build/` or `node_modules/` its page loads included. Any Put on GitHub over a repository keeps the hidden files and folders at its top that a wish never
+undo what's there. A site keeps every folder it checked in, a `build/` or `node_modules/` its page loads included. Any push over a repository keeps the hidden files and folders at its top that a wish never
 carries (`.github/workflows`, `.gitignore`), with the tree's own over them file by file. The chain's last link takes the repository's
 address when it has none (a repository put up before Lamp wrote it, or a folder's git remote, `RepoImport.repository`).
 The person's folder is only read, never changed or removed. The chain's last link also takes the commit the tree is
 at (`Credits.Remix.commit`, from the clone's HEAD, `RepoImport.repository`): the commit of its repository the wish
-has, which an update is merged from and a contribution goes back on top of. Put on GitHub keeps the commit it pushed
+has, which an update is merged from (a contribution goes on the repository's latest instead, below). Lamp keeps the commit it pushed
 in the wish's record (`GitHubRepo.Repo.commit`), and an export names the kept repository and commit on the chain when
 its caller names no place (`Sharing.export`), so a file shared from a wish that's on GitHub says where it lives too.
 A wish opened from one repository and put on another gets a second link for the new place (`Credits.remixed`,
@@ -372,11 +419,11 @@ done. lampify's work is all Lamp's, so it asks no approval, and it never runs wh
   `Sharing.export`, `Sharing.open`), and sharing is refused while one is missing (`ShareCheck`).
 - **The shape** (`GitHubProjects.shape`): the app's structure (`make_app_for`), its line (`Sharing.description`, the
   wish's or its root app's) and an APP.md naming what it's based on are looked for in the wish; then the wish is made as
-  Put on GitHub… would put it up (`GitHubRepo.stage` with no repository: lamp-app.json from the shared file's manifest,
+  a release would put it on GitHub (`GitHubRepo.stage` with no repository: lamp-app.json from the shared file's manifest,
   credits.json, the icon, the license files, Lamp's own files, README) and opened again as Open from GitHub… does
   (`RepoImport.open`). Whatever sharing refuses (a license missing, a key in the code) is reported as something still
   missing, with the rest. The tree is kept in `.lamp/repository` for a look; nothing goes anywhere until the person
-  chooses Put on GitHub….
+  ticks Also put on GitHub on its link's Release Update.
 - **A Lamp wish on GitHub** isn't rebuilt: the skill, and lampify when it's called on one, send the person to File →
   Open from GitHub….
 
@@ -394,16 +441,30 @@ finished with no error (`Store.settleUpdate`) the copy takes the update's commit
 (`Store.openPreparedReview`: `Sharing.review` of the copy as exported, `PendingImport.prepared`). Update puts the copy's
 files in place of the wish's through the ordinary update path, never `mergeUpdate`, since the copy already has the
 wish's changes; the wish keeps its own credits with the commit moved on, and the copy is deleted. If the wish changed
-since the copy was made (`AppUpdates.isStale`), Update offers to prepare it again instead. Keep Both keeps the copy as an
-app of its own, renamed after the wish; Cancel deletes it. Review Update… while a copy exists shows its chat, or its
-review once it's ready. A base that's no longer on GitHub fails the fetch rather than making up a change. File → Open
+since the copy was made (`AppUpdates.isStale`), Update This App offers to prepare it again instead. Keep as Separate App
+keeps the copy as an app of its own, renamed after the wish; Cancel deletes it. Review Update… while a copy exists shows
+its chat, or its review once it's ready. Beside the wish, the desk says how it's going with one button to the right chat
+(`AppUpdates.deskLine`): Updating… and Your update needs a decision. go to the copy's chat, Update applied. and
+Preparing your changes… (a Send Changes Back card working out what goes) to the wish's, and Separate app added. picks
+the app it was kept as. What came of the update (`Store.updateOutcomes`) lasts until the wish is checked or reviewed
+again, and isn't kept across launches. A base that's no longer on GitHub fails the fetch rather than making up a change. File → Open
 from GitHub… on a project that isn't a wish offers Make App, a new wish whose first request is to make it into one.
+
+A shared app's review is one piece of work Lamp owns from the click to the answer (`Store.ReviewWork`): fetching the
+update, unpacking it, reading its code (`Sharing.inspect`, off the main actor) and asking the AI, in one task that Cancel,
+a newer review and the deadline (`Store.reviewDeadline`) all stop, the fetch's git and an engine answering for the AI included (`RepoImport.clone`, `AppAI.viaEngine`); the review never waits for either to exit. A file opened during the welcome waits for it on its own before it takes the review, so files opened together are each kept (`WaitingImport`). A second
+Review Update… on the same wish while it runs is the same review; a stopped review's fetch never opens a sheet (`owns`).
+Its stage shows where it was asked for: beside the wish on the desk ("Fetching update…", with Cancel) until its sheet is
+up, then on the sheet. A reading that didn't finish is never a review: the sheet, or the desk line, says why with Try
+Again, and Update stays off. Try Again on the sheet reads the same package again there (`Store.retryReview`), rather than
+fetching it anew, so its progress and any second failure stay on the sheet. Out of time while the AI is asked, the sheet shows what Lamp's own reading found and says the
+AI's check didn't finish.
 
 A wish whose chain names where it came from is updated as it was opened
 (Review Update… in the desk's menu, `Store.reviewUpdate`; a starter's copy too, "Desk"): the repository fetched again and opened as any is,
-which lands on Update or Keep Both for that wish (`Store.importRepository(updating:)`, carried through a review that
+which lands on Update or Keep as Separate App for that wish (`Store.importRepository(updating:)`, carried through a review that
 waits for the welcome, `Store.copy(of:among:updating:)`: whatever identity the repository's file carries, so a starter's
-copy or a second copy made with Keep Both is the one updated). A wish unchanged since it arrived
+copy or a second copy made with Keep as Separate App is the one updated). A wish unchanged since it arrived
 (`Store.changedSinceArrival`: its files are the last version Lamp saved as an arrival, and nothing is unsaved; looked
 at again once the update owns the wish, since a turn may have run while the review waited) takes the new code in
 place. One changed here is merged by git (`Upstream.merge`, from `Store.mergeUpdate`), never replaced: the wish's own
@@ -413,7 +474,9 @@ repository is (`RepoImport.open`) and staged as the import would install it, and
 (`Upstream.stage`: the code the review read, an Android app's moved into this Mac's package as `AndroidFiles.install`
 moves it, the app's files, its notes and declarations, never Lamp's own files or the icon's pictures), each a tree in
 the wish's git made in an index of the merge's own (`.lamp/merge`), the second committed on top of the first at
-`refs/lamp/upstream`. `git merge-tree` merges the wish's files, the base and that commit three ways and the result
+`refs/lamp/upstream`, and kept as well at `refs/lamp/snapshot/<commit>` for the commit the credits move on to with it
+(`Upstream.snapshot`, with the manifest and credits.json the update came with beside it), which Send Changes Back
+measures the wish's own changes from. `git merge-tree` merges the wish's files, the base and that commit three ways and the result
 goes into the index and the files (`git read-tree --reset -u`), with the version saved first so Versions can bring the
 wish back. What changed only upstream or only here is in place with no agent; the icon's pictures follow when the
 icon changed upstream, for the design as git merged it (`Sharing.installArtwork`, never the file's design in place of
@@ -438,15 +501,67 @@ carries it, `Upstream.filteredTree`); else nothing. A part the package brings th
 kept tree (staged as the app it will be) but not in what's merged. The review sheet says so (`ImportReviewCard.changedHere`, "Already here,
 changed here" in the gallery).
 
-A wish that came from a repository can send its changes back: Send Changes Back… in the chat's Share menu
+A wish that came from a repository can send its changes back: Send Changes Back… in the chat's Share popover
 (`SidebarToolbar.canContribute`, `Contribute`, its card `ContributeCards` and `ContributeCard`, shaped as Put on
-GitHub's). It stages the wish as Put on GitHub does (`GitHubRepo.stage`: the same checks for licenses and keys), forks
-the repository to the person's account with `gh` when they have no fork (`Contribute.fork`), fetches the recorded
-commit into a folder of Lamp's, puts the staged tree over it with the repository's README and license left as its
-owner wrote them (read first) and its credits.json keeping its chain and taking only what the wish newly uses, commits that once in the person's name,
-pushes it to a branch of the fork and opens a pull request on the repository (`Contribute.send`). The request's text
-(`Contribute.summary`) is the wish's line, the names its versions since it arrived were given (never the requests
-themselves, never the chat) and the files changed. The person's own repository is refused (Put on GitHub updates it).
+GitHub's). What goes is only what the wish changed, on top of where the repository is now, worked out before the card
+offers to send (`Contribute.prepare`) from the saved version the card shows, which must still be the wish's when it
+goes (`Contribute.sendableVersion`: nothing unsaved but Lamp's own files, each app's in the folder it's in, which a
+rebuild for a newer Lamp writes afresh without saving a version and which never go). The change is measured in the
+wish's own history, never from the commit its credits name (a shared file names the commit before the one it went up
+in): from the snapshot of the last update it took in, kept by the commit its credits moved on to (`Upstream.snapshot`,
+so an update undone isn't counted), else the version it arrived as (`Contribute.base`), to the version sent, each side as a shared file carries it (`Upstream.filteredTree`: never Lamp's
+own files, in each of the wish's apps), and only files the export of that version carries, as the export writes them
+(the same checks for licenses and keys, and `capabilities.json` written from what passed its checks, never the
+version's own bytes); a settings file Lamp writes (`icon.json`, `capabilities.json`) counts only when what it says
+changed (`Contribute.change`). A plain site's paths go back to its repository's layout (`StaticSite.layOut`: the page
+at the root, Lamp's files in `.lamp-wish/`). The repository's latest commit is fetched into a folder of Lamp's with the person's
+sign-in, and git replays the change on it three ways (`Contribute.replay`, `git merge-tree` on commits made of each
+side, which a git from before merge-tree took trees needs): files the wish didn't
+touch stay as the owner has them, and a file both changed in the same place stops it (`Contribute.Blocked`). The card
+then says the reason Lamp can establish from the commit the version's credits name against the repository's latest
+(`ContributeBlock`): the repository moved since, so Review Update… (the latest is then known, `Store.knowUpdate`, so the
+menu says Review Update… too) puts the card aside and reviews the repository's update (a starter's copy too, rather
+than the starter this Lamp ships, `reviewUpdate(ofRepository:)`), and once an update is in the wish
+(`Store.updateApplied`: put in place, merged cleanly, or merged with conflicts once the agent's turn settling them
+finishes well, `Store.settleMergedUpdate`) the card is prepared again, never sent; the credits name no commit, or nothing says what the
+change is measured from, so Check Update History (`Contribute.recover`) fetches the commit the credits name with the
+person's sign-in, keeps it as that commit's snapshot as an update taken in would (`Upstream.keepSnapshot`, in indexes of its own so an
+update merging meanwhile keeps its own) and prepares
+the card again, or says it couldn't; or the repository is still at that commit and the change doesn't combine with it,
+with Try Again. A sidebar from before these cards gets the reason as a refusal with Done. An Android app's touched files go back to the repository's package (its build file's namespace): their paths,
+the package in them, and the build file without the id Lamp set for this Mac. The manifest keeps the repository's
+identity, name and date and takes the line, kind, device and apps wherever the wish changed them since its base
+(`Contribute.manifest`): measured from the manifest kept with the last update's snapshot or the one the wish last
+arrived with (`Sharing.arrivedManifest`), else, for a wish that arrived before Lamp kept it, the repository's at the
+commit its credits name; a key the repository also changed, differently, stops it like a file does; credits.json keeps its chain and takes the work the export credits that the base didn't (the base's credits.json:
+the arrival version's, or the one kept with the update's snapshot, never Lamp's running record, which takes in work
+added here too); the
+icon's pictures go when its design changed; and a shared file an older Lamp put beside the code is taken away
+(`Contribute.removeSharedFile`), only once some file of the repository's really changed, so a change it already has is
+nothing to send. What would be pushed is
+checked for keys once more as it is (`ShareCheck.secrets`). The fork is made with `gh` when
+the person has none (`Contribute.fork`), and the one commit is pushed to a branch of it and a pull request opened on
+the repository (`Contribute.send`). The request's text (`Contribute.summary`) is the wish's line, the names its
+versions since it arrived were given (never the requests themselves, never the chat) and the files changed; it's
+written before any screenshot exists, so a picture never goes into it. The card can put a screenshot of the app in the
+request: the running app's own window, asked of it when the card opens and on Retake as a link's card retakes its
+picture (`Runtime.requestScreenshots`, `Runtime.screenshots(of:since:)`: only a picture taken from then on, never an
+older one or the desktop), its bytes copied into the card (`ContributeCards.Screenshot`) so the app writing a new one
+changes nothing. It goes only when Include Screenshot is ticked, which starts cleared and is cleared again by Retake, and
+only when the chat sends the digest of the picture it showed (`SidebarContributeCommand.sendShowing`,
+`ContributeCards.authorized`); a chat from before wire 15 never sends one. The card says the picture includes everything
+visible in it, and who sees it: anyone for a public fork, people with access to it for a private one. It goes on a
+branch of the fork of its own (`lamp/screenshots/<submission>`, `Prepared.screenshotBranch`), as a commit with no parent
+holding only `screenshot.png`, made through `GitHubRepo.commit` (signed as the person's git signs, under the address the
+card showed), so it's never in the request's changes, and is kept after the request closes so the picture still shows.
+The request embeds it by a path pinned to that commit and resolved from the request's page
+(`Contribute.screenshotMarkdown`), with no token or expiring address. If it can't be uploaded nothing more goes, and the
+card offers Retry Upload or Send Without Screenshot. Every try at one submission (`Prepared.submission`) uses the same
+branches, fork and screenshot commit (`Contribute.Progress`), and looks for a request from its branch before opening one
+(`Contribute.existingRequest`), so a request never opens twice; the screenshot can't change once a send has begun. The person's own repository is refused (a release on its link updates it, `GitHubRelease`). The request's text tells
+its owner to open the app in Lamp, where the desk shows the request and brings it in (`SuggestedChanges`, in
+[wishes](wishes.md)); one merged on GitHub instead makes their Share Link card offer Bring In Changes before their next
+release (`BringIn`).
 
 On a Mac without Lamp (an app copied over, or kept after Lamp was removed), the wand is on all the same
 (`LampMagic.isOn` when `LampMagic.lampInstalled` is false) and the chat beside the app is the sidebar extension with
@@ -462,12 +577,12 @@ request that names the app, since without either Lamp makes its own version. The
 the helper model after a change lands (`Store`, beside the version's title), kept in `.lamp/suggestions.json` with a
 stamp of the name, line and APP.md, and put into the extension's Info.plist as the app is installed (`Sidebar.install`:
 `LampSuggestions`, with `LampAbout` and `LampShareLink`); the panel has three of its own until then
-(`RemixOffer.fallback`). A wish that's been Put on GitHub also has its repository and the commit last pushed there
+(`RemixOffer.fallback`). A wish that's on GitHub also has its repository and the commit last pushed there
 (`LampRepository`, `LampCommit`), while the repository is public and holds this version (`GitHubRepo.remixOrigin`, by the app's wish for an app in
 a folder of its own; a push refreshes every app of the wish), so
 the panel's request goes with them and Lamp starts from a copy of this exact wish; a
 starter's copy doesn't name the starter, since it may have been changed. When suggestions arrive after an install, a
-Share Link is made or taken down, or Put on GitHub pushes a new commit, the installed
+Share Link is made or taken down, or a release pushes a new commit to GitHub, the installed
 copy is made again from the build on disk and signed as before (`Store.refreshInstalled`: now if the app isn't open,
 else at its next quit), so a copy taken off this Mac carries them. On a Mac with Lamp, a request that came with a wish's
 link goes with the exact wish through a link of Lamp's own (`lamp://wish?file=…&text=…`, `exactWishLink` in
@@ -489,6 +604,13 @@ none. A change that goes into the open app (`LiveReload`, `PageLive`) installs n
 (`LampAbout` in LampSupport, through `LampCommands`) asks Lamp for the page as it is now (`/app/credits`) and shows that,
 and the bundle's page only when Lamp doesn't answer within a moment. Only `Credits.basis` is "Based on", there, in the README and the credit
 bar; everything else, and a library in a wish with no basis, is "Uses".
+
+**What's New…** sits under the About command in a Mac app's menu once its maker has released a version with something
+to say (`LampWhatsNew`): the lines Lamp wrote for each release of its link, newest first, as the link's page shows them
+("Releases" in the wishes guide). Like the credits, it asks Lamp for the list as it is now (`/app/releases`) and falls
+back to the copy written beside Credits.html as the app is installed (`Releases.json`), whose being there is what puts
+the item in the menu; a release refreshes the installed copy (`refreshInstalled`), so the item shows from the app's next
+launch.
 
 `capabilities.json` at an app's root is where the agent declares what the app needs beyond its code
 (`Template.Capabilities`): for an iPhone app the entitlements and background work described above, for a Mac

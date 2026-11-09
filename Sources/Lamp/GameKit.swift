@@ -388,7 +388,7 @@ enum GameKit {
 
     static func withoutWish(page text: String) -> String {
         var text = text.replacingOccurrences(of: pageWishLine, with: "")
-        if let start = text.range(of: "// MARK: - The wish's other apps\n"),
+        if let start = text.range(of: "// MARK: - The project's other apps\n"),
            let end = text.range(of: "// MARK: - The page's log\n", range: start.upperBound..<text.endIndex) {
             text.removeSubrange(start.lowerBound..<end.lowerBound)
         }
@@ -396,7 +396,7 @@ enum GameKit {
     }
 
     private static let pageWishLine = """
-            configuration.userContentController.add(LampPageWish(scheme: scheme), contentWorld: .page, name: "lampWish") // the wish's other apps
+            configuration.userContentController.add(LampPageWish(scheme: scheme), contentWorld: .page, name: "lampWish") // the project's other apps
 
     """
 
@@ -419,6 +419,48 @@ enum GameKit {
     /// for the page's import map.
     static let sourceFolder = "src"
     static let compiledFolder = "\(webFolder)/app"
+
+    /// What a game's Mac binary is compiled from: its Swift, Package.swift and build.sh, and the developer tools that compile
+    /// it. Lamp remembers it at each Mac build that succeeds (`Runtime.markSwiftBuilt`), so a step that changed only the
+    /// page has build.sh copy the binary from then (`LAMP_SWIFT_BUILT`) rather than run swift build for nothing. Nil when
+    /// which version of the tools compiles it can't be told: then it's compiled every time, as before.
+    static func swiftStamp(_ project: LampProject) -> String? {
+        var hasher = SHA256()
+        for name in ["Package.swift", "build.sh"] {
+            hasher.update(data: Data(name.utf8))
+            hasher.update(data: AppFile.read(project.dir.appendingPathComponent(name), in: project) ?? Data())
+        }
+        let root = project.dir.appendingPathComponent("Sources")
+        let files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []).sorted { $0.path < $1.path }
+        for file in files {
+            hasher.update(data: Data(file.path.utf8))
+            hasher.update(data: AppFile.read(file, in: project) ?? Data())
+        }
+        // Which tools, and which version of them, since an update in place keeps the path: an Xcode's version.plist, or for
+        // the Command Line Tools, which have none, their compiler and each SDK's settings as they are on disk.
+        let folders = Sandbox.developerFolders()
+        guard !folders.isEmpty else { return nil }
+        for folder in folders {
+            let root = URL(fileURLWithPath: folder)
+            hasher.update(data: Data(folder.utf8))
+            if let version = try? Data(contentsOf: root.appendingPathComponent("Contents/version.plist")) {
+                hasher.update(data: version)
+                continue
+            }
+            let sdks = root.appendingPathComponent("SDKs")
+            let marks = [root.appendingPathComponent("usr/bin/swift-frontend")]
+                + ((try? FileManager.default.contentsOfDirectory(atPath: sdks.path)) ?? []).sorted().map { sdks.appendingPathComponent($0).appendingPathComponent("SDKSettings.json") }
+            var known = false
+            for mark in marks {
+                let values = try? mark.resolvingSymlinksInPath().resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                guard let size = values?.fileSize, let date = values?.contentModificationDate else { continue }
+                hasher.update(data: Data("\(mark.path) \(size) \(date.timeIntervalSince1970)".utf8))
+                known = true
+            }
+            guard known else { return nil }
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
 
     /// What src/ holds, to tell when it changed while it was being bundled. Nil for a game without it.
     static func sourceStamp(_ project: LampProject) -> String? {
@@ -454,7 +496,13 @@ enum GameKit {
                     && !path.hasPrefix("rapier/") && !(path.hasPrefix("lamp") && !path.contains("/"))
             }.sorted()
         guard !files.isEmpty else { return nil }
-        if modules, GameKit.isGame(project), let strict = strictProblem(in: files, of: web, project: project) { return strict }
+        // Each file is checked on its own, so one that passed and hasn't changed since passes again: a step checks only
+        // what the agent saved, not a data module tens of megabytes big at every change.
+        let question = "parses " + folder + (modules && GameKit.isGame(project) ? " strict" : "")
+        let stamps = PageScan.stamps(files.map { web.appendingPathComponent($0) })
+        let unchecked = files.filter { !PageScan.passed(web.appendingPathComponent($0), stamp: stamps[web.appendingPathComponent($0)], asking: question) }
+        guard !unchecked.isEmpty else { return nil }
+        if modules, GameKit.isGame(project), let strict = strictProblem(in: unchecked, of: web, project: project) { return strict }
         // Bun reads settings from every folder above where it runs, which the sandbox closes in the person's folders:
         // it runs in a scratch folder, reading the page's files by their paths.
         let scratch = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("lamp-check-\(project.id)-\(UUID().uuidString.prefix(8))")
@@ -465,9 +513,10 @@ enum GameKit {
         } catch { return nil }
         var said: [String] = []
         let command = "cd \"$LAMP_SCRATCH\" && BUN_BE_BUN=1 \(Sandbox.quoted(bun.path)) check.js \"$LAMP_WEB\" "
-            + files.map(Sandbox.quoted).joined(separator: " ")
+            + unchecked.map(Sandbox.quoted).joined(separator: " ")
         let status = await Sandbox.run(command, for: project, cwd: project.dir, env: ["LAMP_SCRATCH": scratch.path, "LAMP_WEB": web.path],
                                        opening: [scratch.path], reading: [bun.deletingLastPathComponent().path]) { said.append($0) }
+        if status == 0 { PageScan.pass(stamps.filter { unchecked.map(web.appendingPathComponent).contains($0.key) }, asking: question) }
         // A check that couldn't run says nothing of the code.
         guard status == 1 else { return nil }
         return said.first { !$0.isEmpty } ?? "a module doesn't parse"
@@ -741,30 +790,33 @@ enum GameKit {
     /// open yet, and its first requested edit is when it adopts this.
     static func unregistered(_ project: LampProject) -> [String] {
         guard isGame(project), engine(project) == .web, !ownsLoop(project) else { return [] }
-        let code = sourceText(project)
-        func has(_ pattern: String) -> Bool { code.range(of: pattern, options: .regularExpression) != nil }
-        let flat = has("from\\s*['\"]\\./lamp-phaser\\.js['\"]")
+        let files = sourceFiles(project)
+        // Each pattern is looked for file by file, which finds what it would in the files joined: none spans two.
+        // `needing`: the plain text each pattern can't match without.
+        func has(_ pattern: String, needing words: [String]) -> Bool {
+            PageScan.any(files, in: project, asking: pattern, needing: words) { $0.range(of: pattern, options: .regularExpression) != nil }
+        }
+        let flat = has("from\\s*['\"]\\./lamp-phaser\\.js['\"]", needing: ["lamp-phaser.js"])
         var left: [String] = []
-        if !flat, !has("\\.renderer\\(\\s*(async|\\(|[A-Za-z_$])") && !has("\\.keep\\(\\s*['\"]renderer['\"]") { left.append("its renderer (live.renderer)") }
-        if !flat, !has("\\.camera\\(\\s*['\"]") && !has("\\.keep\\(\\s*['\"][^'\"]*[Cc]amera") { left.append("its camera (live.camera)") }
-        if !has("\\.state\\(\\s*['\"]") && !(has("\\bsnapshot\\b") && has("\\b(restore|pendingRestore)\\b")) { left.append(unregisteredState) }
+        if !flat, !has("\\.renderer\\(\\s*(async|\\(|[A-Za-z_$])", needing: [".renderer("]) && !has("\\.keep\\(\\s*['\"]renderer['\"]", needing: [".keep("]) { left.append("its renderer (live.renderer)") }
+        if !flat, !has("\\.camera\\(\\s*['\"]", needing: [".camera("]) && !has("\\.keep\\(\\s*['\"][^'\"]*[Cc]amera", needing: [".keep("]) { left.append("its camera (live.camera)") }
+        if !has("\\.state\\(\\s*['\"]", needing: [".state("]) && !(has("\\bsnapshot\\b", needing: ["snapshot"]) && has("\\b(restore|pendingRestore)\\b", needing: ["restore", "Restore"])) { left.append(unregisteredState) }
         return left
     }
 
     /// The game's own code: its modules in Web/ or its TypeScript in src/, without Lamp's files or what's bundled.
-    private static func sourceText(_ project: LampProject) -> String {
-        var text = ""
+    private static func sourceFiles(_ project: LampProject) -> [URL] {
+        var files: [URL] = []
         for folder in [webFolder, "src"] {
             let root = project.dir.appendingPathComponent(folder)
             for name in ((try? FileManager.default.subpathsOfDirectory(atPath: root.path)) ?? []).sorted()
             where name.hasSuffix(".js") || name.hasSuffix(".mjs") || name.hasSuffix(".ts") {
                 let first = name.split(separator: "/").first.map(String.init) ?? name
                 if ["three", "rapier", "phaser", "app"].contains(first) || first.hasPrefix("lamp") { continue }
-                text += AppFile.text(root.appendingPathComponent(name), in: project) ?? ""
-                text += "\n"
+                files.append(root.appendingPathComponent(name))
             }
         }
-        return text
+        return files
     }
 
     /// Goes with a request: what isn't registered yet, before the agent changes the game, which may be a part of the wish.
@@ -930,8 +982,15 @@ enum GameKit {
     PLAYER="${LAMP_PLAYER:-}"
     [[ "$PLACE" == "ios" ]] && PLAYER=""
     if [[ -z "$PLAYER" ]]; then
-      BIN="$(swift build "${FLAGS[@]}" --show-bin-path)/{{EXE}}"
-      swift build "${FLAGS[@]}" 2>&1
+      # Lamp says the Swift and the tools are as they were at its last Mac build (LAMP_SWIFT_BUILT, a change of the page
+      # alone): the binary that build made, where it said it was, rather than a second or two of swift build doing nothing.
+      if [[ "$PLACE" != "ios" && -n "${LAMP_SWIFT_BUILT:-}" && -f .build/lamp-mac-bin ]] && BIN="$(<.build/lamp-mac-bin)" && [[ -x "$BIN" ]]; then
+        :
+      else
+        BIN="$(swift build "${FLAGS[@]}" --show-bin-path)/{{EXE}}"
+        swift build "${FLAGS[@]}" 2>&1
+        [[ "$PLACE" == "ios" ]] || print -r -- "$BIN" > .build/lamp-mac-bin
+      fi
     fi
     rm -rf "$APP"
     if [[ "$PLACE" == "ios" ]]; then
@@ -1046,10 +1105,12 @@ enum GameKit {
                                             "menu": 1 << 6, "view": 1 << 7, "up": 1 << 8, "down": 1 << 9, "left": 1 << 10,
                                             "right": 1 << 11, "ls": 1 << 12, "rs": 1 << 13]
 
-    /// `use_app`'s controller moves for a game in its window on this Mac, as the actions Lamp's driver in the app carries
-    /// out (`LampDriver`, with the game's page holding the controller: LampPage.swift, lamp-game.js's "Lamp's hands on
-    /// the controller"): each `stick` or `button` held for its seconds, at most ten as a Mac app's key is, and let go
-    /// before the next; `wait`. Or why they can't be. Each move's words say what it did.
+    /// `use_app`'s actions for a game in its window on this Mac, as the actions Lamp's driver in the app carries out
+    /// (`LampDriver`, with the game's page holding the controller: LampPage.swift, lamp-game.js's "Lamp's hands on the
+    /// controller"): each `stick` or `button` held for its seconds, at most ten as a Mac app's key is, and let go before
+    /// the next; `wait`; and a click, double-click or typing on what the game's page shows (a menu's button, a mode
+    /// switch, a name field), marked `page` so the driver carries it out in the page and nowhere else. Or why they can't
+    /// be. Each move's words say what it did.
     static func controls(for actions: [[String: Any]]) -> (actions: [[String: Any]], problem: String?) {
         var moves: [[String: Any]] = []
         for action in actions {
@@ -1063,6 +1124,15 @@ enum GameKit {
             }
             var words: String
             switch kind {
+            case "click", "double_click", "type":
+                moves.append(action.merging(["page": true]) { $1 })
+                continue
+            case "key":
+                // A key made by Lamp reaches the page as a script's, which the runtime's keyboard (the first player's
+                // controller) never reads, and a real key would be taken for the person's own play.
+                return (moves, "A game's keys are its controller's here: hold `button` (\((buttons.keys.sorted() + ["lt", "rt"]).joined(separator: ", "))) "
+                    + "or move a `stick` for what a key does in play. A button on the game's screen (a menu, a mode switch) is clicked by its id "
+                    + "from the screen as text.")
             case "wait":
                 moves.append(["action": "wait", "amount": seconds])
                 continue
@@ -1085,7 +1155,7 @@ enum GameKit {
                 guard press(key) else { return (moves, "\(key) isn't a button: \((buttons.keys.sorted() + ["lt", "rt"]).joined(separator: ", ")).") }
                 words = "held \(key.uppercased()) for \(seconds.formatted()) s"
             default:
-                return (moves, "A game takes `stick`, `button` and `wait`.")
+                return (moves, "A game takes `stick`, `button` and `wait`, and `click`, `double_click` and `type` on what its screen shows.")
             }
             moves.append(["action": kind, "amount": seconds, "controller": pad, "text": words])
         }
@@ -1156,7 +1226,7 @@ extension Agent.Rules {
     /// skills that one has it read: the web-game skill whole, which saves the turn it would take to open it, and only
     /// the rules a first game needs. A game at home elsewhere, and every later request, has the full rules.
     static func newMacGame(in folder: String, guide: String) -> String {
-        let rules = ["- Your tools and shell start in the wish's folder: every file of this game is under \(folder)/. Only the wish's description is there itself, in \(AppDescription.file), with `write`.\n" + newMacGameEdit, guide + "\n", Agent.Rules.pageNative + "\n", Agent.Rules.gameBudget, Agent.Rules.gameWebAssets, Agent.Rules.macWebGameTry]
+        let rules = ["- Your tools and shell start in the project's folder: every file of this game is under \(folder)/. Only the project's description is there itself, in \(AppDescription.file), with `write`.\n" + newMacGameEdit, guide + "\n", Agent.Rules.pageNative + "\n", Agent.Rules.gameBudget, Agent.Rules.gameWebAssets, Agent.Rules.macWebGameTry]
         return (Agent.Rules.partHeader("a game drawn in a page in Web/ on Lamp's game runtime, at home on the Mac", folder: folder) + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac")
@@ -1196,30 +1266,30 @@ extension Agent.Rules {
     static func placesAmongApps(_ word: String, verb: String) -> String {
         """
 
-        - This wish has other apps beside the \(word). Where the \(word) is \(verb) is make_app_for's `devices` for it, \
-        with its folder in `app` and `made` "web"; the wish's other apps stay as they are, and one is taken away only with remove_app.
+        - This project has other apps beside the \(word). Where the \(word) is \(verb) is make_app_for's `devices` for it, \
+        with its folder in `app` and `made` "web"; the project's other apps stay as they are, and one is taken away only with remove_app.
         """
     }
 
     /// For a wish with a game beside other apps: how its places are given, and how it reaches the others.
     static let gameAmongApps = placesAmongApps("game", verb: "played") + """
 
-    - The game reaches the wish's other apps with `Lamp.wish` in Web/lamp.js, the same block a TV app's page has: \
-    messages, shared values and files, so another app of the wish can send it moves or things to play with, or show \
+    - The game reaches the project's other apps with `Lamp.wish` in Web/lamp.js, the same block a TV app's page has: \
+    messages, shared values and files, so another app of the project can send it moves or things to play with, or show \
     its score. That works wherever it's played: the Mac, an iPhone or an iPad, Android and the Xbox. Its players play with a controller, the keyboard or the touch controls Lamp draws, and \
-    phones join as players from its Phone/ page (`Lamp.controllers`); the wish's other apps send it messages rather than \
+    phones join as players from its Phone/ page (`Lamp.controllers`); the project's other apps send it messages rather than \
     joining as players.
     """
 
     /// For a wish with a screen beside other apps: how its places are given, and how it reaches the others.
     static let screenAmongApps = placesAmongApps("screen", verb: "shown") + """
 
-    - The screen reaches the wish's other apps with `Lamp.wish` in Web/lamp.js, as a TV app does: messages, shared \
+    - The screen reaches the project's other apps with `Lamp.wish` in Web/lamp.js, as a TV app does: messages, shared \
     values and files, wherever it's shown, the Xbox included. Its window on this Mac is one of them; Lamp's preview \
     never is while it holds a copy of that window's data, and otherwise only when the screen is shown there, so what \
     another app sends shows where the screen is shown. What every place shows (a list, the calendar, photos) goes in \
     `LampStore.shared` and `LampStore.sharedFiles`, kept the same on every copy of the screen (and with `{ wish: true }` \
-    in every app of the wish), with a copy that can read the calendar or the album (on the Mac, an iPhone or an iPad, \
+    in every app of the project), with a copy that can read the calendar or the album (on the Mac, an iPhone or an iPad, \
     through `LampNative`) publishing it for the others.
     """
 
@@ -1263,9 +1333,9 @@ extension Agent.Rules {
     builds by itself when you look and, at the end of your turn, opens the game where Try On points (the Mac, a \
     simulator, an Android emulator or device, a TV or the Xbox), so don't run a build, a server or a browser yourself, \
     and leave .lamp/ alone. Where else it's played is the person's to ask for: when they want it somewhere else, call \
-    make_app_for with the game's folder in `app` ("." when it's the wish's own folder), `kind` "game", `made` "web" and \
+    make_app_for with the game's folder in `app` ("." when it's the project's own folder), `kind` "game", `made` "web" and \
     `devices` every device it's to be played on ("mac", "iphone", "android", "android-tv", "tv", "xbox-one"…: a page \
-    goes wherever the table of devices gives a web host); it stays the same game, and the wish's other apps stay as they are.
+    goes wherever the table of devices gives a web host); it stays the same game, and the project's other apps stay as they are.
     \(pageCopies)
     """ }
 
@@ -1448,6 +1518,16 @@ extension Agent.Rules {
         gamePlaces(project, xbox: project.openPlaces.contains(.device) ? GameKit.xboxModel(for: project) : nil)
     }
 
+    /// A web game's budget on a Series X or S. Its web view prepares each draw on the console's processor, which a
+    /// Series S has nearly as fast as a Series X, so the draws are the limit there, not the picture: a city of about 1,000
+    /// draws a frame with a two-cascade shadow map comes to about 30 frames a second there, the shadows about 40% of it.
+    static func xboxWebBudget(triangles: String) -> String {
+        "under about 500 draws a frame, counting each shadow pass (a shadow map draws again everything that casts into it, "
+            + "a cascaded one once per cascade), and \(triangles) triangles (many copies of one shape as one instanced mesh, "
+            + "nothing far off drawn), textures at most 2048 px, a shadow map only when it's drawn again rarely (as the player "
+            + "moves some meters, not every frame), split screen half that for each view"
+    }
+
     static func gamePlaces(_ project: LampProject, xbox: String?) -> String {
         let places = project.openPlaces, web = GameKit.engine(project) == .web
         // Slowest first; an iPhone, which has to stay cool on battery, below a Series S.
@@ -1456,12 +1536,12 @@ extension Agent.Rules {
             switch xbox {
             case let model? where model.localizedCaseInsensitiveContains("Series X"):
                 budgets.append((4, "the person's \(model)'s, which gives a game in Developer Mode most of its GPU" + (web ? ", drawn by its web view" : "") + ": "
-                    + (web ? "under about 1,000 draws and 1,000,000 triangles a frame (many copies of one shape as one instanced mesh)" : "under about 1,500 draws and 2,000,000 vertices a frame")
-                    + ", textures at most 2048 px, one shadow map and a light post-process pass at most"))
+                    + (web ? xboxWebBudget(triangles: "1,000,000") + ", a light post-process pass at most"
+                        : "under about 1,500 draws and 2,000,000 vertices a frame, textures at most 2048 px, one shadow map and a light post-process pass at most")))
             case let model? where model.localizedCaseInsensitiveContains("Series"):
                 budgets.append((3, "the person's \(model)'s, which gives a game in Developer Mode most of its GPU, about a third of a Series X's" + (web ? ", drawn by its web view" : "") + ": "
-                    + (web ? "under about 600 draws and 600,000 triangles a frame (many copies of one shape as one instanced mesh)" : "under about 900 draws and 1,200,000 vertices a frame")
-                    + ", textures at most 2048 px, one shadow map at most, no post-processing"))
+                    + (web ? xboxWebBudget(triangles: "600,000") + ", no post-processing"
+                        : "under about 900 draws and 1,200,000 vertices a frame, textures at most 2048 px, one shadow map at most, no post-processing")))
             case let model:
                 budgets.append((0, (model.map { "the person's \($0)'s" } ?? "an Xbox One's, the slowest console the game may run on")
                     + ", which gives a game in Developer Mode only part of its GPU: "
@@ -1513,12 +1593,16 @@ extension Agent.Rules {
     `use_app` plays the game in its window on this Mac with Lamp's own controller, in plain sight: `stick` (`target` \
     left or right, `x` and `y` -1 to 1, `amount` seconds, optionally `key` held at the same time), `button` (`key` a, \
     b, x, y, lb, rb, lt, rt, menu, view, up, down, left, right, ls, rs; `amount` seconds held, a tap by default) and \
-    `wait`, each at most 10 seconds, with a picture at the end. It plays from wherever the game is (a menu, a pause \
+    `wait`, each at most 10 seconds, with a picture at the end. A button or field on the game's screen (a menu, a mode \
+    switch, a name to type) is used with `click`, `double_click` or `type` by its id from the screen as text; `key` \
+    isn't taken, so what a key does in play is a `button` or a `stick`. A click is only sent: the picture and the log \
+    say whether the game took it. It plays from wherever the game is (a menu, a pause \
     screen, the middle of a level), not its start: read the picture first and get to what you mean to check. The \
     person's own press takes the game back at once, and use_app is off until their next message. `look_at_app` with \
     `on_device` builds the game for where Try On points and looks at it in that place's preview: the game's window on \
     this Mac, or the iPhone or iPad simulator, never the person's own iPhone, iPad or Xbox; `use_app` then takes only \
-    what that place takes. Lamp can't press a phone page or a controller anywhere but the game's window on this Mac: \
+    what that place takes. Once the game has gone on the person's Xbox, a look also gives what it last logged there, \
+    with how many frames a second it gets there: that, not this Mac's, says how it runs on the Xbox. Lamp can't press a phone page or a controller anywhere but the game's window on this Mac: \
     only the person can play it there.
     """
 

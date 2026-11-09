@@ -537,7 +537,7 @@ enum DeviceNote {
         guard !own.isEmpty || !placed.isEmpty || !known.isEmpty else { return "" }
         let now = (own + placed + (known.isEmpty ? [] : [known])).joined(separator: "\n")
         let what = own.isEmpty && placed.isEmpty ? "The person's devices" : placed.isEmpty ? "The device this app is for"
-            : own.isEmpty ? "Where the wish's game or screen is" : "The devices this wish's apps are for"
+            : own.isEmpty ? "Where the game or screen is" : "The devices this app is on"
         switch note.telling(now, for: project, engine: engine, session: session) {
         case .fresh: return "\n\n---\n\(what) (from Lamp, not part of the request above): \(now)"
         case .changed: return "\n\n---\n\(what), changed (from Lamp, not part of the request above): \(now)"

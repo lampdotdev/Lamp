@@ -353,7 +353,7 @@ enum Template {
     /// block never makes such an app build again.
     static func withoutWish(_ swift: String) -> String {
         let swift = swift.replacingOccurrences(of: wishLeavesLampClosed, with: "")
-        guard let start = swift.range(of: "    // MARK: - The wish's other apps\n"),
+        guard let start = swift.range(of: "    // MARK: - The project's other apps\n"),
               let end = swift.range(of: "    // MARK: - Mac building blocks\n", range: start.upperBound..<swift.endIndex) else { return swift }
         return String(swift[..<start.lowerBound]) + String(swift[end.lowerBound...])
     }
@@ -3799,7 +3799,7 @@ enum Template {
         static var host: String { value("host") }
         /// The folder of Lamp's apps, and this app's in it.
         static var apps: String { value("apps") }
-        /// Its folder: under its own name, or for a part of a wish (an app beside a TV app) inside its wish's. An app
+        /// Its folder: under its own name, or for a part of a project (an app beside a TV app) inside its project's. An app
         /// installed by a Lamp from before says only its name.
         static var app: String { apps + "/" + (value("folder").isEmpty ? slug : value("folder")) }
         static var macHost: String { value("macHost") }
@@ -3885,6 +3885,10 @@ enum Template {
         var body: some Commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About \(LampAbout.name)") { LampAbout.show() }
+                // What's new in each version its maker released, there once there's one.
+                if LampWhatsNew.available {
+                    Button("What's New…") { LampWhatsNew.show() }
+                }
             }
             CommandGroup(after: .appInfo) {
                 Button("Customize with Lamp…") {
@@ -3902,7 +3906,7 @@ enum Template {
 
     /// The About window, with the app's credits as Lamp has them now. The Credits.html written into the bundle is only
     /// as new as the app's install, and a credit added while the app is open (work brought in with a change that went
-    /// into the running app, with no install) would wait for the next one; Lamp answers from the wish's credits.json.
+    /// into the running app, with no install) would wait for the next one; Lamp answers from the project's credits.json.
     /// With no answer from Lamp (it isn't open, or this app isn't its), it's the bundle's page, as macOS shows it.
     @MainActor enum LampAbout {
         static var name: String {
@@ -3932,6 +3936,91 @@ enum Template {
                   let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
             guard let page = answer["page"] as? String else { return NSAttributedString() }
             return NSAttributedString(html: Data(page.utf8), documentAttributes: nil)
+        }
+    }
+
+    /// What's New… in the app's menu: what's new in each version the app's maker released with its link, in the plain lines
+    /// Lamp wrote for them, newest first, as the link's page shows them. Asked of Lamp, which has the latest; without an
+    /// answer, the list the app was installed with (Releases.json beside Credits.html). An app installed with none has no
+    /// such item.
+    @MainActor enum LampWhatsNew {
+        struct Release: Identifiable {
+            let id = UUID()
+            let date: Date?
+            let lines: [String]
+        }
+
+        static let available = !(bundled ?? []).isEmpty
+        private static var window: NSWindow?
+
+        static func show() {
+            Task {
+                let releases = await ask() ?? bundled ?? []
+                if window == nil {
+                    let made = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 320), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+                    made.isReleasedWhenClosed = false
+                    made.title = "What's New in \(LampAbout.name)"
+                    made.center()
+                    window = made
+                }
+                window?.contentView = NSHostingView(rootView: LampWhatsNewView(releases: releases))
+                NSApp.activate()
+                window?.makeKeyAndOrderFront(nil)
+            }
+        }
+
+        private static var bundled: [Release]? {
+            Bundle.main.url(forResource: "Releases", withExtension: "json").flatMap { try? Data(contentsOf: $0) }
+                .flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [[String: Any]] }.map(releases)
+        }
+
+        private static func ask() async -> [Release]? {
+            guard let url = URL(string: lampGateway + "/app/releases") else { return nil }
+            var request = URLRequest(url: url, timeoutInterval: 1.5)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
+            request.httpBody = Data("{}".utf8)
+            guard let (data, response) = try? await URLSession.shared.data(for: request),
+                  (response as? HTTPURLResponse)?.statusCode == 200,
+                  let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let list = answer["releases"] as? [[String: Any]], !list.isEmpty else { return nil }
+            return releases(list)
+        }
+
+        private static func releases(_ list: [[String: Any]]) -> [Release] {
+            let dates = ISO8601DateFormatter()
+            return list.compactMap { item in
+                let lines = (item["lines"] as? [String] ?? []).filter { !$0.isEmpty }
+                return lines.isEmpty ? nil : Release(date: (item["date"] as? String).flatMap(dates.date(from:)), lines: lines)
+            }
+        }
+    }
+
+    struct LampWhatsNewView: View {
+        let releases: [LampWhatsNew.Release]
+
+        var body: some View {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    ForEach(releases) { release in
+                        VStack(alignment: .leading, spacing: 6) {
+                            if let date = release.date {
+                                Text(date, format: .dateTime.month(.wide).day().year()).font(.callout).foregroundStyle(.secondary)
+                            }
+                            ForEach(release.lines, id: \.self) { line in
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text("•").foregroundStyle(.tertiary)
+                                    Text(line).fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(20)
+            }
+            .frame(minWidth: 300, minHeight: 200)
         }
     }
 
@@ -6232,7 +6321,7 @@ enum Template {
             // Not put back where a cover was left (full screen, the Dock): the first window takes on what's owed.
             takeOn(window)
             if let wait = askedToOpen() {
-                // A wish Lamp came with, opened for the first time, is seen on its own a moment before its chat
+                // A project Lamp came with, opened for the first time, is seen on its own a moment before its chat
                 // comes in beside it: the file says how long (`MagicPanel.startWithChat`).
                 guard wait > 0 else { return open(window) }
                 DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
@@ -6616,9 +6705,12 @@ enum Template {
                 popover.contentViewController = content
                 popover.behavior = .transient
                 popover.show(relativeTo: wand.bounds, of: wand, preferredEdge: wand.isFlipped ? .maxY : .minY)
+                coachWindow = content.view.window
                 DispatchQueue.main.asyncAfter(deadline: .now() + 8) { popover.performClose(nil) }
             }
         }
+        /// The note `coach` shows, which is Lamp's and not the app's: the app's pictures leave it out.
+        @MainActor static weak var coachWindow: NSWindow?
 
         /// The chat beside the window: a borderless panel of the app's, attached to the window as its child so macOS
         /// moves, stacks and hides it with the window, holding the card on its glass. It takes the keyboard for the
@@ -6776,7 +6868,7 @@ enum Template {
 
         /// The chat on a card in its panel, on the chat's own paper (`Paper`): opaque, since what's behind the window
         /// showing through glass drew the eye from the chat, and glass drew a bright line round its edge. The chat draws its own bar, close button included, and asks the app to close or move the
-        /// panel (`LampSidebarHost`): what changes the wish (undo, versions, sharing…) is in the chat, which only Lamp
+        /// panel (`LampSidebarHost`): what changes the project (undo, versions, sharing…) is in the chat, which only Lamp
         /// speaks to.
         @MainActor private static func card(for host: EXHostViewController, in window: NSWindow) -> (card: NSView, pane: NSView) {
             let outer = Card()
@@ -7341,7 +7433,7 @@ enum Template {
         /// whatever there is (a menu bar app may have nothing).
         @MainActor
         private static func firstSnapshot(waited: Double = 0) {
-            guard windowsOnScreen.isEmpty, waited < 2 else {
+            guard openWindows.isEmpty, waited < 2 else {
                 DispatchQueue.main.asyncAfter(deadline: .now() + (waited < 2 ? 0.5 : 0)) { MainActor.assumeIsolated { snapshot() } }
                 return
             }
@@ -7360,7 +7452,8 @@ enum Template {
         @MainActor
         private static func snapshotNow(then done: (@MainActor () -> Void)?) {
             LampDriver.keepBarPanel()
-            let windows = windowsOnScreen
+            // Every open window, those the last pictures found clear included: each is looked at afresh.
+            let windows = openWindows
             guard !windows.isEmpty else { done?(); return }   // nothing on screen: keep the last pictures
             // The app's own window, not a dialog or sheet in front of it (a menu bar app's panel when that's all it has):
             // the desk keeps this picture until the next launch.
@@ -7370,19 +7463,18 @@ enum Template {
             if loading { previewAtTheLatest() }
             let previewWindow = previewTaken || loading ? nil : windows.first(where: { !$0.isSheet && !($0 is NSPanel) }) ?? windows.first(where: LampDriver.isBarPanel)
             if previewWindow != nil { previewTaken = true }
-            let front = Array(windows.prefix(3))
-            let seen = capturable()
-            let shots = front.map { seen ? shot(of: $0) : nil }
-            let previewShot = previewWindow.flatMap { seen ? shot(of: $0) : nil }
-            // The front window as text, beside its picture (LampScreen), for the builder to read and act on by name: read
-            // now, with the window as it's pictured, and written with the pictures, so a later snapshot's text never
-            // lands beside this one's pictures.
-            let words = LampScreen.text(for: LampDriver.elements(in: windows[0]).map(\.item))
+            // A few windows past the three pictured, since a clear one (a popover closing, a helper window that shows
+            // nothing) is left out and the next one takes its place.
+            let front = Array(windows.prefix(5))
+            let unseen = whyNotCapturable()
+            let shots = front.map { unseen == nil ? shot(of: $0) : nil }
+            // The desk's picture is never sent to the model, and a Share Link shows it large: taken sharper than the rest.
+            let previewShot = previewWindow.flatMap { unseen == nil ? shot(of: $0, longest: 2048) : nil }
             // The window server's pictures are taken off the main thread: the first after a build has the system check
             // the app's signature before it answers, which can take seconds, and the app froze (a spinning cursor) meanwhile.
             pictures.async {
-                let taken = shots.map { $0.flatMap(capture) }
-                let previewPicture = previewShot.flatMap(capture)
+                let taken = shots.map { $0.map(capture) ?? .none }
+                let previewPicture = previewShot.map(capture) ?? .none
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         // The picture Lamp's desk shows when the pointer rests on this app's icon: the first window it
@@ -7390,7 +7482,7 @@ enum Template {
                         // A window of one color (a game's loading screen, a page not drawn yet) is taken again a few
                         // seconds later, for up to a minute, keeping the last picture meanwhile.
                         if let previewWindow {
-                            if let png = previewPicture ?? drawn(previewWindow), !looksBlank(png) || previewRetakes >= 20 {
+                            if let png = usable(previewPicture, of: previewWindow), !looksBlank(png) || previewRetakes >= 20 {
                                 try? png.write(to: folder.appendingPathComponent("preview.png"), options: .atomic)
                             } else {
                                 previewTaken = false
@@ -7400,6 +7492,27 @@ enum Template {
                                 }
                             }
                         }
+                        // A window that shows nothing is left out; one the system gave no picture of, where the app's
+                        // own drawing would leave out a page, a game or video, is said to Lamp instead (capture.txt).
+                        // A clear window is left out of `windowsOnScreen` too, until a picture shows something in it, so
+                        // the first picture, the screen as text and `use_app`'s actions are all of the same window. When
+                        // the front window can't be pictured, no window behind it takes its place as the first picture.
+                        var kept: [(window: NSWindow, png: Data)] = []
+                        var missed: [String] = []
+                        var clear: Set<Int> = []
+                        for (window, result) in zip(front, taken) where kept.count < 3 {
+                            if case .clear = result { clear.insert(window.windowNumber); continue }
+                            if let png = usable(result, of: window) {
+                                if isClear(png) { clear.insert(window.windowNumber) } else { kept.append((window, png)) }
+                            } else {
+                                missed.append(window.title.isEmpty ? "a window" : "\"\(window.title)\"")
+                                if kept.isEmpty { break }
+                            }
+                        }
+                        showsNothing = clear
+                        // The pictured front window as text, beside its picture (LampScreen), for the builder to read and act
+                        // on by name, written with the pictures, so a later snapshot's text never lands beside this one's.
+                        let words = kept.first.flatMap { LampScreen.text(for: LampDriver.elements(in: $0.window).map(\.item)) }
                         let text = folder.appendingPathComponent("screen.txt")
                         if let words {
                             try? words.write(to: text, atomically: true, encoding: .utf8)
@@ -7408,17 +7521,82 @@ enum Template {
                         }
                         for index in 0..<3 {
                             let url = folder.appendingPathComponent(index == 0 ? "screenshot.png" : "screenshot-\(index + 1).png")
-                            if index < front.count, let png = taken[index] ?? drawn(front[index]) {
-                                try? png.write(to: url, options: .atomic)
+                            if index < kept.count {
+                                try? kept[index].png.write(to: url, options: .atomic)
                             } else {
                                 try? FileManager.default.removeItem(at: url)
                             }
+                        }
+                        let note = folder.appendingPathComponent("capture.txt")
+                        if missed.isEmpty {
+                            try? FileManager.default.removeItem(at: note)
+                        } else {
+                            // The titles apart from the reason, whatever lines a title holds.
+                            let report: [String: Any] = ["windows": missed, "why": unseen ?? "the system gave no picture of it"]
+                            try? JSONSerialization.data(withJSONObject: report).write(to: note, options: .atomic)
                         }
                         done?()
                     }
                 }
             }
         }
+
+        /// What the window server gave for a window: a picture, a clear one only (the window shows nothing, as a
+        /// popover closing doesn't), or none.
+        enum Taken: Sendable {
+            case picture(Data)
+            case clear
+            case none
+        }
+
+        /// A picture to keep of the window: the window server's, or when it gave none, the app's own drawing, but only
+        /// of a window with nothing in it the app's drawing leaves out (`drawsElsewhere`), which would be passed off as
+        /// the window while missing the game.
+        @MainActor
+        private static func usable(_ taken: Taken, of window: NSWindow) -> Data? {
+            switch taken {
+            case .picture(let png): return png
+            case .clear: return nil
+            case .none: return drawsElsewhere(window) ? nil : drawn(window)
+            }
+        }
+
+        // begin LampRuntime.pictureChecks
+        /// Whether a picture is all but clear: nothing in it is drawn at all, as a window fading out or one that's only a
+        /// clear holder gives. Seen at 64 by 64, no pixel more than 1/32 opaque.
+        nonisolated static func isClear(_ png: Data) -> Bool {
+            guard let source = CGImageSourceCreateWithData(png as CFData, nil),
+                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return false }
+            switch image.alphaInfo {
+            case .none, .noneSkipFirst, .noneSkipLast: return false
+            default: break
+            }
+            let side = 64
+            var pixels = [UInt8](repeating: 0, count: side * side * 4)
+            let drew = pixels.withUnsafeMutableBytes { bytes -> Bool in
+                guard let context = CGContext(data: bytes.baseAddress, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
+                                              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+                context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+                return true
+            }
+            guard drew else { return false }
+            return stride(from: 3, to: pixels.count, by: 4).allSatisfy { pixels[$0] < 8 }
+        }
+        /// Whether some of the window is drawn where the app's own drawing of it (`cacheDisplay`) can't reach: a web page
+        /// (another process draws it), Metal (a game's or a 3D scene's frames) or video. Looked up by name, as the app may
+        /// not link the frameworks.
+        @MainActor
+        static func drawsElsewhere(_ window: NSWindow) -> Bool {
+            let kinds = ["WKWebView", "CAMetalLayer", "AVPlayerLayer", "AVSampleBufferDisplayLayer"].compactMap(NSClassFromString)
+            func layerElsewhere(_ layer: CALayer) -> Bool {
+                kinds.contains { layer.isKind(of: $0) } || (layer.sublayers ?? []).contains(where: layerElsewhere)
+            }
+            func elsewhere(_ view: NSView) -> Bool {
+                kinds.contains { view.isKind(of: $0) } || view.layer.map(layerElsewhere) == true || view.subviews.contains(where: elsewhere)
+            }
+            return (window.contentView?.superview ?? window.contentView).map(elsewhere) ?? false
+        }
+        // end LampRuntime.pictureChecks
 
         @MainActor private static var previewTaken = false
         @MainActor private static var previewRetakes = 0
@@ -7473,36 +7651,70 @@ enum Template {
         }
 
         @MainActor
-        static func shot(of window: NSWindow) -> Shot? {
+        static func shot(of window: NSWindow, longest: CGFloat = 1024) -> Shot? {
             guard window.windowNumber > 0, let view = window.contentView?.superview ?? window.contentView else { return nil }
-            return Shot(number: window.windowNumber, size: view.bounds.size, scale: scale(of: window))
+            return Shot(number: window.windowNumber, size: view.bounds.size, scale: scale(of: window, longest: longest))
         }
 
-        /// The window server's picture of a window, as a PNG at the size every picture of it is sent at.
-        static func capture(_ shot: Shot) -> Data? {
-            shown(number: shot.number).flatMap { png($0, size: shot.size, scale: shot.scale) }
+        /// The window server's picture of a window, as a PNG at the size every picture of it is sent at. A first try can
+        /// come back with none, a clear one or one of one color (a page between frames, a window still appearing), so it's
+        /// tried again up to three times, 150 ms apart: under half a second for a window. One of one color after that is
+        /// the window as it is (a game that drew nothing), and Lamp says so; none is said to Lamp, never made up.
+        static func capture(_ shot: Shot) -> Taken {
+            var result = Taken.none
+            for attempt in 0..<4 {
+                if attempt > 0 { Thread.sleep(forTimeInterval: 0.15) }
+                guard let image = shown(number: shot.number), let png = png(image, size: shot.size, scale: shot.scale) else { continue }
+                if isClear(png) {
+                    if case .none = result { result = .clear }
+                    continue
+                }
+                result = .picture(png)
+                if !looksBlank(png) { break }
+            }
+            return result
         }
 
         /// Open windows, frontmost first. A dialog or sheet comes before the window it's attached to: it's
         /// what the user has to deal with first, and `orderedWindows` leaves those out.
         @MainActor
-        static var windowsOnScreen: [NSWindow] {
+        static var windowsOnScreen: [NSWindow] { openWindows.filter { !showsNothing.contains($0.windowNumber) } }
+
+        /// The windows the last pictures found clear (`snapshot`): nothing in them is on screen, so they're not the window
+        /// pictured, read or acted on.
+        @MainActor private static var showsNothing: Set<Int> = []
+
+        /// `windowsOnScreen` with those the last pictures found clear.
+        @MainActor
+        private static var openWindows: [NSWindow] {
             func withSheets(_ window: NSWindow) -> [NSWindow] { (window.attachedSheet.map(withSheets) ?? []) + [window] }
             var windows = NSApp.orderedWindows.flatMap(withSheets)
             // Alerts and panels shown on their own.
             windows.insert(contentsOf: NSApp.windows.filter { $0 is NSPanel && !$0.isSheet && !windows.contains($0) }, at: 0)
             // Not the clear windows a change's effect is drawn in (LampTransition), nor the chat's panel beside a window,
-            // which another process draws and the app pictures as blank: the pictures are of the app.
+            // which another process draws and the app pictures as blank, nor the note pointing at the wand: the pictures
+            // are of the app. Nor what the chat shows over its panel (its Share popover), attached to that panel.
             return windows.filter { $0.isVisible && !$0.isMiniaturized && $0.frame.width > 40 && $0.frame.height > 40
-                && !($0 is LampTransition.Glass) && !($0 is LampSidebar.Beside) }
+                && !($0 is LampTransition.Glass) && !($0 is LampSidebar.Beside) && !isChats($0) && $0 !== LampSidebar.coachWindow }
         }
 
-        /// Picture pixels per window point: at most 1024 pixels on the long side, a size models see unscaled and read
+        /// A window attached to the chat's panel beside the app, however deep: the chat's, never the app's.
+        @MainActor
+        private static func isChats(_ window: NSWindow) -> Bool {
+            var parent = window.parent
+            while let next = parent {
+                if next is LampSidebar.Beside { return true }
+                parent = next.parent
+            }
+            return false
+        }
+
+        /// Picture pixels per window point: at most 1024 pixels on the long side unless asked for more, a size models see unscaled and read
         /// a window's words in, at half the bytes and tokens of 1400: every picture is sent again with each request.
         @MainActor
-        static func scale(of window: NSWindow) -> CGFloat {
+        static func scale(of window: NSWindow, longest: CGFloat = 1024) -> CGFloat {
             let size = (window.contentView?.superview ?? window.contentView)?.bounds.size ?? window.frame.size
-            return min(window.backingScaleFactor, 1024 / max(size.width, size.height))
+            return min(window.backingScaleFactor, longest / max(size.width, size.height))
         }
 
         /// The window with its title bar, at most 1024 pixels on the long side. It's the window as the system
@@ -7564,9 +7776,16 @@ enum Template {
         /// Whether the window server would give a picture now: not while the app is hidden, the screen is locked or the
         /// display sleeps, when it hands back a blank one.
         @MainActor
-        private static func capturable() -> Bool {
+        private static func capturable() -> Bool { whyNotCapturable() == nil }
+
+        /// Why the window server would give no picture now, in Lamp's words to the agent, or nil when it would.
+        @MainActor
+        private static func whyNotCapturable() -> String? {
             let session = CGSessionCopyCurrentDictionary() as? [String: Any]
-            return NSApp.isHidden == false && session?["CGSSessionScreenIsLocked"] == nil && CGDisplayIsAsleep(CGMainDisplayID()) == 0
+            if NSApp.isHidden { return "the app is hidden" }
+            if session?["CGSSessionScreenIsLocked"] != nil { return "the screen is locked" }
+            if CGDisplayIsAsleep(CGMainDisplayID()) != 0 { return "the display is asleep" }
+            return nil
         }
 
         private static func shown(number: Int) -> CGImage? {
@@ -7682,6 +7901,7 @@ enum Template {
                     guard gate.admits(phase: phase, id: id, at: at, signature: signature, now: Date()) else { return }
                     switch phase {
                     case "begin": begin()
+                    case "turn": turn()
                     case "land": land()
                     default: end()
                     }
@@ -7711,7 +7931,7 @@ enum Template {
             }
 
             mutating func admits(phase: String, id: String, at: String, signature: String, now: Date) -> Bool {
-                guard !token.isEmpty, !id.isEmpty, ["begin", "land", "end"].contains(phase), let sent = Double(at),
+                guard !token.isEmpty, !id.isEmpty, ["begin", "turn", "land", "end"].contains(phase), let sent = Double(at),
                       abs(now.timeIntervalSince1970 - sent) < 10, !seen.contains(id),
                       signature == Self.signature(phase: phase, id: id, at: at, token: token) else { return false }
                 seen.append(id)
@@ -7742,6 +7962,13 @@ enum Template {
                 glasses.append(glass)
                 glass.glow(still: reduceMotion)
             }
+        }
+
+        /// The app is standing still taking the change in (a game running its code again): the stripes roll up its
+        /// windows every few seconds until the change is on screen (`land`). Only over windows already glowing for it.
+        @MainActor static func turn() {
+            renew()
+            for glass in glasses where !glass.isLeaving { glass.turn(still: reduceMotion) }
         }
 
         /// The change went in: the stripes roll up each window once (fading where motion is reduced), then the smoke and the glow go.
@@ -7815,6 +8042,11 @@ enum Template {
                 look.glow(still: still)
             }
 
+            func turn(still: Bool) {
+                orderFront(nil)
+                look.turn(still: still)
+            }
+
             func reveal(still: Bool) {
                 isLeaving = true
                 orderFront(nil)
@@ -7844,7 +8076,9 @@ enum Template {
         /// as it rises a third of the way up, with a faint glow round the edge: noticeable on any ground, and out of the way
         /// of most of the window. When the change goes in the smoke surges for a moment, then the stripes roll up the window
         /// on Lamp's slant, as if round a drum: each comes in as a thin line, widens to the middle and thins again as it
-        /// leaves, and at the middle of the roll they cover the window whole, leaving it clear behind them.
+        /// leaves, and at the middle of the roll they cover the window whole, leaving it clear behind them. While the app
+        /// stands still taking the change in (a game running its code again), the stripes roll up every few seconds, so the
+        /// frame held there reads as the change going in, and once it's on screen the turn under way finishes.
         @MainActor final class Look: NSView {
             /// Lamp's stripes, in the order they come up: green, lime, yellow, orange, red and magenta.
             static let hues: [NSColor] = [
@@ -7868,6 +8102,14 @@ enum Template {
                     needsLayout = true
                 }
             }
+
+            /// One turn of the drum, in seconds.
+            private static let roll = 1.1
+            /// The roll's place in the turn while the app stands still: the stripes roll up once as it starts (`turn`), then
+            /// the glow and the smoke alone say the change is under way, so a long wait isn't a run of rainbows.
+            private static let turnEvery = 3.2
+            /// When the stripes began turning while the app stood still (`turn`), in the stripes' time.
+            private var turning: CFTimeInterval?
 
             private let glowLayer = CALayer()
             private let wisps = CAEmitterLayer()
@@ -7973,6 +8215,9 @@ enum Template {
                     Self.place(stripe, index: index, roll: 0, across: across, along: along)
                     stripes.addSublayer(stripe)
                 }
+                // Laid out again while the app stands still (its window resized, or put in full screen): the new stripes take up
+                // the roll where it is, from when it began.
+                if let began = turning { rollStripes(from: began, turns: 1, every: Self.turnEvery) }
             }
 
             /// Where a stripe's edges are at a point of the roll, from 0 to 2π: the stripes lie side by side round a drum
@@ -8013,6 +8258,17 @@ enum Template {
                 wisps.birthRate = 1
             }
 
+            /// The app stands still taking the change in: the stripes roll up the window once, the smoke and the glow staying
+
+            /// until `reveal`. Where motion is reduced, the glow alone stays, as while it was built.
+            func turn(still: Bool) {
+                layoutSubtreeIfNeeded()
+                guard !still, turning == nil else { return }
+                let now = stripes.convertTime(CACurrentMediaTime(), from: nil)
+                turning = now
+                rollStripes(from: now, turns: 1, every: Self.turnEvery)
+            }
+
             /// The change went in: the smoke surges and the stripes roll up (the stripes fading where motion is reduced), and
             /// the glow and the smoke go. Answers how long that takes, after which the layers can go.
             func reveal(still: Bool) -> TimeInterval {
@@ -8033,6 +8289,21 @@ enum Template {
                     Self.animate(stripes, "opacity", from: 0.35, to: 0, duration: 0.7)
                     return 0.8
                 }
+                // Turning already (`turn`): its one roll, still under way, is the last and finishes; after it, one more rolls
+                // now, so the change landing is marked as it is without turning. The smoke and the glow go meanwhile.
+                if let began = turning {
+                    turning = nil
+                    let now = stripes.convertTime(CACurrentMediaTime(), from: nil)
+                    let done: Double = 0
+                    let rolling = now - began < Self.roll
+                    if rolling { rollStripes(from: began, turns: Float(done + 1), every: Self.turnEvery) }
+                    else { rollStripes(from: now, turns: 1, every: Self.roll) }
+                    wisps.birthRate = 0
+                    Self.animate(wisps, "opacity", from: wisps.presentation()?.opacity ?? wisps.opacity, to: 0, duration: 0.6)
+                    Self.animate(glowLayer, "opacity", from: glowing, to: 0, duration: 0.6)
+                    let left = rolling ? began + done * Self.turnEvery + Self.roll - now : Self.roll
+                    return max(left, 0.6) + 0.2
+                }
                 // The smoke gathers itself, more of it and rising faster, for a moment before the roll. Timed by
                 // animations, not by the main thread, which may be busy with the new code.
                 let gather = 0.3
@@ -8047,33 +8318,45 @@ enum Template {
                 wisps.add(surge, forKey: "surge")
 
                 // Then the stripes roll up at the drum's steady turn, which is what eases them in and out at the edges, and
-                // the smoke and the glow go with them. Each stripe's edges are worked out ahead along the roll, so Core
-                // Animation can run them without the app.
-                let roll = 1.1
+                // the smoke and the glow go with them.
+                rollStripes(from: stripes.convertTime(CACurrentMediaTime(), from: nil) + gather, turns: 1, every: Self.roll)
+                Self.animate(wisps, "opacity", from: 1, to: 0, duration: 0.6, delay: gather + 0.1)
+                Self.animate(glowLayer, "opacity", from: glowing, to: 0, duration: 0.6, delay: gather)
+                return gather + Self.roll + 0.2
+            }
+
+            /// The stripes roll up the window from `begin` (in the stripes' time), `turns` times round, each stripe's edges
+            /// worked out ahead along the roll so Core Animation runs them without the app, and each left with no height
+            /// after. A turn comes round `every` seconds, the window clear between rolls. Rolled again from the same `begin`,
+            /// the roll goes on unbroken with its new number of turns.
+            private func rollStripes(from begin: CFTimeInterval, turns: Float, every: Double) {
+                let across = stripes.bounds.height, along = stripes.bounds.width
                 let steps = 60
-                let times = (0...steps).map { NSNumber(value: Double($0) / Double(steps)) }
+                // The roll takes its own time at the start of each turn, then the stripes wait at the top, with no height.
+                let share = Self.roll / max(every, Self.roll)
+                let times = (0...steps).map { NSNumber(value: share * Double($0) / Double(steps)) } + (share < 1 ? [1] : [])
                 CATransaction.begin()
                 CATransaction.setDisableActions(true)
                 stripes.opacity = 1
-                for (index, stripe) in layers.enumerated() {
+                for (index, stripe) in (stripes.sublayers ?? []).enumerated() {
                     let frames = (0...steps).map { Self.edges(index: index, roll: 2 * .pi * CGFloat($0) / CGFloat(steps), across: across) }
-                    Self.follow(stripe, "position.y", values: frames.map(\.bottom), times: times, duration: roll, delay: gather)
-                    Self.follow(stripe, "bounds.size.height", values: frames.map { $0.top > $0.bottom ? $0.top - $0.bottom + 1 : 0 },
-                                times: times, duration: roll, delay: gather)
+                    let held = share < 1 ? 1 : 0
+                    let bottoms = frames.map(\.bottom), heights = frames.map { $0.top > $0.bottom ? $0.top - $0.bottom + 1 : 0 }
+                    Self.follow(stripe, "position.y", values: bottoms + bottoms.suffix(held), times: times, every: every, from: begin, turns: turns)
+                    Self.follow(stripe, "bounds.size.height", values: heights + heights.suffix(held), times: times, every: every, from: begin, turns: turns)
                     Self.place(stripe, index: index, roll: 2 * .pi, across: across, along: along)
                 }
                 CATransaction.commit()
-                Self.animate(wisps, "opacity", from: 1, to: 0, duration: 0.6, delay: gather + 0.1)
-                Self.animate(glowLayer, "opacity", from: glowing, to: 0, duration: 0.6, delay: gather)
-                return gather + roll + 0.2
             }
 
-            private static func follow(_ layer: CALayer, _ key: String, values: [CGFloat], times: [NSNumber], duration: Double, delay: Double) {
+            private static func follow(_ layer: CALayer, _ key: String, values: [CGFloat], times: [NSNumber], every: Double,
+                                       from begin: CFTimeInterval, turns: Float) {
                 let animation = CAKeyframeAnimation(keyPath: key)
                 animation.values = values
                 animation.keyTimes = times
-                animation.duration = duration
-                animation.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil) + delay
+                animation.duration = every
+                animation.repeatCount = turns
+                animation.beginTime = begin
                 animation.fillMode = .backwards
                 layer.add(animation, forKey: key)
             }
@@ -8948,6 +9231,7 @@ enum Template {
     /// .lamp/runtime/use.json, which tells Lamp it's all ready.
     @MainActor
     enum LampDriver {
+        // begin LampDriver.Action
         struct Action: Decodable {
             let action: String          // click, double_click, right_click, menu, bar_icon, type, key, scroll, wait
             var target: String?         // what to act on: an id ("b2") or exact name from the screen as text
@@ -8962,7 +9246,19 @@ enum Template {
             /// A game's controller as `stick` and `button` hold it (lx, ly, rx, ry -1 to 1, lt and rt 0 to 1, `down` the
             /// buttons' bits), for `amount` seconds; `text` says it in words. Held in the game's page (LampPage.swift).
             var controller: [String: Double]?
+            /// A game's click, double-click or typing: carried out in the game's page only (`LampPageItems.act`), never
+            /// on what's around it.
+            var page: Bool?
         }
+        // end LampDriver.Action
+
+        // begin LampDriver.holdsController
+        /// Whether a batch has the game's controller from its start to its end: one with controller moves, or with a click
+        /// or typing on the game's page, so the person's own play at any point (a controller, a phone) stops the rest.
+        static func holdsController(_ actions: [Action]) -> Bool {
+            actions.contains { ["stick", "button"].contains($0.action) || $0.page == true }
+        }
+        // end LampDriver.holdsController
 
         // begin LampDriver.Handover
         /// The batch of actions being carried out, and the person's way to take the app back part way through it.
@@ -9135,9 +9431,9 @@ enum Template {
                 report.append(why)
                 answer(stopped: true)
             }
-            // A game's controller is Lamp's for the whole batch, its waits included, so the person's own input at any
-            // point takes it back (lamp-game.js); given back however the batch ends.
-            if actions.contains(where: { ["stick", "button"].contains($0.action) }), let own = LampPageItems.own {
+            // A game's controller is Lamp's for the whole batch, its waits and page clicks included, so the person's own
+            // input at any point takes it back (lamp-game.js); given back however the batch ends.
+            if holdsController(actions), let own = LampPageItems.own {
                 let seconds = actions.reduce(2.0) { total, action in
                     total + 0.6 + (["wait", "key", "stick", "button"].contains(action.action) ? min(max(action.amount ?? 1, 0), 10) : 0)
                 }
@@ -9417,6 +9713,12 @@ enum Template {
             if let act = LampPageItems.act, !(window is NSSavePanel), ["click", "double_click", "type", "key"].contains(action.action),
                let did = act(action, action.x != nil && action.y != nil ? point : nil, window) {
                 return (what.map { "\(action.action) \($0): " } ?? "\(action.action): ") + did
+            }
+            // A game's own: what isn't on its page (the window's edge, a dialog in front) is left alone. Lamp looks for
+            // these words in the app (`Store.gamePageMarker`) before it sends a game's page any click.
+            if action.page == true {
+                if action.action != "type", action.x == nil || action.y == nil { return "\(action.action): needs a target, or x and y" }
+                return (what.map { "\(action.action) \($0): " } ?? "\(action.action): ") + "that isn't on the game's page, so nothing was done"
             }
             if isBarPanel(window), action.action == "key", action.key?.lowercased() == "escape" {
                 releaseBarPanel()
@@ -14050,7 +14352,7 @@ enum Template {
         }
 
         /// `data` is text from outside the app (an email, a web page, a file) for the AI to work on, not obey.
-        /// `model` overrides the app's text model for one call, by Lamp's id ("sonnet", "opus", "haiku", "claude-fable-5-1").
+        /// `model` overrides the app's text model for one call, by Lamp's id ("sonnet", "opus", "haiku", "claude-fable-5-2").
         static func ask(_ prompt: String, data: String? = nil, images: [LampImage] = [],
                         system: String? = nil, model: String? = nil) async throws -> String {
             try await call(prompt: prompt, data: data, images: images, system: system, json: false, model: model)
@@ -15172,17 +15474,17 @@ enum Template {
         }
     }
 
-    // MARK: - The wish's other apps
+    // MARK: - The project's other apps
 
-    /// The other apps of this app's wish (a TV app, an iPhone app, an Android app…): which are open now, and messages
+    /// The other apps of this app's project (a TV app, an iPhone app, an Android app…): which are open now, and messages
     /// between them, through Lamp on the person's Mac over the home Wi‑Fi, with nothing to pair, host or set up. Each app
-    /// of the wish is a peer named by its folder in the wish: "tv", "iphone", "apple" (an app for iPhone and Mac), "mac",
+    /// of the project is a peer named by its folder in the project: "tv", "iphone", "apple" (an app for iPhone and Mac), "mac",
     /// "android". One for the whole app, started the first time it's used; keep using `LampWish.shared`. What they say
-    /// is sealed with a key only the wish's apps have, which Lamp gave each as it put it on its device.
+    /// is sealed with a key only the project's apps have, which Lamp gave each as it put it on its device.
     ///
     ///     @ObservedObject var wish = LampWish.shared
-    ///     wish.peers                                    // the wish's other apps open now
-    ///     wish.peer("tv")?.isOpen                       // whether the TV app is open; nil when the wish has no "tv"
+    ///     wish.peers                                    // the project's other apps open now
+    ///     wish.peer("tv")?.isOpen                       // whether the TV app is open; nil when the project has no "tv"
     ///     wish.peer("tv")?.status.reason                // why not, in words to show as they are: "Open the TV app on your TV.",
     ///                                                   // "The TV app was last open 5 min ago. Open it on your TV."
     ///     wish.peer("tv")?.status.lastSeen              // when it was last open on this device, or since when while it is
@@ -15190,7 +15492,7 @@ enum Template {
     ///     wish.send(["score": 3], to: "tv")             // JSON to one app (to each copy of it that's open); false (with why
     ///                                                   // in the app's log) when it wasn't sent
     ///     wish.send(["score": 3], to: copy.id)          // to one copy of an app: "screen.k3j9x0ab"
-    ///     wish.send(["round": 2])                       // to every other app of the wish
+    ///     wish.send(["round": 2])                       // to every other app of the project
     ///     wish.onMessage { from, data in … }           // what another app sent: who, and its JSON
     ///     wish.onMessage { from, data, copy in … }     // and which copy of it, to answer that one alone
     ///     wish.state                                    // this app's link: .connecting, .connected, .alone, .away (Lamp isn't reachable),
@@ -15198,7 +15500,7 @@ enum Template {
     ///     wish.status.reason                            // what to show about it: "" while all is well
     ///     wish.me                                       // this app's own peer name
     ///     wish.copy                                     // this copy's own: the app open on this device ("screen.k3j9x0ab")
-    ///     wish.values["list"]                           // a value the wish's apps share, kept on each device (@Published)
+    ///     wish.values["list"]                           // a value the project's apps share, kept on each device (@Published)
     ///     wish.set("list", ["milk", "eggs"])            // sets it here and in every other app, now or when they next meet;
     ///                                                   // nil removes it; false (with why in the app's log) when it wasn't set
     ///     wish.onChange { key, value, from in … }       // a value changed, here (from == me) or in another app
@@ -15224,13 +15526,13 @@ enum Template {
         struct State: RawRepresentable, Hashable, Sendable {
             let rawValue: String
             init(rawValue: String) { self.rawValue = rawValue }
-            /// This app is joining the wish's other apps.
+            /// This app is joining the project's other apps.
             static let connecting = State(rawValue: "connecting")
             /// This app is with the others; another app is open and reachable.
             static let connected = State(rawValue: "connected")
-            /// This app's wish has no other app, and no other copy of this one is open.
+            /// This app's project has no other app, and no other copy of this one is open.
             static let alone = State(rawValue: "alone")
-            /// This app can't reach Lamp, nor any other app of the wish.
+            /// This app can't reach Lamp, nor any other app of the project.
             static let away = State(rawValue: "away")
             /// This app called `stop()`.
             static let ended = State(rawValue: "ended")
@@ -15250,7 +15552,7 @@ enum Template {
             var lastSeen: Date?
         }
         struct Peer: Identifiable, Equatable {
-            /// The peer's name: its folder in the wish, lowercased ("tv", "iphone", "apple", "mac", "android").
+            /// The peer's name: its folder in the project, lowercased ("tv", "iphone", "apple", "mac", "android").
             let id: String
             /// Where it's open now, one copy for each device, the one opened first first: none while it isn't open.
             var copies: [Copy] = []
@@ -15274,27 +15576,27 @@ enum Template {
         static let valuesLimit = 64 * 1024
         static let shared = LampWish()
 
-        /// Every other app of the wish, open or not.
+        /// Every other app of the project, open or not.
         @Published private(set) var apps: [Peer] = []
         @Published private(set) var status = Status(state: .connecting, reason: LampWish.reason(.connecting), lastSeen: nil)
         @Published private(set) var me = ""
-        /// The values the wish's apps share, by name: the same in every app once they've met.
+        /// The values the project's apps share, by name: the same in every app once they've met.
         @Published private(set) var values: [String: Any] = [:]
 
-        /// What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
+        /// What the project's apps say to each other, numbered: an app that says another number was built by another Lamp.
         /// 2 brought values, 3 files and a game's controls, 4 copies of one app on several devices, 5 shared collections
-        /// (`LampStore.shared`), 6 the wish's own collections, shared by all its apps, 7 Lamp keeping them too; an app from
+        /// (`LampStore.shared`), 6 the project's own collections, shared by all its apps, 7 Lamp keeping them too; an app from
         /// before says none, which counts as 1.
         private static let wire = 7
-        /// The wish's other apps open now.
+        /// The project's other apps open now.
         var peers: [Peer] { apps.filter(\.isOpen) }
         var state: State { status.state }
-        /// This copy's peer name: the app's own, then this device's id for it, which the app keeps beside the wish.
+        /// This copy's peer name: the app's own, then this device's id for it, which the app keeps beside the project.
         var copy: String { me.isEmpty ? "" : me + "." + copyID }
 
         // Two ways to the others, used together: Lamp's relay while Lamp is open on the Mac, and a link straight to each
         // app that listens (this one does too), found on the home network by an opaque Bonjour name or at the address it
-        // was last reached at. Each is sealed the same way, with the wish's key; a message goes the direct way when there
+        // was last reached at. Each is sealed the same way, with the project's key; a message goes the direct way when there
         // is one. So the apps go on talking with Lamp closed, or the Mac asleep, as long as they're on the same network.
         private final class Link: @unchecked Sendable { var task: URLSessionWebSocketTask? }
         private let link = Link()
@@ -15303,21 +15605,21 @@ enum Template {
         private var opener: Sealer?
         private var handshake: (nonce: Data, tag: Data)?
         private var relayIn = false
-        /// Lamp's room said Lamp keeps the wish's shared collections: Lamp is shared with as a copy is, under its own name
+        /// Lamp's room said Lamp keeps the project's shared collections: Lamp is shared with as a copy is, under its own name
         /// (`keeper`), so a copy that opens alone gets the latest and what it changes reaches the others when they open.
-        /// Never one of the wish's apps or copies.
+        /// Never one of the project's apps or copies.
         private var lampKeeps = false
         nonisolated private static let keeper = "lamp"
         private var lampAway = false
         private var alone = false
         /// Another copy of this app has been open somewhere (Lamp's room said so), kept on the device: until then an
-        /// app with no other app in its wish doesn't look for its copies on the network, so an app on one device never
+        /// app with no other app in its project doesn't look for its copies on the network, so an app on one device never
         /// asks for Local Network.
         private var copiesSeen = false
         /// The copies in Lamp's room now, by peer name ("screen.k3j9x0ab"): the device they said, since when, and what
         /// they speak (`wire`). An app built before copies is in it by its name alone.
         private var relayPresent: [String: (device: String, since: Date, wire: Int)] = [:]
-        /// This device's id for the app, made the first time it runs and kept with what it keeps of the wish, so the app
+        /// This device's id for the app, made the first time it runs and kept with what it keeps of the project, so the app
         /// open here and on another device at once are two copies, and this one opened again is the same one.
         private var copyID = LampWish.newCopyID()
         /// Each value as it was last set, here or by another app, and when: a removed one is kept, without its value, so
@@ -15328,7 +15630,7 @@ enum Template {
         private var clock: (ms: Int64, n: Int64) = (0, 0)
         private var changeListeners: [(String, Any?, String) -> Void] = []
         private var messageListeners: [(String, Any, String) -> Void] = []
-        /// Every app of the wish, this one included, as Lamp last said: kept on the device, so it's known with Lamp closed.
+        /// Every app of the project, this one included, as Lamp last said: kept on the device, so it's known with Lamp closed.
         private var roster: [(id: String, kind: String, name: String)] = []
         private var directs: [String: Direct] = [:]
         private var opening: [ObjectIdentifier: Direct] = [:]
@@ -15345,7 +15647,7 @@ enum Template {
         /// When each app was last open, kept on the device so it's still known after this app was closed.
         private var lastSeen: [String: Date] = [:]
         private var appsOpen: Set<String> = []
-        /// The apps the wish asks for that Lamp hasn't made yet.
+        /// The apps the project asks for that Lamp hasn't made yet.
         private var waiting: Set<String> = []
         private var localNetworkDenied = false
         /// What this app last told Lamp's room of its link, for the builder to see.
@@ -15380,12 +15682,12 @@ enum Template {
         /// Which app a peer name is a copy of.
         private static func app(of peer: String) -> String { peer.split(separator: ".", maxSplits: 1).first.map(String.init) ?? peer }
         private static func newCopyID() -> String { String((0..<8).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! }) }
-        /// `LampController`s, each a player of the wish's TV app's game, by what they're held by: what the TV app sends
+        /// `LampController`s, each a player of the project's TV app's game, by what they're held by: what the TV app sends
         /// them, and the files it sends them, which aren't the app's own `onMessage` and `onFile`.
         private var pads: [(owner: Weak, message: (String, [String: Any]) -> Void, file: (String, String, LampFile) -> Void, apps: () -> Void)] = []
         private final class Weak { weak var object: AnyObject?; init(_ object: AnyObject) { self.object = object } }
 
-        /// One link straight to another app of the wish, dialled or taken: its handshake, then its seals each way.
+        /// One link straight to another app of the project, dialled or taken: its handshake, then its seals each way.
         private final class Direct: @unchecked Sendable {   // touched only on the main queue
             let connection: NWConnection
             let dialled: Bool
@@ -15430,7 +15732,7 @@ enum Template {
             }
         }
 
-        /// Joins the wish's other apps again after `stop()`; otherwise nothing, since it joins by itself.
+        /// Joins the project's other apps again after `stop()`; otherwise nothing, since it joins by itself.
         func start() {
             guard closed else { return }
             closed = false
@@ -15456,7 +15758,7 @@ enum Template {
             rebuild()
         }
 
-        /// The wish's app with this peer name (or the app a copy's name is of), open or not; nil when the wish has no such app.
+        /// The project's app with this peer name (or the app a copy's name is of), open or not; nil when the project has no such app.
         func peer(_ id: String) -> Peer? { apps.first { $0.id == Self.app(of: id) } }
 
         /// The copies a message for `peer` goes to: the one it names, or every open copy of the app it names, or with none
@@ -15467,11 +15769,11 @@ enum Template {
             return self.peer(peer)?.copies.map(\.id) ?? []
         }
 
-        /// Sends `data` (anything JSON can hold) to one of the wish's apps (each copy of it open now) or one copy, or with no
+        /// Sends `data` (anything JSON can hold) to one of the project's apps (each copy of it open now) or one copy, or with no
         /// `to` to all of them; false, with the reason in the app's log, when it wasn't sent.
         @discardableResult
         func send(_ data: Any, to peer: String? = nil) -> Bool {
-            let what = peer.map { "A message to \"\($0)\"" } ?? "A message to the wish's apps"
+            let what = peer.map { "A message to \"\($0)\"" } ?? "A message to the project's apps"
             guard state == .connected else {
                 if !saidAway { saidAway = true; fputs("LampWish: \(what) wasn't sent: not connected (\(state.rawValue)). Check state and peers before sending.\n", stderr) }
                 return false
@@ -15488,7 +15790,7 @@ enum Template {
                 return false
             }
             guard text.count <= Self.messageLimit else {
-                fputs("LampWish: \(what) of \(text.count) bytes wasn't sent: a message between the wish's apps is at most \(Self.messageLimit) bytes as JSON.\n", stderr)
+                fputs("LampWish: \(what) of \(text.count) bytes wasn't sent: a message between the project's apps is at most \(Self.messageLimit) bytes as JSON.\n", stderr)
                 return false
             }
             // Each app the straight way when there is one, else through Lamp's room.
@@ -15513,13 +15815,13 @@ enum Template {
             say(frame)
         }
 
-        /// Hears what the wish's other apps send: who sent it (its peer name) and the JSON they sent.
+        /// Hears what the project's other apps send: who sent it (its peer name) and the JSON they sent.
         func onMessage(_ handler: @escaping (_ from: String, _ data: Any) -> Void) { messageListeners.append { from, data, _ in handler(from, data) } }
 
         /// The same, with which copy of the app sent it (its `id`, "screen.k3j9x0ab"), to answer that copy alone.
         func onMessage(_ handler: @escaping (_ from: String, _ data: Any, _ copy: String) -> Void) { messageListeners.append(handler) }
 
-        /// Sets a value the wish's apps share (anything JSON can hold; nil removes it), here at once and in each other app
+        /// Sets a value the project's apps share (anything JSON can hold; nil removes it), here at once and in each other app
         /// now if it's open, else when they next meet. False, with the reason in the app's log, when it wasn't set.
         @discardableResult
         func set(_ key: String, _ value: Any?) -> Bool {
@@ -15541,7 +15843,7 @@ enum Template {
                     return false
                 }
                 guard size(without: key) + key.utf8.count + max(32, bytes) <= Self.valuesLimit else {
-                    fputs("LampWish: \(what) wasn't set: the wish's values would pass \(Self.valuesLimit) bytes (each name counts 32 bytes at least, and a removed one for a month). Keep to fewer names, and reuse them.\n", stderr)
+                    fputs("LampWish: \(what) wasn't set: the project's values would pass \(Self.valuesLimit) bytes (each name counts 32 bytes at least, and a removed one for a month). Keep to fewer names, and reuse them.\n", stderr)
                     return false
                 }
                 // Kept as it reads back from JSON, so this app sees what the others will.
@@ -15556,19 +15858,19 @@ enum Template {
             return true
         }
 
-        /// Hears every change to the wish's values: its name, the new value (nil when removed), and the peer name of the
+        /// Hears every change to the project's values: its name, the new value (nil when removed), and the peer name of the
         /// app that set it, this one's own (`me`) for a change made here or by another copy of this app.
         func onChange(_ handler: @escaping (_ key: String, _ value: Any?, _ from: String) -> Void) { changeListeners.append(handler) }
 
         /// The words for a state of this app's link, the same in every language Lamp's apps are written in.
         static func reason(_ state: State) -> String {
             switch state {
-            case .connecting: "Connecting to the wish's other apps…"
-            case .away: "Can't reach the wish's other apps. Keep this device on the same Wi‑Fi as them."
+            case .connecting: "Connecting to the apps that go with this one…"
+            case .away: "Can't reach the apps that go with this one. Keep this device on the same Wi‑Fi as them."
             #if os(macOS)
-            case .localNetworkDenied: "To reach the wish's other apps, allow Local Network for this app in System Settings, Privacy & Security."
+            case .localNetworkDenied: "To reach the apps that go with this one, allow Local Network for this app in System Settings, Privacy & Security."
             #else
-            case .localNetworkDenied: "To reach the wish's other apps, allow Local Network for this app in Settings."
+            case .localNetworkDenied: "To reach the apps that go with this one, allow Local Network for this app in Settings."
             #endif
             default: ""
             }
@@ -15616,7 +15918,7 @@ enum Template {
             #endif
         }
 
-        // The wish's key, which Lamp gave this copy as it put it here: in the installed app's Info.plist, or on the
+        // The project's key, which Lamp gave this copy as it put it here: in the installed app's Info.plist, or on the
         // simulator in the app's own folder there. It never crosses the network: the app proves it holds it.
         private static let key: SymmetricKey? = {
             var text = Bundle.main.object(forInfoDictionaryKey: "LampWishKey") as? String
@@ -15684,7 +15986,7 @@ enum Template {
                 keep()
                 DispatchQueue.main.async { MainActor.assumeIsolated { self.lookAgain() } }
             }
-            // Alone: nothing else to reach, as an app with no other app in its wish is while no copy of it is open, as
+            // Alone: nothing else to reach, as an app with no other app in its project is while no copy of it is open, as
             // long as none ever was; once one has been, not reaching it is said as for any other app.
             let next: State = closed ? .ended : (alone || (roster.count == 1 && open.isEmpty && !copiesSeen)) ? .alone
                 : (relayIn || directs.values.contains { $0.ready }) ? .connected
@@ -15758,7 +16060,7 @@ enum Template {
             return number.int64Value
         }
 
-        /// A name the wish's apps can all keep a value under: 1 to 64 bytes, and not one a web page's objects hold already.
+        /// A name the project's apps can all keep a value under: 1 to 64 bytes, and not one a web page's objects hold already.
         private static func isValueName(_ key: String) -> Bool { (1...64).contains(key.utf8.count) && key != "__proto__" }
 
         /// A value's size as JSON, slashes as they are, the same as the TV page's and the Android app's measure.
@@ -15778,7 +16080,7 @@ enum Template {
             entries.reduce(0) { $1.key == key ? $0 : $0 + Self.held($1.key, $1.value) }
         }
 
-        /// What every setting this app has adds up to, sealed with the wish's key: two apps with the same say the same.
+        /// What every setting this app has adds up to, sealed with the project's key: two apps with the same say the same.
         private func digest() -> String {
             guard let key = Self.key else { return "" }
             var data = Data()
@@ -15801,7 +16103,7 @@ enum Template {
         /// in, every app ends with the same.
         private func merge(_ given: [String: Any], from peer: String) {
             var changed: [(String, Any?)] = []
-            // What the store holds may grow, from other apps, to what every app of the wish could have set between them
+            // What the store holds may grow, from other apps, to what every app of the project could have set between them
             // (each sets at most the limit of the whole), twice over for how apps measure: everything they set fits,
             // so they still agree, and an app gone wrong or hostile that floods the others gets no further.
             dropExpired()
@@ -15953,7 +16255,7 @@ enum Template {
             rebuild()
         }
 
-        /// What this app keeps of its wish on the device, by the wish's tag: who it is, the wish's apps and where each was
+        /// What this app keeps of its project on the device, by the project's tag: who it is, the project's apps and where each was
         /// last reached, so it finds the others with Lamp closed.
         private static var keptKey: String? { key.map { "LampWish." + tag(of: $0).map { String(format: "%02x", $0) }.joined() } }
 
@@ -15998,7 +16300,7 @@ enum Template {
 
         // MARK: Files and a game's controls
 
-        /// Sends a file (up to 64 MB) to one of the wish's apps that's open now, in pieces, the straight way when there is one,
+        /// Sends a file (up to 64 MB) to one of the project's apps that's open now, in pieces, the straight way when there is one,
         /// else through Lamp's room; the transfer says how far it's got, and ends failed, with why, when it didn't get there.
         /// It goes to one copy: the one `to` names ("screen.k3j9x0ab"), or for an app open on several devices the one opened
         /// last. Two go to each copy at a time: send a third once one has finished (`try await transfer.finished()`).
@@ -16007,7 +16309,7 @@ enum Template {
             sendFile(data, name: name, type: type, to: peer, channel: "")
         }
 
-        /// Hears the files the wish's other apps send: who sent it (its peer name), and the file, whole (`file.copy` is which
+        /// Hears the files the project's other apps send: who sent it (its peer name), and the file, whole (`file.copy` is which
         /// copy of the app sent it).
         func onFile(_ handler: @escaping (_ from: String, _ file: LampFile) -> Void) { fileListeners.append(handler) }
 
@@ -16061,7 +16363,7 @@ enum Template {
                 pump(key)
                 return transfer
             }
-            guard let app = self.peer(peer) else { return failed("The wish has no app called \"\(given)\".") }
+            guard let app = self.peer(peer) else { return failed("The project has no app called \"\(given)\".") }
             guard app.isOpen, state == .connected else { return failed(app.status.reason.isEmpty ? "\(Self.title(app.name)) isn't open now." : app.status.reason) }
             guard app.copies.contains(where: { $0.id == peer }) else { return failed("That copy of \(app.name) isn't open now.") }
             guard wire(of: peer) >= 3 else { return failed(Self.outOfDate(name: app.name, older: true)) }
@@ -16218,8 +16520,8 @@ enum Template {
 
         private static func title(_ name: String) -> String { name.prefix(1).uppercased() + name.dropFirst() }
 
-        /// A `LampController` taking what the wish's TV app sends its players: kept for as long as `owner` is.
-        /// `apps` hears whenever the list of the wish's apps changes (one came, went, or can take a game's controls).
+        /// A `LampController` taking what the project's TV app sends its players: kept for as long as `owner` is.
+        /// `apps` hears whenever the list of the project's apps changes (one came, went, or can take a game's controls).
         fileprivate func addPad(owner: AnyObject, message: @escaping (String, [String: Any]) -> Void, file: @escaping (String, String, LampFile) -> Void,
                                 apps: @escaping () -> Void) {
             pads.removeAll { $0.owner.object == nil || $0.owner.object === owner }
@@ -16251,12 +16553,12 @@ enum Template {
 
         // MARK: Lamp's room
 
-        // Where to join, from Lamp: the relay's socket and this app's peer name. What lets it in is the wish's key, proved
+        // Where to join, from Lamp: the relay's socket and this app's peer name. What lets it in is the project's key, proved
         // in a handshake that sends nothing anyone could use again, and everything after it is sealed.
         private func open() {
             guard !closed else { return }
             guard let key = Self.key else {
-                status = Status(state: .away, reason: "This copy wasn't opened from Lamp, so it can't reach the wish's other apps. Open it from Lamp on your Mac.", lastSeen: nil)
+                status = Status(state: .away, reason: "This copy wasn't opened from Lamp, so it can't reach the apps that go with it. Open it from Lamp on your Mac.", lastSeen: nil)
                 return
             }
             Task { @MainActor in
@@ -16264,7 +16566,7 @@ enum Template {
                     if address == nil || me.isEmpty {
                         let answer = try await LampAI.post("/app/wish", ["device": Self.device], timeout: 20)
                         if answer["alone"] as? Bool == true {
-                            // The wish has no other app: nothing to join, until one is added.
+                            // The project has no other app: nothing to join, until one is added.
                             alone = true
                             me = ((answer["me"] as? [String: Any])?["peer"] as? String) ?? me
                             if let mine = answer["me"] as? [String: Any] { setRoster([mine]) }
@@ -16272,7 +16574,7 @@ enum Template {
                             return again(after: (answer["renew"] as? Double ?? 300))
                         }
                         guard let socket = (answer["socket"] as? String).flatMap(URL.init(string:)), let peer = answer["peer"] as? String else {
-                            throw LampAI.Failure(message: answer["error"] as? String ?? "Lamp didn't say where the wish's apps meet.")
+                            throw LampAI.Failure(message: answer["error"] as? String ?? "Lamp didn't say where the project's apps meet.")
                         }
                         alone = false
                         address = socket
@@ -16345,7 +16647,7 @@ enum Template {
             }
         }
 
-        // The relay proved it holds the wish's key: this app proves it does too, and both seal from here on.
+        // The relay proved it holds the project's key: this app proves it does too, and both seal from here on.
         private func answer(_ challenge: [String: Any], on task: URLSessionWebSocketTask) -> Bool {
             guard let key = Self.key, let handshake, let server = challenge["peer"] as? String, (1...32).contains(server.utf8.count),
                   let theirs = (challenge["nonce"] as? String).flatMap({ Data(base64Encoded: $0) }), theirs.count == 16,
@@ -16374,7 +16676,7 @@ enum Template {
         }
 
         private func refuse(_ task: URLSessionWebSocketTask) {
-            fputs("LampWish: the link to the wish's other apps heard something that wasn't theirs, and started again.\n", stderr)
+            fputs("LampWish: the link to the project's other apps heard something that wasn't theirs, and started again.\n", stderr)
             task.cancel(with: .goingAway, reason: nil)
             dropped(task)
         }
@@ -16409,7 +16711,7 @@ enum Template {
             case "at":
                 if let id = m["peer"] as? String { remember(id, at: m["addresses"] as? [String] ?? []); lookAgain() }
             case "apps":
-                // The wish gained an app or lost one: the others keep what's known of them.
+                // The project gained an app or lost one: the others keep what's known of them.
                 setRoster(m["apps"] as? [[String: Any]] ?? [])
             case "message":
                 guard let from = m["from"] as? String, let data = m["data"] else { return }
@@ -16456,7 +16758,7 @@ enum Template {
             relayPresent = [:]
             dropFiles("The link was lost.") { _, way in way == nil }
             // Turned away, or the room ended, or dropped before it was let in: the relay may have moved, or this app may
-            // not be of the wish it was, so Lamp is asked again where to join and who this app is.
+            // not be of the project it was, so Lamp is asked again where to join and who this app is.
             if code == 4003 || code == 4005 || retry >= 3 { address = nil }
             rebuild()
             again()
@@ -16508,7 +16810,7 @@ enum Template {
             // And its shared collections, and a shared file asked of a copy that has gone quiet is asked again.
             if beats % 12 == 0 { for each in storePeers { sendSums(to: each) } }
             if beats % 12 == 6 { fetchFiles() }
-            // A copy without the wish's key keeps saying why (`open`) rather than "Connecting…".
+            // A copy without the project's key keeps saying why (`open`) rather than "Connecting…".
             if Self.key != nil { rebuild() }
             reach()
         }
@@ -16540,8 +16842,8 @@ enum Template {
             reach()
         }
 
-        /// This app's place on the network: the wish's port for it, worked out from the wish's key and its place in the
-        /// wish's list, so a TV that can't look up names knows where to try; any port when another program has that one.
+        /// This app's place on the network: the project's port for it, worked out from the project's key and its place in the
+        /// project's list, so a TV that can't look up names knows where to try; any port when another program has that one.
         private static func port(for peer: String, among roster: [String]) -> UInt16? {
             guard let key else { return nil }
             let d = derive("lamp-wish port", key)
@@ -16550,7 +16852,7 @@ enum Template {
             return UInt16(base + rank)
         }
 
-        /// The name an app is found by on the network, which says nothing of the wish or the app to anyone without the key.
+        /// The name an app is found by on the network, which says nothing of the project or the app to anyone without the key.
         /// Each copy adds its own id to it ("…-k3j9x0ab"), so the app's copies on several devices are each found.
         private static func serviceName(of app: String) -> String? {
             key.map { derive("lamp-wish service", $0, Data(app.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined() }
@@ -16591,7 +16893,7 @@ enum Template {
                         made.cancel()
                         self.listener = nil
                         self.listenerPort = nil
-                        // Another program has the wish's port: any port, found by name and told to Lamp's room instead.
+                        // Another program has the project's port: any port, found by name and told to Lamp's room instead.
                         if wanted != nil { self.listen(anyPort: true) }
                     default:
                         break
@@ -16671,7 +16973,7 @@ enum Template {
         /// Where this app listens, for Lamp's room to tell the others, who keep it for when Lamp is closed.
         private func tellWhereIListen() {
             guard relayIn, let port = listenerPort else { return }
-            // This Mac's own address first, for an app of the wish on the same Mac (an iPhone app in the simulator): it shares
+            // This Mac's own address first, for an app of the project on the same Mac (an iPhone app in the simulator): it shares
             // the Mac's network, and an app on another device that tries it is turned away at once.
             let places = (["127.0.0.1"] + Self.addresses()).map { "\($0):\(port)" }
             if let json = try? JSONSerialization.data(withJSONObject: ["t": "at", "addresses": places]) { say(json) }
@@ -16697,7 +16999,7 @@ enum Template {
             return list
         }
 
-        /// Dials another copy at each place in turn until one answers and proves it holds the wish's key; tried again later,
+        /// Dials another copy at each place in turn until one answers and proves it holds the project's key; tried again later,
         /// less often each time it fails, and at once when it's found anew. Whichever copy of that app answers is taken
         /// (an address can change hands), and kept as the copy it said it is.
         private func dial(_ peer: String, _ places: [NWEndpoint]) {
@@ -16744,7 +17046,7 @@ enum Template {
                     // Another copy answered where this one was looked for: what was kept of the old one goes.
                     let reached = direct?.peer ?? peer
                     if reached != peer { self.told[peer] = nil }
-                    // Kept by an address any app of the wish can dial again, an IPv4 one or a name.
+                    // Kept by an address any app of the project can dial again, an IPv4 one or a name.
                     switch host {
                     case .ipv4, .name: self.remember(reached, at: ["\(name):\(port.rawValue)"])
                     default: break
@@ -16788,7 +17090,7 @@ enum Template {
 
         private final class Flag: @unchecked Sendable { var on = false }   // touched only on the main queue
 
-        /// An app of the wish, or anyone, dialling this one: let in only once it proves it holds the wish's key.
+        /// An app of the project, or anyone, dialling this one: let in only once it proves it holds the project's key.
         private func take(_ connection: NWConnection) {
             // Eight unproven at a time, counting only those dialled in, so this app's own dials never shut the others out.
             guard opening.values.filter({ !$0.dialled }).count < 8, !closed else { return connection.cancel() }
@@ -16960,8 +17262,8 @@ enum Template {
             direct.connection.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { _ in then?() })
         }
 
-        // The wish's channel, the same steps as Lamp's relay takes on its side, byte for byte: every value is an HMAC
-        // under the wish's key of a label, a zero byte and what it's about; messages are AES-GCM with a nonce that
+        // The project's channel, the same steps as Lamp's relay takes on its side, byte for byte: every value is an HMAC
+        // under the project's key of a label, a zero byte and what it's about; messages are AES-GCM with a nonce that
         // counts them, so one that was changed, sent again or put out of order doesn't open.
         private static func derive(_ label: String, _ key: SymmetricKey, _ data: Data = Data()) -> Data {
             var message = Data(label.utf8)
@@ -17019,8 +17321,8 @@ enum Template {
         }
     }
 
-    /// How the wish's other apps stand, ready to drop in: a line for each ("TV app connected", "Open the iPhone app on
-    /// your iPhone."), or what keeps this app from them ("To reach the wish's other apps, allow Local Network…"), with a
+    /// How the project's other apps stand, ready to drop in: a line for each ("TV app connected", "Open the iPhone app on
+    /// your iPhone."), or what keeps this app from them ("To reach the apps that go with this one, allow Local Network…"), with a
     /// dot of its color. Nothing while this app is alone, with no other app or copy open. Give a peer name for that app's line alone. It
     /// takes the font and colors of where it's put, so style it as the rest of the app; or show `LampWish`'s own
     /// `status` and `peer(_:)?.status` in a view of your own.
@@ -17057,11 +17359,11 @@ enum Template {
         }
     }
 
-    // MARK: - The wish's TV app
+    // MARK: - The project's TV app
 
-    /// Joins the TV app of this app's wish as a player of its `Lamp.controllers`, the way a phone's page does, over the
+    /// Joins the TV app of this app's project as a player of its `Lamp.controllers`, the way a phone's page does, over the
     /// home Wi‑Fi with nothing to pair or set up. It goes the way `LampWish` reaches the TV app, straight to it or through
-    /// Lamp on the Mac, sealed with the wish's key, so it goes on with Lamp closed. Keep it while it's used (a @StateObject,
+    /// Lamp on the Mac, sealed with the project's key, so it goes on with Lamp closed. Keep it while it's used (a @StateObject,
     /// or a model's property); it leaves the game when released.
     ///
     ///     @StateObject private var pad = LampController.connect()
@@ -17089,7 +17391,7 @@ enum Template {
         private let wish = LampWish.shared
         /// This controller among any others the app has, each a player of its own: on everything it says and is told.
         private let pad = String(UUID().uuidString.prefix(8)).lowercased()
-        /// The copy of the wish's TV app this plays with, by its peer name ("tv.k3j9x0ab"): the one open longest, kept
+        /// The copy of the project's TV app this plays with, by its peer name ("tv.k3j9x0ab"): the one open longest, kept
         /// while it stays open.
         private var tv: String?
         private var seq = 0
@@ -17188,7 +17490,7 @@ enum Template {
             return wish.sendPad(message, to: tv)
         }
 
-        /// The wish's list changed: the TV app came (this one asks to play), went, or can't take players yet.
+        /// The project's list changed: the TV app came (this one asks to play), went, or can't take players yet.
         private func appsChanged() {
             guard !closed else { return }
             let app = wish.apps.first { $0.kind == "tv" }
@@ -17259,7 +17561,7 @@ enum Template {
         }
     }
 
-    /// How files go between a wish's apps, the same in every library and at Lamp's relay (`ControllerWire`): pieces of
+    /// How files go between a project's apps, the same in every library and at Lamp's relay (`ControllerWire`): pieces of
     /// at most `chunk` bytes, at most `window` sent ahead of what the receiver has acknowledged, `largest` at most, and
     /// `transfers` at once each way between two apps.
     enum LampFiles {
@@ -17269,7 +17571,7 @@ enum Template {
         nonisolated static let transfers = 2
     }
 
-    /// A file on its way to another app of the wish (`LampWish.sendFile`, `LampController.sendFile`).
+    /// A file on its way to another app of the project (`LampWish.sendFile`, `LampController.sendFile`).
     @MainActor final class LampTransfer: ObservableObject, Identifiable {
         enum State: Equatable { case sending, done, failed(String) }
         let id: Int
@@ -17310,7 +17612,7 @@ enum Template {
         }
     }
 
-    /// A file another app of the wish sent (`LampWish.onFile`), or the TV app sent with `Lamp.controllers.sendFile`.
+    /// A file another app of the project sent (`LampWish.onFile`), or the TV app sent with `Lamp.controllers.sendFile`.
     struct LampFile {
         let name: String
         let type: String
@@ -17345,13 +17647,13 @@ enum Template {
         }
 
         /// A collection's name: letters, digits, "-", "_" and "."; a shared files' collection is "files:" and such a name, and
-        /// one of the wish's own, shared by all its apps rather than this app's copies, has "wish:" before the name.
+        /// one of the project's own, shared by all its apps rather than this app's copies, has "wish:" before the name.
         nonisolated static func isCollection(_ name: String) -> Bool {
             var plain = name.hasPrefix("files:") ? String(name.dropFirst(6)) : name
             if plain.hasPrefix("wish:") { plain = String(plain.dropFirst(5)) }
             return (1...64).contains(plain.utf8.count) && plain != "__proto__" && plain.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) }
         }
-        /// One of the wish's own collections (`LampStore.shared(name, wish: true)`): every app of the wish keeps it, not only
+        /// One of the project's own collections (`LampStore.shared(name, wish: true)`): every app of the project keeps it, not only
         /// this app's copies.
         nonisolated static func isWishWide(_ name: String) -> Bool { (name.hasPrefix("files:") ? String(name.dropFirst(6)) : name).hasPrefix("wish:") }
         nonisolated fileprivate static func isItemID(_ id: String) -> Bool { (1...128).contains(id.utf8.count) && id != "__proto__" }
@@ -17386,7 +17688,7 @@ enum Template {
                 return false
             }
             dropExpiredItems()
-            // Only what this app set counts: a wish's own collections also hold what its other apps set, which this one
+            // Only what this app set counts: a project's own collections also hold what its other apps set, which this one
             // can't make room for.
             var held = collections.values.reduce(0) { $0 + $1.values.reduce(0) { $0 + (isOwn($1.entry) ? $1.held : 0) } }
             var sets: [String: Entry] = [:], changed: [(String, Any?)] = [], failed = false
@@ -17417,7 +17719,7 @@ enum Template {
                 }
                 let need = id.utf8.count + max(32, size)
                 let ownHad = had.map { isOwn($0.entry) ? $0.held : 0 } ?? 0
-                // A deletion is never turned down: it takes no more than the item it replaces, so the wish holds no more than before.
+                // A deletion is never turned down: it takes no more than the item it replaces, so the project holds no more than before.
                 guard kept == nil || held - ownHad + need <= Self.sharedLimit else {
                     fputs("\(what): the item \"\(id)\" wasn't set: this app's items in shared collections would pass \(Self.sharedLimit) bytes (a deleted item counts 32 bytes for a month).\n", stderr)
                     failed = true
@@ -17471,14 +17773,14 @@ enum Template {
         // MARK: Between copies
 
         /// Who this copy shares collections with now: the other copies of this app that speak 5, which share all of them,
-        /// and the copies of the wish's other apps that speak 6, which share only the wish's own (`shares`).
+        /// and the copies of the project's other apps that speak 6, which share only the project's own (`shares`).
         private var storePeers: [String] {
             guard !me.isEmpty else { return [] }
             return copies(for: nil).filter { $0 != copy && wire(of: $0) >= (Self.app(of: $0) == me ? 5 : 6) } + (relayIn && lampKeeps ? [Self.keeper] : [])
         }
 
         /// Whether a collection goes to another copy and is taken from it: this app's own collections only between its own
-        /// copies, never another app's of the wish; the wish's own between every app of it.
+        /// copies, never another app's of the project; the project's own between every app of it.
         private func shares(_ name: String, with peer: String) -> Bool {
             !me.isEmpty && peer != copy && (Self.app(of: peer) == me || Self.isWishWide(name) || peer == Self.keeper)
         }
@@ -17520,7 +17822,7 @@ enum Template {
 
         /// Items another copy sent, each taken when it's later than what this one has, so whatever order they come in,
         /// every copy ends with the same. What's held from other copies is bounded as values are: to what every app of the
-        /// wish could set between them, twice over, the oldest deletions let go first when a flood needs room.
+        /// project could set between them, twice over, the oldest deletions let go first when a flood needs room.
         private func mergeItems(_ name: String, _ given: [String: Any], from peer: String) {
             guard collections[name] != nil || collections.count < Self.collectionsLimit * 2 else { return }
             dropExpiredItems()
@@ -17825,7 +18127,7 @@ enum Template {
     ///                                       // its items become exactly these
     ///     groceries.onChange { id, item, from in … }   // item nil when deleted; from == wish.me for this app's own copies
     ///
-    /// With `wish: true` the list is the wish's own rather than this app's: every app of the wish keeps it the same (a Mac
+    /// With `wish: true` the list is the project's own rather than this app's: every app of the project keeps it the same (a Mac
     /// app and the iPhone app beside it sharing one calendar), each reading and changing it with the same name.
     ///
     ///     @ObservedObject var events = LampStore.shared("events", of: Event.self, wish: true)
@@ -17915,7 +18217,7 @@ enum Template {
         ///     photos.onChange { name, from in … }
         ///
         /// A file is at most 64 MB, all of them `LampWish.sharedFilesLimit` (256 MB). With `wish: true` the files are the
-        /// wish's own, kept by every app of it, as `shared(_:of:wish:)`'s are.
+        /// project's own, kept by every app of it, as `shared(_:of:wish:)`'s are.
         @MainActor static func sharedFiles(_ name: String, wish: Bool = false) -> SharedFiles {
             let key = wish ? "wish:" + name : name
             if let existing = sharedFolders[key] { return existing }

@@ -1,7 +1,9 @@
 import SwiftUI
 import AppKit
 import CryptoKit
+import LampRelayKit
 import LampFileLook
+import LampSidebarKit
 import UniformTypeIdentifiers
 
 extension UTType {
@@ -55,7 +57,7 @@ enum Sharing {
         anchors.allObjects.first { $0.origin == origin && $0.window === window && !$0.isHiddenOrHasHiddenAncestor }
     }
 
-    /// Before Share…, Copy Wish File, Export… or a drag makes the file: a wish using work that came with no license says
+    /// Before Share…, Copy App File, Export… or a drag makes the file: a wish using work that came with no license says
     /// so once, and goes only with Share Anyway. The answer is kept for the wish until it takes in more such work
     /// (`ShareCheck.accepted`), so the same question isn't asked at every copy.
     @MainActor static func askToShare(_ project: LampProject) -> Bool {
@@ -75,11 +77,77 @@ enum Sharing {
         }
     }
 
+    @MainActor private static var popover: NSPopover?
+
+    /// Share…: the popover the chat's Share button opens (`SharePopover`), from the control it was chosen with: the
+    /// wish's link to copy, the Mac's ways to send it, and the rest of sharing.
     @MainActor static func share(_ project: LampProject, from origin: Origin) {
-        guard let window = NSApp.keyWindow, let content = window.contentView, askToShare(project) else { return }
-        // Where the command was clicked, for when its control has gone by the time the file is ready.
+        guard let window = NSApp.keyWindow, let content = window.contentView else { return }
+        // Where the command was clicked, for when its control has gone, as a menu's row has once the menu closes.
         let clicked = NSRect(origin: content.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil),
                              size: NSSize(width: 1, height: 1))
+        let link = WishLink.kept(for: project)?.url
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(rootView: SharePopover(link: link, canContribute: Contribute.canContribute(project)) { action in
+            chose(action, for: project, link: link, origin: origin, window: window, clicked: clicked)
+        })
+        self.popover?.close()
+        self.popover = popover
+        if let anchor = anchor(for: origin, in: window) {
+            popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+        } else {
+            popover.show(relativeTo: clicked, of: content, preferredEdge: .minY)
+        }
+    }
+
+    /// What was chosen in the popover. Copying the link keeps it open, saying Copied; anything else closes it. The
+    /// Share Link card has a window of its own, where Release Update also puts the wish on GitHub (`GitHubRelease`).
+    @MainActor private static func chose(_ action: SharePopover.Action, for project: LampProject, link: URL?, origin: Origin,
+                                         window: NSWindow, clicked: NSRect) {
+        if action == .copyLink {
+            guard let link else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(link.absoluteString, forType: .string)
+            return
+        }
+        popover?.close()
+        popover = nil
+        let store = Store.shared
+        switch action {
+        case .copyLink: break
+        case .makeLink, .editLink: WishLinkCards.shared.open(project)
+        case .contribute: store.sendChangesBack(project)
+        case .copyFile: store.copyAppFile(project)
+        case .export: store.chooseExport(project)
+        case .send(let way):
+            // The link goes when there is one; without it, the wish's file.
+            if let link {
+                DispatchQueue.main.async { send(way, items: [link], from: origin, in: window, clicked: clicked) }
+            } else {
+                sendFile(project, way: way, from: origin, in: window, clicked: clicked)
+            }
+        }
+    }
+
+    /// Sends with one of the Mac's ways, or shows the system's list for More from where Share… was chosen.
+    @MainActor private static func send(_ way: SharePopover.Way, items: [Any], from origin: Origin, in window: NSWindow, clicked: NSRect) {
+        if let service = way.service { return service.perform(withItems: items) }
+        guard let content = window.contentView else { return }
+        let picker = NSSharingServicePicker(items: items)
+        self.picker = picker
+        // The picker opens from the control, as the system's own Share menus do; a rectangle with no
+        // size isn't a place to it, and it opens beside the window instead.
+        if let anchor = anchor(for: origin, in: window) {
+            picker.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+        } else {
+            picker.show(relativeTo: clicked, of: content, preferredEdge: .minY)
+        }
+    }
+
+    /// The wish's file, made first, for a wish with no link.
+    @MainActor private static func sendFile(_ project: LampProject, way: SharePopover.Way, from origin: Origin, in window: NSWindow, clicked: NSRect) {
+        guard askToShare(project) else { return }
         let request = UUID()
         shareRequest = request
         Task {
@@ -93,15 +161,7 @@ enum Sharing {
                 guard shareRequest == request, window.isVisible else { return }
                 // Separate native items keep the opening instructions beside the attachment in Mail and Messages,
                 // and the picture before it, so it shows large where the file alone is a blank document.
-                let picker = NSSharingServicePicker(items: ["Open this with Lamp https://lamp.dev"] + [picture, file].compactMap { $0 })
-                self.picker = picker
-                // The picker opens from the control, as the system's own Share menus do; a rectangle with no
-                // size isn't a place to it, and it opens beside the window instead.
-                if let anchor = anchor(for: origin, in: window) {
-                    picker.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
-                } else {
-                    picker.show(relativeTo: clicked, of: content, preferredEdge: .minY)
-                }
+                send(way, items: ["Open this with Lamp https://lamp.dev"] + [picture, file].compactMap { $0 }, from: origin, in: window, clicked: clicked)
             } catch {
                 guard shareRequest == request, window.isVisible else { return }
                 NSAlert(error: error).runModal()
@@ -196,7 +256,7 @@ enum Sharing {
     /// (`sharedIcon`); without one, Lamp's own drawing of the same design goes in. A wish of several apps travels whole:
     /// the app at its root as any app does, and each other app in its folder (`Parts`), as an app of its kind.
     /// How a wish's apps go in a shared file: one at the root and the others in their folders (see `export`, which
-    /// says why it's the one it is). What Put on GitHub lays its repository out by too, so the two never differ.
+    /// says why it's the one it is). What a wish's repository on GitHub is laid out by too, so the two never differ.
     /// What the wish says it is: its own line, else the line of the app it travels with at its root, else any of its
     /// apps'. A wish whose apps are all in folders of their own keeps the line in that app's folder, where the agent
     /// writes it, and a manifest or README without it would leave the wish undescribed wherever it goes.
@@ -214,13 +274,15 @@ enum Sharing {
         return (root, found.filter { $0.id != root.id })
     }
 
-    /// `repository` is where the wish is going as it's exported (Put on GitHub), named on the chain's last link so
+    /// `repository` is where the wish is going as it's exported (to GitHub), named on the chain's last link so
     /// whoever opens the file sees where the wish lives, with `commit`, the one up there now. A share that names no
     /// place names where the wish was last put (`GitHubRepo.kept`), so a file shared from a wish on GitHub still says
     /// where it lives and what commit it's at. A wish that lives nowhere names the version of its own history the
     /// file is made from, so a file that comes back from whoever it was sent to can be merged against that version
     /// (`Upstream.ownVersion`); a copy sharing on keeps the version it was given, which is the sender's and not its own.
-    static func export(_ project: LampProject, icon: Data? = nil, repository: String? = nil, commit: String? = nil) throws -> URL {
+    /// `releasing` is what's new in a release the file goes out with, which isn't kept until it has (`WishReleases`).
+    static func export(_ project: LampProject, icon: Data? = nil, repository: String? = nil, commit: String? = nil,
+                       releasing: WishReleases.Entry? = nil) throws -> URL {
         // Some kinds' files can't go in a shared file yet (an app for a device through its integration). The wish's
         // other apps are read off its folder, as Lamp lists them.
         // The file holds one app at its root and the others in their folders, as Lamp laid wishes out until any app could
@@ -285,6 +347,8 @@ enum Sharing {
             return source
         }
         try carried.encoded().write(to: stage.appendingPathComponent(Credits.file))
+        // What's new in each release, for the app's What's New… in the copies made from it (`WishReleases`).
+        try WishReleases.carry(project, releasing: releasing, into: stage)
         // Each license and notice the credits name goes with the work it covers, wherever the kind's own files left it.
         for source in credits.upstream {
             for path in source.termsFiles where Credits.isLicenceFile(path) {
@@ -356,7 +420,7 @@ enum Sharing {
         guard measure.count <= maxFiles else { throw ImportError("\(project.name) has too many files to share.") }
         guard measure.bytes <= maxUnpackedBytes else { throw ImportError("\(project.name) is too big to share.") }
         let output = work.appendingPathComponent("\(project.name).lampapp")
-        try run("/usr/bin/ditto", ["-c", "-k", "--norsrc", stage.path, output.path])
+        try zip(stage, to: output)
         // Media is already compressed, so the archive can be as big as what went in: make sure it's one Lamp opens.
         let size = (try? output.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         guard size <= maxArchiveBytes else { throw ImportError("\(project.name) is too big to share.") }
@@ -525,6 +589,8 @@ enum Sharing {
         /// Where the wish came from (credits.json at the file's root), through Lamp's checks; nil for a part, and in
         /// files from before wishes carried it.
         var credits: Credits? = nil
+        /// What's new in each release of the copy it was shared from (`WishReleases.fileEntry`); nil in files without it.
+        var releases: [WishReleases.Entry]? = nil
         /// The license texts those credits name, beside the work they cover (`Credits.isLicenceFile`).
         var licences: [URL] = []
         /// What the sender's capabilities.json declares, through the checks the agent's own goes through.
@@ -570,7 +636,7 @@ enum Sharing {
     static let maxUnpackedBytes = 256 * 1024 * 1024
     static let maxFiles = 2000
 
-    /// A shared file, or a folder holding a wish as Put on GitHub lays it out (a clone of its repository, `RepoImport`).
+    /// A shared file, or a folder holding a wish as Lamp lays it out on GitHub (a clone of its repository, `RepoImport`).
     static func open(_ file: URL, fetched: RepoArchive.Fetched? = nil) throws -> Package {
         let fm = FileManager.default
         var isFolder: ObjCBool = false
@@ -612,6 +678,7 @@ enum Sharing {
         var package = try read(app: folder, platform: platform, family: manifest.family ?? .iphone, name: name(from: manifest.name),
                                identity: identity(from: manifest.app), description: manifest.description.flatMap(AppDescription.valid), fileCount: all)
         package.credits = Credits.read(folder.appendingPathComponent(Credits.file))
+        package.releases = WishReleases.read(folder.appendingPathComponent(WishReleases.fileEntry))
         package.site = platform == .webApp && manifest.site == true
         package.licences = (package.credits?.upstream ?? []).flatMap(\.termsFiles).filter(Credits.isLicenceFile).compactMap { path in
             let file = folder.appendingPathComponent(path)
@@ -881,6 +948,7 @@ enum Sharing {
         // And where it came from, kept as it arrived so it's credited however the wish changes here (`Credits.load`), with
         // each license it names where it names it, when the kind's own files didn't already bring it.
         try Credits.arrive(package.credits, in: project)
+        WishReleases.arrive(package.releases, in: project)
         // An update replaces what's there, so a license whose text changed upstream never stays as it was; one the kind's
         // files already brought is the same text written again.
         for file in package.licences {
@@ -892,7 +960,20 @@ enum Sharing {
         // Its capabilities too, written by Lamp from what passed the checks; a file that declares none takes
         // away what an app being updated declared.
         try package.capabilities.save(for: project)
+        keepArrivedManifest(from: package.folder, in: project)
         return try installIcon(package, into: project)
+    }
+
+    /// Where the manifest a wish's files last arrived with is kept, in Lamp's own folder: what Send Changes Back measures a
+    /// change of the wish's line, kind or apps from (`Contribute.baseManifest`), since the files don't hold the manifest.
+    static let arrivedManifest = ".lamp/manifest-arrived.json"
+
+    static func keepArrivedManifest(from folder: URL, in project: LampProject) {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("lamp-app.json")),
+              (try? JSONSerialization.jsonObject(with: data)) is [String: Any] else { return }
+        let url = project.dir.appendingPathComponent(arrivedManifest)
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
     }
 
     /// The shared icon into the app: its design (icon.json) and its artwork, which lives in Lamp's own folder outside
@@ -969,6 +1050,35 @@ enum Sharing {
         guard result.ok else { throw ImportError("Couldn't read the Lamp app file.") }
         return result.output
     }
+
+    /// A folder as a zip that's the same bytes whenever its files are: entries in order of their paths, each dated the
+    /// same, with no folder entries or the Mac's extended attributes. Two exports of an unchanged wish then differ only
+    /// in what the manifest says of when it was made (`Manifest.exportedAt`), and a file remade from a repository's tree
+    /// (`Contribute`) shows only what changed in it.
+    static func zip(_ folder: URL, to output: URL) throws {
+        let fm = FileManager.default
+        let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey]
+        var names: [String] = []
+        for case let file as URL in fm.enumerator(at: folder, includingPropertiesForKeys: keys) ?? FileManager.DirectoryEnumerator() {
+            let values = try? file.resourceValues(forKeys: Set(keys))
+            guard values?.isRegularFile == true, values?.isSymbolicLink != true else { continue }
+            let name = relativePath(of: file, in: folder)
+            // One path a line is what zip reads: a name that can't be one isn't a name Lamp writes.
+            guard !name.contains("\n") else { throw ImportError("Couldn't read or write the Lamp app file.") }
+            // The folder is Lamp's own copy, and a copy of a file locked in Finder is locked too, which refuses a new
+            // date: it's unlocked first (`removeStaged` would anyway), never the person's own file.
+            try fm.setAttributes([.immutable: false, .appendOnly: false], ofItemAtPath: file.path)
+            try fm.setAttributes([.modificationDate: zipDate], ofItemAtPath: file.path)
+            names.append(name)
+        }
+        names.sort()
+        let made = Subprocess.runBlocking("/usr/bin/zip", ["-X", "-D", "-q", output.path, "-@"], cwd: folder, env: ["TZ": "UTC"],
+                                          timeout: 120, input: Data(names.map { $0 + "\n" }.joined().utf8))
+        guard made.ok else { throw ImportError("Couldn't read or write the Lamp app file.") }
+    }
+
+    /// The date every entry of a zip of Lamp's carries: the start of 2020, in the zone `zip` is told to write.
+    static let zipDate = Date(timeIntervalSince1970: 1_577_836_800)
 
     private static func run(_ tool: String, _ arguments: [String]) throws {
         guard Subprocess.runBlocking(tool, arguments, timeout: 120).ok else {
@@ -1411,6 +1521,13 @@ extension Sharing {
         var detected: [Capability] = []
         /// Code beyond the last request (`batchCount`), which no model reads.
         var truncated = false
+        /// What each app may reach once it's here (`SharedNetwork.reading`), by its folder in the wish ("" for the app at
+        /// the root, `SharedNetwork.readingKey`), from the same reading of its code the list above was made from: an
+        /// update applies these rather than reading the same package again (`Store.confirmUpdate`).
+        var readings: [String: NetworkPolicy] = [:]
+        /// False when the reading stopped before the end (the review was cancelled or ran out of time): nothing it
+        /// found counts as checked, and no review is made of it (`Store.inspectForReview`).
+        var finished = true
         var files: [(name: String, text: String)] { Array(batches.joined()) }
     }
 
@@ -1475,6 +1592,7 @@ extension Sharing {
             var everything = ""
             var sources: [URL] = []
             for file in app.sources {
+                if Task.isCancelled { found.finished = false; return found }
                 guard let text = try? String(contentsOf: file, encoding: .utf8) else { unreadable = true; sources.append(file); continue }
                 if knownLibraries.contains(fingerprint(text)) { continue }
                 sources.append(file)
@@ -1495,13 +1613,17 @@ extension Sharing {
             if !app.capabilities.isEmpty, let json = try? capabilitiesJSON(app.capabilities) {
                 files.append((prefix + Template.Capabilities.file, json))
             }
+            // Where its page's requests go, read once: for the list here and for what it's held to (`SharedNetwork`).
+            let reach = SharedNetwork.applies(to: app.platform) ? TVFiles.reach(in: sources, data: app.webData) : nil
+            if Task.isCancelled { found.finished = false; return found }
+            found.readings[SharedNetwork.readingKey(prefix)] = SharedNetwork.reading(of: app, reach: reach, stock: stockNative)
             if isPage(app.platform) {
                 // A web app's, a screen's or a game's page is read for its reach as a TV app's page is, and the Swift beside
                 // it (Native.swift) as any app's, without its comments: Lamp's scaffold names its blocks there as examples.
                 let swift = sources.filter { $0.pathExtension == "swift" }.compactMap { try? String(contentsOf: $0, encoding: .utf8) }
                     .joined(separator: "\n").split(separator: "\n", omittingEmptySubsequences: false)
                     .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }.joined(separator: "\n")
-                add(TVFiles.detected(in: sources, data: app.webData) + checklist.filter { item in
+                add(TVFiles.detected(in: sources, data: app.webData, reach: reach) + checklist.filter { item in
                     item.patterns.contains { swift.contains($0) }
                 })
                 // The page is held to its sites once it's here (`SharedNetwork`); Swift of the sender's beside it isn't.
@@ -1513,7 +1635,7 @@ extension Sharing {
                     // reach is read off what it asks Android for and what its build brings in (`AndroidFiles.detected`).
                     add(AndroidFiles.detected(in: app))
                 case .web:
-                    add(TVFiles.detected(in: sources, data: app.webData))
+                    add(TVFiles.detected(in: sources, data: app.webData, reach: reach))
                 default:
                     add(checklist.filter { item in
                         item.patterns.contains { everything.contains($0) }
@@ -1563,8 +1685,14 @@ extension Sharing {
     }
 
     static func review(_ package: Package) async -> ImportReview {
-        let found = inspect(package)
+        await review(package, inspection: inspect(package))
+    }
+
+    /// The review of a package already read (`inspect`): the AI's part of it, when AI is set up.
+    static func review(_ package: Package, inspection found: Inspection) async -> ImportReview {
         var review = ImportReview(inspection: found)
+        // A review closed or replaced meanwhile (`Store.ReviewWork`) is never shown: its AI requests aren't sent.
+        if Task.isCancelled { return review }
         // No AI to ask is an ordinary state for someone who was only sent an app, not a failure: the same
         // words whether nothing can answer at all or the route apps use is OpenRouter without a key.
         // (`available` is the test `AppAI.resolve` and the pickers use.)

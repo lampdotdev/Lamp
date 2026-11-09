@@ -140,6 +140,31 @@ enum Subprocess {
     /// build, a clone, an approval request waiting an hour) running and holding the output pipe open, so the
     /// turn would never end. Each gets a chance to quit cleanly, then whatever is left is killed. Returns the
     /// processes signaled, for a caller that has to wait for them to be gone (`alive`).
+    /// A process run through `Shell.run`, to stop with its tree when the task waiting for it is cancelled: one cancelled
+    /// before it starts is stopped as it does. `Shell.run` itself waits for the process to exit, so a caller that
+    /// shouldn't wait for one that hangs stops it with this (`RepoImport.clone`, `AppAI.viaEngine`).
+    final class Running: @unchecked Sendable {
+        private let lock = NSLock()
+        private var process: Process?
+        private var stopped = false
+
+        func started(_ process: Process) {
+            let stop = lock.withLock { () -> Bool in
+                self.process = process
+                return stopped
+            }
+            if stop { _ = Subprocess.terminateTree(process) }
+        }
+
+        func stop() {
+            let process = lock.withLock { () -> Process? in
+                stopped = true
+                return self.process
+            }
+            if let process { _ = Subprocess.terminateTree(process) }
+        }
+    }
+
     @discardableResult
     static func terminateTree(_ process: Process) -> [pid_t] {
         guard process.isRunning else { return [] }

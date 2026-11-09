@@ -35,6 +35,25 @@ struct WaitingImport {
     /// The request a link brought with a fetched file, kept beside it (`Store.fetchedRequest`): it goes with the copy.
     static let requestFile = "request.txt"
 
+    /// The link a kept file was opened by, which the wish made of it follows (`following(beside:)`).
+    static let followingFile = "following.json"
+
+    private struct Followed: Codable {
+        var followed: Following.Followed
+        var pulling: String?
+    }
+
+    /// The followed link `keep` saved beside a kept file, with the version fetched: only in a folder kept here.
+    static func following(beside file: URL) -> Following.Followed? {
+        let home = file.deletingLastPathComponent()
+        guard home.deletingLastPathComponent().lastPathComponent == "Waiting",
+              let data = try? Data(contentsOf: home.appendingPathComponent(followingFile)),
+              let saved = try? JSONDecoder().decode(Followed.self, from: data), saved.followed.place.reachable else { return nil }
+        var followed = saved.followed
+        followed.pulling = saved.pulling
+        return followed
+    }
+
     /// The wish a repository was fetched to update, kept beside it (`target(beside:)`).
     static let targetFile = "update-target.txt"
 
@@ -66,10 +85,10 @@ struct WaitingImport {
     /// any already kept: each gets its review, none pushes another out. The same file opened again is kept
     /// once. False when no copy could be made (a full disk, say): nothing is remembered then, so Lamp never
     /// promises a file it may not have. A request kept beside a fetched file is copied with it.
-    func keep(_ file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil) -> Bool {
+    func keep(_ file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil) -> Bool {
         let fm = FileManager.default
         let kept = paths
-        // The same file again counts as the same only when it's for the same wish: two copies (Keep Both) updated from
+        // The same file again counts as the same only when it's for the same wish: two copies (Keep as Separate App) updated from
         // one repository fetch the same thing, and each still gets its own review. And only as the same fetch: a fork
         // with the same files is another repository, to be credited as that.
         if let same = kept.first(where: { URL(fileURLWithPath: $0).lastPathComponent == file.lastPathComponent
@@ -97,6 +116,10 @@ struct WaitingImport {
             }
             if let target { try target.write(to: home.appendingPathComponent(Self.targetFile), atomically: true, encoding: .utf8) }
             if let fetched { try JSONEncoder().encode(fetched).write(to: home.appendingPathComponent(Self.fetchedFile), options: .atomic) }
+            if let following {
+                try JSONEncoder().encode(Followed(followed: following, pulling: following.pulling))
+                    .write(to: home.appendingPathComponent(Self.followingFile), options: .atomic)
+            }
         } catch {
             try? fm.removeItem(at: home)
             return false

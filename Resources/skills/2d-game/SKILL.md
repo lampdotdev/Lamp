@@ -177,6 +177,11 @@ Nothing is loaded from the network, ever: the art is in Web/ or made in code.
   it runs) instead of frames that wouldn't match. Make it once and scale it in the game (`setDisplaySize`).
 - A file the person gave (Attachments/) is copied into Web/ the same way.
 
+Whichever way it's drawn, make it read at a glance: characters and objects with recognizable silhouettes, one sprite
+scale and one outline style throughout, a quieter background behind the action, hazards and rewards that never look
+alike, and animation that shows each action (a wind-up, a landing, a hit). Simple geometric art chosen for the game is
+fine.
+
 ### Sound and saves
 
 The game skill's: look in the `assets` tool first for an effect for each thing the player does or meets and for the
@@ -234,7 +239,7 @@ The log on a device says every ten seconds how many frames a second it gets ther
 ### Checking it
 
 `look_at_app` shows the game in its window on this Mac, where the person is in it, opening it when it's closed;
-`use_app` plays it there with Lamp's own controller (`stick`, `button`, `wait`), from wherever it is, a picture at the
+`use_app` plays it there with Lamp's own controller (`stick`, `button`, `wait`, and a `click` on what its screen shows), from wherever it is, a picture at the
 end (the game skill, "Playtesting"). When the person asks you to try, play or test it, play it as they would: start
 it, jump, die, win, pause, change a setting and come back to find it kept. Once it looks or plays right there,
 `look_at_app` with `on_device` looks at it in the preview of where Try On points (the iPhone or iPad simulator); the

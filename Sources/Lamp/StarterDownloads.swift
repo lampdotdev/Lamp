@@ -5,7 +5,7 @@ import Foundation
 /// desk lists it by (`Starters.Listed`). Two things come down:
 ///
 /// - **Its tree**: the starter's repository at the commit this Lamp pins, as GitHub's archive of that commit, so it's
-///   what Update from GitHub… merges against and Send Changes Back… goes on top of, and needs no git (a new person's
+///   what Update from GitHub… merges against and what a copy arrives as, which Send Changes Back… measures its changes from, and needs no git (a new person's
 ///   Mac has none until Apple's tools come). It's checked against the pin itself: the commit object Lamp ships
 ///   (`Listed.commit`, from the build's fetch) must hash to the pinned commit, and the files must hash to the tree that
 ///   commit names, as git hashes a tree. Anything else is refused and removed.

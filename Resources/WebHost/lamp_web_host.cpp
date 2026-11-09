@@ -1158,6 +1158,11 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         g_log = _wfopen((local + L"\\log.txt").c_str(), L"wb");
     } catch (...) {}
     say_line(L"Lamp: the app started.");
+    // An Xbox gives a package installed as a game about 5 GB and one installed as an app 1 GB: which it got.
+    try {
+        say(L"Lamp: the console lets the app use %llu MB of memory.",
+            (unsigned long long)(Windows::System::MemoryManager::AppMemoryUsageLimit() >> 20));
+    } catch (...) {}
     SetUnhandledExceptionFilter(last_words);
     try {
         CoreApplication::Run(make<View>());

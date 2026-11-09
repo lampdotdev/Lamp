@@ -81,7 +81,14 @@ public struct AskCardView: View {
             ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
                 if index > 0 { Divider() }
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(question.question).font(.headline)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(question.question).font(.headline).fixedSize(horizontal: false, vertical: true)
+                        if let detail = question.detail {
+                            Text(detail)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                     ChipRow(options: question.options, chosen: progress.answers[index],
                             own: Binding(get: { progress.own[index] ?? "" }, set: { progress.type($0, for: index) })) {
                         progress.choose($0, for: index)

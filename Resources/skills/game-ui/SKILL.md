@@ -87,7 +87,7 @@ Each screen has one job. "What is this game?" and "which level?" are two questio
 
 Before writing a phone's screens, go through each phase of the flow and settle what the shared display shows and what
 each player's phone shows, and keep that as a small table under the `Flow:` line. The shared display is whatever everyone looks at: the
-Mac, a TV, or a phone or iPad running the game. A phone used as a controller, by a phone page or an app of the wish's own
+Mac, a TV, or a phone or iPad running the game. A phone used as a controller, by a phone page or an app of the project's own
 (the phone-controllers skill), is a different thing from a phone running the game, which has only its own screen and
 needs no split.
 
@@ -176,6 +176,20 @@ What makes it work anywhere:
 - What the registered state keeps is yours to name: the screen, the node and the focus, with the camera registered too,
   restored directly with no intro replayed (the game skill, "Changes while it's played"). The map isn't `busy()`.
 
+## A finished look
+
+A game should look finished, in whatever style suits it:
+
+- **The playfield dominates.** The world takes most of the screen; the HUD shows only what's needed in play and sits
+  clear of the action. A racer's speed and lap sit at the edges of the driving view; a board game's score
+  sits beside its board.
+- **Menus share the world's look.** Title, pause and results are made of the same material, palette and type as play,
+  and pause keeps the scene visible behind it.
+- **Every detail chosen.** Type, spacing, icons and each control's states (rest, focus, pressed, disabled) are styled
+  for this game: nothing is left as a browser or system default by accident.
+- **Focus and access stay.** Keyboard and controller focus is always visible, and controls stay real buttons that every
+  input the game promises can reach.
+
 ## Teaching and input
 
 - Teach by doing: a safe first objective, the action named beside the thing it applies to, then the next action when
@@ -221,6 +235,8 @@ Play the journey, don't only look at it:
 - each input the game supports, and a mix of them where players differ;
 - long text, a small window and a wide one;
 - mute and reduced motion;
+- how it looks: the opening, play and results read as one game; the HUD stays readable at the smallest window; focus,
+  pressed and disabled look different; nothing shows a browser's default look by accident;
 - joining, a failed join and reconnecting, where the game takes phones, and a gesture interrupted partway (the
   phone-pages skill).
 

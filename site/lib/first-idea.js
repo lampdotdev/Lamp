@@ -43,7 +43,7 @@ The request is what they'll type into Lamp, so it reads like a person asking for
 - It does what they asked and nothing more: no extra features they didn't mention. At most one small touch that follows from what they said, and often none.
 - If it changes, moves, sends or deletes anything, it asks first.
 - One paragraph of plain text: no name or title, no lists, no line breaks, no parentheses, no markup, no technical words.
-- "lead" is one short sentence from you introducing it, like "Here's your wish. Change anything you like."
+- "lead" is one short sentence from you introducing it, like "Here it is. Change anything you like."
 
 Reply with "kind" set to "question" (fill "question" and "options", leave "lead" and "request" empty) or "request" (fill "lead" and "request", leave "question" empty and "options" empty).`;
 

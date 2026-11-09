@@ -39,7 +39,7 @@ panel, beside the simulator, the emulator or Lamp's preview that shows it, or on
 (`ChatPanel`, "The chat's one screen" in the chat guide); one still coming true, or waiting on an answer, opens its
 chat. With VoiceOver a row is picked as a click picks it, and opened by its Open action. A right-click has Open and then what ⋯ has
 (`DeskWishMenu`): Duplicate…, New Copy of the Original, Update from the Original, Start Over, Send Changes Back… and Check for Updates…
-(Review Update… once there's one, for a wish that follows a repository on GitHub: `DeskEntry.followsRepository`) where they apply, then the wish's own menu (`AppMenu`: Rename…, Delete… and the rest).
+(Review Update… once there's one, for a wish that follows a repository on GitHub: `DeskEntry.followsRepository`) where they apply, Follow a Copy… ("Sharing a copy and following others" in the wishes guide), then the wish's own menu (`AppMenu`: Rename…, Delete… and the rest).
 A row under Starter apps has no ⋯ (above), and its side panel offers Open and Remix it; the arrows move the pick through
 both sections, and File's commands act on no wish while a starter not on the desk yet is picked.
 Open isn't behind ⋯: the button beside it opens the wish, and an item first under the pointer would take a click meant
@@ -57,7 +57,7 @@ front (⌘[).
 or moved to with the arrows; the first until then) shows beside it what it is, in a panel the toolbar's sidebar button
 slides away and back, shown only where the window leaves the list room beside it (`DeskDetail`): its picture
 (`Runtime.previewURL`, else the one its starter shipped), line, who made it and its license, where it runs and its
-remixes, Open (the panel's first button, in ink) with ⋯, and **Remix it** (its Remix button outlined, the second thing to do): a box whose change goes to this wish (`Store.change(_:asking:)`), sent as if typed
+remixes, the copies it follows with Pull In or Check Again beside each (`FollowingList`; a wish made from someone's project rather than a wish keeps its one update line), Open (the panel's first button, in ink) with ⋯, and **Remix it** (its Remix button outlined, the second thing to do): a box whose change goes to this wish (`Store.change(_:asking:)`), sent as if typed
 in its chat, which opens beside it as Open opens it; with nothing written it only opens. While a starter is fetched or built for its first opening, a spinner takes the place of its row's Open button, beside the "Getting it ready…" line. A starter's own three changes
 are there to put in the box. The wish changes in place, a version of its own that Undo and Versions take back. A starter
 or a wish opened from GitHub or a file is already the person's own copy, so the original is never touched.
@@ -74,12 +74,12 @@ the code, the old chat and the old conversations together. For a starter there's
 also New Copy of the Original (`Store.duplicateOriginal`), on every copy of one this Lamp ships, changed or not: a fresh
 copy of the starter as this Lamp ships it, put on the desk as a remix link puts one, beside the copy. Send Changes Back… is
 in the menu only for such a wish that came from a repository (`Contribute.canContribute`), and opens its card in the
-wish's chat as the chat's Share menu does. A remix link from the site lands the same way: it opens the person's own
+wish's chat as the chat's Share popover does. A remix link from the site lands the same way: it opens the person's own
 untouched copy of the starter with the request written into its box (`openCopy`), to be sent in place.
 
 Remix means changing the wish itself, everywhere Lamp says it: the desk, the site's and a README's remix links (which
 open the starter itself), and the wand mark in every app, which opens its chat. **Duplicate…** (`Store.remix`, in the
-wish's menu and File → Duplicate…, which, like Copy Wish File and Name This Version…, acts on the row picked while the
+wish's menu and File → Duplicate…, which, like Copy App File and Name This Version…, acts on the row picked while the
 desk is in front and otherwise on the chat in front, `Store.commandTarget`) is for making something else of it while keeping it as it is. It makes a new copy, "<name> Remix", with its code, history and icon on another background, and a link back
 to the original at the end of its chain, then builds it with its chat beside it; the original stays as it was. From the
 panel's menu, what's in the box goes as the copy's first request. A remix made with no change asked opens its chat on
@@ -138,6 +138,17 @@ it, and says it wasn't checked by AI; building it takes a click, a request that 
 something compiled then waits for Apple's tools. A starter from the site opens once it's fetched, and only a wish from
 the site, which has to be made, goes on to the welcome's setup.
 
+Apple's tools count as there only when they can build a Mac app: a compiler, and the macOS SDK an app's build would
+take, found the way the build finds it (`SetupCheck.macSDKRepair`: `Shell.compatibleSDK`, then xcrun, in the build's
+environment, so with the Xcode Lamp chose for itself when it did). Tools that are there without one need repair, not
+Apple's installer (`SetupCheck.ToolsRepair`): the desk, the welcome and the chat of a wish that needs them say so before
+anything is asked, with the one thing that puts it right (installing the Command Line Tools again, accepting Xcode's
+terms, Xcode from the App Store), and setup looks again every few seconds until they can build. The developer folder is
+looked at apart from any `SDKROOT` Lamp was started with: one that isn't there is said as that setting, never as tools
+to reinstall, and the Command Line Tools are removed for reinstalling only after a fresh look still finds them without an SDK. Lamp never changes
+which Xcode the Mac uses. A build looks again just before it starts and after it fails (`Store.appleToolsBroke`): tools
+that broke meanwhile hold the build until they're put right, and their failure never goes to the agent as its code's.
+
 **Starters are fetched when they're first opened.** Lamp's bundle carries only what the desk lists each one by
 (`Starters.Listed`, in `listing/` beside its starter.md: its line, credits, picture and icon, and the commit object
 the fetch is checked against), so on the first launch every starter is under Starter apps and none is on the desk yet.
@@ -179,7 +190,7 @@ is) that need no key or account, use the AI the person builds with when they use
 example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
 
 Each starter is made in a public repository in the Lamp team's account (github.com/lampdotdev/<folder>, the
-account `Starters.account` names), laid out as Put on GitHub lays a wish out: the app's code and files with Lamp's own
+account `Starters.account` names), laid out as Lamp lays a wish out on GitHub: the app's code and files with Lamp's own
 around them (so `zsh build.sh` builds it there too), an MIT license, a README and, among its pictures (`.github/`), the
 drawn icon and the desk's preview. Lamp's repository holds only what names each one: `Resources/Starters/<folder>/
 starter.md`, with the starter's line and three changes, where it lives (`repository:`) and the commit this Lamp ships
@@ -187,8 +198,8 @@ starter.md`, with the starter's line and three changes, where it lives (`reposit
 committed) by `build.sh`, CI and anyone running the tests; build.sh bundles only its listing (above), and a person's
 Lamp fetches the tree itself when the starter is opened. It's read as a repository
 is opened (`Starters.copy`: `RepoImport.open` and `Sharing.install`, so Lamp's own files in it are never copied, and
-the copy names the starter at that commit on its chain, which Update from GitHub… merges against and Send Changes
-Back… goes on top of). A copy made before starters named a repository gets the address from the starter this Lamp
+the copy names the starter at that commit on its chain, which Update from GitHub… merges against; Send Changes
+Back… measures the copy's changes from the version it began with, "From Lamp"). A copy made before starters named a repository gets the address from the starter this Lamp
 ships (`Starters.located`) and is merged against the version it began with ("From Lamp", an arrival like a shared
 file's). A starter of a kind Lamp doesn't share yet has none. A starter based on someone else's work (New York,
 Home HQ) still credits that work in its credits.json; its repository is Lamp's version.
@@ -197,7 +208,7 @@ What a starter's repository shows is the starter's own: the GitHub description i
 (`GitHubRepo.readme` with a `Showcase`) opens with the icon from `.github/`, the description, the buttons (Play in your browser for a game, Open
 in Lamp, "Generated apps"), its reel's loop where it has one and its preview otherwise, and "Ideas to try" titled with starter.md's `offer` and listing its tweaks, each a link
 that opens Lamp on a copy with that request. A game whose page is the whole game also gets a page
-anyone plays in a browser (`StarterRepos.stagePage`: the page Put on GitHub puts up for a game, `Publish.copyPage`, with the credit bar and the tweaks in its Remix
+anyone plays in a browser (`StarterRepos.stagePage`: the page a release puts up on GitHub for a game, `Publish.copyPage`, with the credit bar and the tweaks in its Remix
 panel, which names the starter so a remix starts from a fresh copy of it, "Remixing a published page" in the
 wishes guide, on the repository's `gh-pages` branch for GitHub Pages, at lampdotdev.github.io/<folder>), which the README
 links and the repository's website points to; any other starter's website is its remix link on lamp.dev. `scripts/publish-starters.sh` refreshes all of that: it clones each
@@ -290,7 +301,7 @@ leaves the storyboards and reels out (build.sh).
 **Changing a starter.** Its repository is the starter; Lamp pins a commit of it. A change is best made in Lamp Dev,
 where it's played as it's made: open the starter with File → Open from GitHub… (github.com/lampdotdev/<folder>), ask
 for the change, then File → Send Changes Back…, which opens a pull request on the repository (a member of the account's
-starters team, which has push access to every starter's repository, can Put on GitHub to it directly). A change made in a clone and pushed is as good. Once the repository has moved on,
+starters team, which has push access to every starter's repository, can release to it directly with Also update GitHub). A change made in a clone and pushed is as good. Once the repository has moved on,
 `scripts/pull-starters.sh [<folder>]` moves the pin to its latest commit and fetches the tree: look at what changed
 (`git -C Resources/Starters/<folder>/tree log`, or the repository), run `scripts/check-starters.sh <folder>` and
 `swift test --filter StartersTests`, and commit the starter.md. When the icon's design (icon.json) changed, draw the
@@ -320,7 +331,7 @@ Support/Lamp Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp); its rep
    them.
 4. Put it on GitHub: `./build.sh`, then `scripts/publish-starters.sh --new <folder> <the wish's folder>`, signed in
    with `gh` to an account that can make repositories in lampdotdev. It makes the public repository (and a game's
-   page) from the wish as Put on GitHub would (GitHub's API can't mark a new file executable, so in a new
+   page) from the wish as a release to GitHub would (GitHub's API can't mark a new file executable, so in a new
    repository `build.sh` isn't, which is why the README says `zsh build.sh`; Lamp writes it afresh, executable, before
    building a copy), gives the account's starters team push access to it (the team whose
    members make and change starters), and fills in the starter's `repository:` and `commit:`, fetching the tree. Then its pictures: take `preview.png` as above, and paint and draw the icon into the tree with
@@ -341,13 +352,17 @@ its file finds the wish it was remixed from by its chain, and the original's fil
 unsaved, and lines up every change either of you made since the copies last met on one timeline by date, each a switch: lit when it's kept, dimmed when it's left out, across the window's width. A thumb on
 its owner's side (yours left, theirs right) does what a click does: up to keep it, turned over to leave it out. A
 change's time shows while Option is held.
-Nothing of theirs starts in; Mix waits for the file's review (`Sharing.review`), as opening it would. The window's head
-names the wish being mixed into and how a click works, and Choose Another… starts over with another file.
+Nothing of theirs starts in; Mix waits for the file's review (`Sharing.review`), as opening it would: the import's own,
+whole, when it had finished before Mix… (`MixModel.adopt`), so the code is checked once; otherwise Mix checks it itself. The window's head
+names the wish being mixed into and how a click works, and Choose Another… starts over with another file. Under the
+two copies, every warning of the reviews in force, with its detail, as the import's review shows them
+(`ImportReviewCard.considerations`); and Mix follows their rule (`ImportReview.opening`): Return mixes only
+on a review Lamp vouches for, anything less takes a click, and "Mix Anyway" when there's something to be wary of.
 
 A wish file dropped on the desk opens as one opened from the Finder (`Store.importApp`). With the switch on, a file
 that carries its versions and finds a wish here it met at a version both have (`Mix.copy`, `Mix.meeting`) gets Mix…
 in place of Update on its review, waiting while another mix is saved
-(`PendingImport.mixFile`), beside Keep Both: Mix… closes the review and opens the window on that file
+(`PendingImport.mixable`), beside Keep as Separate App: Mix… closes the review and opens the window on that file
 (`MixModel.shared`).
 
 - **What travels.** With the switch on, a shared file carries History/ (`MixHistory`): the sender's versions since
@@ -365,6 +380,19 @@ in place of Update on its review, waiting while another mix is saved
 - **Playing back.** What's in is replayed in date order from where they met with `git merge-tree -X theirs`: the
   later change wins wherever two touch the same lines (`Mix.replay`), and the window marks an earlier change a later
   one replaces in part. Lamp's own files stay as this copy has them.
+- **What no review read.** The file's review read its code at the top of the file, their latest; a pick can come to
+  something else (a change of theirs taken without a later one, a file both changed, a History/ that differs from the
+  code beside it), and so can each version saved on the way, which Undo reaches at once. Mix plays the pick back once
+  (`Mix.prepare`) into the trees it will save; a version holding a file (its content and mode, or its absence) that is
+  neither what the review read, as an import stages it (`Upstream.stage`), nor what this copy has had since the copies
+  met, needs a check. Mix then saves nothing: it checks the app as the mix leaves it, every file written as the tree holds it and
+  read as a shared file is (`Mix.checkInput`), with each such earlier version's code beside it under that version's title, in one review, which
+  adds to the file's and never takes any of it back: Mix shows what both say and follows the stricter rule. The check is of those trees only: a change to the pick drops it. A check that couldn't read what the mix comes to
+  shows why with Try Again beside it (`MixModel.retryCheck`), which plays the same pick back again and checks it, the
+  file's review kept as it was; Mix stays off until that check is in. `Mix.apply`
+  saves the very trees prepared, refusing one that needs a check without it or a copy that has moved on, before a file
+  is touched. Their changes to a file no shared copy carries don't come in; it stays as this copy has it. Each
+  preparation, preview and save builds its trees in an index of its own.
 - **Saving.** On top of this copy's history, never rewriting it: one version leaving out what of yours was taken
   out, tagged `Lamp-Left-Out: <commits>` and saved even when it changes no file, then one per change of theirs taken
   in, under its title, with `Lamp-Mixed: <their commit>` so neither copy offers it again. The next lineup reads both:
@@ -374,6 +402,5 @@ in place of Update on its review, waiting while another mix is saved
   then, and isn't made again (`Mix.mixedMark`). Every git it runs works on commits, so a git
   without `merge-tree -X` still mixes, a later change then winning whole files.
 
-Not yet: a review of the code in History/ beyond what the file's own review read (an early change of theirs taken
-without a later one brings code no review saw), Android's package rename, a wish of several apps (untried), and
+Not yet: Android's package rename, a wish of several apps (untried), and
 running their copy beside yours.

@@ -82,9 +82,50 @@ export function load(name) {
 // played" below).
 export async function asset(path) {
     took(clean(path));
-    const answer = await fetch(fresh(path));
-    if (!answer.ok) { log(`asset: no ${path}`); return null; }
-    return answer.arrayBuffer();
+    let answer;
+    try { answer = await fetch(fresh(path)); } catch (e) { log(`asset: couldn't fetch ${path}`); loadProblem(); return null; }
+    if (!answer.ok) { log(`asset: no ${path}`); loadProblem(answer.status); return null; }
+    // The body can still stop partway, after the answer's headers came.
+    try { return await answer.arrayBuffer(); } catch (e) { log(`asset: ${path} stopped partway`); loadProblem(); return null; }
+}
+
+// A file the game needed that didn't come, said on the page rather than only in its log, with Reload: a game that
+// waits on it otherwise sits on its loading screen with nothing said. A file that isn't there (404) can be one the
+// game only tries, so that's said only when the page itself is gone too: a newer version took its place.
+let problemShown = false;
+async function loadProblem(status) {
+    if (problemShown || !document.body) return;
+    let words = "Part of the game didn't load.";
+    let updated = false;
+    if (status === 404) {
+        let gone = false;
+        try { gone = (await fetch(new URL('./', location.href), { method: 'HEAD', cache: 'no-store' })).status === 404; } catch (e) {}
+        if (!gone || problemShown) return;
+        words = 'This game was just updated.';
+        updated = true;
+    }
+    problemShown = true;
+    const bar = document.createElement('div');
+    bar.setAttribute('role', 'alert');
+    bar.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:2147483647;display:flex;' +
+        'align-items:center;gap:12px;padding:8px 8px 8px 16px;border-radius:999px;background:rgba(20,20,22,.92);color:#fff;' +
+        'font:500 14px/1.3 -apple-system,system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.35);max-width:calc(100vw - 32px)';
+    const text = document.createElement('span');
+    text.textContent = words;
+    const reload = document.createElement('button');
+    reload.type = 'button';
+    reload.textContent = 'Reload';
+    reload.style.cssText = 'border:0;border-radius:999px;padding:6px 14px;background:#fff;color:#111;font:600 13px/1 -apple-system,system-ui,sans-serif;cursor:pointer';
+    // Starting afresh keeps the player's place where the game saves it (`__lampReloadNow`). A page that's been replaced
+    // can't come back at its own address: the page around it (a Share Link's on lamp.dev) is asked to load again, which
+    // brings the new version; on its own, it loads again.
+    reload.addEventListener('click', () => {
+        if (!updated) return (window.__lampReloadNow || (() => location.reload()))();
+        if (window.top !== window) window.parent.postMessage({ lamp: 'reload-page' }, '*');
+        else location.reload();
+    });
+    bar.append(text, reload);
+    document.body.append(bar);
 }
 
 // Work done in a worker (js/city-worker.js, a module beside the page), off the frame the game draws: `message` is sent
@@ -1654,9 +1695,9 @@ function keep(path, key, build, options = {}) {
         keepsWaiting.add(waiting);
         value = Promise.resolve(value).finally(() => keepsWaiting.delete(waiting));
         const drawnBefore = draws;
-        value.then(v => { entry.made = v; entry.settled = true; entry.timers = waiting.timers; entry.ms = performance.now() - began; if (draws !== drawnBefore) entry.draws = null; own(v, waiting); },
+        value.then(v => { entry.made = v; entry.settled = true; entry.timers = waiting.timers; entry.ms = performance.now() - began; entry.span = [began, began + entry.ms]; if (draws !== drawnBefore) entry.draws = null; own(v, waiting); },
             () => { entry.settled = true; if (kept.get(id) === entry) kept.delete(id); });
-    } else { entry.made = value; entry.settled = true; entry.ms = performance.now() - began; }
+    } else { entry.made = value; entry.settled = true; entry.ms = performance.now() - began; entry.span = [began, began + entry.ms]; }
     entry.value = value;
     // The part it replaces goes, sparing what the new one shares with it (materials made once, so compiled once).
     if (had) Promise.resolve(value).then(v => letGo(had, usedBy(v)), () => letGo(had));
@@ -2438,6 +2479,7 @@ async function runAgain(change, state, roster) {
             addresses.set(path, from);
             if (rootPaths.includes(path)) {
                 // The module that starts the game: what it awaits may be the whole start, so it isn't waited for here.
+                if (again.started == null) again.started = performance.now();
                 import(from).catch(e => ranAgainFailed(again, e));
                 continue;
             }
@@ -2557,11 +2599,24 @@ function ranAgain(again) {
     // for Reload: Lamp's chat and the agent's next look say it, so neither says the person sees what they don't. Said
     // once the new code's first frame is drawn, with how long the game stood still for it (`firstDrawn`).
     const ms = k => k.ms == null ? {} : { ms: Math.round(k.ms) }, cause = k => k.cause ? { cause: k.cause } : {};
-    reporting = { again, said, ran: performance.now() - again.began, more: {
+    // The game's own start, outside the parts built again: what it awaits there (data fetched from the network, above
+    // all) holds the game still at every change, and nothing else would tell the agent so.
+    // Parts built side by side, or one inside another's build, overlap: what's taken off is the time some part was being
+    // built, each moment once, within the start.
+    const ranAt = performance.now();
+    let outside = null;
+    if (again.started != null) {
+        const clipped = tally.built.filter(k => k.span).map(k => [Math.max(k.span[0], again.started), Math.min(k.span[1], ranAt)])
+            .filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+        let building = 0, reach = again.started;
+        for (const [a, b] of clipped) { if (b > reach) { building += b - Math.max(a, reach); reach = b; } }
+        outside = Math.max(0, Math.round(ranAt - again.started - building));
+    }
+    reporting = { again, said, outside, ran: ranAt - again.began, more: {
         built: [...tally.built.map(k => ({ part: k.key, ...ms(k), ...cause(k) })),
                 ...tally.building.map(k => ({ part: k.key, background: true, ...cause(k) })),
                 ...tally.swapped.map(k => ({ part: k.key, background: true, ...ms(k), ...cause(k) }))],
-        kept: tally.kept.length, waits, ...(again.change.quiet ? { later: true } : {}) } };
+        kept: tally.kept.length, waits, ...(outside == null ? {} : { outside }), ...(again.change.quiet ? { later: true } : {}) } };
     if (waits.length) {
         // The rest of the change goes in when the page opens again, at the person's Reload.
         waiting = { ...again.change, changed: waits, why: `nothing in the running game read ${waits.join(', ')} again`, hard: true, reopens: true };
@@ -2577,12 +2632,13 @@ function ranAgain(again) {
 let reporting = null;
 function firstDrawn(cost) {
     if (!reporting) return;
-    const { again, said, ran, more } = reporting, still = performance.now() - again.stopped, compiled = warmed;
+    const { again, said, ran, outside, more } = reporting, still = performance.now() - again.stopped, compiled = warmed;
     reporting = warmed = null;
     const timing = `the game stood still ${Math.round(still)} ms (its first frame ${Math.round(cost)} ms`
         + `${compiled == null ? '' : `, drawn once its shaders had compiled in ${Math.round(compiled)} ms`})`;
     log(again.change.quiet ? `Lamp: put in what was built in the background${said ? ` (${said})` : ''}; ${timing}.`
-        : `Lamp: the game's code ran again in place${said ? ` (${said})` : ''} in ${Math.round(ran)} ms; ${timing}.`);
+        : `Lamp: the game's code ran again in place${said ? ` (${said})` : ''} in ${Math.round(ran)} ms`
+            + `${outside >= 100 ? `, ${outside} ms of it in the game's own start outside its kept parts (what it awaits there, such as data from the network, holds it still at every change)` : ''}; ${timing}.`);
     tellHost(again.change.gen, 'report', said, { ...more, frozen: Math.round(still), firstFrame: Math.round(cost) });
 }
 

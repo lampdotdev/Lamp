@@ -5,7 +5,7 @@ import LampSidebarKit
 /// Lamp's starters as repositories on GitHub (`Starters.account`, one each), where the starters are made: a change to
 /// one goes to its repository (from Lamp, Send Changes Back…; or a push by whoever has access), and Lamp pins the
 /// commit it ships (`scripts/pull-starters.sh` moves the pin, `scripts/fetch-starters.sh` fetches the tree). Each is
-/// laid out as Put on GitHub lays a wish out (`GitHubRepo.stage`: the shared file's contents with its checks, Lamp's
+/// laid out as Lamp lays a wish out on GitHub (`GitHubRepo.stage`: the shared file's contents with its checks, Lamp's
 /// own files so `zsh build.sh` builds it, a README, an MIT license), so it opens with File → Open from GitHub…, and a
 /// copy on someone's desk takes the latest of it (Update from GitHub…) and sends changes back to it.
 /// `scripts/publish-starters.sh` runs `stage` on each repository's main to refresh what's Lamp's there (Lamp's own
@@ -13,10 +13,9 @@ import LampSidebarKit
 /// wish on this Mac (`--from-wish`).
 ///
 /// The tree is the same every time for the same starter, so a starter that didn't change makes no new commit: its
-/// identity is derived from the starter (never a random one), its export time is fixed, and the shared file isn't in
-/// it (a zip differs every time it's made; the tree is what Lamp opens). Its README leads with the starter: its icon
+/// identity is derived from the starter (never a random one), and its export time is fixed. Its README leads with the starter: its icon
 /// and its reel or preview (in `.github/`, out of the code's way), what it is, the changes its chat offers, and for a game, the
-/// page it plays on: the game staged as Put on GitHub stages one (`stagePage`), which the script puts on the repository's
+/// page it plays on: the game staged as a wish's release to GitHub stages one (`stagePage`), which the script puts on the repository's
 /// `gh-pages` branch for GitHub Pages.
 enum StarterRepos {
     static let commandLineFlag = "--stage-starter-repos"
@@ -124,10 +123,6 @@ enum StarterRepos {
         let repo = repo(of: starter)
         let staged = try GitHubRepo.stage(project, repo: repo, link: nil, withPage: false)
         let tree = staged.folder
-        // The tree alone, not the shared file beside it.
-        for file in try fm.contentsOfDirectory(at: tree, includingPropertiesForKeys: nil) where file.pathExtension == "lampapp" {
-            try fm.removeItem(at: file)
-        }
         // The chain: what the starter is based on (its credits as `Starters.copy` installed them, less the starter's own
         // link), and the starter itself, named where it lives. The commit is the one this tree becomes, which whoever
         // opens it gets from the repository (`RepoImport.naming`).
@@ -177,14 +172,13 @@ enum StarterRepos {
         let build = GitHubRepo.Build(alone: app.platform.target.recipe.buildsAlone, app: app.platform.target.identity.name, others: !parts.isEmpty)
         // Its credits are what it's based on; the chain would name only the starter itself, which is this page.
         try Data(GitHubRepo.readme(for: project, credits: Credits(upstream: based.upstream, generated: based.generated),
-                                   open: Publish.OpenInLamp(link: nil, file: nil), build: build, repo: repo, showcase: showcase).utf8)
+                                   open: Publish.OpenInLamp(), build: build, repo: repo, showcase: showcase).utf8)
             .write(to: tree.appendingPathComponent("README.md"))
         return (tree, page)
     }
 
-    /// A page as Put on GitHub stages one to play or use in any browser (`Publish.copyPage`), with the credit bar, the starter's
-    /// changes in its Remix panel (whose request goes with the starter's id, so Lamp copies it) and Lamp's site for the rest: nothing else (no shared file, which differs every time
-    /// it's made). Nil for a starter whose app isn't a page (`Publish.hasPage`).
+    /// A page as a release to GitHub stages one to play or use in any browser (`Publish.copyPage`), with the credit bar, the starter's
+    /// changes in its Remix panel (whose request goes with the starter's id, so Lamp copies it) and Lamp's site for the rest: nothing else. Nil for a starter whose app isn't a page (`Publish.hasPage`).
     static func stagePage(_ project: LampProject, starter: Starters.Starter, repo: String, in root: URL) throws -> URL? {
         guard Publish.hasPage(project) else { return nil }
         let fm = FileManager.default
@@ -195,7 +189,7 @@ enum StarterRepos {
         let credits = Credits.load(project)
         let ideas = starter.tweaks.map { RemixIdea(text: $0.title, symbol: $0.symbol ?? "sparkles") }
         // Its Remix panel names the starter, so Lamp starts from a copy of it with the request.
-        let open = Publish.OpenInLamp(link: nil, file: nil, origin: .starter(starter.folder.lastPathComponent))
+        let open = Publish.OpenInLamp(link: nil, origin: .starter(starter.folder.lastPathComponent))
         try Data(Publish.withCreditBar(html, credits: credits, open: open,
                                        suggestions: ideas.isEmpty ? RemixOffer.fallback : ideas, name: project.name,
                                        about: AppDescription.description(of: project)).utf8).write(to: index)

@@ -11,7 +11,7 @@ import SwiftUI
 /// at its next change: a change to Lamp's own building blocks can't go into an open app, so it reopens with them.
 @MainActor
 enum AppTransition {
-    enum Phase: String { case begin, land, end }
+    enum Phase: String { case begin, turn, land, end }
 
     /// A line every app that understands the request has in its binary.
     static let marker = "lampTransitionSignature"
@@ -50,6 +50,13 @@ enum AppTransition {
             }
         }
         return true
+    }
+
+    /// The open app stands still taking the change in (a game running its code again, or opening its page again): the
+    /// stripes roll up it every few seconds, from the glow already over it, until the change is on screen (`land`).
+    static func turn(_ project: LampProject) {
+        guard glowing[project.id] != nil, canShow(project) else { return }
+        send(.turn, to: project)
     }
 
     /// The change is in the open app: the light crosses it. Also for a copy just opened with the change, which

@@ -61,7 +61,12 @@ final class WishTests: XCTestCase {
         XCTAssertEqual(Wish.markedRemix(html: #"<span data-lamp-wish="starter=newyork" style="x">Make it snow</span>"#, plain: "Make it snow"),
                        Wish.Remix(from: .starter("newyork"), text: "Make it snow"))
         XCTAssertNil(Wish.markedRemix(html: #"<span data-lamp-wish="1">Make it snow</span>"#, plain: "Make it snow"))
-        XCTAssertNil(Wish.markedRemix(html: #"<span data-lamp-wish="repo=https%3A%2F%2Fevil.example%2Fa%2Fb">x</span>"#, plain: "x"))
+        XCTAssertNil(Wish.markedRemix(html: #"<span data-lamp-wish="repo=https%3A%2F%2Fevil.example%2Fa%2Fb">x</span>"#, plain: "x"))        // A shared app's page copies its link's id, with the change asked for it, if any.
+        XCTAssertEqual(Wish.markedShared(html: #"<span data-lamp-wish="shared=KEdCT2V7wU">Make him squeak</span>"#, plain: "Make him squeak"),
+                       Wish.Shared(id: "KEdCT2V7wU", text: "Make him squeak"))
+        XCTAssertEqual(Wish.markedShared(html: #"<span data-lamp-wish="shared=KEdCT2V7wU"></span>"#, plain: " "), Wish.Shared(id: "KEdCT2V7wU", text: nil))
+        XCTAssertNil(Wish.markedShared(html: #"<span data-lamp-wish="shared=../../etc">x</span>"#, plain: "x"))
+        XCTAssertNil(Wish.markedRemix(html: #"<span data-lamp-wish="shared=KEdCT2V7wU">x</span>"#, plain: "x"))
     }
 
     func testALinksWordsAreTidiedAndCut() throws {

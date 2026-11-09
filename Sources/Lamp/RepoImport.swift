@@ -1,10 +1,10 @@
 import Foundation
 
-/// A wish opened from where it lives on GitHub: the repository Put on GitHub made (`GitHubRepo`), by its address or
+/// A wish opened from where it lives on GitHub: the repository Lamp put it in (`GitHubRepo`), by its address or
 /// from a folder it was cloned into. The repository is fetched shallowly with Lamp's own git, confined as every git
 /// command of Lamp's is (`Versions.git`: the sandbox, with the network open), into a folder of Lamp's; then the tree is
 /// read as a shared file's contents are (`Sharing.open(unpacked:)`: the same review, the same checks, Lamp's own files
-/// written afresh), or the shared file in it is opened when the tree holds only that. The repository's address and the
+/// written afresh), or, for a repository an older Lamp made with no lamp-app.json, the shared file in it is opened. The repository's address and the
 /// commit fetched go on the credits' chain, on the link for the wish opened, so a remix of a remix links each
 /// repository and an update from there is merged from that commit (`Upstream`). On a Mac with no git yet the tree comes
 /// from GitHub's archive of the commit instead (`RepoArchive`), which leaves no git records in it: what was fetched is
@@ -86,17 +86,26 @@ enum RepoImport {
         let ref = Sandbox.quoted(source.ref ?? "HEAD")
         let command = "git init -q && git remote add origin \(remote) && git fetch -q --depth 1 origin \(ref) && git checkout -q --detach FETCH_HEAD"
         let said = Said()
+        let running = Subprocess.Running()
         // Ten minutes is plenty for a wish; a repository that takes longer isn't one, and is let go: git and whatever it
-        // started with it, not only the shell they run under, which would leave them holding the output open.
-        let status = await Versions.git(command, cwd: tree, env: ["GIT_TERMINAL_PROMPT": "0"], started: { process in
-            Task {
-                try? await Task.sleep(for: .seconds(600))
-                Subprocess.terminateTree(process)
-            }
-        }, onLine: { said.add($0) })
+        // started with it, not only the shell they run under, which would leave them holding the output open. A fetch
+        // whose review is cancelled, replaced or out of time (`Store.ReviewWork`) is let go the same way, at once.
+        let status = await withTaskCancellationHandler {
+            await Versions.git(command, cwd: tree, env: ["GIT_TERMINAL_PROMPT": "0"], started: { process in
+                running.started(process)
+                Task {
+                    try? await Task.sleep(for: .seconds(600))
+                    Subprocess.terminateTree(process)
+                }
+            }, onLine: { said.add($0) })
+        } onCancel: { running.stop() }
+        if Task.isCancelled {
+            try? fm.removeItem(at: folder)
+            throw CancellationError()
+        }
         guard status == 0 else {
             try? fm.removeItem(at: folder)
-            if status == Versions.noGit { throw Sharing.ImportError("Lamp needs Apple's tools for this.", detail: "Updating a wish from GitHub uses git, which comes with them.") }
+            if status == Versions.noGit { throw Sharing.ImportError("Lamp needs Apple's tools for this.", detail: "Updating an app from GitHub uses git, which comes with them.") }
             let detail = said.lines.last.map { String($0.suffix(200)) }
             if status == Versions.unconfined { throw Sharing.ImportError("Lamp couldn't fetch \(source.owner)/\(source.name).", detail: "Its sandbox couldn't be set up.") }
             throw Sharing.ImportError("Lamp couldn't get \(source.owner)/\(source.name) from GitHub.",
@@ -116,11 +125,11 @@ enum RepoImport {
 
     // MARK: Reading a tree
 
-    /// The wish in a folder laid out as Put on GitHub lays a repository out: the shared file's contents at the top
+    /// The wish in a folder laid out as Lamp lays a repository out on GitHub: the shared file's contents at the top
     /// (`lamp-app.json` and the code), read as a shared file is once copied into a folder of Lamp's own, with Lamp's
-    /// own files, the repository's README and license and the shared file beside them left where they are; a site's
+    /// own files, the repository's README and license and any shared file an older Lamp put beside them left where they are; a site's
     /// page at the top and the rest in Lamp's folder (`StaticSite`); or a plain site, as a new web app. A folder
-    /// holding only a shared file opens that file. The folder itself is never changed: it may be the person's.
+    /// holding only a shared file (an older Lamp's repository) opens that file. The folder itself is never changed: it may be the person's.
     static func open(folder: URL, fetched: RepoArchive.Fetched? = nil) throws -> Sharing.Package {
         let fm = FileManager.default
         let repository = fetched.map { (url: $0.url, commit: Optional($0.commit)) } ?? repository(of: folder)
@@ -141,14 +150,14 @@ enum RepoImport {
             .filter { $0.pathExtension == "lampapp" && (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         guard let file = files.first else {
-            throw Sharing.ImportError("This isn't a wish Lamp can open.", detail: "A wish put on GitHub has lamp-app.json and its code at the top of the repository.")
+            throw Sharing.ImportError("This isn't an app Lamp can open.", detail: "An app put on GitHub has lamp-app.json and its code at the top of the repository.")
         }
         var package = try Sharing.open(file)
         package.credits = naming(package.credits, repository: repository?.url, commit: repository?.commit, name: package.name, identity: package.identity)
         return package
     }
 
-    /// Whether a fetched tree is a wish (laid out as Put on GitHub lays one out, or holding a shared file) rather than
+    /// Whether a fetched tree is a wish (laid out as Lamp lays one out on GitHub, or holding a shared file) rather than
     /// someone's own project, which `open` can't read.
     /// A plain site (`StaticSite.isPlain`) opens too, as a web app laid out as it is, unless `sites` is false: making an
     /// app from someone's project (`GitHubProjects`) asks only whether it's a wish already.
@@ -162,8 +171,8 @@ enum RepoImport {
         ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).contains { $0.hasSuffix(".lampapp") }
     }
 
-    /// The tree as a shared file unpacks: every regular file but the repository's own records and builds, and the shared
-    /// file beside the code, which would double what's counted. Held to what a shared file may hold.
+    /// The tree as a shared file unpacks: every regular file but the repository's own records and builds, and a shared
+    /// file an older Lamp put beside the code, which would double what's counted. Held to what a shared file may hold.
     /// `skipped` are the folders left out wherever they are: a wish's builds and Lamp's records; a site keeps every
     /// folder but git's, since a `build/` or `node_modules/` it checked in is what its page loads.
     static func copyTree(_ from: URL, to: URL, skipped: Set<String> = [".git", ".build", "build", ".lamp", "node_modules"]) throws {

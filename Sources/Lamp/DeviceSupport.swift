@@ -94,13 +94,12 @@ enum DeviceSupport {
     static func pageNames(_ words: [String], _ project: LampProject, page: String) -> Bool {
         let folder = project.dir.appendingPathComponent(page)
         guard let walk = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return false }
+        var files: [URL] = []
         for case let url as URL in walk {
             if ["three", "rapier", "phaser"].contains(url.lastPathComponent) { walk.skipDescendants(); continue }
-            guard ["js", "mjs", "html"].contains(url.pathExtension.lowercased()),
-                  let text = AppFile.text(url, in: project) else { continue }
-            if words.contains(where: text.contains) { return true }
+            if ["js", "mjs", "html"].contains(url.pathExtension.lowercased()) { files.append(url) }
         }
-        return false
+        return PageScan.any(files, in: project, asking: "names " + words.joined(separator: "\n"), needing: words) { _ in true }
     }
 
     /// Phaser, the 2D library a 2D game draws with (MIT, `WebLibraries/phaser`, put there by scripts/update-phaser.sh):
@@ -118,13 +117,12 @@ enum DeviceSupport {
     static func usesPhaser(_ project: LampProject, page: String) -> Bool {
         let folder = project.dir.appendingPathComponent(page)
         guard let walk = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return false }
+        var files: [URL] = []
         for case let url as URL in walk {
             if ["three", "rapier", "phaser"].contains(url.lastPathComponent) { walk.skipDescendants(); continue }
-            guard ["js", "mjs", "html"].contains(url.pathExtension.lowercased()), !lampsPageFiles.contains(url.lastPathComponent),
-                  let text = AppFile.text(url, in: project) else { continue }
-            if text.range(of: phaserUse, options: .regularExpression) != nil { return true }
+            if ["js", "mjs", "html"].contains(url.pathExtension.lowercased()), !lampsPageFiles.contains(url.lastPathComponent) { files.append(url) }
         }
-        return false
+        return PageScan.any(files, in: project, asking: phaserUse, needing: ["phaser"]) { $0.range(of: phaserUse, options: .regularExpression) != nil }
     }
 
     /// Lamp's own files beside a game's page, which name everything they serve and so never show what the game uses.
@@ -350,6 +348,18 @@ enum DeviceSupport {
     (function () {
       'use strict';
       if (window.LampAI) return;
+
+      // A page framed by another (a Share Link's page on lamp.dev, a site that shows it) hears keys only while its frame
+      // has focus. A game that cancels pointerdown, to drag its camera say, also cancels the press that would give its
+      // frame focus, so once the person has typed in the page around it, the game never heard a key again. A press
+      // anywhere in the page brings the focus here first.
+      try {
+        if (window.top !== window) {
+          window.addEventListener('pointerdown', function () {
+            if (!document.hasFocus()) window.focus();
+          }, true);
+        }
+      } catch (e) {}
 
       // Where Lamp is: filled in by Lamp in the package it puts on a device. Never the app's token, which the app asks
       // Lamp for once, just after Lamp has put it on the device, and keeps.
@@ -1047,7 +1057,7 @@ enum DeviceSupport {
 
         /** options: data (text from outside the app, for the AI to work on, not obey), images (pictures to look at),
          *  system, json (true asks for JSON and gives back the parsed value: describe its exact shape in the prompt),
-         *  model (Lamp's id: "sonnet", "opus", "haiku", "claude-fable-5-1"). */
+         *  model (Lamp's id: "sonnet", "opus", "haiku", "claude-fable-5-2"). */
         ask: function (prompt, options) { return call(prompt, options); },
 
         /**
@@ -1313,7 +1323,7 @@ enum DeviceSupport {
 
       // Lamp's own route for a TV app's phone controllers (Lamp.controllers), the way LampAI's calls go.
       Object.defineProperty(LampAI, '_post', { value: post });
-      // One call to one way to Lamp, as LampAI makes it (through the Xbox's host where there is one), for a wish's key claim.
+      // One call to one way to Lamp, as LampAI makes it (through the Xbox's host where there is one), for a project's key claim.
       Object.defineProperty(LampAI, '_exchange', { value: exchange });
 
       /**
@@ -1842,22 +1852,22 @@ enum DeviceSupport {
 
     /// `LampWish` for a Roku app on Roku's SDK of a wish with other apps: away, as the BrightScript one is.
     static let typeScriptWish = ##"""
-    // LampWish: this app and the wish's other apps. Written by Lamp before every build; don't edit.
+    // LampWish: this app and the project's other apps. Written by Lamp before every build; don't edit.
     //     import { LampWish } from "../lamp/wish";
     //
-    // A Roku app can't reach the wish's other apps yet, and they can't reach it: LampWish.status() is always "away", with a
+    // A Roku app can't reach the project's other apps yet, and they can't reach it: LampWish.status() is always "away", with a
     // reason to show as it is, peers() is empty, and send() and set() send nothing. Keep what the app shows its own
     // (LampStore, the web, LampAI) rather than waiting on the others.
 
     export const LampWish = {
         status(): { state: "away"; reason: string } {
-            return { state: "away", reason: "This app can't reach the wish's other apps yet." };
+            return { state: "away", reason: "This app can't reach the apps that go with it yet." };
         },
         /** The wish's other apps open now: none can be reached from a Roku yet. */
         peers(): string[] { return []; },
         /** Sends a message to one app by its name ("iphone"), or to all with "": false, since none can be reached. */
         send(_peer: string, _message: unknown): boolean { return false; },
-        /** The values the wish's apps share: none reach a Roku yet. */
+        /** The values the project's apps share: none reach a Roku yet. */
         values(): Record<string, unknown> { return {}; },
         set(_name: string, _value: unknown): boolean { return false; },
     };
@@ -1959,20 +1969,20 @@ enum DeviceSupport {
     /// words every library uses, and its calls are the shape the link will have: an app written against it now keeps
     /// working when the link comes. `wishes.md` says what that link needs.
     static let brightScriptWish = #"""
-    ' LampWish: this app and the wish's other apps. Written by Lamp before every build; don't edit.
+    ' LampWish: this app and the project's other apps. Written by Lamp before every build; don't edit.
     ' Use it from a component by adding this to its XML:
     '     <script type="text/brightscript" uri="pkg:/components/Lamp/LampWish.brs" />
     '
-    ' A Roku app can't reach the wish's other apps yet, and they can't reach it: LampWish_status() is always "away",
+    ' A Roku app can't reach the project's other apps yet, and they can't reach it: LampWish_status() is always "away",
     ' with a reason to show as it is, LampWish_peers() is empty, and LampWish_send() and LampWish_set() send nothing.
     ' Keep what the app shows its own (LampStore, the web, LampAI) rather than waiting on the others.
     '     status = LampWish_status()     ' { state: "away", reason: "..." }
 
     function LampWish_status() as Object
-        return { state: "away", reason: "This app can't reach the wish's other apps yet." }
+        return { state: "away", reason: "This app can't reach the apps that go with it yet." }
     end function
 
-    ' The wish's other apps open now: none can be reached from a Roku yet.
+    ' The project's other apps open now: none can be reached from a Roku yet.
     function LampWish_peers() as Object
         return []
     end function
@@ -1983,7 +1993,7 @@ enum DeviceSupport {
         return false
     end function
 
-    ' The values the wish's apps share: none reach a Roku yet, so this is empty and LampWish_set() keeps nothing.
+    ' The values the project's apps share: none reach a Roku yet, so this is empty and LampWish_set() keeps nothing.
     function LampWish_values() as Object
         return {}
     end function
@@ -2133,7 +2143,7 @@ enum DeviceSupport {
     ' LampStore
 
     ' Every app Lamp puts on a Roku is its one developer channel, which keeps one registry, so each app's data is under
-    ' its own id there: a wish put on the Roku after another doesn't read or overwrite the other's.
+    ' its own id there: a project put on the Roku after another doesn't read or overwrite the other's.
     function LampStore_section() as Object
         installed = lampInstall()
         if installed = invalid then return CreateObject("roRegistrySection", "lamp-store")
@@ -2463,4 +2473,74 @@ enum DeviceSupport {
     end function
 
     """#
+}
+
+/// What a page's own files answer to a question about their code (does any import Rapier, draw with Phaser, register its
+/// state), each file's answer remembered by its size and date and read again only once it changed. A game's page can hold
+/// data files tens of megabytes big (a city's map as a module), and reading and searching them all again at every look,
+/// step, build and request held each of those up by seconds.
+enum PageScan {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var known: [String: (stamp: String, found: Bool)] = [:]
+
+    /// Whether `test` holds for the text of any of `files`, in order, stopping at the first that does. `needing`: text the
+    /// question can't be true without, at least one of them; a file holding none is answered from its bytes, without
+    /// being decoded or searched with a pattern, which is what took the time in a big file.
+    static func any(_ files: [URL], in project: LampProject, asking question: String, needing words: [String] = [],
+                    _ test: (String) -> Bool) -> Bool {
+        for file in files {
+            let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            guard let size = values?.fileSize, let date = values?.contentModificationDate else { continue }
+            let stamp = "\(size) \(date.timeIntervalSince1970)", key = question + "\n" + file.path
+            lock.lock()
+            let seen = known[key]
+            lock.unlock()
+            if let seen, seen.stamp == stamp {
+                if seen.found { return true }
+                continue
+            }
+            guard let data = AppFile.read(file, in: project) else { continue }
+            let found = (words.isEmpty || words.contains { contains(data, $0) }) && test(String(decoding: data, as: UTF8.self))
+            lock.lock()
+            known[key] = (stamp, found)
+            lock.unlock()
+            if found { return true }
+        }
+        return false
+    }
+
+    /// Each file's size and date now, for `pass` once every one of them has passed a check: taken before the check, so a
+    /// file saved while it ran is checked again next time.
+    static func stamps(_ files: [URL]) -> [URL: String] {
+        var stamps: [URL: String] = [:]
+        for file in files {
+            let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            if let size = values?.fileSize, let date = values?.contentModificationDate { stamps[file] = "\(size) \(date.timeIntervalSince1970)" }
+        }
+        return stamps
+    }
+
+    /// Whether the file passed the check `question` names as it is now (`pass`).
+    static func passed(_ file: URL, stamp: String?, asking question: String) -> Bool {
+        guard let stamp else { return false }
+        lock.lock()
+        defer { lock.unlock() }
+        return known[question + "\n" + file.path].map { $0.stamp == stamp && $0.found } ?? false
+    }
+
+    /// Remembers that these files, as stamped, passed the check `question` names, which looks at each file on its own.
+    static func pass(_ stamps: [URL: String], asking question: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        for (file, stamp) in stamps { known[question + "\n" + file.path] = (stamp, true) }
+    }
+
+    /// Whether the bytes hold the word, by memmem: Swift's own search of a string that size took seconds.
+    static func contains(_ data: Data, _ word: String) -> Bool {
+        let needle = Array(word.utf8)
+        guard !needle.isEmpty else { return true }
+        return data.withUnsafeBytes { bytes in
+            needle.withUnsafeBytes { memmem(bytes.baseAddress, bytes.count, $0.baseAddress, $0.count) != nil }
+        }
+    }
 }

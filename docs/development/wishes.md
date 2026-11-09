@@ -2,6 +2,8 @@
 
 One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the repository: it has the rules every change follows and the list of guides; a section named in quotes may be in another guide on that list.
 
+People see a wish called an app; the agent's prompts call it a project.
+
 A wish can be more than one app made to work together: a TV app with an iPhone app that controls it, a Mac app with an
 Android app (`Parts`). The wish is its own thing, apart from its apps: its name, chat, versions and icon are the wish's,
 and which apps it should have is its list (`LampProject.apps`, `WishApp`, in its meta.json; below). No app of a wish is
@@ -226,11 +228,17 @@ iPad the app around the page enforces it (`LampPageGuard` in LampPage.swift): ev
 Content-Security-Policy naming only those sites; the page never leaves its own address in its window or a frame
 (redirects included); a link opens in the browser only on the person's click, once they've seen where it goes; what
 no policy covers (WebRTC, a link's preconnect and prefetch) is off (`NetworkPolicy.holdBack`). A page whose sheet said
-"May connect outside this app" shows what was blocked, and the person can allow that site, once they've seen it whole,
-or every site for good, on that device. A game's own controllers relay is the one way out the app adds: the rules name
+"May connect outside this app" shows what was blocked in a bar above it (`LampPageBlocked`, one site at a time, in
+room of its own that `LampPageHolder` lays the page out below, so the page's own top controls are never covered), and
+the person can allow that site, once they've seen it whole, or every site for good, on that device. Closing a site's
+bar keeps it blocked and its bar away for the rest of that launch, in every page and window (`LampPageRefusals`), since
+a page often asks for the same site again and again; a bar another window shows at that moment goes too when its site
+is the one closed or allowed, or when every site was allowed (`LampPageRefused.settle`). Allowing a site, or every site,
+opens every page of the app again under the new rules (`LampPageGuard.retirePages`), each as Lamp's Reload opens it (`LampPageView.reopen`: a game keeps where the player was), since a page's rules came with
+its files and one in another window would otherwise go on refusing what was allowed. A game's own controllers relay is the one way out the app adds: the rules name
 it at `ws://127.0.0.1:<port>` for connecting only, for that launch, never kept with the sites or taken from the page
 (`ControllerRuntime.pageSites`, "Lamp's player" in the devices guide). Lamp's previews serve the same rules (`StagedFiles.policy`), with Lamp's own relay open to a TV game's page in its preview (the TV guide). A copy of the wish
-(a remix, an update's copy) is held as the wish is (`SharedNetwork.carry`, `arrive`). A phone's controller page reads it
+(a remix, an update's copy) is held as the wish is (`SharedNetwork.carry`, `arrive`). What an update or Keep as Separate App records is the reading its review made of exactly that package (`Sharing.Inspection.readings`, kept as `PendingImport.readings`), not a second reading on the main actor; an update with no review (an original, a pull-in, an update's copy) reads it off the main actor (`Store.readings(of:reviewed:)`). A phone's controller page reads it
 too (`PhonePageReach`, under "TV apps"): its servers allow only the policy's sites, an app with Swift of the sender's
 included, since Lamp and an LG TV serve it outside the app's process; a game that serves its own page on the Mac,
 iPhone or iPad (`PhonePageServer`) does so in that process, where its Swift could change that too. A host elsewhere (a
@@ -252,11 +260,10 @@ author, an https address, the commit, the license as an SPDX id or `LicenseRef-`
 which the agent writes when it brings such work in (`Agent.Rules.about`, in every kind's prompt and so every engine's),
 and `remixOf`, the wishes it was made from, oldest first, which only Lamp adds to: a starter's copy begins it with the
 starter, and a shared file carries the wish being shared as its last link (`Sharing.export`; the same wish shared again
-stays one link), with where that wish lives when Lamp knows it (`url`: its repository on GitHub, written by Put on GitHub
+stays one link), with where that wish lives when Lamp knows it (`url`: its repository on GitHub, written by a release there
 and by opening a repository, "Generated apps") and the commit of it the wish has (`commit`: the one it was opened at,
-the last one merged in by Update from GitHub…, or the last one Put on GitHub pushed; for a wish that lives nowhere, the
-version of its own history the file was made from; shown nowhere, it's what an update is merged from and a contribution
-goes back on top of, "Generated apps"). The same wish put somewhere else is a link of its own
+the last one merged in by Update from GitHub…, or the last one a release pushed there; for a wish that lives nowhere, the
+version of its own history the file was made from; shown nowhere, it's what an update is merged from, "Generated apps"). The same wish put somewhere else is a link of its own
 (`Remix.sameLink`), so the chain keeps where a wish came from beside where it was put; `Credits.origin(own:)` is the
 former. The About window and a repository's README link the chain. Credit is only added to: what a wish arrived with (a starter's copy, a file opened) is kept in
 `.lamp/credits-arrived.json` and read back with the file (`Credits.load`), so a source the file lost while the wish was
@@ -281,11 +288,15 @@ an open license goes with its license and credit; under a share-alike one (GPL, 
 and the remix stays under it, which a shared file satisfies by carrying the code and a published page says
 (`ShareCheck.notes`); under its own terms (`LicenseRef-`, an id Lamp doesn't know, non-commercial or no-derivatives) it
 goes, credited and named; with no license it goes too, once the person has been told, naming it (`ShareCheck.warning`):
-Share…, Copy Wish File, Export… and a drag from the desk ask once with Share Anyway (`Sharing.askToShare`), and the answer
+Share…, Copy App File, Export… and a drag from the desk ask once with Share Anyway (`Sharing.askToShare`), and the answer
 is kept for the wish until it takes in more such work (`ShareCheck.accepted`, in Lamp's settings rather than the wish's
 folder, where the agent writes); an app's File ▸ Share… gets the same question from `/app/share` and asks again with
-`anyway` and the work it was shown (an answer covers only that, by the wish's `instance`); Share Link (with the wish itself ticked), Send Changes Back… and Put on GitHub… to a public repository (a game's page with it) say it
-as a line among their facts, and a private repository says nothing, since nothing is passed on. A license file the
+`anyway` and the work it was shown (an answer covers only that, by the wish's `instance`); Share Link (with the wish itself ticked), Send Changes Back… and Also put on GitHub to a public repository (a game's page with it) say it
+as a line among their facts, and a private repository says nothing, since nothing is passed on. Send Changes Back and
+Also put on GitHub fold the lines of sources only credited under their own terms (`ShareCheck.cardNotes`: own terms that
+aren't non-commercial or no-derivatives, and share-alike data) under one line, keeping the rest in sight, and in the
+chat's place scroll their words while their buttons stay at the bottom (`GitHubCardLayout`), so a wish built on many
+data sets never pushes the buttons out of sight. A license file the
 credits name must still be in the wish. And nothing of the person's goes: what's staged is searched for the person's
 provider keys, the app's secrets and its token for Lamp's gateway (`ShareCheck.keptSecrets`, the values themselves) and
 for anything shaped like a key (a private key, the prefixes services give their keys), and a hit refuses the share,
@@ -295,8 +306,8 @@ never ship.
 ### Publishing a page
 
 A wish whose one app is a page that runs in any browser (`Publish.hasPage`, asked of its kind: `Target.publishedPage`, a
-web game's played, a web app's or a screen's used) gets a page anyone plays or uses in a browser when it's Put on GitHub
-to a public repository ("Generated apps"): the same repository, on its `gh-pages` branch (`Publish.pageBranch`), served by
+web game's played, a web app's or a screen's used) gets a page anyone plays or uses in a browser when it's put on GitHub
+in a public repository ("Generated apps"): the same repository, on its `gh-pages` branch (`Publish.pageBranch`), served by
 GitHub Pages at `https://<owner>.github.io/<repository>/`, which the README's Play in your browser (Open in your browser for an app) links and the
 repository's website points to (`GitHubRepo.offerWebsite`, over the remix link Lamp set there before, never over one the
 person set). It's the person's under GitHub's terms, through `gh` and their sign-in there, never Lamp's servers, so it
@@ -318,17 +329,21 @@ on `<owner>.github.io` or the account's own domain; and over the page Lamp's cre
 its link on a narrow screen). Its Open in Lamp is the wish's Share Link when the person has made one (`Publish.OpenInLamp`:
 that page works for someone without Lamp, whose Download Lamp carries the wish into the welcome, and for someone with
 it), else lamp.dev's remix of the repository; both it and Remix… name the repository at the commit pushed with the page,
-so they start from the game that's played. The bar is written as the page is pushed, once that commit is known
+so they start from the game that's played. Where the Share Link plays or opens the page itself (`WishLink.Shared.plays`,
+set as the link's page goes up), the GitHub page sends whoever opens it there (`OpenInLamp.plays`): lamp.dev shows the wish whole, with its ways to get it
+and change it, and a page too big for its link stays on GitHub. It stays, playing on GitHub, when it's framed, when the
+browser has saves of it there (`lamp:<repository>:`, which the link's own play address can't read), and when the link
+doesn't say it plays the page within four seconds (`/w/<id>/card.png?plays`, a pixel never cached, 404 for a link taken
+down or one whose page went with a later release that didn't update GitHub). The bar is written as the page is pushed, once that commit is known
 (`GitHubRepo.upload`). The page goes up after the code, as one commit on top of what's on its branch, or none when it's
 the same (`Publish.pushPage`); Pages is turned on for that branch, or asked to build, and the card waits until GitHub says
 it built that very commit (an earlier build's "built" is the page as it was), saying so if it's still building after ten
 minutes (`Publish.servePage`). Pages the person set to serve another branch are left alone, and the card says so. The code
-is kept as soon as it's up, so a page that fails is tried again by Put on GitHub on top of it. Where the page plays is
-kept with the repository (`GitHubRepo.Repo.page`), and the card's done state offers Play (Open Page for an app) and
-Copy Page Link.
+is kept as soon as it's up, so a page that fails is tried again on top of it (Try GitHub Again on the release card). Where the page plays is
+kept with the repository (`GitHubRepo.Repo.page`).
 
 Publish as Web Page…, which made a repository of its own holding only the page, was an experiment in Lamp Dev while
-Lamp's runtime had no license that let anyone pass it on; Lamp is MIT now, and Put on GitHub with its page does what it
+Lamp's runtime had no license that let anyone pass it on; Lamp is MIT now, and putting a wish on GitHub with its page does what it
 did and keeps the game's code and its page in one place, so it's gone.
 
 #### Remixing a published page
@@ -337,7 +352,7 @@ The credit bar's Remix… opens a panel over the page (the one beside an app on 
 the page's own HTML by `Publish.withCreditBar`): three things to change and a box. Continue with Lamp names what the
 page is a copy of when Lamp can copy it again (`OpenInLamp.origin`): a starter's own page names the starter's id
 (`StarterRepos.stagePage`), a game's page put up with its code names that repository at the commit pushed with it
-(`GitHubRepo.upload`), and an app whose wish has been Put on GitHub names its repository and the commit last pushed
+(`GitHubRepo.upload`), and an app whose wish is on GitHub names its repository and the commit last pushed
 while that repository is public (as GitHub said at the push) and holds the wish as it is now (the wish's own version
 the push carried, with nothing unsaved then or now, `Versions.savedVersion`, `GitHubRepo.remixOrigin`): a private repository can't be fetched without a sign-in, and an older
 push would remix an older game than the one played. The request goes to `https://lamp.dev/?starter=newyork&ask=…` (or `?repo=…&commit=…&ask=…`),
@@ -359,8 +374,209 @@ the starter at the commit this Lamp ships). A link without a request opens it wi
 goes through Open from GitHub…'s own fetch, review and credit (`importRepository`), the request kept beside it for the
 box. Nothing is sent or built from the link. During the welcome a starter's remix waits a moment (`Onboarding.keptRemix`, saved
 like the welcome's wish) and opens as the welcome gives way to the desk, with nothing set up, in the desk's own copy of the starter, put there moments
-before; the Download's copy is found by the welcome's one look at the clipboard (`Wish.markedRemix`). Wish
+before; the Download's copy is found by the welcome's one look at the clipboard (`Wish.markedRemix`). A shared app's
+page copies its link the same way (`Wish.markedShared`), which the welcome brings in as the link would (`takeShared`). Wish
 links are read as a browser's form writes them too (`Wish.items`: "+" is a space).
+
+#### Sharing a copy and following others
+
+Nobody's copy of a wish is the main one: everyone has their own, and nothing is upstream of anything (`Following`). A
+copy is shared as its Share Link with the wish itself included (`WishLink`, SHARED_WISHES.md in site/: `lamp.dev/w/<id>`,
+the file kept in lamp.dev's Blob store; the file always goes when the wish can go as one), and
+each Release Update sends the file again, which counts the link's version up (see "Releases" below). A wish with a page (a web app, a web
+game, a screen: `Publish.hasPage`) sends that too (`WishLink.playablePage`, the page a release puts on GitHub, which
+stays as it is), and its link's page opens on it, playing, with the ways to make one's own under it: whoever has the
+link tries the wish first and remixes it after (SHARED_WISHES.md). The box under it (labeled only for screen readers) asks
+in turn the questions the link carries (`asks`: open questions about what's broken, missing or could be better, in the
+app's own terms, which Lamp writes as the Share Link card opens for a link without any, `WishAsks.write`, and the person
+can change under Ask for Ideas), else "Found a bug?", "What's missing?" and "What would make it better?"; its button says
+who reads it ("Send to Alex", the full name where there's room), and it sends what's written, never a question, to the
+wish's maker first (`/api/wish-ideas`, `createIdeasHandler`): the site keeps it with the link, numbered, until the maker lets it go,
+sent only once the sender confirms it in the dialog the box opens, where they can still change it and give an address
+to hear back at. Only the link's
+secret reads them; they go with the link, and nothing of them is logged. Lamp asks for them for every wish with a link
+at launch and every five minutes (`WishIdeas`, `Store.checkIdeas`); the desk shows them on a line of their own
+under its changes ("Ideas", with how many are new, and a line under the app's row while some are new; seen ones are
+counted by the link, since a link made again counts from one), and the person goes to them in `IdeasPanel`, which takes the list's place
+with Back: Build It asks the wish's chat for one, in the sender's words, marked as theirs (`WishIdeas.request`); It's In
+lets it go and has the site write once to whoever asked to hear back, through Resend (`tellItsIn`: `RESEND_API_KEY` and
+`LAMP_IDEAS_FROM` in the site's environment); Dismiss lets it go quietly. The maker sees only that someone wants to hear
+back, never their address. Either way the idea is kept with its outcome for 90 days (`finishIdea`, one step, so the
+email goes once): the sender's browser keeps each idea's number and a token the site answered, asks after them on its
+next visit (`?mine=`), and an idea that's in says so once in a bar over the app, with See What's New; one dismissed
+says nothing. Making one's own with Lamp stays in the
+dialog under the idea sent, and is all it offers when the idea couldn't go. A new page leaves the one before it playable
+(`previousPage` in lib/shared-wishes.js; the play handler remembers a link's record a minute per instance,
+`PLAY_MEMORY`, rather than reading the store for each of a game's hundreds of files), since a game open on it goes on loading files as it's played (a big city's map
+as the player moves); the one before that goes. A file a game asks for through lamp-game.js's `asset` that doesn't come
+puts a bar with Reload on the page (`loadProblem`) rather than leaving the game on its loading screen: for a 404 only
+when the page itself is gone too, since a game may ask for a file it doesn't have. Keys reach a framed page only while its frame has
+focus: the link's page focuses it as it loads and after its own buttons, and lamp.js in the page takes focus back on any
+press inside it, since a game that cancels pointerdown (to drag its camera) also cancels the press that would have. The version is what followers ask for (`latest` in
+lib/shared-wishes.js, `GET /api/wishes?id=`, `WishLink.latest`). The page's Open in Lamp is `lamp://wish?shared=<id>`
+(`sharedWishLink` in lib/wish.js, `Wish.Shared`): Lamp asks for the file's latest, fetches it and reviews it as any shared
+file (`Store.takeShared`), and the copy it makes follows that link, marked as the one it started from, at the version it
+arrived as (`finishImport`, `Following.brought`).
+
+Releases: once a link is out, the Share Link card's button is **Release Update**, and the card opens with a What's New
+field that Lamp fills (`WishReleases.write`): one to five short lines for the people who use the wish, in plain words
+("You can jump out of helicopters now"), written by the helper model in one call (`AppAI.complete`, whichever route
+answers apps' text, so any engine) from the versions saved since the last release, their titles or else the requests
+that made them, never Lamp's own versions, one an Undo took back, or anything before a going back to an earlier version
+(which doesn't say how far it went). The maker changes or clears them before they go; empty is fine. Each share that
+went through, the wish's file with it, records a release in the wish's folder (`.lamp/releases.json`, not versioned:
+the version it was made at, when, and its lines, the first share's always empty), which is where the next release's
+changes start, and refreshes each of the wish's installed apps; one that failed keeps its lines on the card to try again.
+A link shared before releases were kept starts from its last few versions.
+
+A wish that's on GitHub (`GitHubRelease.find`: a repository Lamp put it in, `GitHubRepo.isUp`, or the person's own one
+it was opened from, `GitHubRepo.ownOrigin`) is released there too, from the same card: a box, "Also update GitHub
+(owner/name)", ticked each time the card opens, and shown only once `gh` is signed in (else one gray line saying so). The
+link always goes first; GitHub follows only once the link went through, with the same release: the wish staged and
+uploaded (`GitHubRepo.stage`, `upload`: the same checks, the README and page as before), the
+release's lines as the commit's message, then a GitHub release tagged `v<n>`, n the release's number, kept on it in
+`.lamp/releases.json` (`Release.number`, one more than the latest's, so it keeps counting past the 200 releases the
+history keeps; the first share is v1), with the lines as its notes (`GitHubRelease.tag`: one already there on the same
+commit, peeled when it's annotated, is the one made by a try that failed later; one on another commit is refused, never
+moved). While the repository is being found (`gitHubFinding`) the card shows "Checking GitHub…" in the box's place, and
+neither the share button nor `WishLinkCards.share` (`Card.canShare`) goes until it's found, so a release never goes
+somewhere the card didn't show; copying a link that's out still works meanwhile. Finding it
+also finds who the commits are made as (`GitHubRepo.authors(releasingTo:)`), and when the person's git signs them with
+an address that shows on GitHub, the card says so under the box, as it does for a first push; the upload holds the commits
+to what was said (`GitHubRepo.commit`'s `shown`). The
+card stays busy until everything is pushed, then only GitHub Pages' build is waited for with the card free; a release
+that's still waiting then neither speaks on the card once a newer one started (`gitHubOperation`) nor writes its record
+over a newer push's. GitHub says how it went in a line of its own (`WishLinkCard.GitHubStage`), so a failure there never
+hides the link's, which works whatever GitHub does; Try GitHub Again runs that half alone with the same version and
+lines, and only while the wish is still at the version released (else the card says to release again).
+A repository that has moved on from the last commit the wish has of it (`Repo.expected`: what Lamp pushed, or what the
+wish brought in since, `taken`) is never gone over (`GitHubRepo.Moved`): someone's pull request from Send Changes Back,
+merged by the owner, or an edit made on GitHub. Finding it asks GitHub (`GitHubRelease.isBehind`, `ls-remote`), and the
+card shows Bring In Changes in the box's place (`gitHubBehind`), so a release goes to the link alone; a release that
+finds it moved meanwhile says so with Bring In Changes, not Try GitHub Again. Bring In Changes (`BringIn`) fetches the
+repository with the person's own sign-in (so a private one works), into a folder of Lamp's, and the base commit into
+the wish's git; the review is an update's, and Update merges it (`Store.mergeUpdate`'s `bringingIn`) against that one
+base and nothing else (`BringIn.given`, `Upstream.merge`'s `given`): the staged tree kept from the last bring-in
+(`BringIn.snapshot`, so a force push since can't bring back what it took away), else the commit, else, from Lamp's own
+push, the wish's version it carried; with none, nothing is brought in. The wish's own repository is never followed as
+a copy and never joins the chain; only the credit for work the change uses joins the credits (`Mix.creditsTaken`). It
+counts once saved, clean or settled by the agent's turn (`BringIn.Pending`, `Store.settleBringIn`), and not when an app it
+brings couldn't be made: `taken` names the commit with the version that saved it (`takenIn`), which the wish's history
+must still have, with no Undo or going back to before it since (`BringIn.holds`, by `Lamp-Undid` and `Lamp-Restored`,
+each followed to the version it went back to),
+else it's offered again from Lamp's push. Bringing in changes the wish, so it's released with a new Release Update.
+Someone's request on the repository is brought in from Lamp too, never with GitHub's merge button, so the agent always
+knows what came in (`SuggestedChanges`; design/suggested-changes/README.md). Lamp asks GitHub with the person's sign-in
+which requests are open on the branch it pushes (at launch, every quarter of an hour, after a release, and when the agent
+asks). Nothing goes in the chat: the desk says quietly how many are new (a line under the app's row, and "Sent to you" at
+the foot of its side column), and the person goes to them in the desk's panel (`SuggestionsPanel`), which takes the list's
+place with Back. The record is the app's on one repository (its instance with the repository's name), and every change
+to it is one read and one write under a lock (`SuggestedChanges.change`), so a look at GitHub writes only what GitHub
+says and never what the person marked. A request is new until it's shown in the panel, kept by the head shown (`seen`):
+new commits make it new again, and one closed and opened again at the same head is as it was; Mark All as Seen marks
+the new ones the list shows when it's clicked, with its search and topic, and shows only while there is one. Not for Me
+sets one aside at its head (`hidden`), saying nothing on GitHub, until its sender changes it. What each does is said in plain words by `SuggestionSummaries`: made only along a way that can't
+act (`AppAI.toolFree`: OpenRouter, a model on this Mac, or Claude Code and Codex only through
+`SideAnswer.Run`'s checked launch), from the request's title, note and changed code marked as someone else's and the
+app's APP.md read without following a link (`AppFile`), checked before it's kept (its shape and lengths, a topic from
+the app's list of at most eight, and no word on safety), kept by what it was made from and its format and shown or
+saved only while the request and APP.md are still that, one job after another (each waits for the one before, as an
+actor alone wouldn't), with a daily limit; without one, the sender's own title
+shows. What Lamp knows for sure (the files it takes away, the person's own
+changes to the same files, other requests on them) is worked out from the files (`SuggestedChanges.facts`). Try It First
+(`SuggestionTrial`, for a wish of one Mac app) runs the shared-app review, then makes a copy of the wish under an
+identity of its own in a folder of Lamp's, merges the request into it as Bring In would (`Upstream.merge`, the same
+base), builds it and opens it with none of the person's data and no token; it stops at a conflict, and everything it
+made goes when it ends, whatever ends it (its build stopped and waited for first, found by the folder it works in),
+and at the next launch; it's pinned to the request's head and a
+fingerprint of what it copied, files git ignores included. The `suggested_changes` tool (the same for every
+engine) lays a request out in the wish's folder of fetched copies (`SharedCopies`), read-only: its words marked as the
+sender's, never Lamp's, and its change as a diff; with `bring_in` the review opens once the turn ends. Bring Into My App
+is Bring In Changes with the request's head (`refs/pull/<n>/head`) in the repository's latest's place,
+measured from where the request branched (GitHub's `merge_base_commit`), or from the head last brought in of it while the
+wish still has that; it counts once saved, pinned at the head reviewed (`SuggestedChanges.accept`). The next release
+gives its commit each pinned head as one more parent (`GitHubRepo.upload`'s `merging`, a commit even when the files are
+unchanged), which GitHub reads to mark the request merged, by ancestry alone. So a head goes only when the release
+really has its change (`SuggestedChanges.parents`): the version that brought it in still holds (`BringIn.holds(version:)`),
+the request still points at the pinned head (one rewritten since stays open, the panel saying it sent more), none of its
+files, over the whole request from where it branched, is one the release wouldn't export as the request has it, in the
+repository's own paths (a copy of the wish with the change staged into it as the merge stages it, exported as a release
+exports it, and put in the place of the repository as the request found it as an upload does, hidden folders kept:
+`SuggestedChanges.notCarried`, `GitHubRepo.overlay`; each path compared as git has it, mode and type with the bytes; a
+check that can't be made counts as not carried),
+and no other open request that isn't going is at its head or under it (GitHub's compare, by request number), since that
+request would be marked merged with it. Every page of open requests is read, and only GitHub's answer of closed ends one;
+a reopened one is open again. What a push went with is kept before its tag (`SuggestedChanges.pushed`); a request released without being a
+parent is held by that release, and the panel's Close Request… comments with the release and commit. Merged is only what
+GitHub says (`SuggestedChanges.find` asks for each request that went).
+The release then goes on top of what was brought in, and what changed on GitHub since Lamp's push stays as GitHub has it
+unless it's the app's (`GitHubRepo.keptFromGitHub`), on that push and every one after (`Repo.ownFiles`): a README or
+license edited there, a file only GitHub has; the app's
+files, and what Lamp makes from them, follow the app, a file it brought in and took away again staying away; a file
+Lamp writes itself to build the app (the root's or a part's in its folder), edited there, is refused, saying which. The push records the new commit without
+`taken`. A link that
+fails sends nothing to GitHub, and says so. The first link of a wish that's on GitHub makes the link and releases there too, as v1
+(or the next number), with no lines, the commit's message then the old "Update <name> from Lamp". A wish that isn't on GitHub (`GitHubRelease.Found.new`) gets "Also put on GitHub" in the box's place, unticked each
+time the card opens, since a first push makes its code public by default. Ticking it stages and checks what would go up
+(`GitHubRelease.check`: the free name on the person's account, the same refusals, who the commits are made as) and
+shows it under the box with the choices GitHub takes once (`WishLinkCard.GitHubSetup`), which stage it again where the
+README changes; Release Update waits for the check. Then, after the link, the wish is staged afresh (so a private
+repository's README offers the link just made) and pushed as the repository's first commit, with the release's lines
+as its message (`GitHubRelease.putUp`, `upload`'s `isNew`), tagged and with its page as any release; the card then
+offers Also update GitHub, as for any wish that's there. Without `gh` or a sign-in the box is shown off with what fixes
+it (`Publish.obtain`). A failure says the link is updated and the wish isn't on GitHub yet; a repository made on the way is
+kept, so Try GitHub Again or the next release goes on with it. The wish's shared file carries what its app
+shows (`releases.json` at its root, dates and lines only), and a copy opened or updated from it keeps that apart
+(`.lamp/releases-received.json`), so the copy's What's New… shows the original's releases beside its own, while its own
+link shows only its own. The releases that say something go with every share (`releases`, at most
+30, `WishLink.Limit`), and show on the link's page under What's new (SHARED_WISHES.md) and in the app's menu under
+What's New… ("Generated apps"). What the agent pulled in from someone else's copy is kept with the version that brought it in (`PulledIn`, below), for a release to credit; the release doesn't say it yet.
+
+A wish opened from GitHub follows its repository as before (the chain's last link, `AppUpdates`, Update from GitHub…), so
+that commit moves with each update and goes back with Undo. Any other copy is followed by its link (Follow a Copy… in
+the desk's menu, which takes a Share Link, Lamp's own `wish?shared=`, or a repository's address,
+`Following.copy(fromLink:)`). What a wish follows is kept in Lamp's own folder by the wish's instance (`Following.json`,
+never the wish's folder, which the agent writes and versions carry), in a format that says its number
+(`Following.format`), each copy with its place's kind (`Following.Place`: `lamp` or `github`, so a kind added later reads
+beside them; one this Lamp doesn't know shows as one it can't reach), its sharer's name for it as its link last said, and
+what of theirs was last pulled in (`brought`: a link's version, a repository's commit).
+
+The desk's side panel lists what a wish follows (`FollowingList`, `Store.followingRows`): the copy it started from
+first, then the others, each with what was last heard of it and one button, Pull In once it has something new, else
+Check Again. Each is asked about at most daily, as updates are (a link of lamp.dev, a repository of GitHub with
+`git ls-remote`, nothing fetched), once a launch for every followed copy and every repository a wish came from
+(`Store.checkAllFollowed`), and a newer version of either is a notification, once for each (`Store.tellNew`: `told`, and
+`Following.originTold` for a repository). A link opened during the welcome keeps what it follows beside the waiting
+file (`WaitingImport.following(beside:)`). Pull In on a repository the wish came from is Review Update. On any
+other copy it goes through `Following.pullIn`, the one place the merge experience plugs in: today `ReviewThenMerge`,
+which fetches the copy, shows the review a shared wish gets, and on Update always merges it (`PendingImport.following`,
+`Store.mergeUpdate(…following:)`), never puts it in place, since it's someone else's copy. The merge keeps each copy's
+staged latest at a ref of its own (`Following.incomingRef`, passed to `Upstream.merge` and to the agent's note on
+conflicts), promoted to the copy's accepted ref (`Following.acceptedRef`, `promote`) only once the pull-in succeeded, and
+measures both sides against that once something was pulled in (a link's copy by that ref alone, never a repository
+both came from); before that, against what the two last shared: a repository both chains name, or this wish's own
+repository at the commit their chain names (`Following.base`), else the version this wish arrived as. What it brought
+counts (`brought`) only once it's saved: a clean merge as it's saved, one with conflicts once the agent's turn that
+settles it finished well, or a turn answering one of its questions (`Following.Pending`, `Store.settlePull`), so a
+pull-in that failed is offered again and measured as before. Only the credit for work it
+brings joins the wish's credits (`Mix.creditsTaken`), so where the wish came from stays as it was. A view that makes
+someone's changes understandable and lets the person take part of them takes the same `Following.Offer` in
+`ReviewThenMerge`'s place.
+
+Pulling in from a link: the person can also just ask ("pull in the water from lamp.dev/w/…", "from the one I shared"),
+with no dragging or following first. The agent's one rule for it (`Agent.sharedLinkRules`) sends it to `shared_copy`
+(`SharedCopies`, every engine), which reads the link as Follow a Copy… does (`Following.copy(fromLink:)`: every Lamp's
+scheme, the link written without `https://`, and a Lamp Dev's own dev server's links), fetches that copy's latest file
+as following does, opens it with a shared file's checks, and lays out what those let through for the agent to read only
+("Someone's shared copy, fetched for the agent" in the approvals guide). With no link it lists the ones this Mac knows:
+the copies the wish follows and the person's own shared wishes. When the file carries its history and it meets this
+wish's (`MixHistory`, `Mix.meeting`), the answer lists their changes since, so the agent finds what was asked for; it
+brings that in by writing it into the app itself, as any change, never the whole copy, and says in its last message what
+it took from whose copy. Nothing is followed by it. The credit (`PulledIn`, `.lamp/pulled-in.json`, not versioned): the
+link, its name and who it's by as the site says (`WishLink.Latest.by`), their file's version, and what was asked for,
+waiting for the version the turn saves (`PulledIn.settle`, after the turn's commit), so a turn that asked first credits
+the turn after; one never saved goes after a day. A release reads it by version (`PulledIn.credits(for:in:)`,
+`Credit.line`: "The water from Sam's version").
 
 The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,
 what stops it (`needs`: this Mac can't build it yet, or its folder couldn't be made), so a quit or a failure between

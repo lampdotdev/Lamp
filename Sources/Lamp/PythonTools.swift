@@ -148,25 +148,8 @@ final class PythonTools: ObservableObject {
             }
         }
 
-        /// A failed download or write whose own error, or one beneath it, says the disk is full.
-        private static func outOfSpace(_ error: Error) -> Bool {
-            var said: [String] = []
-            var next: NSError? = error as NSError
-            while let current = next {
-                if current.domain == NSPOSIXErrorDomain, [Int(ENOSPC), Int(EDQUOT)].contains(current.code) { return true }
-                if current.domain == NSCocoaErrorDomain, current.code == NSFileWriteOutOfSpaceError { return true }
-                said.append(current.localizedDescription)
-                next = current.userInfo[NSUnderlyingErrorKey] as? NSError
-            }
-            return outOfSpace(said)
-        }
-
-        /// The disk is full: something said so, or there's next to nothing left on it.
-        private static func outOfSpace(_ output: [String]) -> Bool {
-            if output.contains(where: { $0.localizedCaseInsensitiveContains("no space left") || $0.contains("os error 28") }) { return true }
-            let home = FileManager.default.homeDirectoryForCurrentUser
-            let free = (try? home.resourceValues(forKeys: [.volumeAvailableCapacityKey]))?.volumeAvailableCapacity
-            return free.map { $0 < 200_000_000 } ?? false
-        }
+        /// The disk is full (`ErrorMessages.isOutOfSpace`).
+        private static func outOfSpace(_ error: Error) -> Bool { ErrorMessages.isOutOfSpace(error) }
+        private static func outOfSpace(_ output: [String]) -> Bool { ErrorMessages.isOutOfSpace(output) }
     }
 }

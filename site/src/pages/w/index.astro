@@ -1,0 +1,673 @@
+---
+import Base from "../../layouts/Base.astro";
+import { DOWNLOAD_URL } from "../../lib/download";
+---
+
+<!--
+  A wish shared as a link (lamp.dev/w/<id>): a page for playing it. The wish fills the window, playing when Lamp sent
+  its page, else its picture (or icon) with what it does and how to get it, under a header with its name and who it's by. Making one's own is kept to a slim band at
+  the foot that reads as a prompt box, with the changes Lamp suggests turning in it, and can be put away; Lamp itself
+  is only a quiet "Made with Lamp" in the header and a line in the dialog Remix opens. It's on the site's paper and ink, in its
+  type, with thin rules and nothing more, so nothing competes with the wish; put away, the bars leave the wish on black,
+  as a game is best seen. The site is static and the wish is only known when the page is asked for, so this is built
+  empty and the server puts the wish in as #shared-wish (lib/shared-wish-page.js).
+-->
+<Base title="An app · Lamp" description="An app made with Lamp." bare>
+  <div data-page class="relative flex h-dvh flex-col overflow-hidden bg-paper text-tape">
+    <!-- The header and the band lie over the wish's room, which leaves space for them (`.bar`), and slide out of the
+         window when they're put away. -->
+    <div data-bar class="bar bar-top">
+    <header class="flex h-14 items-center justify-between gap-4 border-b border-tape/15 bg-paper px-4 sm:px-6">
+      <div class="flex min-w-0 items-baseline gap-2">
+        <img data-icon alt="" width="24" height="24" class="size-6 shrink-0 self-center" hidden />
+        <h1 data-name class="min-w-0 truncate text-[17px] font-extrabold tracking-[-0.02em]"></h1>
+        <p data-by hidden class="hidden min-w-0 shrink-[3] truncate text-sm text-muted-ink sm:block"></p>
+        <!-- When the maker last released a version, opening what's new in each, in plain words Lamp wrote: there only
+             when there's some. Gray once this browser has opened it; until then darker, with a sparkle. -->
+        <button type="button" data-news hidden popovertarget="news" class="news-button shrink-0 cursor-pointer rounded-md px-1.5 py-0.5 -my-0.5 text-sm whitespace-nowrap text-muted-ink hover:bg-tape/5 hover:text-tape focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tape/50">
+          <svg data-news-new hidden aria-hidden="true" viewBox="0 0 16 16" class="news-sparkle"><path d="M8 0.8l1.6 4.2 4.2 1.6-4.2 1.6L8 12.4 6.4 8.2 2.2 6.6 6.4 5zM13 10.5l0.7 1.8 1.8 0.7-1.8 0.7L13 15.5l-0.7-1.8-1.8-0.7 1.8-0.7z" /></svg><span data-news-label></span>
+        </button>
+      </div>
+      <div class="flex shrink-0 items-center gap-4 text-sm">
+        <a href="/" class="rounded-md font-mono text-[13px] text-muted-ink hover:text-tape focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tape/50">Made with Lamp</a>
+      </div>
+    </header>
+    </div>
+    <div id="news" data-news-list popover class="news-list" aria-labelledby="news-title">
+      <h2 id="news-title" class="news-title">What's new</h2>
+      <ol data-news-releases class="news-releases"></ol>
+    </div>
+
+    <!-- The thing itself, as big as the room between the header and the band allows: a playing page filling it, and a
+         picture only as big as it is. -->
+    <main data-stage class="stage relative flex min-h-0 flex-1 items-center justify-center p-3 sm:px-6" aria-label="The app">
+      <!-- An idea this browser sent that the maker has since put in, said once on a later visit. -->
+      <div data-idea-in hidden role="status" class="idea-in">
+        <span data-idea-in-text></span>
+        <button type="button" data-idea-in-news hidden class="idea-in-news">See what's new</button>
+        <button type="button" data-idea-in-close aria-label="Close" class="idea-in-close">
+          <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+        </button>
+      </div>
+      <div data-play hidden class="play-frame relative overflow-hidden bg-black">
+        <button
+          type="button"
+          data-fullscreen
+          aria-label="Full screen"
+          class="absolute top-3 right-3 z-10 grid size-8 cursor-pointer place-items-center rounded-md bg-black/40 text-white/90 backdrop-blur hover:bg-black/60 focus-visible:outline-2 focus-visible:outline-white"
+        >
+          <svg aria-hidden="true" viewBox="0 0 16 16" class="size-4 fill-none stroke-current stroke-[1.5] [stroke-linecap:round] [stroke-linejoin:round]"><path data-enter d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" /><path data-exit hidden d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5" /></svg>
+        </button>
+      </div>
+      <!-- An app that doesn't play here (a Mac app, or one too big to play): its picture as it is, else its icon large,
+           with what it does and how to get it under it, so the page is never empty. -->
+      <div data-still hidden class="still">
+        <img data-picture hidden alt="" class="still-picture" />
+        <img data-still-icon hidden alt="" width="128" height="128" class="still-icon" />
+        <p data-about class="still-about"></p>
+        <div class="still-actions">
+          <a data-still-get href={DOWNLOAD_URL} class="shared-button shared-button-outline"><span data-still-get-label>Get Lamp</span></a>
+          <a data-still-open href="/" class="shared-button">Open in Lamp</a>
+          <a data-still-mail hidden href="/" class="shared-button">Email me the link</a>
+        </div>
+        <p data-still-note class="still-note"></p>
+      </div>
+    </main>
+
+    <!-- Making one's own: a prompt box with the changes Lamp suggests for it turning in it as its placeholder, and a send
+         button that opens Remix, with what's written or else the change shown. The chevron in the window's corner puts it
+         and the header away together (remembered in this browser), leaving only the wish, and from the same place
+         brings both back. -->
+    <div data-bar data-remix-band class="bar bar-bottom">
+    <aside class="remix-band h-16 border-t border-tape/15 bg-paper" aria-label="Make a change">
+      <form data-prompt class="mx-auto flex h-full max-w-[44rem] items-center gap-3 py-3 pr-14 pl-3 sm:pl-6 lg:px-6">
+        <!-- The box's questions and its button say what it's for; its label is for screen readers. -->
+        <label for="change" class="sr-only">How would you make this better?</label>
+        <div class="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-tape/15 bg-paper py-1 pr-1 pl-3 shadow-xs transition focus-within:border-tape/50 focus-within:ring-3 focus-within:ring-tape/10">
+          <input
+            id="change"
+            data-change
+            type="text"
+            autocomplete="off"
+            enterkeyhint="send"
+            placeholder="What would you change?"
+            class="min-w-0 flex-1 bg-transparent py-1.5 text-[15px] placeholder:text-muted-ink focus:outline-none"
+          />
+          <!-- Says who reads it, when the link names its maker: the box is a note to a person. -->
+          <button type="submit" data-remix class="h-8 shrink-0 cursor-pointer rounded-md bg-tape px-3 text-sm font-semibold whitespace-nowrap text-paper transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tape/50"><span data-send-short class="sm:hidden">Send</span><span data-send-long class="hidden sm:inline">Send</span></button>
+        </div>
+      </form>
+    </aside>
+    </div>
+
+    <!-- Puts the header and the band away and brings them back, from the same place: centered on the band's height at
+         the window's right, over the band while it's there and over the wish once it isn't. -->
+    <button type="button" data-bars-toggle aria-label="Hide the title and the change box" aria-expanded="true" class="bars-toggle absolute right-3 bottom-4 z-10 grid size-8 cursor-pointer place-items-center rounded-md focus-visible:outline-2 focus-visible:outline-tape/50">
+      <svg aria-hidden="true" viewBox="0 0 16 16" class="size-3.5 fill-none stroke-current stroke-2 [stroke-linecap:round] [stroke-linejoin:round]"><path d="M4 6l4 4 4-4" /></svg>
+    </button>
+
+    <!-- An idea, to send to the person who made it once it's confirmed here: its words, which can still be changed, and an
+         address to hear back at, if they want. Once sent, it says so. Under it either way, making one's own with Lamp:
+         opening it (on a Mac) or getting it. -->
+    <dialog data-remix-dialog aria-labelledby="remix-title" class="remix-popup">
+      <button type="button" data-remix-close aria-label="Close" class="remix-popup-close">
+        <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+      </button>
+      <h2 id="remix-title" data-remix-title class="remix-popup-title"></h2>
+      <p data-remix-text class="remix-popup-text"></p>
+      <form data-confirm class="remix-popup-confirm">
+        <label for="idea-text" class="sr-only">Your idea</label>
+        <textarea id="idea-text" data-remix-to class="remix-popup-to remix-popup-edit" rows="3" maxlength="1000" required></textarea>
+        <label for="notify-email" class="remix-popup-label">Email me once when it's in <span class="remix-popup-optional">(optional)</span></label>
+        <input id="notify-email" data-notify-email class="remix-popup-input" type="email" autocomplete="email" placeholder="Your email" />
+        <div class="remix-popup-rows"><button type="submit" data-confirm-send class="shared-button">Send</button></div>
+      </form>
+      <p data-sent-text hidden class="remix-popup-to"></p>
+      <p data-notify-note class="remix-popup-note empty:hidden" role="status" aria-live="polite"></p>
+      <p data-own-lead class="remix-popup-lead">Or have Lamp make it for you now. It's free on your Mac and works with your ChatGPT or Claude plan.</p>
+      <div class="remix-popup-rows">
+        <!-- One way on: on a Mac it opens Lamp with the idea, or gets Lamp when that doesn't open; elsewhere it gets Lamp. -->
+        <a href={DOWNLOAD_URL} data-download data-download-place="shared-remix" class="shared-button shared-button-outline"><span data-download-label>Get Lamp</span></a>
+      </div>
+      <!-- Empty until Download is pressed, when it says how the wish waits for Lamp. -->
+      <p data-next class="remix-popup-note empty:hidden" role="status" aria-live="polite"></p>
+    </dialog>
+  </div>
+</Base>
+
+<style>
+  /* A playing page's frame fills the room between the header and the band (the stage's own box, a size container),
+     as the app's window fills the Mac's: a game's controls are laid out to the window's edges, and its scene, drawn on
+     a fixed stage, is fitted inside with black around it where the shapes differ, as it is on the Mac. */
+  .stage { container-type: size; }
+  .play-frame { width: 100cqw; height: 100cqh; }
+
+  /* An app shown still: as much of the room as its picture can take, with its line and buttons kept under it. */
+  .still { display: flex; flex-direction: column; align-items: center; gap: 1rem; max-width: 100%; max-height: 100%; min-height: 0; text-align: center; }
+  .still[hidden] { display: none; }
+  .still-picture { display: block; min-height: 0; max-width: 100%; flex: 0 1 auto; object-fit: contain; border-radius: 0.5rem;
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1); }
+  .still-icon { width: 8rem; height: 8rem; flex: none; }
+  .still-picture[hidden], .still-icon[hidden] { display: none; }
+  .still-about { margin: 0; max-width: 34rem; font-size: 1.0625rem; line-height: 1.45; flex: none; }
+  .still-about:empty { display: none; }
+  .still-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem; flex: none; }
+  .still-note { margin: 0; font-size: 0.8125rem; color: var(--color-muted-ink); flex: none; }
+  .still-note:empty { display: none; }
+
+  /* The page comes in as it opens (`.built`, from the script): the wish fades up, and a moment later the band rises
+     into its place. Without the script, or where less motion is asked for, it's simply there. */
+  @media (scripting: enabled) and (prefers-reduced-motion: no-preference) {
+    .stage > * { opacity: 0; transition: opacity 0.4s ease; }
+    .remix-band { opacity: 0; translate: 0 8px; transition: opacity 0.3s ease 0.6s, translate 0.3s ease 0.6s; }
+    .built .stage > * { opacity: 1; }
+    .built .remix-band { opacity: 1; translate: 0 0; }
+  }
+  /* The bars slide straight out of the window, the header up and the band down, and the wish grows into the room they
+     leave as they go, to the whole window on black. The chevron turns to point the way the bars will go, and darkens to
+     sit on the wish. */
+  .bar { position: absolute; left: 0; right: 0; z-index: 1; }
+  .bar-top { top: 0; }
+  .bar-bottom { bottom: 0; }
+  .stage { padding-top: calc(3.5rem + 0.75rem); padding-bottom: calc(4rem + 0.75rem); }
+  [data-bars="hidden"] .bar-top { translate: 0 -100%; }
+  [data-bars="hidden"] .bar-bottom { translate: 0 100%; }
+  /* A playing page goes edge to edge between the header and the band, with none of the page's paper around it. */
+  .stage.plays { padding: 3.5rem 0 4rem; }
+  [data-bars="hidden"] .stage { padding: 0; }
+  [data-bars="hidden"] { background: #000; }
+  .bars-toggle { color: var(--color-muted-ink); }
+  .bars-toggle:hover { background: color-mix(in srgb, var(--color-tape) 6%, transparent); color: var(--color-tape); }
+  [data-bars="hidden"] .bars-toggle { background: rgb(255 255 255 / 0.1); color: rgb(255 255 255 / 0.6); }
+  [data-bars="hidden"] .bars-toggle:hover { background: rgb(255 255 255 / 0.2); color: white; }
+  [data-bars="hidden"] .bars-toggle svg { rotate: 180deg; }
+  @media (prefers-reduced-motion: no-preference) {
+    .built .bar { transition: translate 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
+    .built .stage { transition: padding 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
+    .built .bars-toggle, .built .bars-toggle svg { transition: background-color 0.35s, color 0.35s, rotate 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
+  }
+
+  /* What's new: the header's "Updated" button, with a sparkle and darker words until this browser has opened it, and
+     a plain list on the paper hanging under it, its versions newest first. */
+  .news-button[hidden] { display: none; }
+  .news-button.unseen { color: var(--color-tape); font-weight: 500; }
+  .news-sparkle { display: inline-block; width: 0.75rem; height: 0.75rem; margin: 0 0.3rem 0 0; vertical-align: -0.0625rem; fill: currentColor; }
+  .news-sparkle[hidden] { display: none; }
+  /* The sparkle twinkles twice as the page comes in, then holds still; where less motion is asked for, it's just there. */
+  @media (prefers-reduced-motion: no-preference) {
+    .news-sparkle { transform-origin: center; animation: news-twinkle 0.9s ease-in-out 0.9s 2; }
+  }
+  @keyframes news-twinkle {
+    0%, 100% { scale: 1; rotate: 0deg; opacity: 1; }
+    30% { scale: 1.45; rotate: 20deg; opacity: 0.55; }
+    60% { scale: 0.85; rotate: -8deg; opacity: 1; }
+  }
+  .news-list {
+    position: fixed; inset: auto; top: calc(3.5rem + 0.5rem); left: 0.75rem; margin: 0; padding: 1rem 1.25rem 1.25rem;
+    width: min(22rem, calc(100vw - 1.5rem)); max-height: calc(100dvh - 5.5rem); overflow-y: auto;
+    border: 1px solid color-mix(in srgb, var(--color-tape) 15%, transparent); border-radius: 0.5rem; background: var(--color-paper); color: var(--color-tape);
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .news-list:popover-open { animation: remix-popup-in 0.15s ease-out both; }
+  }
+  .news-title { margin: 0; font-size: 0.9375rem; font-weight: 600; }
+  .news-releases { margin: 0.5rem 0 0; padding: 0; list-style: none; }
+  /* The list's items are made by the script, so they're reached through :global (scoped styles miss them). */
+  .news-releases :global(> li + li) { margin-top: 0.875rem; padding-top: 0.875rem; border-top: 1px solid color-mix(in srgb, var(--color-tape) 6%, transparent); }
+  .news-releases :global(time) { display: block; font-size: 0.75rem; color: var(--color-muted-ink); }
+  .news-releases :global(ul) { margin: 0.25rem 0 0; padding: 0 0 0 1rem; list-style: disc; font-size: 0.875rem; line-height: 1.5; }
+  .news-releases :global(li li::marker) { color: var(--color-muted-ink); }
+
+  /* Plain buttons: ink with paper-colored words, or outlined. */
+  .shared-button {
+    display: inline-flex; align-items: center; justify-content: center; height: 2.25rem; padding: 0 1rem;
+    border-radius: 0.375rem; background: var(--color-tape); color: var(--color-paper); font-size: 0.875rem; font-weight: 700;
+    transition: background-color 0.15s;
+  }
+  .shared-button:hover { background: color-mix(in srgb, var(--color-tape) 85%, var(--color-paper)); }
+  .shared-button:focus-visible { outline: 2px solid var(--color-muted-ink); outline-offset: 2px; }
+  .shared-button-outline {
+    background: var(--color-paper); color: var(--color-tape); border: 1px solid color-mix(in srgb, var(--color-tape) 15%, transparent);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+  }
+  .shared-button-outline:hover { background: color-mix(in srgb, var(--color-tape) 6%, transparent); }
+  .shared-button[hidden] { display: none; }
+
+  /* An idea that's in: a dark bar over the top of the app, closed with its ×. */
+  .idea-in {
+    position: absolute; top: 0.75rem; left: 50%; translate: -50% 0; z-index: 20; display: flex; align-items: center; gap: 0.75rem;
+    max-width: calc(100% - 1.5rem); padding: 0.5rem 0.5rem 0.5rem 1rem; border-radius: 999px; background: var(--color-tape);
+    color: var(--color-paper); font-size: 0.875rem; box-shadow: 0 6px 20px rgb(0 0 0 / 0.25);
+  }
+  .idea-in[hidden], .idea-in-news[hidden] { display: none; }
+  /* Under the header while it's shown, which lies over the top of the app. */
+  [data-bars="shown"] .idea-in { top: 4.25rem; }
+  .idea-in span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .idea-in-news { flex: none; padding: 0.25rem 0.75rem; border-radius: 999px; background: var(--color-paper); color: var(--color-tape); font-weight: 600; cursor: pointer; }
+  .idea-in-close { flex: none; display: grid; place-items: center; width: 1.5rem; height: 1.5rem; border-radius: 999px; cursor: pointer; opacity: 0.8; }
+  .idea-in-close svg { width: 0.625rem; height: 0.625rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+
+  /* The change dialog: a plain card on the paper, fading in. */
+  .remix-popup {
+    margin: auto; padding: 1.5rem; width: min(26rem, calc(100vw - 2rem)); border: 1px solid color-mix(in srgb, var(--color-tape) 15%, transparent);
+    border-radius: 0.5rem; background: var(--color-paper); color: var(--color-tape);
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  }
+  .remix-popup::backdrop { background: rgb(0 0 0 / 0.5); }
+  @media (prefers-reduced-motion: no-preference) {
+    .remix-popup[open] { animation: remix-popup-in 0.2s ease-out both; }
+    .remix-popup[open]::backdrop { animation: remix-popup-dim 0.2s ease both; }
+  }
+  @keyframes remix-popup-in { from { scale: 0.96; opacity: 0; } }
+  @keyframes remix-popup-dim { from { opacity: 0; } }
+  .remix-popup-close {
+    position: absolute; top: 1rem; right: 1rem; display: grid; place-items: center; width: 1.75rem; height: 1.75rem;
+    border-radius: 0.375rem; color: var(--color-muted-ink); cursor: pointer;
+  }
+  .remix-popup-close:hover { background: color-mix(in srgb, var(--color-tape) 6%, transparent); color: var(--color-tape); }
+  .remix-popup-close svg { width: 0.75rem; height: 0.75rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+  .remix-popup-close:focus-visible { outline: 2px solid var(--color-muted-ink); outline-offset: 2px; }
+  .remix-popup-title { margin: 0 2rem 0 0; font-size: 1.375rem; line-height: 1.2; font-weight: 800; letter-spacing: -0.02em; }
+  .remix-popup-text { margin: 0.375rem 0 0; font-size: 0.875rem; line-height: 1.5; color: var(--color-muted-ink); }
+  /* The change itself, as it was written in the box. */
+  .remix-popup-to {
+    margin: 1rem 0 0; padding: 0.625rem 0.75rem; border-radius: 0.375rem; background: color-mix(in srgb, var(--color-tape) 4%, var(--color-paper));
+    border: 1px solid color-mix(in srgb, var(--color-tape) 15%, transparent); font-size: 0.875rem; line-height: 1.5; overflow-wrap: break-word;
+  }
+  /* The two ways on, at the dialog's foot to the right. Off a Mac, only getting it. */
+  .remix-popup-rows { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.25rem; }
+  .remix-popup-note { margin: 0.75rem 0 0; font-size: 0.8125rem; color: var(--color-muted-ink); }
+  /* The idea as it goes: its words, still to change, and an address to hear back at, then Send. */
+  .remix-popup-confirm[hidden], .remix-popup-to[hidden] { display: none; }
+  .remix-popup-edit { display: block; width: 100%; box-sizing: border-box; resize: vertical; font: inherit; color: inherit; }
+  .remix-popup-edit:focus { outline: 2px solid color-mix(in srgb, var(--color-tape) 30%, transparent); outline-offset: 0; }
+  .remix-popup-label { display: block; margin-top: 1rem; font-size: 0.875rem; font-weight: 600; }
+  .remix-popup-optional { font-weight: 400; color: var(--color-muted-ink); }
+  .remix-popup-input {
+    display: block; width: 100%; box-sizing: border-box; margin-top: 0.375rem;
+    height: 2.25rem; padding: 0 0.75rem; border-radius: 0.375rem; font-size: 0.875rem;
+    border: 1px solid color-mix(in srgb, var(--color-tape) 15%, transparent); background: var(--color-paper); color: inherit;
+  }
+  .remix-popup-input:focus { outline: 2px solid color-mix(in srgb, var(--color-tape) 30%, transparent); outline-offset: 0; }
+  /* Making one's own: a line over its two buttons, set apart from the idea. */
+  .remix-popup-lead {
+    margin: 1.25rem 0 0; padding-top: 1rem; border-top: 1px solid color-mix(in srgb, var(--color-tape) 12%, transparent);
+    font-size: 0.875rem; color: var(--color-muted-ink);
+  }
+  .remix-popup-lead + .remix-popup-rows { margin-top: 0.75rem; }
+</style>
+
+<script>
+  import { askFrom, copyWish, sharedWishLink, withAsk, wishLink } from "../../../lib/wish.js";
+  import { track } from "../../lib/analytics";
+
+  type Release = { date: string; lines: string[] };
+  type Shared = { id: string; name: string; by?: string; ideas?: string[]; asks?: string[]; releases?: Release[]; about: string; wish: string; picture: string; icon: string; file?: string; shared?: string; play?: string; shape?: number | "fill" };
+  const json = document.getElementById("shared-wish")?.textContent;
+  // Only ever a shared wish's page: on its own, there's nothing to show.
+  if (!json) location.replace("/ideas");
+  const wish = json ? (JSON.parse(json) as Shared) : null;
+
+  if (wish) {
+    const $ = <T extends Element>(selector: string) => document.querySelector<T>(selector)!;
+    $<HTMLElement>("[data-name]").textContent = wish.name;
+    // Who made it, as they gave their name when they shared it.
+    const by = $<HTMLElement>("[data-by]");
+    by.textContent = wish.by ? `by ${wish.by}` : "";
+    by.hidden = !wish.by;
+    const icon = $<HTMLImageElement>("[data-icon]");
+    if (wish.icon) { icon.src = wish.icon; icon.hidden = false; }
+
+    // What's new: each version the maker released, newest first, opened from "updated <date>" beside the name, which
+    // has a sparkle until this browser has opened it since the newest one.
+    const releases = (wish.releases ?? []).filter((release) => release.lines?.length);
+    if (releases.length) {
+      const list = $<HTMLElement>("[data-news-releases]");
+      const day = new Intl.DateTimeFormat(undefined, { month: "long", day: "numeric", year: "numeric" });
+      for (const release of releases) {
+        const item = document.createElement("li");
+        const when = document.createElement("time");
+        when.dateTime = release.date;
+        when.textContent = day.format(new Date(release.date));
+        const lines = document.createElement("ul");
+        for (const line of release.lines) lines.append(Object.assign(document.createElement("li"), { textContent: line }));
+        item.append(when, lines);
+        list.append(item);
+      }
+      const button = $<HTMLButtonElement>("[data-news]");
+      const sparkle = $<SVGElement>("[data-news-new]");
+      const newest = releases[0].date;
+      $<HTMLElement>("[data-news-label]").textContent =
+        `updated ${new Intl.DateTimeFormat(undefined, { month: "numeric", day: "numeric", year: "2-digit" }).format(new Date(newest))}`;
+      const SEEN = `lamp.shared.seen.${wish.id}`;
+      let seen: string | null = null;
+      try { seen = localStorage.getItem(SEEN); } catch {}
+      const mark = (unseen: boolean) => {
+        sparkle.toggleAttribute("hidden", !unseen);
+        button.classList.toggle("unseen", unseen);
+        button.setAttribute("aria-label", unseen ? "What's new, not yet seen" : "What's new");
+      };
+      mark(seen == null || seen < newest);
+      button.hidden = false;
+      // The list hangs under the button, kept inside the window.
+      const panel = $<HTMLElement>("[data-news-list]");
+      panel.addEventListener("beforetoggle", (event) => {
+        if ((event as ToggleEvent).newState !== "open") return;
+        const width = Math.min(352, innerWidth - 24);
+        panel.style.left = `${Math.max(12, Math.min(button.getBoundingClientRect().left - 4, innerWidth - width - 12))}px`;
+      });
+      panel.addEventListener("toggle", (event) => {
+        if ((event as ToggleEvent).newState !== "open") return;
+        mark(false);
+        try { localStorage.setItem(SEEN, newest); } catch {}
+      });
+    }
+
+    // Keys reach a framed page only while its frame has focus. On GitHub Pages the game is the page and has them from
+    // the start, so here the frame takes focus when it loads and again after the page's own buttons, unless the person
+    // is typing in the box.
+    let focusPlay = () => {};
+
+    if (wish.play) {
+      // The page plays from the link's own host (`playOrigin`), so it can't reach the site or another wish's storage.
+      const stage = $<HTMLElement>("[data-play]");
+      $<HTMLElement>("[data-stage]").classList.add("plays");
+      const frame = document.createElement("iframe");
+      frame.title = wish.name;
+      frame.allow = "fullscreen; gamepad; autoplay; clipboard-write";
+      frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-popups allow-modals allow-downloads");
+      frame.className = "absolute inset-0 size-full border-0 bg-black";
+      stage.prepend(frame);
+      stage.hidden = false;
+      focusPlay = () => { if (document.activeElement !== $<HTMLInputElement>("[data-change]")) frame.focus(); };
+      frame.addEventListener("load", focusPlay);
+      // A game whose version was replaced while it was open asks for the page again, which plays the newest
+      // (lamp-game.js's `loadProblem`). Only from this frame, and it only reloads.
+      window.addEventListener("message", (event) => {
+        if (event.source === frame.contentWindow && event.data?.lamp === "reload-page") location.reload();
+      });
+      frame.src = wish.play;
+      // The same button takes the wish out of full screen, and shows which way it goes.
+      const button = $<HTMLButtonElement>("[data-fullscreen]");
+      button.addEventListener("click", () => {
+        (document.fullscreenElement === stage ? document.exitFullscreen() : stage.requestFullscreen?.())?.catch?.(() => {});
+        focusPlay();
+      });
+      document.addEventListener("fullscreenchange", () => {
+        const full = document.fullscreenElement === stage;
+        button.setAttribute("aria-label", full ? "Exit full screen" : "Full screen");
+        button.querySelector<SVGPathElement>("[data-enter]")!.toggleAttribute("hidden", full);
+        button.querySelector<SVGPathElement>("[data-exit]")!.toggleAttribute("hidden", !full);
+        focusPlay();
+      });
+    } else {
+      // Not played here: what it looks like (its picture, else its icon), what it does, and how to get it. Lamp opens
+      // it on a Mac; anywhere else, the link goes to their Mac by email.
+      $<HTMLElement>("[data-still]").hidden = false;
+      if (wish.picture) {
+        const picture = $<HTMLImageElement>("[data-picture]");
+        picture.src = wish.picture;
+        picture.alt = `${wish.name}, as it looks`;
+        picture.hidden = false;
+      } else if (wish.icon) {
+        const big = $<HTMLImageElement>("[data-still-icon]");
+        big.src = wish.icon;
+        big.alt = wish.name;
+        big.hidden = false;
+      }
+      $<HTMLElement>("[data-about]").textContent = wish.about ?? "";
+      const onMac = /Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2;
+      const openIt = $<HTMLAnchorElement>("[data-still-open]");
+      const getIt = $<HTMLAnchorElement>("[data-still-get]");
+      const mail = $<HTMLAnchorElement>("[data-still-mail]");
+      const note = $<HTMLElement>("[data-still-note]");
+      if (onMac) {
+        openIt.href = (wish.file && wish.shared ? sharedWishLink(wish.shared, "") : wishLink(wish.wish)) ?? "/";
+        openIt.addEventListener("click", () => track("idea_sent", { idea: wish.name, place: "shared" }));
+        getIt.addEventListener("click", () => {
+          track("idea_download", { idea: wish.name, place: "shared" });
+          // The app itself, when it came with its file: the copy names the link (`shared=`), which a new Lamp opens.
+          const origin = wish.file && wish.shared ? { shared: wish.shared } : null;
+          copyWish(origin ? "" : wish.wish, { origin, plain: wish.wish }).then((copied) => {
+            $<HTMLElement>("[data-still-get-label]").textContent = "Downloading…";
+            note.textContent = copied === "marked" ? "Open Lamp when it's ready. This app will be there."
+              : copied === "plain" ? "It's copied. Paste it into Lamp when it's ready."
+              : "Copy the app's name, and ask Lamp for it when it's ready.";
+          });
+        });
+      } else {
+        openIt.hidden = true;
+        getIt.hidden = true;
+        mail.hidden = false;
+        mail.href = `mailto:?subject=${encodeURIComponent(wish.name)}&body=${encodeURIComponent(location.href)}`;
+        mail.addEventListener("click", () => track("idea_mailed", { idea: wish.name, place: "shared" }));
+        note.textContent = "It opens with Lamp, on a Mac.";
+      }
+    }
+
+    // The header and the band go and come back together, by the chevron in the window's corner, and stay as they were
+    // left in this browser. Put away, they can't be reached by the keyboard either.
+    const toggle = $<HTMLButtonElement>("[data-bars-toggle]");
+    const HIDDEN = "lamp.shared.barsHidden";
+    const bars = (hidden: boolean) => {
+      $<HTMLElement>("[data-page]").dataset.bars = hidden ? "hidden" : "shown";
+      for (const bar of document.querySelectorAll<HTMLElement>("[data-bar]")) bar.inert = hidden;
+      toggle.setAttribute("aria-expanded", String(!hidden));
+      toggle.setAttribute("aria-label", hidden ? "Show the title and the change box" : "Hide the title and the change box");
+    };
+    let wasHidden = false;
+    try { wasHidden = localStorage.getItem(HIDDEN) === "1"; } catch {}
+    bars(wasHidden);
+    toggle.addEventListener("click", () => {
+      const hidden = $<HTMLElement>("[data-page]").dataset.bars !== "hidden";
+      bars(hidden);
+      try { hidden ? localStorage.setItem(HIDDEN, "1") : localStorage.removeItem(HIDDEN); } catch {}
+      focusPlay();
+    });
+
+    // The box: a request brought by the link (a published page's Remix…) waits in it; otherwise the changes Lamp
+    // suggests for it turn in its placeholder, holding still while it's in use or where less motion is asked for.
+    const change = $<HTMLInputElement>("[data-change]");
+    change.value = askFrom(location.search) ?? "";
+    // That someone started writing a change, once a visit, to count those who begin one and never send it.
+    change.addEventListener("input", () => track("idea_change_started", { idea: wish.name, place: "shared" }), { once: true });
+    // The questions the maker's link asks in turn (Lamp writes them, the maker can change them), else these: open
+    // questions that draw out what someone found, not changes for them to pick.
+    const asks = wish.asks?.length ? wish.asks : ["Found a bug?", "What's missing?", "What would make it better?"];
+    let shown = 0;
+    const placeholder = () => { change.placeholder = asks[shown]; };
+    placeholder();
+    if (asks.length > 1 && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setInterval(() => {
+        if (document.activeElement === change || change.value) return;
+        shown = (shown + 1) % asks.length;
+        placeholder();
+      }, 3500);
+    }
+    // Only what's written: a question isn't an idea.
+    const asked = () => change.value.trim();
+
+    // Remix opens a dialog with the change, a line on Lamp, and, since a page can't tell whether Lamp is installed,
+    // Open in Lamp for whoever has it (on a Mac) beside Get Lamp for whoever doesn't. Open is the exact wish when it
+    // came with the link, so the copy follows it (`Following` in Lamp); else its words.
+    const mac = /Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2;
+    const dialog = $<HTMLDialogElement>("[data-remix-dialog]");
+    // Where Lamp opens the idea: a lamp: link, which a page can follow but can't tell whether anything answered.
+    let lampLink = "/";
+    // The box asks for ideas in the maker's name, as they gave it when they shared it.
+    const maker = wish.by?.trim() || "";
+    // "Send to Alex Kim" where there's room, "Send to Alex" on a phone or for a long name, else "Send".
+    const first = maker.split(/\s+/)[0] ?? "";
+    const short = maker && first.length <= 12 ? `Send to ${first}` : "Send";
+    $<HTMLElement>("[data-send-short]").textContent = short;
+    $<HTMLElement>("[data-send-long]").textContent = maker && maker.length <= 16 ? `Send to ${maker}` : short;
+    const confirm = $<HTMLFormElement>("[data-confirm]");
+    const ideaText = $<HTMLTextAreaElement>("[data-remix-to]");
+    const sentText = $<HTMLElement>("[data-sent-text]");
+    const notifyNote = $<HTMLElement>("[data-notify-note]");
+    const confirmSend = $<HTMLButtonElement>("[data-confirm-send]");
+    confirmSend.textContent = maker && maker.length <= 16 ? `Send to ${maker}` : short;
+    const title = $<HTMLElement>("[data-remix-title]");
+    const text = $<HTMLElement>("[data-remix-text]");
+    // Open in Lamp takes the idea as it stands in the dialog.
+    const pointOpen = () => {
+      const ask = ideaText.value.trim();
+      lampLink = (wish.file && wish.shared ? sharedWishLink(wish.shared, ask) : wishLink(withAsk(wish.wish, ask))) ?? "/";
+    };
+    ideaText.addEventListener("input", pointOpen);
+    // Each time the bar opens the dialog is a draft of its own: an answer to one sent earlier never changes a later one.
+    let draft = 0;
+    let fromBar = "";
+    // The bar's send opens the dialog with the idea, to confirm before it goes; nothing is sent until then.
+    $<HTMLFormElement>("[data-prompt]").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const ask = asked();
+      if (!ask) return change.focus();
+      // That one was written, never what it says.
+      track("idea_own_change", { idea: wish.name, place: "shared" });
+      draft += 1;
+      fromBar = ask;
+      confirmSend.disabled = false;
+      title.textContent = maker ? `Send to ${maker}?` : "Send your idea?";
+      text.textContent = `${maker || "Whoever made it"} sees every idea, and can add yours to ${wish.name}.`;
+      ideaText.value = ask;
+      confirm.hidden = false;
+      sentText.hidden = true;
+      $<HTMLElement>("[data-own-lead]").textContent = "Or have Lamp make it for you now. It's free on your Mac and works with your ChatGPT or Claude plan.";
+      notifyNote.textContent = "";
+      pointOpen();
+      dialog.showModal();
+      confirmSend.focus();
+    });
+    // The ideas this browser sent to this link, by number and token, for a later visit to ask what became of them (only
+    // theirs, nothing else). Kept here alone: there's no account, and nothing of them goes anywhere but this link's site.
+    const MINE = `lamp.shared.ideas.${wish.id}`;
+    type Mine = { n: number; token: string; text: string; at: string };
+    const mineKept = (): Mine[] => { try { return JSON.parse(localStorage.getItem(MINE) ?? "[]"); } catch { return []; } };
+    const keepMine = (all: Mine[]) => { try { all.length ? localStorage.setItem(MINE, JSON.stringify(all.slice(-20))) : localStorage.removeItem(MINE); } catch {} };
+    const remember = (answer: { n: number; token: string }, text: string) => {
+      if (Number.isInteger(answer?.n) && typeof answer?.token === "string") keepMine([...mineKept(), { n: answer.n, token: answer.token, text, at: new Date().toISOString() }]);
+    };
+    // On a visit, one that's in says so once, over the app; one dismissed, or older than the site keeps them, is let go.
+    (async () => {
+      const all = mineKept();
+      if (!all.length) return;
+      let answers: { n: number; status: string }[] = [];
+      try {
+        const response = await fetch(`/api/wish-ideas?id=${encodeURIComponent(wish.id)}&mine=${all.map((one) => `${one.n}.${one.token}`).join(",")}`, { signal: AbortSignal.timeout(8000) });
+        if (!response.ok) return;
+        answers = (await response.json()).ideas ?? [];
+      } catch { return; }
+      const status = new Map(answers.map((one) => [one.n, one.status]));
+      const isIn = all.filter((one) => status.get(one.n) === "in");
+      // Against what's kept now: one sent while this was being asked stays.
+      const asked = new Set(all.map((one) => one.n));
+      keepMine(mineKept().filter((one) => !asked.has(one.n) || status.get(one.n) === "open"));
+      if (!isIn.length) return;
+      const bar = $<HTMLElement>("[data-idea-in]");
+      $<HTMLElement>("[data-idea-in-text]").textContent = isIn.length === 1
+        ? `Your idea is in: “${isIn[0].text}”` : `${isIn.length} of your ideas are in`;
+      const news = $<HTMLButtonElement>("[data-idea-in-news]");
+      const newsButton = $<HTMLButtonElement>("[data-news]");
+      news.hidden = newsButton.hidden;
+      // After this click has finished, or the list it opens takes it as a click outside and closes again.
+      news.addEventListener("click", () => { bar.hidden = true; setTimeout(() => $<HTMLElement>("[data-news-list]").showPopover(), 0); });
+      $<HTMLButtonElement>("[data-idea-in-close]").addEventListener("click", () => { bar.hidden = true; });
+      bar.hidden = false;
+      track("idea_in_seen", { idea: wish.name, place: "shared" });
+    })();
+
+    // Confirmed: the idea goes to the maker (`/api/wish-ideas`), who sees it in Lamp, with the address if one was given.
+    confirm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const idea = ideaText.value.trim();
+      const email = $<HTMLInputElement>("[data-notify-email]").value.trim();
+      if (!idea || confirmSend.disabled) return ideaText.focus();
+      const mine = draft, written = fromBar;
+      confirmSend.disabled = true;
+      let sent = false;
+      try {
+        const response = await fetch(`/api/wish-ideas?id=${encodeURIComponent(wish.id)}`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(email ? { text: idea, email } : { text: idea }),
+          signal: AbortSignal.timeout(8000),
+        });
+        sent = response.status === 201;
+        if (sent) remember((await response.json()) as { n: number; token: string }, idea);
+        if (!sent && response.status === 400 && email && mine === draft) { notifyNote.textContent = "Check the email address."; confirmSend.disabled = false; return; }
+      } catch {}
+      if (sent) {
+        track("idea_sent_to_maker", { idea: wish.name, place: "shared" });
+        if (email) track("idea_notify", { idea: wish.name, place: "shared" });
+        // The bar is emptied only while it still holds what was sent.
+        if (change.value.trim() === written) change.value = "";
+      }
+      // The dialog has moved on to another idea since: it's left as it is.
+      if (mine !== draft) return;
+      confirmSend.disabled = false;
+      if (!sent) { notifyNote.textContent = "That didn't go. Try again in a moment."; return; }
+      title.textContent = maker ? `Sent to ${maker}` : "Sent";
+      sentText.textContent = idea;
+      sentText.hidden = false;
+      confirm.hidden = true;
+      notifyNote.textContent = email ? "We'll email you once when it's in." : "";
+      $<HTMLElement>("[data-own-lead]").textContent = "Want it sooner? Lamp can make it for you now. It's free on your Mac and works with your ChatGPT or Claude plan.";
+    });
+    $<HTMLButtonElement>("[data-remix-close]").addEventListener("click", () => dialog.close());
+    dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+
+    // One button. A page can't tell whether Lamp is on this Mac, so on a Mac it tries Lamp first: if this page loses the
+    // focus within a moment (the browser asking to open Lamp, or Lamp coming forward), Lamp has it; if not, Lamp isn't
+    // here and it's fetched instead. Either way the app and the idea are copied first, with Lamp's mark, for a Lamp just
+    // fetched to find when it first opens (and while the press still lets the page copy).
+    const download = $<HTMLAnchorElement>("[data-download]");
+    const downloadLabel = $<HTMLElement>("[data-download-label]");
+    const next = $<HTMLElement>("[data-next]");
+    if (mac) downloadLabel.textContent = "Have Lamp Make It";
+    // Safari and Firefox show an error for a link nothing answers when the page itself goes to it; a frame of its own
+    // doesn't. Chrome's frames can't open apps, so there the page goes to it, which shows nothing when nothing answers.
+    const chromium = /Chrome\//.test(navigator.userAgent);
+    const tryLamp = (link: string) => {
+      if (chromium) { location.href = link; return; }
+      const frame = Object.assign(document.createElement("iframe"), { src: link, hidden: true });
+      document.body.append(frame);
+      setTimeout(() => frame.remove(), 3000);
+    };
+    download.addEventListener("click", (event) => {
+      const ask = ideaText.value.trim();
+      // The app itself with the change for it, when it came with its file; else its words with the change.
+      const copy = wish.file && wish.shared ? copyWish(ask, { origin: { shared: wish.shared }, plain: withAsk(wish.wish, ask) }) : copyWish(withAsk(wish.wish, ask));
+      const fetching = () => {
+        track("idea_download", { idea: wish.name, place: "shared-remix" });
+        copy.then((copied) => {
+          downloadLabel.textContent = "Downloading…";
+          next.textContent = copied === "marked" ? "Open Lamp when it's ready. This app will be there."
+            : copied === "plain" ? "It's copied. Paste it into Lamp when it's ready."
+            : "Copy the app's name, and ask Lamp for it when it's ready.";
+        });
+      };
+      if (!mac || lampLink === "/") return fetching();
+      event.preventDefault();
+      let answered = false;
+      const away = () => { answered = true; };
+      window.addEventListener("blur", away, { once: true });
+      document.addEventListener("visibilitychange", away, { once: true });
+      tryLamp(lampLink);
+      setTimeout(() => {
+        window.removeEventListener("blur", away);
+        document.removeEventListener("visibilitychange", away);
+        if (answered || !document.hasFocus()) {
+          track("idea_sent", { idea: wish.name, place: "shared-remix" });
+          next.textContent = "Opening in Lamp…";
+          return;
+        }
+        fetching();
+        location.href = download.href;
+      }, 1200);
+    });
+    track("idea_opened", { idea: wish.name, place: "shared" });
+
+    // Two frames first, so the page is drawn as it was before it comes in.
+    requestAnimationFrame(() => requestAnimationFrame(() => $<HTMLElement>("[data-page]").classList.add("built")));
+  }
+</script>

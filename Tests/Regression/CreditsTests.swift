@@ -90,6 +90,24 @@ final class CreditsTests: XCTestCase {
         XCTAssertEqual(ShareCheck.licence(nil), .none)
     }
 
+    /// The GitHub cards fold the lines of sources that are only credited under their own terms, and keep in sight what
+    /// changes what the person may do: a remix that becomes share-alike, work that forbids commercial use or changes.
+    func testCardFoldsOnlyLinesThatAskForCredit() {
+        let licenses: [(String, String?)] = [
+            ("Parcels", "None"), ("River Gauge", "LicenseRef-US-Government-Public-Domain"), ("Scooters", "LicenseRef-Bird-GBFS-Data-License"),
+            ("Streets", "ODbL-1.0"), ("Street Photos", "CC-BY-SA-4.0"), ("Murals", "CC-BY-NC-4.0"),
+            ("Tiles", "MIT AND CC-BY-ND-4.0"), ("Engine", "MIT"), ("Found Code", nil),
+            ("Transit", "ODbL-1.0 AND GPL-3.0-only"), ("Routing", "GPL-3.0-only AND ODbL-1.0"),
+        ]
+        let credits = Credits(upstream: licenses.map { Credits.Source(name: $0.0, license: $0.1) })
+        let (shown, terms) = ShareCheck.cardNotes(for: credits)
+        func names(_ lines: [String]) -> [String] { lines.map { String($0.prefix { $0 != " " }) } }
+        XCTAssertEqual(names(terms), ["Parcels", "River", "Scooters", "Streets"])
+        XCTAssertEqual(names(shown), ["Street", "Murals", "Tiles", "Transit", "Routing"], "code share-alike stays in sight in either order")
+        XCTAssertTrue(shown.allSatisfy { !$0.contains("stays under that license") || !$0.contains("GPL") })
+        XCTAssertEqual(Set(shown + terms), Set(ShareCheck.notes(for: credits)), "the card leaves no line out")
+    }
+
     /// Share Link with the wish itself ticked says why the wish can't go and what to ask Lamp, not only that it can't.
     @MainActor func testShareLinkSaysWhyTheWishCantGo() throws {
         let saved = Sharing.knownSecrets

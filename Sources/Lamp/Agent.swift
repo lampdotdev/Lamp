@@ -59,7 +59,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,assets,offer_setup,make_app_for,remove_app,rename_app,use_icon_picture,connectors,lampify,network_devices,device_integration,device_permission,ask,progress,write_wish,read_skill"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,assets,offer_setup,make_app_for,remove_app,rename_app,use_icon_picture,connectors,lampify,shared_copy,suggested_changes,network_devices,device_integration,device_permission,ask,progress,write_wish,read_skill"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -68,7 +68,7 @@ enum Agent {
     /// game on the Mac: what such a game never needs (a wish's versions, its name, the person's services and devices).
     /// Claude Code and Codex are served every tool, as ever: they have no such exposure from Lamp's endpoint.
     static let deferredTools = ["list_versions", "name_version", "restore_version", "rename_app", "remove_app", "use_icon_picture", "write_wish",
-                                "connectors", "lampify", "offer_setup", "network_devices", "device_integration", "device_permission"]
+                                "connectors", "lampify", "shared_copy", "suggested_changes", "offer_setup", "network_devices", "device_integration", "device_permission"]
 
     /// pi's default selection when a run names no tools, which a deferring run can't: `--tools` is an allowlist, and
     /// `tool_search` can't find what it leaves out. Every other run names its tools, which overrides this.
@@ -107,7 +107,7 @@ enum Agent {
 
     /// Rules for the tools every engine has: pi through Resources/lamp-tools.ts, Claude Code and
     /// Codex through Lamp's MCP endpoint (Store.mcp). Keep the two in step.
-    static var tryRules: String { talkRules + findRules + lookRules + planRules + artRules + setupRules + connectorRules + githubRules + deviceRules + (Memory.isOn ? memoryRules : "") }
+    static var tryRules: String { talkRules + findRules + lookRules + planRules + artRules + setupRules + connectorRules + githubRules + sharedLinkRules + suggestedRules + deviceRules + (Memory.isOn ? memoryRules : "") }
 
     /// For the engines whose shell commands run confined (Sandbox): what the shell can and can't reach.
     static let sandboxNote = """
@@ -130,14 +130,16 @@ enum Agent {
     - A web game at home on the Mac has a rule of its own on looking at it and trying it, in its rules: for that game \
     it stands in for the rules on looking below.
     - `look_at_app` puts what you've written into the app and shows you its windows, what it printed and any \
-    build errors or crash, so you can check your work instead of guessing. What you save goes into the open app \
-    by itself when it can; a look shows you what the person sees. While the app is open a look is quick, since \
-    only the files you changed are compiled. Fix what you see before finishing.
+    build errors or crash. What you save goes into the open app by itself when it can, and the person sees it \
+    there as it lands, so a change doesn't need a look to be seen. Look when the person asks you to, when \
+    something failed or didn't go in (a build error, a crash, a change waiting for Reload), and when the code \
+    alone can't tell you how it came out (a new screen's layout, a drawing, how something fits); a small change \
+    whose effect the code makes plain (a color, a word, a size, a fix to one thing) is written and finished \
+    without one. Fix what a look shows before finishing.
     - Show the change early and bit by bit. The person is waiting beside the app, and a minute of nothing feels \
-    long: your first look comes as soon as there's one thing to see, before you've read more than that one thing \
-    needs, and a change with several parts is saved part by part, in the order they'd notice (a theme: the colors \
-    first, then the type, then the symbols), each going into the open app as you save it, with a look when you \
-    need to see how it came out; never written whole and looked at once at the end.
+    long: a change with several parts is saved part by part, in the order they'd notice (a theme: the colors \
+    first, then the type, then the symbols), each going into the open app as you save it, with a look only when \
+    you need to see how it came out; never written whole at the end.
     - Work in passes when you build a new app, or when a request changes much of what the person sees in an app \
     they already have (a new screen, a redesign, a new main feature; not a fix or a small change), so they \
     watch it take shape instead of waiting for the end. Each pass leaves the app building and visibly further \
@@ -215,12 +217,12 @@ enum Agent {
     `ask` for anything you need to ask (they click an answer, type their own, or leave it to you); \
     `plan` for what \
     you're building; `progress` for a line on how longer work is going; `offer_setup` for setting up AI; `make_app_for` when they want the app on other devices \
-    (the iPhone, the Mac or a TV), `remove_app` when they want one of the wish's apps gone, and `rename_app` when they \
+    (the iPhone, the Mac or a TV), `remove_app` when they want one of the project's apps gone, and `rename_app` when they \
     ask for a new name, never only the name in its code or headings. A change of mind \
-    ("never mind, make it a timer instead") changes the app the wish has, in its own code and, when what it's made for \
+    ("never mind, make it a timer instead") changes the app the project has, in its own code and, when what it's made for \
     changes, with `make_app_for` and its folder in `app`; one more app of another kind ("an Android app as well") is \
     `another`, only once they chose it when you asked them with `ask`, before changing anything; two apps of one kind \
-    (two Mac apps) can't be in a wish yet: the `more-apps` skill. When a piece fits, use it instead of writing the same \
+    (two Mac apps) can't be in a project yet: the `more-apps` skill. When a piece fits, use it instead of writing the same \
     thing out: no questions, options or assumptions listed in a reply. A click comes back as their next \
     message, the same as something typed. If they type something that isn't one of your options, that's their \
     answer: follow it.
@@ -234,17 +236,17 @@ enum Agent {
     """
 
     /// "Help me find one" on Lamp's desk starts a wish with this request (`LampProject.finding`).
-    static let findingRequest = "Help me find something to wish for."
+    static let findingRequest = "Help me find something to make."
 
     private static let findRules = """
 
-    - When the person asks you to help them find something to wish for, nothing is built yet: change no files. \
+    - When the person asks you to help them find something to make, nothing is built yet: change no files. \
     Find it with them like a short wizard, in `ask` cards: first which of four everyday moments sounds like them, \
     each a situation from a different part of life (home, family, health, money, work, play) in plain words, such \
     as "Checking if a delivery is close"; then one or two questions about the one they pick: who it's for, when it \
     comes up, and where help would suit them (their Mac, iPhone or watch, the menu bar, a widget, or quietly in \
-    the background). Ask about their days, never about apps. Then call `write_wish` with the wish in their words, \
-    as a request to Lamp, and end. They send it, changed or not: that message is the wish. Build it then, \
+    the background). Ask about their days, never about apps. Then call `write_wish` with the idea in their words, \
+    as a request to Lamp, and end. They send it, changed or not: that message is the request. Build it then, \
     without asking again.
     """
 
@@ -295,17 +297,17 @@ enum Agent {
     ---
     The person has this app open beside the chat and is watching it as you work. A change that goes into the \
     open app shows at once; one that can't waits until they press Reload, and until then they see nothing of it. \
-    So work in small steps, each shown with a look as it lands, prefer the shape of change that goes in live, and \
-    say what they can see now, not what you've written. Each look tells you which way the change went and why. \
+    So work in small steps, each going in as it lands, prefer the shape of change that goes in live, and \
+    say what they can see now, not what you've written. A look tells you which way the change went and why. \
     What you save goes into the open app by itself a few seconds after you save it, whenever it can, so the person \
     sees each piece as you write it. But changes saved close together go in together, and one that can't go in \
     live holds back everything saved with it: so save the most visible piece first and alone (a theme: the file \
-    with its colors), in a step of its own, and look before you save anything else; after that, each piece goes in \
+    with its colors), in a step of its own, and when more follows, look before you save anything else; after that, each piece goes in \
     by itself, with no need to wait for a look. \
     Once a change in a request has to wait for Reload, nothing more shows until they press it: go on with what's \
     left, saying in progress lines what shows after Reload and never that it's in, and when you need to see the \
     app before going on, look, and Lamp stops you there until they've pressed Reload and starts you again after. \
-    So plan the request before you write: make the changes that go in live first, with a look after each, and put \
+    So plan the request before you write: make the changes that go in live first, and put \
     every change that needs the app reopened at the end, all together, or leave it for a request of its own, so a \
     request ends with one Reload at most. Before the first change that needs a reopen, look, and start those \
     changes only once the look says what you saved before them is in the open app. These need it reopened: the app's icon (icon.json), capabilities.json, a \
@@ -373,6 +375,22 @@ enum Agent {
     credit: never rewrite it from memory in its place.
     """
 
+    /// When to fetch someone's shared copy; what the tool does, and what to do with what it fetched, is its own to say.
+    private static let sharedLinkRules = """
+
+    - When a request has a link to someone's shared Lamp app (lamp.dev/w/…, or a wish?shared= link of Lamp's) or means \
+    one ("the one I shared", "Sam's version"), get it with `shared_copy` before working on it, and bring in only what \
+    the request asks for from it. Your last message says what you took from whose copy.
+    """
+
+    /// When to look at changes someone suggested; what the tool fetches, and that bringing one in is the person's review,
+    /// is its own to say.
+    private static let suggestedRules = """
+
+    - When the person asks about changes someone sent or suggested for this app, or to bring them in, use \
+    `suggested_changes`; if it isn't clear which request they mean, ask.
+    """
+
     private static let connectorRules = """
 
     - When a wish needs a service the person uses (their Notion, Airtable, GitHub, Home Assistant…) that the \
@@ -402,7 +420,7 @@ enum Agent {
     with the remote, so it can't show this 3D game"). When the refusal says Lamp can't build it yet (a native app on a \
     Samsung or LG TV, a page on Vision Pro), say that Lamp can't make that yet, never that their device can't run it. \
     Then offer the nearest thing that works with `ask`: a simple version made for that device as one more of the \
-    wish's apps, or another of their devices the refusal says runs it, or casting from a phone. Never pass on a tool's \
+    project's apps, or another of their devices the refusal says runs it, or casting from a phone. Never pass on a tool's \
     error as it came, or explain how Lamp works inside: what reaches the person is what's true of their device, of \
     Lamp and of their wish.
     """
@@ -497,8 +515,8 @@ enum Agent {
         guard !parts.isEmpty else { return emptyWishPrompt }
         let apps = parts.map { "\(Parts.name(of: $0)) in \($0.dir.lastPathComponent)/" }
         let header = """
-        You are Lamp's builder agent. The current directory is a wish: \(apps.joined(separator: " and ")), each app in a \
-        folder of its own with its own build files. The folder itself holds what's the wish's: its icon, its description \
+        You are Lamp's builder agent. The current directory is a project: \(apps.joined(separator: " and ")), each app in a \
+        folder of its own with its own build files. The folder itself holds what's the project's: its icon, its description \
         and the person's attachments. Read the APP.md in each app's folder first for context.
         """
         let rules = [Rules.ask, Rules.shell, Rules.icon, Rules.about, Rules.wishAttachments, Rules.audience, Rules.begin, Rules.finish]
@@ -519,11 +537,11 @@ enum Agent {
     /// how it gets an app, with nothing of any kind's rules or files that are gone.
     static var emptyWishPrompt: String {
         let header = """
-        You are Lamp's builder agent. The current directory is a wish that has no apps now: it keeps its name, its chat, \
+        You are Lamp's builder agent. The current directory is a project that has no apps now: it keeps its name, its chat, \
         its history, its icon and the person's attachments, and nothing in it is built, opened or tried. When the person \
-        wants something made, give the wish an app with `make_app_for`: what it is (`kind`, a game or an app), how it's \
+        wants something made, give the project an app with `make_app_for`: what it is (`kind`, a game or an app), how it's \
         made (`made`) and the devices it's for; its reply carries that app's rules, which you then follow in the same \
-        request. Undo in the chat's toolbar, or restore_version, brings back an app the wish had.
+        request. Undo in the chat's toolbar, or restore_version, brings back an app the project had.
         """
         let rules = [Rules.ask, Rules.shell, Rules.icon, Rules.about, Rules.wishAttachments, Rules.audience, Rules.begin, Rules.finish]
             .joined()
@@ -689,7 +707,9 @@ enum Agent {
         For a change to an app that exists, ask only when it is too vague to build well; most are clear, so \
         build them. Ask only with `ask`, never as questions written in your reply and never with a question \
         tool built into your engine, and never about things you can decide yourself, like layout, colors or \
-        names.
+        names. The card is all they read of it, so give every question its `detail`: what a thing it names \
+        is when they haven't seen it (a button you'd add, a name from their data, a part of the app), or what \
+        the choice changes.
         """
 
         static let shell = """
@@ -831,7 +851,7 @@ enum Agent {
         Mac, the kitchen iPad and the TV): `LampStore.shared("groceries", of: Grocery.self)` (`items`, `put`, \
         `delete`, `publish`, `onChange`), merged item by item between the app's copies on the home network, and \
         `LampStore.sharedFiles("photos")` for pictures one copy reads for the others; with `wish: true` the list is \
-        the wish's own, the same in every app of the wish (a Mac app and its iPhone app sharing one calendar), never \
+        the project's own, the same in every app of the project (a Mac app and its iPhone app sharing one calendar), never \
         kept by one app for the others. Open the `wish-links` skill first.
         """
 
@@ -1062,7 +1082,7 @@ enum Agent {
         static let audience = """
         - The person you're talking to isn't a programmer and never sees the code: to them, Lamp makes apps, \
         and you're the one making theirs. Their app is open on screen beside this chat, and they want to see each \
-        result there right away. Everything you say to them is about their app and what it does, in everyday words. Never name files, folders, types, functions, frameworks or tools, and never show code, \
+        result there right away. Everything you say to them is about their app and what it does, in everyday words. What these instructions call a project is, to them, their app, called by its name ("Tally", "Tally's iPhone app"): never say "project" or "wish" for something already made. Never name files, folders, types, functions, frameworks or tools, and never show code, \
         commands or compiler errors, unless they ask for them. Their Mac is set to \(language): write to them \
         in that, with its spelling, and make the app's own words the same, whatever spelling the app's files, a \
         starter or these instructions happen to use.
@@ -1089,6 +1109,10 @@ enum Agent {
         - Never say you've done something ("I've added…", "it now has…") before it shows in the app. Until it does, \
         say what you're doing, or, for a change waiting for Reload, what they'll see once they press it ("Press \
         Reload to see the water counter.").
+        - After each change goes in, Lamp reads what the app logged, and errors it never logged before come back to \
+        you as a note from Lamp, with the lines before each that say where it was. They're yours to look at: if your \
+        change caused them, fix them before you finish; if they come from outside the app (a service that's down, no \
+        network), leave the code be and say so plainly in your answer. Don't look or test just to check for them.
         - How you finish depends on what was asked, and it is one thing, never two. A question: answer it in a \
         sentence or two. A small change or a fix they'll see at once (bigger text, a color, a bug gone): one \
         plain sentence, and one more only if something couldn't be tried. A change that gives them something \
@@ -1349,14 +1373,21 @@ enum Shell {
     /// Put this before a build command. The macOS 27 SDK makes `@State` a macro, and its compiler plugin
     /// only ships with full Xcode. With just the Command Line Tools, this builds against the newest
     /// installed SDK that doesn't need the plugin. The same lines are in Lamp's own build.sh.
+    /// An `SDKROOT` Lamp was started with is kept unless it's one of those SDKs: a launch from a shell can hand
+    /// Lamp one it never chose (Apple's /usr/bin/python3 sets it to the tools' newest SDK), and a build against it
+    /// can't compile `@State`. One that isn't there is kept too, so setup says it's Lamp's setting (`SetupCheck`).
     static let compatibleSDK = #"""
     dev="${DEVELOPER_DIR:-$(/usr/bin/xcode-select -p 2>/dev/null)}"
-    if [ -z "${SDKROOT:-}" ] && [ -d "$dev/SDKs" ] && [ ! -e "$dev/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]; then
-      for sdk in "$dev"/SDKs/MacOSX*.sdk(/NnOn); do
-        if ! /usr/bin/grep -qs StateMacro /dev/null "$sdk"/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/*-macos.swiftinterface(N); then
-          export SDKROOT="$sdk"; break
-        fi
-      done
+    if [ -d "$dev/SDKs" ] && [ ! -e "$dev/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]; then
+      lamp_sdk="${SDKROOT:-}"
+      case "$lamp_sdk" in ""|/*) ;; *) lamp_sdk="$(/usr/bin/xcrun --sdk "$lamp_sdk" --show-sdk-path 2>/dev/null)" ;; esac
+      if [ -z "${SDKROOT:-}" ] || /usr/bin/grep -qs StateMacro /dev/null "$lamp_sdk"/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/*-macos.swiftinterface(N); then
+        for sdk in "$dev"/SDKs/MacOSX*.sdk(/NnOn); do
+          if ! /usr/bin/grep -qs StateMacro /dev/null "$sdk"/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/*-macos.swiftinterface(N); then
+            export SDKROOT="$sdk"; break
+          fi
+        done
+      fi
     fi
 
     """#

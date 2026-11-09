@@ -11,7 +11,7 @@ A capability given to one engine must be given to all of them that can take it, 
   taken when it's left to Lamp; an answer never grants access or approves an outside action (`Agent.Rules.ask`). Each piece of a card has a word limit (`Talk.Words`, the same numbers as the
   tools' descriptions), and a call over it is turned away for the agent to say shorter, whichever engine it is. Its
   pieces are tools: `ask` puts questions in the chat as a card answered by clicking, laid out as the agent
-  chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own). What a
+  chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own). Every question the agent asks has a line under it (`detail`, `Talk.Words.questionDetail`) saying what a name in it is or what the choice changes, drawn in both layouts, since the card is all the person reads (`Agent.Rules.ask`); a question without one goes back to the agent, as a long one does. What the agent writes after its card shows like any other message. What a
   request came to is the agent's last message, in a sentence or two (`Agent.Rules.finish`), under the line that says
   the app is ready or updated; a card for it said no more than that message did and hid what it said beyond it.
   While longer work goes on, the agent says how it's going with `progress`: a line of 12 words at most, shown at once
@@ -112,13 +112,17 @@ starter this Lamp ships (all in `Conversation`; "How big a conversation grows" i
 ## The chat's one screen
 
 A wish's chat is one screen, drawn the same wherever it is (`ChatScreen`, in Sources/LampSidebarKit): its bar, the chat
-or a panel in its place (Versions, Share Link; the desk's Previous Versions… opens the chat on Versions), the
+or a panel in its place (Versions; the desk's Previous Versions… opens the chat on Versions; Share Link is a small
+window of Lamp's own, `WishLinkWindows`, which the chat's Share button only asks for), the
 message box, every card and line. It's drawn from the
 state Lamp makes for the wish (`SidebarState`, made by `SidebarServer.state(for:)`) and hands every click and word back
 as a command (`SidebarCommand`, done by `SidebarServer.handle`), through a `ChatLink`: the extension beside a Mac app
 talks to Lamp over its socket (`Link`), and Lamp's own panel (`ChatPanel`) calls Lamp directly (`LocalChat`). Nothing
 about the chat is decided where it's drawn, so a change to what the chat shows or does is made once, in the state and
-the screen, and reaches both. Where the chat is, and how it moves, is in "Generated apps" (beside a Mac app) and below.
+the screen, and reaches both. A row of the chat is given its own line and only what it needs besides (a first build's live
+line gets the turn's activity, `LiveActivity`), never the whole state: every row compares what it's given whenever the
+chat changes, so a row given the whole chat makes each change cost the chat's length times its rows, which in a long
+chat held up for seconds what was just sent. Where the chat is, and how it moves, is in "Generated apps" (beside a Mac app) and below.
 
 The chat is in one place at a time, always beside whatever is showing the wish (`ChatPanel.beside`): a Mac app's own
 chat beside its window (the extension, from the first build on); beside the iPhone or iPad simulator, Lamp's Android
@@ -156,10 +160,17 @@ with Set Up…, and its keys, downloads and sign-ins, and Image Playground for a
 (`SetupSheet`), over Lamp's panel when the chat is there and in front on its own when it's beside the app. The same goes
 for what builds, asked for when a request finds nothing does (`BuilderLine`): the line is in the chat, with a button for
 each of Claude Code and Codex that's on this Mac and signed in (`SidebarLine.choices`), which only a click takes since it
-spends the person's plan, and the key or sign-in in the sheet (`SetupView`). There, choosing Claude Code or Codex shows how far it has got under
+spends the person's plan, and the key or sign-in in the sheet (`SetupView`). The line goes up only after setup is looked
+at again (`Store.askForSetup` runs `recheckSetup` first), so a sign-in made elsewhere since the last look lets the request
+go instead; with Claude Code or Codex already chosen, it names what that engine lacks (`BuilderLine.missing`) rather than
+asking again what builds. A sign-in check that timed out or couldn't start is "couldn't tell", never "signed out"
+(`EngineSignIn.verdict`). There, choosing Claude Code or Codex shows how far it has got under
 the choice (`EngineUseRow`: its download, what failed with Try Again, its sign-in), and Try Again goes the whole way
 through (`EngineUse`); the request stays waiting until that's done. A device's
 step opens its setup window, and an iPhone or Android setup line its kind's setup. A new wish's empty chat shows its
 intro (`SidebarIntro`, `ChatLook.Intro`: its icon, its name to change, what to do, and ideas that go into the message
-box), and Apple's tools installing shows above every chat (`SidebarBanner`). A sidebar built by an earlier Lamp reads
+box), and Apple's tools installing, or needing repair, shows above every chat (`SidebarBanner`). So does work Lamp couldn't save (a chat's
+file, what's typed in its box, a file sent with a message), on the desk too, never only in the chat it belongs to: it
+stays in memory, the notice tells a full disk apart from other failures, and it goes only once Try Again's writes have
+landed (`Store.saveTrouble`, `retrySaving`). A sidebar built by an earlier Lamp reads
 an older shape of the state, and Lamp sends it what it can read (`Connection.push`, by the version it says in `hello`).

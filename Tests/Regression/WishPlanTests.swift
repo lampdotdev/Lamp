@@ -59,7 +59,7 @@ final class WishPlanTests: XCTestCase {
             XCTAssertFalse(Template.talksToOtherApps(alone), "\(alone.platform.rawValue) with \(alone.apps.count) asked")
             XCTAssertTrue(Template.carriesWish(alone))
             // Its data rules may point to the skill for shared collections; the rule for a wish of several isn't there.
-            XCTAssertFalse(Agent.systemPrompt(for: alone).contains("The apps of this wish can share data"))
+            XCTAssertFalse(Agent.systemPrompt(for: alone).contains("The apps of this project can share data"))
             XCTAssertFalse(Skills.applying(to: alone).contains { $0.name == "wish-links" })
             XCTAssertEqual(WishNote.line(for: alone, store: .shared), "")
         }

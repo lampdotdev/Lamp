@@ -119,6 +119,10 @@ enum Sandbox {
         // in leads, which a command could change between Lamp's look and Codex's start. A folder named here that is a
         // link, or leads through one, Codex refuses to start with or to run a command in.
         paths.append((project.realDir.path, "write"))
+        // Someone's shared app Lamp fetched for the agent to read (`SharedCopies`), inside the temporary folder opened
+        // above: read only, as the narrower entry.
+        try? FileManager.default.createDirectory(at: SharedCopies.root, withIntermediateDirectories: true)
+        paths.append((SharedCopies.root.path, "read"))
         if !Privacy.sharesPictures || !Privacy.sharesLog {
             paths.append((project.realDir.path + "/.lamp/runtime", "deny"))
         }
@@ -253,6 +257,9 @@ enum Sandbox {
         // unconfined. Reading and running what's there stays open; installing with brew doesn't. Last, so no
         // folder opened above reopens them.
         lines.append("(deny file-write* (subpath \(quotedPath(real("/opt/homebrew")))) (subpath \(quotedPath(real("/usr/local")))))")
+        // Someone's shared app Lamp fetched for the agent to read (`SharedCopies`) sits in the temporary folder opened
+        // above: it's read, never changed.
+        lines.append("(deny file-write* (subpath \(quotedPath(SharedCopies.root.path))))")
         // The same goes for /Applications, which an admin can write: an Xcode dragged there is the person's,
         // so a command could swap its xcodebuild or simctl for Lamp to run as itself at the next simulator or
         // phone step, or change Lamp itself, or leave an app there that Lamp takes for Xcode. And the developer

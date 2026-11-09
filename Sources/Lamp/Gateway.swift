@@ -301,7 +301,7 @@ enum AppAI {
     /// The models OpenRouter offers for apps; Sonnet is the default among them (Haiku is cheaper but
     /// noticeably worse, so it's only used when someone picks it).
     static let anthropicModels: [Provider.ListedModel] = [
-        Provider.ListedModel(id: "claude-fable-5-1", name: "Claude Fable", blurb: "Smartest, priciest", openRouter: "anthropic/claude-fable-5.1"),
+        Provider.ListedModel(id: "claude-fable-5-2", name: "Claude Fable", blurb: "Smartest, priciest", openRouter: "anthropic/claude-fable-5.2"),
         Provider.ListedModel(id: "opus", name: "Claude Opus", blurb: "Best at coding", openRouter: "anthropic/claude-opus-5.5"),
         Provider.ListedModel(id: "sonnet", name: "Claude Sonnet", blurb: "Faster & cheaper", openRouter: "anthropic/claude-sonnet-5.5"),
         Provider.ListedModel(id: "haiku", name: "Claude Haiku", blurb: "Fastest, cheapest", openRouter: "anthropic/claude-haiku-5.5"),
@@ -349,7 +349,8 @@ enum AppAI {
         switch id {
         case "engine:claude": return "engine:claude:sonnet"
         case "engine:codex": return Builder.codexModels.first { !$0.id.isEmpty }.map { "engine:codex:\($0.id)" } ?? id
-        default: return id
+        // A model named by its earlier id, in an app's own choice or its code, is today's.
+        default: return Builder.currentModel(id)
         }
     }
 
@@ -388,7 +389,7 @@ enum AppAI {
     /// The OpenRouter model an app on the person's phone uses away from the Mac, where only OpenRouter can
     /// answer: Settings' choice, else the chosen route's own model when that's through OpenRouter, else Sonnet.
     @MainActor static var awayModel: Provider.ListedModel {
-        let saved = UserDefaults.standard.string(forKey: "awayModel") ?? ""
+        let saved = Builder.currentModel(UserDefaults.standard.string(forKey: "awayModel") ?? "")
         if let chosen = anthropicModels.first(where: { $0.id == saved }) { return chosen }
         if case .openRouter(let name) = model.kind, let same = anthropicModels.first(where: { $0.openRouter == name }) { return same }
         return anthropicModels.first { $0.id == "sonnet" }!
@@ -396,7 +397,7 @@ enum AppAI {
 
     /// The same for one app: its own choice (one an earlier Lamp let it make), else Settings'.
     @MainActor static func awayModel(for choice: String?) -> Provider.ListedModel {
-        anthropicModels.first { $0.id == choice } ?? awayModel
+        anthropicModels.first { $0.id == choice.map(Builder.currentModel) } ?? awayModel
     }
 
     /// The image model an app on the phone uses away from the Mac: Settings' choice, else the Mac's own
@@ -641,7 +642,11 @@ enum AppAI {
         var failure: String?
         final class Deadline { var passed = false }
         let deadline = Deadline()
-        let status = await Shell.run(command, cwd: folder, env: env, started: { process in
+        // A caller that's cancelled (a shared app's review closed or out of time) stops the engine with it, rather than
+        // waiting for an engine that may never answer.
+        let running = Subprocess.Running()
+        let status = await withTaskCancellationHandler { await Shell.run(command, cwd: folder, env: env, started: { process in
+            running.started(process)
             guard let timeLimit else { return }
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(timeLimit))
@@ -667,13 +672,77 @@ enum AppAI {
                 default: break
                 }
             }
-        }
+        } } onCancel: { running.stop() }
+        try Task.checkCancellation()
         if deadline.passed { throw Failure(message: "\(engine.title) took too long to answer.") }
         if let failure { throw Failure(message: Provider.friendlyError(failure, from: engine.title)) }
         guard !text.isEmpty else {
             throw Failure(message: status == 0 ? "The AI didn't answer." : "\(engine.title) didn't answer. Check it's signed in.")
         }
         return (text, cost)
+    }
+
+    /// One answer for Lamp's own reading of text someone else wrote (`SuggestionSummaries`), only along a way that can't
+    /// act. Never `complete`, which can hand the call to an engine unsealed. Nil when none of these can answer:
+    /// - OpenRouter with the person's key, or a model on this Mac: text in, text out.
+    /// - Claude Code and Codex only through the run proven for answers beside a turn (`SideAnswer.Run`): a version that run
+    ///   was tested on, launched with no tools (Claude Code started afresh, `claudeFreshArguments`; Codex with its model's
+    ///   catalog entry edited), its own report of what it was given checked before a word is taken (Claude Code's must
+    ///   list no tools and no MCP servers), and a tool tried stopping that version for good, with every run of it going.
+    ///   `viaEngine`'s sealed launches have the flags without that check, so neither is used here.
+    /// What comes back says which engine and version answered, so the caller can ask again before keeping it.
+    struct ToolFreeAnswer {
+        var text: String
+        var cost: Double
+        var engine: Engine? = nil
+        var version = ""
+
+        /// Still showable: an engine's answer whose version hasn't been stopped since by any run of it.
+        var stillGood: Bool { engine.map { !SideAnswer.isStopped($0, version: version) } ?? true }
+    }
+
+    @MainActor static func toolFreeAvailable() async -> Bool {
+        if Provider.hasKey, await helperModel() != nil { return true }
+        guard model.available else { return false }
+        switch model.kind {
+        case .openRouter, .engine(.pi, _): return false
+        case .localModel: return true
+        case .engine(let engine, _): return answerRoute(engine, model: "") != nil
+        }
+    }
+
+    @MainActor static func toolFree(prompt: String, system: String, schema: [String: Any], for project: LampProject) async throws -> ToolFreeAnswer? {
+        if Provider.hasKey, let helper = await helperModel() {
+            let (text, cost) = try await viaOpenRouter(prompt: prompt, images: [], system: system, model: helper, json: true, schema: schema)
+            return ToolFreeAnswer(text: text, cost: cost)
+        }
+        let chosen = model
+        guard chosen.available else { return nil }
+        switch chosen.kind {
+        case .openRouter, .engine(.pi, _): return nil
+        case .localModel(_, let name):
+            let base = try await LocalModels.shared.ensureServer(for: name)
+            let (text, cost) = try await viaOpenAICompatible("\(base)/v1/chat/completions", key: LocalModels.apiKey, prompt: prompt, images: [],
+                                                             system: system, model: name, schema: schema, timeout: 120)
+            return ToolFreeAnswer(text: text, cost: cost)
+        case .engine(let engine, let name):
+            guard var route = answerRoute(engine, model: fastModel(for: chosen) ?? name) else { return nil }
+            // Claude Code takes the system prompt as its own; Codex's proven launch has none, so what it's told goes first
+            // in what it's asked.
+            route.system = system
+            let run = SideAnswer.Run(message: UUID(), engine: engine)
+            let outcome = await run.answer(engine == .codex ? system + "\n\n" + prompt : prompt, route: route, transcript: nil, in: project)
+            guard SideAnswer.mayShow(outcome, engine: engine), let reply = outcome.reply else { return nil }
+            return ToolFreeAnswer(text: reply, cost: 0, engine: engine, version: outcome.version)
+        }
+    }
+
+    /// Claude Code or Codex as `SideAnswer` runs it; nil when it isn't here. Codex always on the model it was proven with.
+    @MainActor static func answerRoute(_ engine: Engine, model: String) -> SideAnswer.Route? {
+        guard engine != .pi, let executable = EngineInstall.path(for: engine) else { return nil }
+        return SideAnswer.Route(engine: engine, executable: executable, configFolder: EngineInstall.configFolder(engine).path,
+                                model: engine == .codex ? SideAnswer.testedCodexModel : model, system: "", path: ToolLocator.userPath,
+                                environment: EngineInstall.environment(for: engine))
     }
 
     /// Chat completion against an OpenAI-compatible endpoint: Lamp's own model servers on this Mac.
