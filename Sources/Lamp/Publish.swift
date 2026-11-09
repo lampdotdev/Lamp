@@ -91,9 +91,12 @@ enum Publish {
     /// page was put up with, at the commit pushed with it (`GitHubRepo.upload`). The Remix panel's request goes with it
     /// (`RemixLink.Origin`), so Lamp starts from a copy rather than its own version, and with no Share Link, Open in Lamp
     /// goes there too.
+    /// `plays` is that the Share Link plays or opens the page itself (`WishLink.Shared.plays`): the page on GitHub then
+    /// sends whoever opens it there, where the wish is shown whole with its ways to get it and change it.
     struct OpenInLamp: Equatable {
         var link: URL?
         var origin: RemixLink.Origin? = nil
+        var plays = false
     }
 
     /// Gives a published copy of lamp.js the repository's name to keep what the page saves under (`LAMP_PAGE_SCOPE`).
@@ -248,10 +251,23 @@ enum Publish {
             <script>setTimeout(function(){var c=document.getElementById('lamp-credit');if(c)c.className='settled'},8000)</script>
 
             """
-        if let end = html.range(of: "</body>", options: [.caseInsensitive, .backwards]) {
-            return html.replacingCharacters(in: end.lowerBound..<end.lowerBound, with: bar)
+        var page = html
+        if let end = page.range(of: "</body>", options: [.caseInsensitive, .backwards]) {
+            page.replaceSubrange(end.lowerBound..<end.lowerBound, with: bar)
+        } else {
+            page += bar
         }
-        return html + bar
+        // Where the Share Link plays it, the page opened on its own goes there before anything of the game loads. Framed
+        // by anything, it stays: something is showing it on purpose.
+        guard open.plays, let link = open.link,
+              let json = String(data: (try? JSONSerialization.data(withJSONObject: [link.absoluteString], options: [.withoutEscapingSlashes])) ?? Data(), encoding: .utf8)
+        else { return page }
+        let away = "<script>if(window.top===window)location.replace(\(json.dropFirst().dropLast().replacingOccurrences(of: "<", with: "\\u003c")))</script>"
+        if let head = page.range(of: "<head[^>]*>", options: [.regularExpression, .caseInsensitive]) {
+            page.insert(contentsOf: "\n" + away, at: head.upperBound)
+            return page
+        }
+        return away + "\n" + page
     }
 
     /// What a README says of the wish's credits: what it's based on and under which licenses, what else it uses, the

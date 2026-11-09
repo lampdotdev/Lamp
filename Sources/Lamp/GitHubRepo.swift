@@ -130,6 +130,8 @@ enum GitHubRepo {
             /// credits.json's chain, whose last link names the commit pushed with the page, written then.
             let chain: Credits
             let link: URL?
+            /// The link plays the page itself, so the page sends visitors there (`Publish.OpenInLamp.plays`).
+            let plays: Bool
             let suggestions: [RemixIdea]
             let about: String?
             let url: String
@@ -229,6 +231,7 @@ enum GitHubRepo {
                                           detail: "It's in \(first). Ask Lamp to take it out and keep it out of the code.")
             }
             page = Staged.Page(folder: site, html: html, credits: credits, chain: chain, link: link,
+                               plays: link != nil && link == WishLink.kept(for: project)?.url && WishLink.kept(for: project)?.plays == true,
                                suggestions: RemixSuggestions.load(project) ?? RemixOffer.fallback,
                                about: AppDescription.description(of: project), url: Publish.pageURL(repo))
             showcase.play = page?.url
@@ -660,7 +663,7 @@ enum GitHubRepo {
         keep(record, for: project)
         // The page's Open in Lamp and Remix… start from the code just pushed with it, which is the game it plays.
         step("Putting up its page on GitHub…")
-        let open = Publish.OpenInLamp(link: page.link, origin: .repository(url: url, commit: commit))
+        let open = Publish.OpenInLamp(link: page.link, origin: .repository(url: url, commit: commit), plays: page.plays)
         try Data(Publish.withCreditBar(page.html, credits: page.credits, open: open, suggestions: page.suggestions,
                                        name: project.name, about: page.about).utf8)
             .write(to: page.folder.appendingPathComponent("index.html"))

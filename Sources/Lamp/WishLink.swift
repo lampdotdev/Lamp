@@ -70,6 +70,9 @@ enum WishLink {
         var url: URL
         var secret: String
         var shown: Words
+        /// The link plays or opens the wish's page itself, so the wish's page on GitHub sends visitors here
+        /// (`Publish.OpenInLamp.plays`). Nil in links from before, and for a link whose page is gone or never went.
+        var plays: Bool? = nil
     }
 
     struct Failure: LocalizedError {
@@ -677,17 +680,22 @@ enum WishLink {
                     do {
                         if let page = try await Task.detached(priority: .userInitiated, operation: { try WishLink.playablePage(of: project, id: id) }).value {
                             try await WishLink.uploadFile(page, for: shared, page: true)
+                            shared.plays = true
                         } else {
                             // No page now (an app added to the wish, say): the link goes back to its card.
                             try await WishLink.removeFile(for: shared, page: true)
+                            shared.plays = false
                         }
                     } catch {
                         // The old page goes, so the link shows the picture as the card says; if it can't be taken away,
                         // the link still plays the earlier version, and the card says that instead.
                         do {
                             try await WishLink.removeFile(for: shared, page: true)
+                            shared.plays = false
                             pageProblem = Self.problem(error)
                         } catch {
+                            // Its earlier page still plays there.
+                            shared.plays = card.shared?.plays
                             pageProblem = "\(project.name)'s page couldn't be updated on its link, so the link still plays its earlier version. Try again in a moment."
                         }
                     }
