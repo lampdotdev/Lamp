@@ -98,24 +98,25 @@ import { DOWNLOAD_URL } from "../../lib/download";
       <svg aria-hidden="true" viewBox="0 0 16 16" class="size-3.5 fill-none stroke-current stroke-2 [stroke-linecap:round] [stroke-linejoin:round]"><path d="M4 6l4 4 4-4" /></svg>
     </button>
 
-    <!-- The idea sent: to the person who made it, with a way to hear back when it's in; under it, making one's own with
-         Lamp: opening it (on a Mac) or getting it. When it couldn't be sent, only making one's own. -->
+    <!-- An idea, to send to the person who made it once it's confirmed here: its words, which can still be changed, and an
+         address to hear back at, if they want. Once sent, it says so. Under it either way, making one's own with Lamp:
+         opening it (on a Mac) or getting it. -->
     <dialog data-remix-dialog aria-labelledby="remix-title" class="remix-popup">
       <button type="button" data-remix-close aria-label="Close" class="remix-popup-close">
         <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" /></svg>
       </button>
-      <h2 id="remix-title" data-remix-title class="remix-popup-title">Your own <span data-remix-name></span></h2>
-      <p data-remix-text class="remix-popup-text">Lamp makes the change on your Mac. It's free, and needs no coding.</p>
-      <p data-remix-to class="remix-popup-to"></p>
-      <form data-notify hidden class="remix-popup-notify">
-        <label for="notify-email" class="remix-popup-label">Want to hear when it's in? We'll email you once.</label>
-        <div class="remix-popup-field">
-          <input id="notify-email" data-notify-email type="email" autocomplete="email" required placeholder="Your email" />
-          <button type="submit" class="shared-button shared-button-outline">Tell Me</button>
-        </div>
+      <h2 id="remix-title" data-remix-title class="remix-popup-title"></h2>
+      <p data-remix-text class="remix-popup-text"></p>
+      <form data-confirm class="remix-popup-confirm">
+        <label for="idea-text" class="sr-only">Your idea</label>
+        <textarea id="idea-text" data-remix-to class="remix-popup-to remix-popup-edit" rows="3" maxlength="1000" required></textarea>
+        <label for="notify-email" class="remix-popup-label">Email me once when it's in <span class="remix-popup-optional">(optional)</span></label>
+        <input id="notify-email" data-notify-email class="remix-popup-input" type="email" autocomplete="email" placeholder="Your email" />
+        <div class="remix-popup-rows"><button type="submit" data-confirm-send class="shared-button">Send</button></div>
       </form>
+      <p data-sent-text hidden class="remix-popup-to"></p>
       <p data-notify-note class="remix-popup-note empty:hidden" role="status" aria-live="polite"></p>
-      <p data-own-lead hidden class="remix-popup-lead">Can't wait? Make it yourself with Lamp, free on your Mac.</p>
+      <p class="remix-popup-lead">Or make it yourself with Lamp, free on your Mac.</p>
       <div class="remix-popup-rows">
         <a href={DOWNLOAD_URL} data-download data-download-place="shared-remix" class="shared-button shared-button-outline"><span data-download-label>Get Lamp</span></a>
         <a data-open data-remix-open href="/" class="shared-button">Open in Lamp</a>
@@ -259,17 +260,19 @@ import { DOWNLOAD_URL } from "../../lib/download";
   /* The two ways on, at the dialog's foot to the right. Off a Mac, only getting it. */
   .remix-popup-rows { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.25rem; }
   .remix-popup-note { margin: 0.75rem 0 0; font-size: 0.8125rem; color: var(--color-muted-ink); }
-  /* Hearing back: an address and Tell Me, on one line. */
-  .remix-popup-notify { margin: 1rem 0 0; }
-  .remix-popup-notify[hidden], .remix-popup-lead[hidden] { display: none; }
-  .remix-popup-label { display: block; font-size: 0.875rem; font-weight: 600; }
-  .remix-popup-field { display: flex; gap: 0.5rem; margin-top: 0.375rem; }
-  .remix-popup-field input {
-    min-width: 0; flex: 1; height: 2.25rem; padding: 0 0.75rem; border-radius: 0.375rem; font-size: 0.875rem;
+  /* The idea as it goes: its words, still to change, and an address to hear back at, then Send. */
+  .remix-popup-confirm[hidden], .remix-popup-to[hidden] { display: none; }
+  .remix-popup-edit { display: block; width: 100%; box-sizing: border-box; resize: vertical; font: inherit; color: inherit; }
+  .remix-popup-edit:focus { outline: 2px solid color-mix(in srgb, var(--color-tape) 30%, transparent); outline-offset: 0; }
+  .remix-popup-label { display: block; margin-top: 1rem; font-size: 0.875rem; font-weight: 600; }
+  .remix-popup-optional { font-weight: 400; color: var(--color-muted-ink); }
+  .remix-popup-input {
+    display: block; width: 100%; box-sizing: border-box; margin-top: 0.375rem;
+    height: 2.25rem; padding: 0 0.75rem; border-radius: 0.375rem; font-size: 0.875rem;
     border: 1px solid color-mix(in srgb, var(--color-tape) 15%, transparent); background: var(--color-paper); color: inherit;
   }
-  .remix-popup-field input:focus { outline: 2px solid color-mix(in srgb, var(--color-tape) 30%, transparent); outline-offset: 0; }
-  /* Making one's own, after the idea went: a line over its two buttons, set apart from the idea. */
+  .remix-popup-input:focus { outline: 2px solid color-mix(in srgb, var(--color-tape) 30%, transparent); outline-offset: 0; }
+  /* Making one's own: a line over its two buttons, set apart from the idea. */
   .remix-popup-lead {
     margin: 1.25rem 0 0; padding-top: 1rem; border-top: 1px solid color-mix(in srgb, var(--color-tape) 12%, transparent);
     font-size: 0.875rem; color: var(--color-muted-ink);
@@ -482,60 +485,63 @@ import { DOWNLOAD_URL } from "../../lib/download";
     const short = maker && first.length <= 12 ? `Send to ${first}` : "Send";
     $<HTMLElement>("[data-send-short]").textContent = short;
     $<HTMLElement>("[data-send-long]").textContent = maker && maker.length <= 16 ? `Send to ${maker}` : short;
-    const notify = $<HTMLFormElement>("[data-notify]");
+    const confirm = $<HTMLFormElement>("[data-confirm]");
+    const ideaText = $<HTMLTextAreaElement>("[data-remix-to]");
+    const sentText = $<HTMLElement>("[data-sent-text]");
     const notifyNote = $<HTMLElement>("[data-notify-note]");
-    let sentIdea: { n: number; key: string } | null = null;
-    // What was written goes to the maker first (`/api/wish-ideas`), who sees it in Lamp; the dialog says it went and
-    // offers to hear back. Making one's own with Lamp stays under it. If it couldn't go, the dialog is only that.
-    const send = $<HTMLButtonElement>("[data-remix]");
-    $<HTMLFormElement>("[data-prompt]").addEventListener("submit", async (event) => {
+    const confirmSend = $<HTMLButtonElement>("[data-confirm-send]");
+    confirmSend.textContent = maker && maker.length <= 16 ? `Send to ${maker}` : short;
+    const title = $<HTMLElement>("[data-remix-title]");
+    const text = $<HTMLElement>("[data-remix-text]");
+    // Open in Lamp takes the idea as it stands in the dialog.
+    const pointOpen = () => {
+      const ask = ideaText.value.trim();
+      open.href = (wish.file && wish.shared ? sharedWishLink(wish.shared, ask) : wishLink(withAsk(wish.wish, ask))) ?? "/";
+    };
+    ideaText.addEventListener("input", pointOpen);
+    // The bar's send opens the dialog with the idea, to confirm before it goes; nothing is sent until then.
+    $<HTMLFormElement>("[data-prompt]").addEventListener("submit", (event) => {
       event.preventDefault();
       const ask = asked();
-      if (!ask || send.disabled) return change.focus();
-      // That one was sent, never what it says.
+      if (!ask) return change.focus();
+      // That one was written, never what it says.
       track("idea_own_change", { idea: wish.name, place: "shared" });
-      send.disabled = true;
-      sentIdea = null;
+      title.textContent = maker ? `Send to ${maker}?` : "Send your idea?";
+      text.textContent = `${maker || "Whoever made it"} sees every idea, and can add yours to ${wish.name}.`;
+      ideaText.value = ask;
+      confirm.hidden = false;
+      sentText.hidden = true;
+      notifyNote.textContent = "";
+      pointOpen();
+      dialog.showModal();
+      confirmSend.focus();
+    });
+    // Confirmed: the idea goes to the maker (`/api/wish-ideas`), who sees it in Lamp, with the address if one was given.
+    confirm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const idea = ideaText.value.trim();
+      const email = $<HTMLInputElement>("[data-notify-email]").value.trim();
+      if (!idea || confirmSend.disabled) return ideaText.focus();
+      confirmSend.disabled = true;
+      let sent = false;
       try {
         const response = await fetch(`/api/wish-ideas?id=${encodeURIComponent(wish.id)}`, {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: ask }), signal: AbortSignal.timeout(8000),
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(email ? { text: idea, email } : { text: idea }),
+          signal: AbortSignal.timeout(8000),
         });
-        if (response.status === 201) sentIdea = await response.json();
+        sent = response.status === 201;
+        if (!sent && response.status === 400 && email) { notifyNote.textContent = "Check the email address."; confirmSend.disabled = false; return; }
       } catch {}
-      send.disabled = false;
-      const sent = sentIdea !== null;
-      if (sent) track("idea_sent_to_maker", { idea: wish.name, place: "shared" });
-      $<HTMLElement>("[data-remix-title]").textContent = sent ? (maker ? `Sent to ${maker}` : "Sent") : `Your own ${wish.name}`;
-      $<HTMLElement>("[data-remix-text]").textContent = sent
-        ? `${maker || "Whoever made it"} sees every idea, and can add yours to ${wish.name}.`
-        : "Lamp makes the change on your Mac. It's free, and needs no coding.";
-      $<HTMLElement>("[data-remix-to]").textContent = ask;
-      notify.hidden = !sent;
-      notifyNote.textContent = "";
-      $<HTMLElement>("[data-own-lead]").hidden = !sent;
-      open.href = (wish.file && wish.shared ? sharedWishLink(wish.shared, ask) : wishLink(withAsk(wish.wish, ask))) ?? "/";
-      if (sent) change.value = "";
-      dialog.showModal();
-    });
-    // An address to hear back at, added to the idea that just went with its key.
-    notify.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const email = $<HTMLInputElement>("[data-notify-email]").value.trim();
-      if (!sentIdea || !email) return;
-      let ok = false;
-      try {
-        const response = await fetch(`/api/wish-ideas?id=${encodeURIComponent(wish.id)}&n=${sentIdea.n}`, {
-          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: sentIdea.key, email }), signal: AbortSignal.timeout(8000),
-        });
-        ok = response.status === 204;
-      } catch {}
-      if (ok) {
-        track("idea_notify", { idea: wish.name, place: "shared" });
-        notify.hidden = true;
-        notifyNote.textContent = "Thanks. We'll email you once when it's in.";
-      } else {
-        notifyNote.textContent = "That didn't go. Check the address and try again.";
-      }
+      confirmSend.disabled = false;
+      if (!sent) { notifyNote.textContent = "That didn't go. Try again in a moment."; return; }
+      track("idea_sent_to_maker", { idea: wish.name, place: "shared" });
+      if (email) track("idea_notify", { idea: wish.name, place: "shared" });
+      title.textContent = maker ? `Sent to ${maker}` : "Sent";
+      sentText.textContent = idea;
+      sentText.hidden = false;
+      confirm.hidden = true;
+      notifyNote.textContent = email ? "We'll email you once when it's in." : "";
+      change.value = "";
     });
     $<HTMLButtonElement>("[data-remix-close]").addEventListener("click", () => dialog.close());
     dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
@@ -547,7 +553,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
     const next = $<HTMLElement>("[data-next]");
     download.addEventListener("click", () => {
       track("idea_download", { idea: wish.name, place: "shared-remix" });
-      const ask = $<HTMLElement>("[data-remix-to]").textContent ?? "";
+      const ask = ideaText.value.trim();
       // The app itself with the change for it, when it came with its file; else its words with the change.
       const copy = wish.file && wish.shared ? copyWish(ask, { origin: { shared: wish.shared }, plain: withAsk(wish.wish, ask) }) : copyWish(withAsk(wish.wish, ask));
       copy.then((copied) => {

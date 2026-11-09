@@ -265,18 +265,6 @@ export function cloudStore(env, fetcher = fetch) {
     },
     /** True when this call took it away: two at once never both do. */
     async removeIdea(id, n) { return (await command(["HDEL", ideasKey(id), String(n)])) === 1; },
-    /** Adds the address to hear back at to idea `n`, given the key it was sent with: false when it's gone or the key isn't its. */
-    // In one step, so an idea let go or a link taken down meanwhile is never written back.
-    async addEmail(id, n, ideaKey, email) {
-      return (await command(["EVAL", `if redis.call('EXISTS', KEYS[2]) == 0 then return 0 end
-        local text = redis.call('HGET', KEYS[1], ARGV[1])
-        if not text then return 0 end
-        local idea = cjson.decode(text)
-        if idea.key ~= ARGV[2] then return 0 end
-        idea.email = ARGV[3]
-        redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(idea))
-        return 1`, "2", ideasKey(id), key(id), String(n), ideaKey, email])) === 1;
-    },
     async putImage(id, name, image) {
       const { put } = await import("@vercel/blob");
       const blob = await put(`${scope}/w/${id}/${name}.${image.extension}`, image.bytes, {
@@ -364,13 +352,6 @@ export function memoryStore() {
     },
     async ideas(id) { return [...(ideas.get(id)?.all.values() ?? [])].map((idea) => structuredClone(idea)).sort((a, b) => a.n - b.n); },
     async removeIdea(id, n) { return ideas.get(id)?.all.delete(n) ?? false; },
-    async addEmail(id, n, key, email) {
-      if (!records.has(id)) return false;
-      const idea = ideas.get(id)?.all.get(n);
-      if (!idea || idea.key !== key) return false;
-      idea.email = email;
-      return true;
-    },
     async putImage(_id, _name, image) { return `data:${image.type};base64,${image.bytes.toString("base64")}`; },
     async removeImages() {},
     async putFile(_id, _name, bytes) { return `data:application/octet-stream;base64,${bytes.toString("base64")}`; },
@@ -530,31 +511,26 @@ export async function tellItsIn(idea, record, link, { env = process.env, fetcher
   } catch { return false; }
 }
 
-/** An idea as sent from a link's page, or null: its words. */
+/** An idea as sent from a link's page, or null: its words, and an address to hear back at only if it looks like one. */
 export function readIdea(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
   const text = tidy(body.text, IDEA_LIMITS.text, { lines: true });
-  return text ? { text } : null;
-}
-
-/** An address to hear back at, as given after the idea went, or null unless it looks like one. */
-export function readEmail(body) {
-  if (!body || typeof body !== "object" || typeof body.key !== "string" || !/^[A-Za-z0-9_-]{12}$/.test(body.key)) return null;
+  if (!text) return null;
+  if (body.email == null || body.email === "") return { text };
   const email = tidy(body.email, IDEA_LIMITS.email);
-  return email && EMAIL.test(email) ? { key: body.key, email } : null;
+  return email && EMAIL.test(email) ? { text, email } : null;
 }
 
 /**
- * Ideas for a link's maker (`/api/wish-ideas?id=`). POST, from the link's page, keeps one: what someone playing it would
- * change. It answers the idea's number and a key, which PUT ?n= takes with an address, if they give one, to hear when
- * it's in. GET, with the link's secret, answers them for Lamp to show the maker: never the keys or the addresses, only
+ * Ideas for a link's maker (`/api/wish-ideas?id=`). POST, from the link's page once the sender confirms it, keeps one:
+ * what someone using it would change, and an address to hear when it's in, if they gave one. GET, with the link's secret, answers them for Lamp to show the maker: never the keys or the addresses, only
  * whether someone wants to hear back. DELETE ?n= with the secret lets one go; with `built=1`, the site first writes to
  * whoever asked (`tellItsIn`). Kept only for the maker: never logged, never on the page, gone with the link.
  */
 export function createIdeasHandler({ env = process.env, fetcher = fetch, store, limited = true, now = () => new Date() } = {}) {
   return async (request) => {
     const method = request.method;
-    if (!["GET", "POST", "PUT", "DELETE"].includes(method)) return reply(405, { error: "method_not_allowed" }, { Allow: "GET, POST, PUT, DELETE" });
+    if (!["GET", "POST", "DELETE"].includes(method)) return reply(405, { error: "method_not_allowed" }, { Allow: "GET, POST, DELETE" });
     const url = new URL(request.url);
     const origin = request.headers.get("origin");
     if (origin && origin !== url.origin) return reply(403, { error: "origin_not_allowed" });
@@ -562,18 +538,18 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
     if (!isID(id)) return reply(404, { error: "not_found" });
 
     let idea = null;
-    if (method === "POST" || method === "PUT") {
+    if (method === "POST") {
       if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(request.headers.get("content-type") || "")) return reply(415, { error: "json_required" });
-      try { const body = JSON.parse(await readBody(request)); idea = method === "POST" ? readIdea(body) : readEmail(body); }
+      try { idea = readIdea(JSON.parse(await readBody(request))); }
       catch (error) { return reply(error instanceof RangeError ? 413 : 400, { error: "invalid_idea" }); }
       if (!idea) return reply(400, { error: "invalid_idea" });
     }
-    const n = method === "DELETE" || method === "PUT" ? Number(url.searchParams.get("n")) : null;
+    const n = method === "DELETE" ? Number(url.searchParams.get("n")) : null;
     if (n !== null && (!Number.isInteger(n) || n < 1)) return reply(400, { error: "invalid_idea" });
 
     let kept;
     try { kept = store ?? cloudStore(env, fetcher); } catch { return reply(503, { error: "service_unavailable" }); }
-    if (limited && (method === "POST" || method === "PUT")) {
+    if (limited && method === "POST") {
       const ip = (request.headers.get("x-vercel-forwarded-for") || request.headers.get("x-forwarded-for") || "").trim();
       if (!isIP(ip) || !kept.limiter) return reply(503, { error: "service_unavailable" });
       let retry;
@@ -586,15 +562,13 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
       const record = await kept.get(id);
       if (!record) return reply(404, { error: "not_found" });
       if (method === "POST") {
-        const key = randomBytes(9).toString("base64url");
-        const number = await kept.addIdea(id, { ...idea, key, at: now().toISOString() });
-        return number ? reply(201, { n: number, key }) : reply(429, { error: "full" });
+        const number = await kept.addIdea(id, { ...idea, at: now().toISOString() });
+        return number ? reply(201, { n: number }) : reply(429, { error: "full" });
       }
-      if (method === "PUT") return (await kept.addEmail(id, n, idea.key, idea.email)) ? reply(204) : reply(404, { error: "not_found" });
       if (!secretMatches(bearer(request), record.secret)) return reply(404, { error: "not_found" });
       // The maker sees whether someone wants to hear back, never their address: the site writes to them.
       if (method === "GET") {
-        return reply(200, { ideas: (await kept.ideas(id)).map(({ key: _key, email, ...shown }) => ({ ...shown, ...(email ? { wantsNews: true } : {}) })) });
+        return reply(200, { ideas: (await kept.ideas(id)).map(({ email, ...shown }) => ({ ...shown, ...(email ? { wantsNews: true } : {}) })) });
       }
       // `built`: it's in, so whoever asked to hear back is told, once, before it goes.
       // Taken away first: only the call that took it writes, so two at once, or one tried again, send one email.
