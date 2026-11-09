@@ -225,10 +225,12 @@ export function cloudStore(env, fetcher = fetch) {
       headers: { Authorization: `Bearer ${db.token}`, "Content-Type": "application/json" },
       body: JSON.stringify(args),
     });
-    if (!response.ok) throw new Error(`Store unavailable (${response.status})`);
-    const body = await response.json();
-    // Upstash's own words for it (a limit reached, say), which name no key.
-    if (body.error) throw new Error(`Store unavailable: ${String(body.error).slice(0, 200)}`);
+    // Upstash's own words for it (a limit reached, say), which name no key: it gives them with a status that isn't
+    // OK too, so the answer is read either way, and the status alone says it when there are none.
+    let body = null;
+    try { body = await response.json(); } catch {}
+    if (body?.error) throw new Error(`Store unavailable (${response.status}): ${String(body.error).slice(0, 200)}`);
+    if (!response.ok || !body) throw new Error(`Store unavailable (${response.status})`);
     return body.result;
   };
   // A store connected now gives the project its id (BLOB_STORE_ID), and @vercel/blob signs in with the deployment's
