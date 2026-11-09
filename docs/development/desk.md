@@ -387,7 +387,9 @@ in place of Update on its review, waiting while another mix is saved
   neither what the review read, as an import stages it (`Upstream.stage`), nor what this copy has had since the copies
   met, needs a check. Mix then saves nothing: it checks the app as the mix leaves it, every file written as the tree holds it and
   read as a shared file is (`Mix.checkInput`), with each such earlier version's code beside it under that version's title, in one review, which
-  adds to the file's and never takes any of it back: Mix shows what both say and follows the stricter rule. The check is of those trees only: a change to the pick drops it, and `Mix.apply`
+  adds to the file's and never takes any of it back: Mix shows what both say and follows the stricter rule. The check is of those trees only: a change to the pick drops it. A check that couldn't read what the mix comes to
+  shows why with Try Again beside it (`MixModel.retryCheck`), which plays the same pick back again and checks it, the
+  file's review kept as it was; Mix stays off until that check is in. `Mix.apply`
   saves the very trees prepared, refusing one that needs a check without it or a copy that has moved on, before a file
   is touched. Their changes to a file no shared copy carries don't come in; it stays as this copy has it. Each
   preparation, preview and save builds its trees in an index of its own.
