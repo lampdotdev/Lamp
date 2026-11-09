@@ -3,7 +3,7 @@
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -78,6 +78,10 @@ test("a new game is given what only Lamp's app writes, and a file that isn't the
   const run = spawnSync(process.execPath, [join(import.meta.dirname, "..", "lamp.mjs"), "new", made, "--name", "Harbor <Racer>"], { encoding: "utf8" });
   assert.equal(run.status, 0, run.stderr);
   assert.match(readFileSync(join(made, "index.html"), "utf8"), /<title>Harbor &lt;Racer&gt;<\/title>/);
+  // The folder is a whole site: every file its page and the runtime name is in it.
+  for (const file of ["game.js", "lamp-game.js", "lamp-controllers.js", "lamp-device.js", "lamp.js", "three/three.module.js"]) assert.ok(existsSync(join(made, file)), file);
+  // A game whose folder has none of Lamp's own files is given them all the same.
+  for (const file of ["lamp-controllers.js", "lamp-device.js", "lamp.js"]) rmSync(join(made, file));
   const game = await serve({ folder: made, quiet: true });
   try {
     // The runtime imports the first, and can't load without it; the rest are what a game's page may name.

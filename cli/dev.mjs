@@ -29,19 +29,20 @@ const TYPES = {
 
 // The two files Lamp writes beside a game's runtime in each copy of the page, which the folder's own copy doesn't
 // hold (`GamePage.stage`): which device the copy is on, and which build it is.
-const DEVICE_FILE = "lamp-device.js", BUILD_FILE = "lamp-build.js";
+export const DEVICE_FILE = "lamp-device.js";
+const BUILD_FILE = "lamp-build.js";
 // A browser on any device, as a page published to the web is given (`GamePage.anyBrowser`).
-const ANY_BROWSER = `// Written by lamp dev for a browser on any device (any-browser); don't edit.
+export const ANY_BROWSER = `// Written by lamp for a browser on any device (any-browser); don't edit.
 export default {"keys":{"AltLeft":"Alt / Option","AltRight":"Alt / Option","Backspace":"Backspace / Delete","Enter":"Enter / Return","MetaLeft":"Win / ⌘","MetaRight":"Win / ⌘"}};
 `;
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PAGE_SCRIPT = readFileSync(join(HERE, "page.js"), "utf8");
 // Lamp's building blocks for a page (AI, saved data, the app's files) come with Lamp's app around it, which writes
 // lamp.js at each build. A game whose folder has none is given this in its place, so the page loads.
-const LAMP_JS = "// lamp dev's stand-in for lamp.js: Lamp's building blocks come with Lamp's app around the page, and aren't here.\n";
+export const LAMP_JS = "// lamp's stand-in for lamp.js: Lamp's building blocks come with Lamp's app around the page, and aren't here.\n";
 // The controllers a game names buttons for, which Lamp's app writes beside the page at every build and the game
 // runtime can't load without: Lamp's list as a file (a test keeps it Lamp's, `CLIFilesTests`).
-const CONTROLLERS_FILE = "lamp-controllers.js", CONTROLLERS = join(HERE, "lamps", CONTROLLERS_FILE);
+export const CONTROLLERS_FILE = "lamp-controllers.js", CONTROLLERS = join(HERE, "lamps", CONTROLLERS_FILE);
 // The libraries Lamp puts beside a game's page when the page uses them (`DeviceSupport`), where they are in Lamp's
 // own folder: a game whose folder has none of one is served Lamp's copy.
 const LIBRARIES = join(HERE, "..", "Resources", "WebLibraries");
@@ -191,7 +192,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       return;
     }
     if (page) {
-      if (READY.has(state) || (state === "page-loaded" && !layout.game)) page.ready = true;
+      if ((READY.has(state) || (state === "page-loaded" && !layout.game)) && !page.ready) { page.ready = true; page.readyAt = Date.now(); }
       if (DONE.has(state)) { page.at = typeof about === "number" ? Math.max(page.at, about) : gen; page.rerunning = 0; }
       if (state === "rerun") page.rerunning = Date.now() + 15_000;
       if (state === "reloading") reopening.set(page.tab, Date.now() + 30_000);
@@ -299,6 +300,9 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       if (!tab) await sleep(100);
     }
     const unfinished = await waitUntilSettled(Math.max(0, wait) * 1000, tab);
+    // A page that has only just opened is still putting its loading screen away.
+    const opened = Math.max(0, ...[...pages.values()].filter((page) => !tab || page.tab === tab).map((page) => page.readyAt ?? 0));
+    if (Date.now() - opened < 1000) await sleep(1000 - (Date.now() - opened));
     let seen = null, picture = null, where = target?.where ?? null;
     if (target) {
       // Two frames on, so what's pictured has the change drawn, and long enough for what the page just logged to come.

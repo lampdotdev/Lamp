@@ -82,7 +82,8 @@
         const tag = el.tagName.toLowerCase();
         if (tag === 'script' || tag === 'style' || tag === 'template' || tag === 'noscript') continue;
         const look = getComputedStyle(el);
-        if (look.display === 'none' || Number(look.opacity) === 0) continue;
+        // What's faded out, or nearly (a loading screen on its way out), isn't on the screen.
+        if (look.display === 'none' || Number(look.opacity) < 0.1) continue;
         const hidden = look.visibility === 'hidden', r = hidden ? null : box(el);
         if (r && tag === 'canvas') { lines.push(`canvas ${Math.round(r.width)}×${Math.round(r.height)} at ${middle(r)}`); continue; }
         if (r && el.matches(CONTROLS)) {

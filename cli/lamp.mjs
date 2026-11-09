@@ -17,7 +17,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Problem, layoutOf, stateOf, running, ask } from "./state.mjs";
-import { serve } from "./dev.mjs";
+import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, LAMP_JS } from "./dev.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -143,7 +143,7 @@ async function main() {
     // What Lamp gives a new web game: its starting page, the game runtime and three.js, from Lamp's own folder.
     const lamps = join(here, "..", "Resources"), scaffold = join(lamps, "GameKit", "scaffold-web", "Web");
     const runtime = join(lamps, "GameKit", "web"), three = join(lamps, "WebLibraries", "three");
-    if (![scaffold, runtime, three].every(existsSync)) throw new Problem("Lamp's starting files aren't beside this copy of lamp");
+    if (![scaffold, runtime, three, CONTROLLERS].every(existsSync)) throw new Problem("Lamp's starting files aren't beside this copy of lamp");
     const name = String(options.name ?? basename(folder).split(/[-_\s]+/).filter(Boolean).map((word) => word[0].toUpperCase() + word.slice(1)).join(" "));
     const inPage = name.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
     mkdirSync(folder, { recursive: true });
@@ -152,6 +152,11 @@ async function main() {
     }
     for (const file of readdirSync(runtime)) cpSync(join(runtime, file), join(folder, file));
     cpSync(three, join(folder, "three"), { recursive: true });
+    // Lamp's own files beside the page, which its app writes at every build: with them the folder is a whole site,
+    // and runs wherever it's served from. lamp.js is the stand-in until Lamp's app takes the folder on.
+    cpSync(CONTROLLERS, join(folder, CONTROLLERS_FILE));
+    writeFileSync(join(folder, DEVICE_FILE), ANY_BROWSER);
+    writeFileSync(join(folder, "lamp.js"), LAMP_JS);
     console.log(`Made ${folder}: a new game, "${name}", on Lamp's game runtime with three.js.\nShow it with: lamp open ${/\s/.test(folder) ? JSON.stringify(folder) : folder}`);
     return;
   }

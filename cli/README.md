@@ -17,7 +17,7 @@ with an `index.html`; without one, the folder you're in.
 | `lamp dev [--open] [--lan] [--port N]` | Runs the page and says how each change went. Each save goes into every open copy of it. `--open` opens a window for it; `--lan` lets other devices on the network open it. |
 | `lamp open` | Shows the page in a window, running it in the background if it isn't running, and returns at once. |
 | `lamp look [--wait s] [--json]` | How the changes since the last look went, a picture of the page, its screen as text, new errors and the log. |
-| `lamp use key w 2` | Tries it as a person would, then looks: `key <name> [seconds]`, `click <x> <y>`, `type <text>`, `wait <seconds>`. |
+| `lamp use key w 2` | Tries it as a person would, then looks: `click`, `type`, `key` (several at once with `w+d`), `drag`, `scroll`, `wait`, and in a game on Lamp's runtime `stick` and `button`, which hold Lamp's own controller as Lamp's app does (`window.__lampDrive`) and give it back when the person plays. |
 | `lamp reload` | Opens the page again from its files, a game from where the player is. |
 | `lamp stop` | Stops running it. |
 | `lamp setup [--remove]` | Teaches Claude Code and Codex on this computer to work this way: a skill for each. |
@@ -50,8 +50,9 @@ Files are watched; a save is handed to every open page a moment later.
 
 ## Lamp's own files beside a game's page
 
-Lamp's app writes some files beside a game's page at every build. A folder that came from Lamp has most of them; one
-`lamp new` made has only what's in Lamp's folder as files. What a game's folder lacks, the server gives it:
+Lamp's app writes some files beside a game's page at every build. A folder that came from Lamp has them, and
+`lamp new` writes them into the folder it makes, so the folder is a whole site that runs wherever it's served from.
+What a game's folder lacks all the same, the server gives it:
 
 | File | Where it comes from here |
 | --- | --- |
@@ -66,9 +67,10 @@ never runs and the page can't say so itself.
 ## A new game
 
 `lamp new` copies what Lamp gives a new web game: the starting page (`Resources/GameKit/scaffold-web`), the game
-runtime (`Resources/GameKit/web`) and three.js. The page is at the top of the folder, so Lamp's app can open the
-folder too. It isn't yet an app as Lamp's app makes one: it has no manifest and none of the app around the page, which
-Lamp's app adds when it takes the folder on. A plain web page needs no starting files.
+runtime (`Resources/GameKit/web`), three.js, and Lamp's own files beside the page (the table above). The page is at
+the top of the folder with nothing that builds it, which is what Lamp's app opens as a site (`StaticSite.isPlain`).
+It isn't yet an app as Lamp's app makes one: it has no manifest and none of the app around the page, which Lamp's app
+adds when it takes the folder on. A plain web page needs no starting files.
 
 A change saved while a page is opening isn't lost: each page says which change its files had, and is handed what came
 after. A server started again tells its pages to open again, since it can't know what changed while it was away.

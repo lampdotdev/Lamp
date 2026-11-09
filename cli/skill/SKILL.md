@@ -38,8 +38,22 @@ Only when the person asks you to try, play or test the app: a request to change 
 - `{{lamp}} use click 640 400` clicks a point of the picture. The screen as text gives each control's point, its
   middle: click exactly there. The answer names what the click landed on.
 - `{{lamp}} use type hello` types into whatever has the keyboard: click a field first.
-- `{{lamp}} use key w 2` holds a key for two seconds (a letter, a digit, `space`, `enter`, `escape`, `up`, `left`…).
+- `{{lamp}} use key w 2` holds a key for two seconds (a letter, a digit, `space`, `enter`, `escape`, `up`, `left`…),
+  and `w+d` holds two at once.
+- `{{lamp}} use drag 400 300 700 300` presses at one point, moves to the other and lets go.
+- `{{lamp}} use scroll 600` scrolls down, and up with a negative number. A look shows only what's in the window.
 - `{{lamp}} use wait 3` waits, for something that takes time.
+
+A game on Lamp's runtime is played with Lamp's own controller, as Lamp's game skills say (`use_app`'s `stick` and
+`button`):
+
+- `{{lamp}} use stick left 1 0 2` holds the left stick to the right for two seconds: `left` or `right`, then x and y
+  from -1 to 1, right and up being 1. A button named after the seconds is held with it (`… 2 a`).
+- `{{lamp}} use button a` presses a button, `a 1.5` holds it, and `a+rt` holds two: `a`, `b`, `x`, `y`, `lb`, `rb`,
+  the triggers `lt` and `rt`, `menu`, `view`, `up`, `down`, `left`, `right`.
+
+It's the first player's controller, from wherever the game is. If the person plays meanwhile they have it back at
+once and the answer says so: the game is theirs until they ask again. A key works in a game here too.
 
 Each answers with a look. With the window open it happens in the person's own window, where they see it.
 
@@ -63,7 +77,8 @@ An app Lamp made (its page loads `lamp.js`) is built from Lamp's own building bl
 kind of work on one: a new web game, 3D, how a game feels, a web app's page. `{{lamp}} skills game` lists those about a
 word, `{{lamp}} skills` all of them, and `{{lamp}} skill <name>` prints one. Read the ones that fit before changing what
 they cover: they are the one place that says which building blocks to use and how. Where one names a tool of Lamp's,
-`look_at_app` is `{{lamp}} look` and `use_app` is `{{lamp}} use`; putting a change in needs no tool here.
+`look_at_app` is `{{lamp}} look` and `use_app` is `{{lamp}} use` (each of its actions is one command); putting a change
+in needs no tool here.
 
 A plain site, with no `lamp.js`, uses none of them: skip the skills there.
 
