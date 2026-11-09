@@ -349,7 +349,7 @@ and say in the PR description which engines you tried.
 ## The person's own agent through MCP (trial)
 
 Besides the three engines Lamp runs, the person's own coding agent (Claude Code, Codex) can start Lamp as a local MCP
-server and work on a Lamp-format Mac app in a folder of its own (`OutsideServer`, `OutsideWork`). It isn't an engine:
+server and work on an app in a folder of its own (`OutsideServer`, `OutsideWork`). It isn't an engine:
 Lamp starts no process for it and sees none of its commands, so its shell is under its own approvals, not
 `/agent/approve`. What Lamp does for it (building, opening, putting a change in) keeps Lamp's own checks.
 
@@ -359,11 +359,17 @@ Lamp starts no process for it and sees none of its commands, so its shell is und
   reads), and each connection's peer must be the person's user. The first line each way is a handshake with
   `OutsideKit.protocolVersion`. Lamp not running is started from the helper's own bundle; a call under way when Lamp
   ends is answered `interrupted`.
-- **Taking a folder on.** `open_project` goes through the same import review as any app that comes to Lamp
-  (`Store.importApp` with an `OutsideImport`): the fixed checks, the AI's check when AI is set up, and the person's
-  Build & Open, always as a new app and with no chat opened beside it. The call waits for that answer. The app's first
-  build is what the review installed, never the folder read again; an edit made while the review was up is pending
-  for the next apply. Later applies are the agent's own work, as a chat's turns are, and aren't reviewed again.
+- **Taking a folder on.** `open_project` asks the importer what the folder is (`RepoImport.layout`, the same answer
+  `RepoImport.open` reads it by): an app in Lamp's format, a site (`StaticSite`, run as a web app), or what's missing
+  for either, which is answered `not_importable` with those words. A packed shared file alone, a kind that doesn't open
+  on the Mac, and a wish of more than one app are answered `not_importable` too. Adapting a folder Lamp can't read is not
+  done here. What it can read goes through the same import review as any app that comes to Lamp (`Store.importApp`
+  with an `OutsideImport`): the fixed checks, the AI's check when AI is set up, and the person's Build & Open, always as
+  a new app and with no chat opened beside it. The review reads a copy of the very package open_project captured and
+  checked (`OutsideImport.snapshot`), not the folder read again, so what's approved is what's built first; an edit made
+  while the review was up is pending for the next apply. The call waits for that answer. A review that ended is never
+  opened again for the same call (its Try Again does nothing once the agent was told), and a folder taken on is applied,
+  never imported again, so a retried open_project makes no second app. Later applies are the agent's own work, as a chat's turns are, and aren't reviewed again.
 - **An app with no icon.** Its icon is designed right after the review, before the first build, as a new app's is
   while its first request builds: designed after it, the icon is a change the open app can't take, and the next
   change of any kind would reopen the app.
@@ -379,6 +385,13 @@ Lamp starts no process for it and sees none of its commands, so its shell is und
   became of the change is read from its `outcomes`, as a look reads it; pulling the apply and its checks out of
   `Turn` into something of their own is still to do. Folders are known by real path, device and inode
   (`Outside/adopted.json`); a folder put in another's place is refused until `open_project` takes it on.
+- **The mapping.** The folder's paths and the workspace's differ wherever the import moves files (a site's page goes
+  into Web/, a laid-out site's `.lamp-wish/` to the top). `OutsideWork.Mapping`, made from the package and its layout
+  once per capture, is the one way between them: each file the install puts in the app by its workspace path, with the
+  package's copy and the folder's path it came from (none for a file the import writes itself, such as a plain site's
+  APP.md). The capture's checks, the sync, the metadata digest (every file of the folder the mapping doesn't put in the
+  app) and the paths answered to the agent all go through it. Its record is kept per folder (`Adopted.files`), so a file
+  taken out of the folder is taken out of the workspace where the import put it, and Lamp's own files there stay.
 - **One at a time.** Every call on a folder waits for the one before it, whatever connection sent it
   (`outsideSerially`). An apply answers stale when the folder changed while it built. `operation_id` replays an apply
   that ran, for as long as Lamp runs; after Lamp starts again an apply waits for a `look_at_app` first.

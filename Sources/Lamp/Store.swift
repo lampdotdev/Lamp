@@ -4193,6 +4193,9 @@ final class Store: ObservableObject {
             // opened together at launch, during the welcome, are each kept for it, in the order they came.
             await setupLook.wait()
             if let outside {
+                // Told already (the review failed, and this is its Try Again): an app made now would be one the agent never
+                // hears of, and its next open_project would make another.
+                guard !outside.isFinished else { return }
                 guard reviewsCanOpen else { return outside.finish(nil, "Lamp's welcome isn't finished yet. Ask the person to finish it, then call open_project again.") }
             }
             guard reviewsCanOpen else { return keepForWelcome(file, updating: target, fetched: fetched, following: following) }
@@ -4248,7 +4251,9 @@ final class Store: ObservableObject {
         // Unpacking is a process and some file reads: off the main actor, so Lamp stays responsive.
         let package: Sharing.Package
         do {
-            package = try await Self.offMain { Result { try Sharing.open(file, fetched: fetched) } }.get()
+            // A folder of the person's agent: the very package open_project captured and checked, which is what's built.
+            let snapshot = outside?.snapshot
+            package = try await Self.offMain { Result { try snapshot.map(OutsideImport.copy(of:)) ?? Sharing.open(file, fetched: fetched) } }.get()
         } catch {
             guard owns(id) else { return }
             let failure = error as? Sharing.ImportError

@@ -51,11 +51,12 @@ enum OutsideWork {
     }
 
     static let instructions = """
-    Lamp builds and runs the Mac app in a folder you work on, puts each change you make into the open app while it \
-    runs, and shares what you made. Call open_project once with the folder's absolute path: the person reviews the app \
-    in Lamp first, and the answer lists Lamp's skills for this kind of app. Read the ones that fit with read_skill \
-    before changing what they cover; they say which of Lamp's building blocks to use and how. Sources/LampSupport.swift, \
-    build.sh and Package.swift are Lamp's: read them, never edit them (Lamp writes its own at every build). After \
+    Lamp builds and runs the app in a folder you work on, on this Mac, puts each change you make into the open app \
+    while it runs, and shares what you made. Call open_project once with the folder's absolute path: the person reviews \
+    the app in Lamp first, and the answer says how Lamp reads the folder and lists Lamp's skills for this kind of app. \
+    Read the ones that fit with read_skill before changing what they cover; they say which of Lamp's building blocks to \
+    use and how. Lamp's own files (Sources/LampSupport.swift, build.sh, Package.swift, lamp.js) are rewritten at every \
+    build: read them, never edit them. After \
     editing, call apply_change: it builds what the folder holds now and answers how the change reached the app, with \
     pictures of its windows. look_at_app shows the open app as it is and never applies anything; you can't click or \
     type in the app, so ask the person to try what needs a hand. export_app makes the app's shared file and \
@@ -67,7 +68,7 @@ enum OutsideWork {
         let path: [String: Any] = ["type": "string", "description": "The folder's absolute path."]
         return [
             ["name": "open_project",
-             "description": "Has Lamp take on a Lamp-format Mac app in a folder (lamp-app.json and its code at the top), build it and open it. Lamp shows the person its review of the code first, as for any app that comes to it, and builds it only if they choose Build & Open. Call again if Lamp says the folder moved or is missing.",
+             "description": "Has Lamp take on the app in a folder, build it and open it on this Mac. Lamp reads the folder as it reads anything brought to it: an app in Lamp's format (lamp-app.json and its code at the top), or a plain site (index.html at the top, no build step), which it runs as a web app. The folder stays where edits are made; Lamp never writes in it. Lamp shows the person its review of the code first, and builds it only if they choose Build & Open. A folder Lamp can't read as an app is answered not_importable, with what it lacks. Call again if Lamp says the folder moved or is missing.",
              "inputSchema": ["type": "object", "properties": ["path": path], "required": ["path"]]],
             ["name": "apply_change",
              "description": "Builds what the folder holds now and puts it into the open app. Answers the outcome: live (went into the running app, window as it was), reopened (closed and opened again for it), opened (it wasn't open), held (waits for the person's Reload), unchanged (nothing new), not_built (compiler errors follow), crashed (the app quit; its log follows), stale (the folder changed while Lamp built it: apply again), cancelled. Retrying with the same operation_id gets the first answer.",
@@ -91,9 +92,15 @@ enum OutsideWork {
     /// What open_project tells the agent about working on this kind of app: the skills Lamp offers it (the same index
     /// and words as Lamp's own engines get, `Skills.index`), those its code already shows it uses, and whose files
     /// are Lamp's. The skills are the one place that says which building blocks to use and how.
-    @MainActor static func guidance(for project: LampProject) -> String {
+    /// A site (`RepoImport.Layout.site`) is laid out as the folder has it: the skills' Web/ is the folder's top.
+    @MainActor static func guidance(for project: LampProject, layout: RepoImport.Layout) -> String {
         let named = Skills.named(project.platform)
-        var text = "Working on it: Sources/LampSupport.swift, build.sh and Package.swift are Lamp's and rewritten at every build, so edits to them never go in; read LampSupport.swift for what Lamp gives the app.\n"
+        var text: String
+        if case .site(let laidOut) = layout {
+            text = "Working on it: Lamp runs this site as a web app, its page shown in an app of Lamp's. Edit the site's files where they are in the folder: what Lamp's skills call Web/ is this folder's top\(laidOut ? ", and the rest of the app is in \(StaticSite.folder)/" : ""). Lamp writes its own files around the page at every build, so lamp.js, Sources/LampSupport.swift, build.sh and Package.swift are never taken from the folder.\n"
+        } else {
+            text = "Working on it: Sources/LampSupport.swift, build.sh and Package.swift are Lamp's and rewritten at every build, so edits to them never go in; read LampSupport.swift for what Lamp gives the app.\n"
+        }
         if !named.isEmpty { text += "Read these with read_skill before changing the app, and keep to them: \(named.joined(separator: ", ")).\n" }
         let applying = Skills.applying(to: project)
         if !applying.isEmpty { text += "Its code already uses: " + applying.map { "\($0.name) (\($0.because))" }.joined(separator: "; ") + ".\n" }
@@ -137,6 +144,10 @@ enum OutsideWork {
         /// changed. Lamp works on the icon of its copy by itself (designing one, painting its artwork), and writing the
         /// folder's over that at every apply changed the icon each time, which reopens the app for every change.
         var metadata: String?
+        /// What the workspace holds of the folder's (`Mapping.record`): each path there and the folder's path it came
+        /// from, so a file taken out of the folder is taken out where the import had put it. Nil in records from before
+        /// it was kept.
+        var files: [String: String]?
     }
 
     static var registryURL: URL { Edition.supportFolder.appendingPathComponent("Outside/adopted.json") }
@@ -163,11 +174,28 @@ enum OutsideWork {
     // MARK: Capturing a folder
 
     /// What a folder held when Lamp read it: the package the import reads (`RepoImport.open`, held to the same limits
-    /// and the same manifest), and every file's hash, so what was copied is checked against what the folder held.
+    /// and the same manifest), every file's hash, and where each of the package's files goes in the workspace and which
+    /// file of the folder it came from (`Mapping`), so what was copied is checked against what the folder held and an
+    /// edit to the folder lands where the import put that file.
     struct Capture {
         let package: Sharing.Package
+        let layout: RepoImport.Layout
         let hashes: [String: String]
+        let mapping: Mapping
         var fingerprint: String { OutsideWork.fingerprint(hashes) }
+    }
+
+    /// The one way between the folder and the workspace, for every apply and the first build alike: each file the
+    /// import puts in the app, by its path in the workspace, with the package's copy of it and its path in the folder.
+    /// The two differ for a site, whose page the import moves into Web/ (`StaticSite.unpack`); a file the import writes
+    /// itself (a plain site's lamp-app.json and APP.md) has no path in the folder.
+    struct Mapping {
+        struct File { let copy: URL; let source: String? }
+        let files: [String: File]
+        /// What's kept between applies: each workspace path and the folder's path it came from ("" for none).
+        var record: [String: String] { files.mapValues { $0.source ?? "" } }
+        /// The folder's paths that become the app's code and files; every other file of the folder is the app's metadata.
+        var sources: Set<String> { Set(files.values.compactMap(\.source)) }
     }
 
     /// One digest of a folder's reading, to tell whether what's in the app is what the folder holds.
@@ -181,10 +209,17 @@ enum OutsideWork {
 
     static func sha(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 
+    /// The folders the import leaves out of a folder of this layout (`RepoImport.copyTree`): a site keeps every folder
+    /// but git's, since a `build/` or `node_modules/` it checked in is what its page loads.
+    static func skipped(_ layout: RepoImport.Layout) -> Set<String> {
+        if case .site = layout { return [".git"] }
+        return [".git", ".build", "build", ".lamp", "node_modules"]
+    }
+
     /// Every regular file the import would take, by its path in the folder, and its hash. The same folders are left out
-    /// as the import leaves out (`RepoImport.copyTree`), and links are never followed.
-    static func hashes(of folder: URL) -> [String: String] {
-        let skipped: Set<String> = [".git", ".build", "build", ".lamp", "node_modules"]
+    /// as the import leaves out, and links are never followed.
+    static func hashes(of folder: URL, layout: RepoImport.Layout? = nil) -> [String: String] {
+        let skipped = skipped(layout ?? RepoImport.layout(of: folder))
         let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .isDirectoryKey]
         var found: [String: String] = [:]
         guard let items = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: keys) else { return [:] }
@@ -198,30 +233,82 @@ enum OutsideWork {
         return found
     }
 
-    /// Reads the folder as the import does, then checks it: every file the package took must have the bytes the folder
-    /// held before the copy began, and the folder must hold the same after it. A folder still being written is read
-    /// again, a few times, and then refused, never built from a mix of two moments.
+    /// Where a file of the package came from in the folder, as the import laid it out: nil for one the import wrote.
+    static func source(ofPackagePath path: String, layout: RepoImport.Layout) -> String? {
+        let web = TVTemplate.webFolder + "/"
+        switch layout {
+        case .wish: return path
+        case .site(laidOut: false): return path.hasPrefix(web) ? String(path.dropFirst(web.count)) : nil
+        case .site(laidOut: true): return path.hasPrefix(web) ? String(path.dropFirst(web.count)) : StaticSite.folder + "/" + path
+        case .sharedFile, .unknown: return nil
+        }
+    }
+
+    /// The package's files the install puts in the app, by their path there, as `Sharing.install` puts them for this kind
+    /// (its code, the page and its data for an app around a page, the app's own files in Assets/, APP.md), Lamp's own
+    /// files left out. Nil for a kind whose files Lamp doesn't keep in step with a folder yet.
+    static func mapping(of package: Sharing.Package, layout: RepoImport.Layout) -> Mapping? {
+        var files: [String: Mapping.File] = [:]
+        func add(_ path: String, _ copy: URL, from packagePath: String) {
+            guard !path.contains("..") else { return }
+            files[path] = Mapping.File(copy: copy, source: source(ofPackagePath: packagePath, layout: layout))
+        }
+        let language = package.platform.target.recipe.language
+        if ScreenKit.isWebApp(package.platform) {
+            for file in package.sources + package.webData {
+                let path = package.path(of: file)
+                guard !ScreenFiles.isLamps(path),
+                      path.hasPrefix(TVTemplate.webFolder + "/") || (path.hasPrefix("Sources/") && path.hasSuffix(".swift")) else { continue }
+                add(path, file, from: path)
+            }
+        } else if language == .swift {
+            let codeFolders = ["Sources/", Template.widgetFolder + "/", Template.watchFolder + "/", Template.shareFolder + "/"]
+            let lampsOwn: Set<String> = ["LampSupport.swift", Template.sceneSupportFile, Template.widgetSupportFile, Template.shareSupportFile]
+            for file in package.sources where !lampsOwn.contains(file.lastPathComponent) {
+                let path = package.path(of: file)
+                guard codeFolders.contains(where: { path.hasPrefix($0) }), !Template.watchSupportPaths.contains(path) else { continue }
+                add(path, file, from: path)
+            }
+        } else {
+            return nil
+        }
+        for file in package.attachments {
+            add(Sharing.Assets.folder + "/" + package.assetPath(of: file), file, from: package.path(of: file))
+        }
+        let appMd = package.folder.appendingPathComponent("APP.md")
+        if FileManager.default.fileExists(atPath: appMd.path) { add("APP.md", appMd, from: "APP.md") }
+        return Mapping(files: files)
+    }
+
+    /// Reads the folder as the import does, then checks it: every file the package took from the folder must have the
+    /// bytes the folder held before the copy began, and the folder must hold the same after it. A folder still being
+    /// written is read again, a few times, and then refused, never built from a mix of two moments.
     static func capture(_ repo: URL) throws -> Capture {
         var last = ""
         for _ in 0..<3 {
-            let before = hashes(of: repo)
+            let layout = RepoImport.layout(of: repo)
+            if case .unknown(let why) = layout { throw CaptureProblem(text: why) }
+            let before = hashes(of: repo, layout: layout)
             let package: Sharing.Package
             do { package = try RepoImport.open(folder: repo) } catch {
                 let failure = error as? Sharing.ImportError
                 throw CaptureProblem(text: (failure?.message ?? error.localizedDescription) + (failure?.detail.map { " " + $0 } ?? ""))
             }
-            var differs: [String] = []
-            let taken = package.sources + package.attachments + [package.folder.appendingPathComponent("APP.md")]
-            for file in taken {
-                guard let data = try? Data(contentsOf: file) else { continue }
-                let path = Sharing.relativePath(of: file, in: package.folder)
-                if before[path] != sha(data) { differs.append(path) }
+            guard let mapping = mapping(of: package, layout: layout) else {
+                try? FileManager.default.removeItem(at: package.folder)
+                throw CaptureProblem(text: "Lamp can't yet keep \(package.platform.target.identity.name) in step with a folder.")
             }
-            let after = hashes(of: repo)
-            if differs.isEmpty, before == after { return Capture(package: package, hashes: before) }
+            var differs: [String] = []
+            for file in mapping.files.values {
+                guard let source = file.source, let data = try? Data(contentsOf: file.copy) else { continue }
+                if before[source] != sha(data) { differs.append(source) }
+            }
+            let after = hashes(of: repo, layout: layout)
+            if differs.isEmpty, before == after, RepoImport.layout(of: repo) == layout {
+                return Capture(package: package, layout: layout, hashes: before, mapping: mapping)
+            }
             try? FileManager.default.removeItem(at: package.folder)
-            last = (differs.isEmpty ? Set(after.keys).symmetricDifference(before.keys).union(after.keys.filter { after[$0] != before[$0] }).sorted() : differs)
-                .prefix(5).joined(separator: ", ")
+            last = (differs.isEmpty ? changes(from: before, to: after) : differs.sorted()).prefix(5).joined(separator: ", ")
             Thread.sleep(forTimeInterval: 0.4)
         }
         throw CaptureProblem(text: "The folder kept changing while Lamp read it (\(last)). Apply again once your edits are written.")
@@ -232,62 +319,57 @@ enum OutsideWork {
         Set(old.keys).union(new.keys).filter { old[$0] != new[$0] }.sorted()
     }
 
-    /// Puts what was captured into the workspace, writing only what differs, so a file that didn't change keeps its
-    /// date and LiveReload sees only the change. Lamp's own files in the workspace are left to Lamp
-    /// (`Template.writeOwnedFiles`), whatever copy of them the folder has.
-    /// The folder's files that are the app's metadata rather than its code or its own files: what `syncMetadata` reads.
-    static func metadataDigest(_ hashes: [String: String]) -> String {
-        let code = ["Sources/", Template.widgetFolder + "/", Template.watchFolder + "/", Template.shareFolder + "/", Sharing.Assets.folder + "/"]
-        return fingerprint(hashes.filter { path, _ in path != "APP.md" && !code.contains { path.hasPrefix($0) } })
+    /// The folder's files that are the app's metadata rather than its code or its own files (what `syncMetadata`
+    /// reads): every file of the folder the mapping doesn't put in the app.
+    static func metadataDigest(_ capture: Capture) -> String {
+        let code = capture.mapping.sources
+        return fingerprint(capture.hashes.filter { !code.contains($0.key) })
     }
 
+    /// Puts what was captured into the workspace, writing only what differs, so a file that didn't change keeps its
+    /// date and LiveReload sees only the change, and taking out what an earlier apply put in that the folder no longer
+    /// holds (`previous`: the mapping's record then; nil in records from before it was kept, for which the code folders
+    /// and Assets/ are looked through instead). Lamp's own files in the workspace are left to Lamp
+    /// (`Template.writeOwnedFiles`), whatever copy of them the folder has. Answers the folder's paths written or taken
+    /// out (the workspace's, for a file with none), and the record to keep.
     /// `metadata`: put the app's metadata in too (`syncMetadata`), which is only when the folder's changed.
-    static func sync(_ capture: Capture, into project: LampProject, metadata: Bool) throws -> [String] {
+    static func sync(_ capture: Capture, into project: LampProject, previous: [String: String]?, metadata: Bool) throws -> [String] {
         let fm = FileManager.default
-        let package = capture.package
-        let codeFolders = ["Sources/", Template.widgetFolder + "/", Template.watchFolder + "/", Template.shareFolder + "/"]
-        let lampsOwn: Set<String> = ["LampSupport.swift", Template.sceneSupportFile, Template.widgetSupportFile, Template.shareSupportFile]
-        func ownedByLamp(_ path: String) -> Bool {
-            lampsOwn.contains((path as NSString).lastPathComponent) || Template.watchSupportPaths.contains(path)
-        }
-        var wanted: [String: URL] = [:]
-        for file in package.sources {
-            let path = package.path(of: file)
-            guard !path.contains(".."), codeFolders.contains(where: { path.hasPrefix($0) }), !ownedByLamp(path) else { continue }
-            wanted[path] = file
-        }
-        for file in package.attachments {
-            let path = Sharing.Assets.folder + "/" + package.assetPath(of: file)
-            guard !path.contains("..") else { continue }
-            wanted[path] = file
-        }
-        let appMd = package.folder.appendingPathComponent("APP.md")
-        if fm.fileExists(atPath: appMd.path) { wanted["APP.md"] = appMd }
-
+        let wanted = capture.mapping.files
+        let had = previous ?? legacyFiles(in: project)
         var changed: [String] = []
-        // What's in the workspace now under the same folders, Lamp's own files aside.
-        var have: [String] = []
-        for folder in codeFolders + [Sharing.Assets.folder + "/"] {
-            let root = project.dir.appendingPathComponent(folder)
-            for case let item as URL in fm.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) ?? FileManager.DirectoryEnumerator() {
-                guard (try? item.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
-                let path = Sharing.relativePath(of: item, in: project.dir)
-                if !ownedByLamp(path) { have.append(path) }
-            }
+        for (path, source) in had where wanted[path] == nil {
+            let target = project.dir.appendingPathComponent(path)
+            guard !path.contains(".."), fm.fileExists(atPath: target.path) else { continue }
+            try fm.removeItem(at: target)
+            changed.append(source.isEmpty ? path : source)
         }
-        for path in have where wanted[path] == nil {
-            try fm.removeItem(at: project.dir.appendingPathComponent(path))
-            changed.append(path)
-        }
-        for (path, source) in wanted {
-            let data = try Data(contentsOf: source)
+        for (path, file) in wanted {
+            let data = try Data(contentsOf: file.copy)
             let target = project.dir.appendingPathComponent(path)
             if (try? Data(contentsOf: target)) == data { continue }
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: target, options: .atomic)
-            changed.append(path)
+            changed.append(file.source ?? path)
         }
-        return (changed + (metadata ? try syncMetadata(package, into: project) : [])).sorted()
+        return (changed + (metadata ? try syncMetadata(capture.package, into: project) : [])).sorted()
+    }
+
+    /// What a workspace taken on before the mapping was kept holds of the folder's: its code folders and Assets/, Lamp's
+    /// own files aside (only Mac apps in Lamp's format were taken on then).
+    private static func legacyFiles(in project: LampProject) -> [String: String] {
+        let fm = FileManager.default
+        let lampsOwn: Set<String> = ["LampSupport.swift", Template.sceneSupportFile, Template.widgetSupportFile, Template.shareSupportFile]
+        var have: [String: String] = [:]
+        for folder in ["Sources/", Template.widgetFolder + "/", Template.watchFolder + "/", Template.shareFolder + "/", Sharing.Assets.folder + "/"] {
+            let root = project.dir.appendingPathComponent(folder)
+            for case let item as URL in fm.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) ?? FileManager.DirectoryEnumerator() {
+                guard (try? item.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
+                let path = Sharing.relativePath(of: item, in: project.dir)
+                if !lampsOwn.contains(item.lastPathComponent), !Template.watchSupportPaths.contains(path) { have[path] = path }
+            }
+        }
+        return have
     }
 
     /// The app's own metadata, put in as the import puts it in (`Sharing.install`), from the same checked package: its
@@ -325,15 +407,38 @@ enum OutsideWork {
 
 /// A folder waiting on Lamp's import review for `open_project` (`Store.importApp`): told once, with the app made or
 /// why there's none, whichever way the review ends.
+/// The review is of the very package open_project captured and checked (`snapshot`), never the folder read again, so
+/// what the person approves is what's built first.
 @MainActor final class OutsideImport {
     let repo: String
+    /// The folder as captured: what the review reads and the install puts in. Kept until the review ends.
+    let snapshot: Sharing.Package
     /// Build & Open was chosen: the review closing after that isn't a no.
     var confirmed = false
     private var done: ((LampProject?, String?) -> Void)?
+    /// Told already: a review opened again for it (its Try Again) makes no app, which nobody would be told of and a
+    /// second open_project would make again.
+    var isFinished: Bool { done == nil }
 
-    init(repo: String, done: @escaping (LampProject?, String?) -> Void) {
+    init(repo: String, snapshot: Sharing.Package, done: @escaping (LampProject?, String?) -> Void) {
         self.repo = repo
+        self.snapshot = snapshot
         self.done = done
+    }
+
+    /// A copy of the snapshot for one review to unpack into and take apart, as a file opened is copied for each.
+    nonisolated static func copy(of snapshot: Sharing.Package) throws -> Sharing.Package {
+        let copy = Sharing.workFolder.appendingPathComponent("forge-import-\(UUID().uuidString)")
+        try FileManager.default.copyItem(at: snapshot.folder, to: copy)
+        do {
+            var package = try Sharing.open(unpacked: copy)
+            // Where it came from, which the import adds to the chain it read (`RepoImport.naming`).
+            package.credits = snapshot.credits
+            return package
+        } catch {
+            try? FileManager.default.removeItem(at: copy)
+            throw error
+        }
     }
 
     func finish(_ project: LampProject?, _ why: String?) {
@@ -449,7 +554,8 @@ extension Store {
         guard let now = OutsideWork.identity(of: path) else { return .refused("There's no folder at \(path).") }
         let state = OutsideState.shared
         let repo = URL(fileURLWithPath: now.real)
-        // Taken on already, here or (moved) elsewhere: the same workspace goes on.
+        // Taken on already, here or (moved) elsewhere: the same workspace goes on. A retry of an open_project that took
+        // the folder on lands here, so it never makes a second app.
         if let index = state.adopted.firstIndex(where: { ($0.repo == now.real || ($0.device == now.device && $0.inode == now.inode)) }),
            projects.contains(where: { $0.id == state.adopted[index].project }),
            state.adopted[index].device == now.device, state.adopted[index].inode == now.inode {
@@ -460,34 +566,47 @@ extension Store {
             var answer = await outsideApply(now.real, reopen: false)
             if moved { answer.text = "Lamp had this folder at another path; it's known here now.\n\n" + answer.text }
             if let project = projects.first(where: { $0.id == state.adopted[index].project }) {
-                answer.text += "\n\n" + OutsideWork.guidance(for: project)
+                answer.text += "\n\n" + OutsideWork.guidance(for: project, layout: RepoImport.layout(of: repo))
             }
             return answer
         }
         // A folder put where one Lamp knew was: that one is let go (its workspace stays on the desk), and this one is new.
         state.adopted.removeAll { $0.repo == now.real }
-        guard FileManager.default.fileExists(atPath: repo.appendingPathComponent("lamp-app.json").path) else {
-            return .refused("\(now.real) isn't a Lamp-format project: it needs lamp-app.json and its code at the top, as Lamp puts a wish on GitHub.")
+        state.save()
+        // What the folder is, as the import reads it (`RepoImport.layout`): a Lamp app, a site, or what's missing for
+        // either. One Lamp can't read is answered with what it lacks.
+        switch RepoImport.layout(of: repo) {
+        case .unknown(let why):
+            return OutsideWork.Answer(outcome: "not_importable", text: "Lamp can't open \(now.real) as it is. \(why) Nothing was changed.", isError: true)
+        case .sharedFile(let file):
+            return OutsideWork.Answer(outcome: "not_importable",
+                                      text: "\(now.real) holds only a packed Lamp app (\(file.lastPathComponent)), not its code, so there's nothing in the folder to edit. Lamp works on a folder holding the app's code: lamp-app.json and its code at the top, or a site's index.html at the top. Nothing was changed.",
+                                      isError: true)
+        case .wish, .site: break
         }
         let capture: OutsideWork.Capture
         do { capture = try await Self.offMain { Result { try OutsideWork.capture(repo) } }.get() } catch {
             return .refused((error as? OutsideWork.CaptureProblem)?.text ?? error.localizedDescription)
         }
         let package = capture.package
-        try? FileManager.default.removeItem(at: package.folder)
-        guard package.platform == .mac, package.parts.isEmpty else {
-            return .refused("For now Lamp takes on only a Mac app on its own; this is \(package.platform.target.identity.name)\(package.parts.isEmpty ? "" : " with other apps").")
+        let target = package.platform.target
+        guard (target.startsAt ?? target.places).contains(.mac), package.parts.isEmpty else {
+            try? FileManager.default.removeItem(at: package.folder)
+            return OutsideWork.Answer(outcome: "not_importable",
+                                      text: "For now Lamp takes on only an app that opens on this Mac, on its own; this is \(target.identity.name)\(package.parts.isEmpty ? "" : " with other apps"). Nothing was changed.",
+                                      isError: true)
         }
         // The same review as any app that comes to Lamp: its fixed checks, the AI's check when AI is set up, and the
-        // person's Build & Open. The agent's call waits for that answer.
-        let before = await Self.offMain { OutsideWork.hashes(of: repo) }
+        // person's Build & Open, of exactly what was captured, which is what's then installed. The agent's call waits
+        // for that answer.
         let made: (LampProject?, String?) = await withCheckedContinuation { answered in
-            importApp(from: repo, outside: OutsideImport(repo: now.real) { answered.resume(returning: ($0, $1)) })
+            importApp(from: repo, outside: OutsideImport(repo: now.real, snapshot: package) { answered.resume(returning: ($0, $1)) })
         }
+        try? FileManager.default.removeItem(at: package.folder)
         guard let project = made.0 else { return .refused(made.1 ?? "Lamp didn't take the folder on.") }
-        // The review installed the folder's metadata as it read just before the review began.
+        // The review installed the capture: its metadata, and the files the mapping names.
         state.adopted.append(OutsideWork.Adopted(repo: now.real, device: now.device, inode: now.inode, project: project.id, applied: nil,
-                                                 metadata: OutsideWork.metadataDigest(before)))
+                                                 metadata: OutsideWork.metadataDigest(capture), files: capture.mapping.record))
         state.save()
         // An app that came with no icon gets its design now, before its first build, as a new app's is designed while its
         // first request builds: designed after it, the icon is a change the open app can't take, and the next change of
@@ -497,9 +616,9 @@ extension Store {
         }
         // Its first build is what the review read and installed, never the folder read again: an edit made while the
         // review was up would otherwise go in unreviewed. Such an edit is pending, for the next apply.
-        var answer = await outsideApply(now.real, reopen: false, reviewed: before)
+        var answer = await outsideApply(now.real, reopen: false, reviewed: capture.hashes)
         answer.text = "Lamp took on \(now.real) as “\(project.name)”.\n\n" + answer.text
-            + "\n\n" + OutsideWork.guidance(for: current(project) ?? project)
+            + "\n\n" + OutsideWork.guidance(for: current(project) ?? project, layout: capture.layout)
         return answer
     }
 
@@ -533,13 +652,17 @@ extension Store {
                     return .refused((error as? OutsideWork.CaptureProblem)?.text ?? error.localizedDescription)
                 }
                 defer { try? FileManager.default.removeItem(at: capture.package.folder) }
-                let metadata = OutsideWork.metadataDigest(capture.hashes)
-                let metadataChanged = state.adopted.first(where: { $0.repo == entry.repo })?.metadata != metadata
-                do { written = try OutsideWork.sync(capture, into: project, metadata: metadataChanged) } catch {
+                let metadata = OutsideWork.metadataDigest(capture)
+                let kept = state.adopted.first(where: { $0.repo == entry.repo })
+                let metadataChanged = kept?.metadata != metadata
+                do { written = try OutsideWork.sync(capture, into: project, previous: kept?.files, metadata: metadataChanged) } catch {
                     return .refused("Lamp couldn't copy the folder's files into its build: \(error.localizedDescription)")
                 }
-                if metadataChanged, let index = state.adopted.firstIndex(where: { $0.repo == entry.repo }) {
-                    state.adopted[index].metadata = metadata
+                // The record of what the workspace holds of the folder's goes with what was just written, whatever the
+                // apply comes to: a file taken out of the folder now is out of the workspace too.
+                if let index = state.adopted.firstIndex(where: { $0.repo == entry.repo }) {
+                    if metadataChanged { state.adopted[index].metadata = metadata }
+                    state.adopted[index].files = capture.mapping.record
                     state.save()
                 }
                 read = capture.hashes
