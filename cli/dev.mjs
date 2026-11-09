@@ -310,10 +310,6 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
   /** What the page shows now: how the changes since the last look went, a picture, the screen as text, and the log. */
   async function look({ wait = 20, reopen = false } = {}) {
     checkAll();
-    if (reopen) {
-      // The page opens again from its beginning, a game with its saves kept: what a person opening it sees.
-      for (const page of pages.values()) { reopening.set(page.tab, Date.now() + 30_000); tell(page, "reload", "fresh"); }
-    }
     let target = null, problem = null;
     try { target = await watched(); } catch (error) { problem = error.message; }
     // Which tab that is, which lasts through the page opening again: only its page is waited for.
@@ -322,7 +318,14 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       tab = await target.page.evaluate("window.__lampTab || null", { timeout: 1000 });
       if (!tab) await sleep(100);
     }
-    const unfinished = await waitUntilSettled(Math.max(0, wait) * 1000, tab);
+    let unfinished = await waitUntilSettled(Math.max(0, wait) * 1000, tab);
+    if (reopen) {
+      // The page opens again from its beginning, a game with its saves kept: what a person opening it sees. A copy
+      // only just started is opened again too, since a game puts back the place it was last left in.
+      const open = [...pages.values()].filter((page) => !tab || page.tab === tab);
+      for (const page of open) { reopening.set(page.tab, Date.now() + 30_000); page.calm = false; tell(page, "reload", "fresh"); }
+      if (open.length) unfinished = await waitUntilSettled(Math.max(0, wait) * 1000, tab);
+    }
     // A page that has only just opened is still putting its loading screen away.
     const mine = [...pages.values()].filter((page) => !tab || page.tab === tab);
     const opened = Math.max(0, ...mine.map((page) => page.readyAt ?? 0));
