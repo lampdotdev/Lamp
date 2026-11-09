@@ -70,6 +70,9 @@ enum WishLink {
         var url: URL
         var secret: String
         var shown: Words
+        /// The link plays or opens the wish's page itself, so the wish's page on GitHub sends visitors here
+        /// (`Publish.OpenInLamp.plays`). Nil in links from before, and for a link whose page is gone or never went.
+        var plays: Bool? = nil
     }
 
     struct Failure: LocalizedError {
@@ -290,7 +293,9 @@ enum WishLink {
             request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
             request.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
             request.httpBody = data.subdata(in: (n * Limit.filePart)..<min(data.count, (n + 1) * Limit.filePart))
-            let (_, status) = try await send(request)
+            // A part is the same whenever it's sent, so one whose connection dropped partway goes again: a big app sends
+            // many, and one dropped part used to fail the whole release.
+            let (_, status) = try await send(request, tries: 4)
             guard status == 204 else { throw fileFailure(status, page: page) }
         }
         var finish = URLRequest(url: fileAddress(for: shared.id, page: page))
@@ -312,7 +317,7 @@ enum WishLink {
         var request = URLRequest(url: fileAddress(for: shared.id, page: page))
         request.httpMethod = "DELETE"
         request.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
-        let (_, status) = try await send(request)
+        let (_, status) = try await send(request, tries: 3)
         guard status == 204 || status == 404 else { throw failure(status) }
     }
 
@@ -331,15 +336,30 @@ enum WishLink {
         return parts.url!
     }
 
-    private static func send(_ request: URLRequest) async throws -> (Data, Int) {
-        do {
-            let (data, response) = try await session.data(for: request)
-            return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
-        } catch {
-            throw Failure(message: (error as? URLError)?.code == .notConnectedToInternet
-                          ? "You're offline. Try again when you're connected." : "Lamp couldn't reach lamp.dev. Try again in a moment.")
+    /// Sends `request`, trying again up to `tries` times in all, a little later each time, when the connection drops or
+    /// times out on the way: only for a request that's the same however often it arrives.
+    private static func send(_ request: URLRequest, tries: Int = 1) async throws -> (Data, Int) {
+        var attempt = 1
+        while true {
+            do {
+                let (data, response) = try await session.data(for: request)
+                return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
+            } catch {
+                let code = (error as? URLError)?.code
+                if attempt < tries, let code, transient.contains(code) {
+                    try await Task.sleep(for: .seconds(attempt * 2))
+                    attempt += 1
+                    continue
+                }
+                throw Failure(message: code == .notConnectedToInternet
+                              ? "You're offline. Try again when you're connected." : "Lamp couldn't reach lamp.dev. Try again in a moment.")
+            }
         }
     }
+
+    /// A connection that dropped or stalled partway, rather than one that can't be made at all.
+    private static let transient: Set<URLError.Code> = [.networkConnectionLost, .timedOut, .secureConnectionFailed,
+                                                       .cannotConnectToHost, .dnsLookupFailed, .cannotFindHost]
 
     private static func failure(_ status: Int) -> Failure {
         switch status {
@@ -677,17 +697,22 @@ enum WishLink {
                     do {
                         if let page = try await Task.detached(priority: .userInitiated, operation: { try WishLink.playablePage(of: project, id: id) }).value {
                             try await WishLink.uploadFile(page, for: shared, page: true)
+                            shared.plays = true
                         } else {
                             // No page now (an app added to the wish, say): the link goes back to its card.
                             try await WishLink.removeFile(for: shared, page: true)
+                            shared.plays = false
                         }
                     } catch {
                         // The old page goes, so the link shows the picture as the card says; if it can't be taken away,
                         // the link still plays the earlier version, and the card says that instead.
                         do {
                             try await WishLink.removeFile(for: shared, page: true)
+                            shared.plays = false
                             pageProblem = Self.problem(error)
                         } catch {
+                            // Its earlier page still plays there.
+                            shared.plays = card.shared?.plays
                             pageProblem = "\(project.name)'s page couldn't be updated on its link, so the link still plays its earlier version. Try again in a moment."
                         }
                     }

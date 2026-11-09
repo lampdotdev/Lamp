@@ -863,10 +863,18 @@ final class Store: ObservableObject {
         failReview(id, "Lamp couldn't finish checking this in time.", detail: "Nothing was changed.")
     }
 
-    /// Try Again, after a review failed: the same request again (its sheet, when it was up, stays up for it).
+    /// Try Again, after a review failed. One that failed on its sheet reads the package on that sheet again (`check`),
+    /// so the retry's progress and any failure of it stay on the sheet; fetching it anew would start a review with no
+    /// sheet, whose failure the sheet never shows. One that failed before its sheet was up asks for the same again.
     func retryReview() {
-        guard reviewWork?.failed == true, let retry = reviewRetry else { return }
+        guard let work = reviewWork, work.failed, let retry = reviewRetry else { return }
         endReview()
+        if let sheet = work.sheet, let pending = pendingImport, pending.id == sheet {
+            // The sheet's whole review as it is now, a prepared update's copy included. A Cancel before this runs closes
+            // the sheet, and `check` then does nothing.
+            Task { await check(pending) }
+            return
+        }
         retry()
     }
 
@@ -898,12 +906,15 @@ final class Store: ObservableObject {
         await reviewTask?.value
     }
 
+    /// How a review reads a package's code: `Sharing.inspect`, which tests replace with a reading that doesn't finish.
+    nonisolated(unsafe) static var inspectForReview: (Sharing.Package) -> Sharing.Inspection = Sharing.inspect
+
     /// The safety check of a review whose sheet is up: Lamp's own reading of the code, off the main actor, then the
     /// AI's. A reading that didn't finish is never a review: the sheet says so, and its buttons stay off.
     private func inspectAndAsk(_ pending: PendingImport, id: UUID) async {
         setReviewStage(.inspecting, for: id)
         let package = pending.package
-        let found = await Self.offMain { Sharing.inspect(package) }
+        let found = await Self.offMain { Self.inspectForReview(package) }
         guard owns(id) else { return }
         guard found.finished else { return failReview(id, "Lamp couldn't finish checking this.", detail: "Nothing was changed.") }
         setReviewStage(.asking, for: id)
@@ -1452,6 +1463,8 @@ final class Store: ObservableObject {
     /// A turn in progress on an app, for tests of what a tool call does under one.
     func beginTurnForTest(_ turn: Turn, on project: LampProject) { turns[project.id] = turn }
     func turnForTest(on project: LampProject) -> Turn? { turns[project.id] }
+    /// Lamp has looked at setup, for tests of a review: reviews wait for that look before their sheet opens.
+    func lookedAtSetupForTest() { setupLook.done() }
 
     /// A Store over the wishes in `root` alone, for tests: none of Lamp's launch work (migration, keys, starters) runs.
     init(testingAt root: URL) {
@@ -3980,6 +3993,10 @@ final class Store: ObservableObject {
 
     private func fetchForReview(_ source: RepoImport.Source, request: String?, updating target: String?, following: Following.Followed?, id: UUID) async {
         let folder = RepoImport.cloneFolder()
+        // The clone is done with once its review is up or kept for setup: the review works from its own copy, the request
+        // beside the clone is read into it (`PendingImport.request`), a wait for setup copies the tree and request
+        // (`WaitingImport.keep`), and Try Again fetches afresh.
+        defer { try? FileManager.default.removeItem(at: folder) }
         do {
             // With no git on this Mac, GitHub's archive of the commit, for anything but an update: that's a merge, which
             // takes git in any case.
@@ -3987,13 +4004,12 @@ final class Store: ObservableObject {
             let tree: URL
             if let fetched { tree = fetched.tree } else { tree = try await RepoImport.clone(source, into: folder) }
             // Cancelled, replaced or out of time meanwhile: what was fetched never opens a review.
-            guard owns(id) else { try? FileManager.default.removeItem(at: folder); return }
+            guard owns(id) else { return }
             // Someone's own project, not a wish: the agent can make it into one, which then gets its updates as
             // any wish does (`AppUpdates`). A wish's own update that finds no wish there is an error as before.
             if target == nil, !RepoImport.holdsWish(tree) {
                 // The commit fetched, so the app is made from exactly the version the person opened.
                 let commit = fetched?.commit ?? RepoImport.repository(of: tree)?.commit
-                try? FileManager.default.removeItem(at: folder)
                 endReview()
                 offerToAdapt(source, commit: commit)
                 return
@@ -4001,7 +4017,6 @@ final class Store: ObservableObject {
             if let request { try request.write(to: folder.appendingPathComponent(Self.requestFile), atomically: true, encoding: .utf8) }
             await openForReview(tree, updating: target, fetched: fetched, following: following, id: id)
         } catch {
-            try? FileManager.default.removeItem(at: folder)
             guard owns(id) else { return }
             let failure = error as? Sharing.ImportError
             failReview(id, failure?.message ?? "Lamp couldn't fetch the update.", detail: failure?.detail ?? (failure == nil ? error.localizedDescription : nil))
@@ -4132,9 +4147,10 @@ final class Store: ObservableObject {
         var copy: String? = nil
         /// The copy's version when its review was made: a copy changed since isn't what was reviewed.
         var copyHead: String? = nil
-        /// With mixing on, the file itself when it can be mixed into a wish here (`Mix.copy`): it carries its versions.
-        /// That wish is then `existing`, and the choice is Mix… or Keep as Separate App.
-        var mixFile: URL? = nil
+        /// With mixing on, whether the package can be mixed into a wish here (`Mix.copy`): it carries its versions.
+        /// That wish is then `existing`, and the choice is Mix… or Keep as Separate App. Mix… hands the package itself to
+        /// the mix (`mixPendingImport`), so nothing needs the file it came from once the review is up.
+        var mixable = false
         /// Another copy `existing` follows, pulled in (`Following`): Update always merges it, since it's someone else's
         /// copy rather than a newer one of where the wish came from.
         var following: Following.Followed? = nil
@@ -4271,7 +4287,7 @@ final class Store: ObservableObject {
         if Mix.isOn, !trying, outside == nil, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
            let into = Mix.copy(of: package, among: projects), await Mix.meeting(package, history: history, with: into) != nil {
             pending.existing = into
-            pending.mixFile = file
+            pending.mixable = true
         }
         if let existing = pending.existing { pending.changedHere = await changedSinceArrival(existing) }
         guard owns(id) else { try? FileManager.default.removeItem(at: package.folder); return }
@@ -4307,6 +4323,18 @@ final class Store: ObservableObject {
             }
         }
         return file != nil
+    }
+
+    /// Mix… on the review: the mix takes the review's package and, when its check has finished, that check too, so the
+    /// code isn't checked twice; then the review closes without removing the package, since the mix window owns it from
+    /// here (`MixModel.reset` removes it). False, with the review left up, while a mix is being saved.
+    @discardableResult func mixPendingImport() -> Bool {
+        guard let pending = pendingImport, pending.mixable,
+              MixModel.shared.adopt(pending.package, reviewed: pending.review, store: self) else { return false }
+        endReview()
+        if let copy = pending.copy { Task { await discardPreparedCopy(copy, movingQueuedTo: nil) } }
+        pendingImport = nil
+        return true
     }
 
     func cancelImport() {
@@ -4661,8 +4689,9 @@ final class Store: ObservableObject {
 
     /// Mixes what was picked of two copies into this one (`Mix.apply`), owning the wish as an update does, then builds
     /// it as a merged update is built. The wish's files must be as its latest version has them: the mix window saves
-    /// what's unsaved before lining the copies up.
-    func mix(_ picked: Set<String>, in lineup: Mix.Lineup) async throws {
+    /// what's unsaved before lining the copies up. `checked` is the check of `prepared`, when it held code no review read.
+    func mix(_ prepared: Mix.Prepared, checked: ImportReview?, in lineup: Mix.Lineup) async throws {
+        let picked = prepared.picked
         guard let project = current(lineup.project), begin(project) != nil else {
             throw Mix.Failure(message: "“\(lineup.project.name)” is busy right now. Try again when it's done.")
         }
@@ -4672,7 +4701,7 @@ final class Store: ObservableObject {
         }
         let iconFile = project.dir.appendingPathComponent("icon.json")
         let iconBefore = try? Data(contentsOf: iconFile)
-        guard try await Mix.apply(picked, in: lineup) > 0 else { return }
+        guard try await Mix.apply(prepared, in: lineup, checked: checked) > 0 else { return }
         // The icon's pictures live outside the versions: theirs go in when the mix brought their icon's design.
         let iconAfter = try? Data(contentsOf: iconFile)
         if iconAfter != iconBefore, iconAfter == (try? Data(contentsOf: lineup.package.folder.appendingPathComponent("icon.json"))) {
@@ -7486,6 +7515,12 @@ final class Store: ObservableObject {
               !inWindow || Self.binary(of: project, contains: "lampDriveTakenOver") else {
             return (200, ["text": "The open app was built before use_app could do this. Call look_at_app to rebuild it, then try again."])
         }
+        // A click on a game's page is kept to the page only by a driver that knows `page`: an older one would click and type
+        // natively wherever the point fell. The running copy's own executable is what's asked: the one that would carry the
+        // clicks out, which can be an older copy elsewhere than the installed one.
+        if inWindow, actions.contains(where: { $0["page"] as? Bool == true }), !Self.binary(at: app.executableURL, contains: Self.gamePageMarker) {
+            return (200, ["text": "The open game was built before use_app could click its screen. Call look_at_app to rebuild it, then try again."])
+        }
         let readsScreen = Self.binary(of: project, contains: Self.screenTextMarker)
         if !readsScreen, actions.contains(where: { ($0["target"] as? String)?.isEmpty == false }) {
             return (200, ["text": "The open app was built before use_app could act on things by name. Call look_at_app to rebuild it, then try again."])
@@ -7642,6 +7677,9 @@ final class Store: ObservableObject {
 
     /// A line every app that writes its screen as text (`LampScreen` in LampSupport.swift) has in its binary.
     private static let screenTextMarker = "The screen as text, in reading order"
+    /// Words only a driver that keeps a game's clicks to its page has (`LampDriver.run`, the `page` refusal), looked for in
+    /// the running copy's executable.
+    static let gamePageMarker = "that isn't on the game's page, so nothing was done"
 
     /// `use_app` for an iPhone app: Lamp drives the simulator through the Mac's accessibility system
     /// (Simulator.Driver), then a fresh picture of the screen follows the report.
@@ -8718,8 +8756,12 @@ final class Store: ObservableObject {
 
     /// Whether the installed app's binary contains a string, which says which Lamp features it was built with.
     static func binary(of project: LampProject, contains marker: String) -> Bool {
-        let binary = project.installedURL.appendingPathComponent("Contents/MacOS/\(project.exe)")
-        guard let data = try? Data(contentsOf: binary, options: .alwaysMapped) else { return false }
+        binary(at: project.installedURL.appendingPathComponent("Contents/MacOS/\(project.exe)"), contains: marker)
+    }
+
+    /// Whether the executable at `url` (a running copy's own, wherever it is) contains `marker`; false when there's none.
+    static func binary(at url: URL?, contains marker: String) -> Bool {
+        guard let url, let data = try? Data(contentsOf: url, options: .alwaysMapped) else { return false }
         return data.range(of: Data(marker.utf8)) != nil
     }
 

@@ -9220,6 +9220,7 @@ enum Template {
     /// .lamp/runtime/use.json, which tells Lamp it's all ready.
     @MainActor
     enum LampDriver {
+        // begin LampDriver.Action
         struct Action: Decodable {
             let action: String          // click, double_click, right_click, menu, bar_icon, type, key, scroll, wait
             var target: String?         // what to act on: an id ("b2") or exact name from the screen as text
@@ -9234,7 +9235,19 @@ enum Template {
             /// A game's controller as `stick` and `button` hold it (lx, ly, rx, ry -1 to 1, lt and rt 0 to 1, `down` the
             /// buttons' bits), for `amount` seconds; `text` says it in words. Held in the game's page (LampPage.swift).
             var controller: [String: Double]?
+            /// A game's click, double-click or typing: carried out in the game's page only (`LampPageItems.act`), never
+            /// on what's around it.
+            var page: Bool?
         }
+        // end LampDriver.Action
+
+        // begin LampDriver.holdsController
+        /// Whether a batch has the game's controller from its start to its end: one with controller moves, or with a click
+        /// or typing on the game's page, so the person's own play at any point (a controller, a phone) stops the rest.
+        static func holdsController(_ actions: [Action]) -> Bool {
+            actions.contains { ["stick", "button"].contains($0.action) || $0.page == true }
+        }
+        // end LampDriver.holdsController
 
         // begin LampDriver.Handover
         /// The batch of actions being carried out, and the person's way to take the app back part way through it.
@@ -9407,9 +9420,9 @@ enum Template {
                 report.append(why)
                 answer(stopped: true)
             }
-            // A game's controller is Lamp's for the whole batch, its waits included, so the person's own input at any
-            // point takes it back (lamp-game.js); given back however the batch ends.
-            if actions.contains(where: { ["stick", "button"].contains($0.action) }), let own = LampPageItems.own {
+            // A game's controller is Lamp's for the whole batch, its waits and page clicks included, so the person's own
+            // input at any point takes it back (lamp-game.js); given back however the batch ends.
+            if holdsController(actions), let own = LampPageItems.own {
                 let seconds = actions.reduce(2.0) { total, action in
                     total + 0.6 + (["wait", "key", "stick", "button"].contains(action.action) ? min(max(action.amount ?? 1, 0), 10) : 0)
                 }
@@ -9689,6 +9702,12 @@ enum Template {
             if let act = LampPageItems.act, !(window is NSSavePanel), ["click", "double_click", "type", "key"].contains(action.action),
                let did = act(action, action.x != nil && action.y != nil ? point : nil, window) {
                 return (what.map { "\(action.action) \($0): " } ?? "\(action.action): ") + did
+            }
+            // A game's own: what isn't on its page (the window's edge, a dialog in front) is left alone. Lamp looks for
+            // these words in the app (`Store.gamePageMarker`) before it sends a game's page any click.
+            if action.page == true {
+                if action.action != "type", action.x == nil || action.y == nil { return "\(action.action): needs a target, or x and y" }
+                return (what.map { "\(action.action) \($0): " } ?? "\(action.action): ") + "that isn't on the game's page, so nothing was done"
             }
             if isBarPanel(window), action.action == "key", action.key?.lowercased() == "escape" {
                 releaseBarPanel()

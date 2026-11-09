@@ -503,10 +503,15 @@ app, and that Reload's launch is the fresh start. An ordinary Reload keeps the p
 
 `use_app` on a game in its window holds Lamp's own controller in the game's page, carried out by the app's own driver
 under the same signed batch, Stop and report as any Mac app's use (`LampDriver`, `LampDriver.Handover`): Lamp turns
-`stick`, `button` and `wait` into the driver's actions (`GameKit.controls`, each held at most 10 s), the driver hands each
+`stick`, `button` and `wait` into the driver's actions (`GameKit.controls`, each held at most 10 s), and passes a
+`click`, `double_click` or `type` on what the game's page shows (a menu's button, a mode switch, a field) marked `page`,
+which the driver carries out in the page (`LampPageItems.act`) and never on what's around it, reporting it as sent, not
+as taken, and only to an open copy whose driver knows `page` (`Store.gamePageMarker`, read from the running copy's own executable; an older one
+is asked to be rebuilt first, since it would click and type natively wherever the point fell); `key` is refused with what does a key's work (a `button` or a `stick`), since the runtime's keyboard never
+reads a key a script made and a real key would be taken for the person's play. The driver hands each
 hold to the page (`LampPageItems.hold`, LampPage.swift, `window.__lampDrive`) and reports the page's answer, held or
 why not (no Lamp runtime running in it, the page failing), never "held" before the page took it; it lets the hold go when
-it's due, when the batch stops or a newer one begins (`Handover.hold(for:release:)`). A batch with controller moves has
+it's due, when the batch stops or a newer one begins (`Handover.hold(for:release:)`). A batch with controller moves, or with a click or typing on the page (`LampDriver.holdsController`), has
 the controller from its start to its end, waits and gaps included (`LampPageItems.own`, `__lampOwn`, given back by
 `Handover.whenOver` however the batch ends). In the page (lamp-game.js, "Lamp's hands on the controller") Lamp's
 controller is the first player while it holds anything, in place of that player's controller, keyboard and touch, never
@@ -747,7 +752,8 @@ the start of a service's name (no minus sign, no period before a digit), on a TV
 read among them, gets no service: its lamp.js names none, and `start({ host: 'game' })` there is refused by Lamp, which
 answers the page's asks.
 `Tests/LGPhones/relay-test.js` runs the service on real sockets under each Node an LG TV has, with LG's
-`webos-service` stood in for.
+`webos-service` stood in for. `.github/workflows/lg-phone-tests.yml` runs it on Node 8.12, 12, 16 and 20 when the
+service, its tests or the ws update script changes, and on demand. It uses the bundled ws without installing packages.
 On the Xbox a game that chose its own runs its phones in Lamp's WebView2 host (`lamp_web_host.cpp`, with the protocol in
 `Resources/WebHost/lamp_controllers.h`, plain C++ that keeps to LampRelayKit's wire message for message): the page is
 in the package as `Phone/`, beside `Web/` (`GamePhones.xboxPage`, `WebHost.payload`), and the page asks the host for its

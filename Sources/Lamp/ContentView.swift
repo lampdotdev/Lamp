@@ -346,7 +346,7 @@ struct ImportReviewView: View {
                          cancel: store.cancelImport, open: store.confirmImport, update: store.confirmUpdate,
                          android: pending.package.platform.target.recipe.language == .kotlin, prepared: pending.prepared != nil,
                          mixWaits: mixing.stage == .mixing,
-                         mix: pending.mixFile.map { file in { store.cancelImport(); openWindow(id: "mix"); MixModel.shared.open(file, store: store) } },
+                         mix: pending.mixable ? { if store.mixPendingImport() { openWindow(id: "mix") } } : nil,
                          trying: pending.trying, tryIt: store.confirmTrial, ownFolder: pending.outside != nil,
                          progress: work?.failed == false ? work?.line : nil, failure: work?.failed == true ? work?.line : nil,
                          retry: store.retryReview)

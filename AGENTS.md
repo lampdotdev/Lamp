@@ -72,7 +72,12 @@ Renaming any of those needs a migration, not a find-and-replace.
 - Write American spelling (color, center, license, favorite) in everything: on-screen words, prompts and skills, docs and
   comments. The agent picks up whatever spelling surrounds it. Names in code that existing apps or saved data depend on
   (`LampNetwork.neighbours`) stay as they are.
-- Files committed to the repo (README, docs, code comments, tests) must never name a person, personal device or hostname, or narrate a particular session or test run; put those details in the PR description.
+- Lamp is open source, so everything that goes to the repository is public: files, commit messages, PR descriptions and
+  their screenshots. None of them names a person, a personal device or a hostname, or mentions meetings, what someone
+  said, users or customers, or someone's own apps and the feedback on them. Say why a change is needed from the code and
+  what was observed, in general terms ("a big web game"), and use made-up examples in tests, the gallery and
+  screenshots. Files committed to the repo also never narrate a particular session or test run; what was tried and its
+  numbers go in the PR description.
 - Verify in an isolated harness app rather than in the user's apps, without taking over the screen others are using:
   see "Checking a change beside other work" in [Lamp Dev and instances](docs/development/lamp-dev-and-instances.md).
 - No attribution lines in commits or PR descriptions.

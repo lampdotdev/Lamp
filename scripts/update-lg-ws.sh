@@ -6,8 +6,8 @@
 # services take no C/C++ addons. Run it to move to another version: change the two lines below.
 set -euo pipefail
 cd "${0:A:h}/.."
-version=7.5.10
-integrity='sha512-+dbF1tHwZpXcbOJdVOkzLDxZP1ailvSxM6ZweXTegylPny803bFhA+vqBYw4s31NSAk4S2Qz+AKXK9a4wkdjcQ=='
+version=7.5.11
+integrity='sha512-zS54Oen9bITtp7kp2XM3AydrCIq1D+HwJOuH+c+e4LfpL/lotP5osijd+UoMnxwAam1GN8R4KtLAyIrIcBNpiA=='
 
 out=Resources/LGPhones/node_modules/ws
 work=$(mktemp -d)

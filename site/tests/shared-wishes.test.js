@@ -211,6 +211,47 @@ function zip(name, data) {
   return Buffer.concat([local, nameBytes, data, central, nameBytes, end]);
 }
 
+test("a part sent again while its first try is still storing keeps the parts sent meanwhile", async () => {
+  const store = memoryStore();
+  const handler = createShareHandler({ store, limited: false });
+  const { id, secret } = await (await send(handler, "POST", share)).json();
+  // Parts kept as the site keeps them, each at an address of its own and gone once removed.
+  const blobs = new Map();
+  let count = 0, slowPut = true, holdPut, slowRead = false, holdRead;
+  store.putFile = async (_id, _name, bytes) => {
+    if (slowPut) { slowPut = false; await new Promise((resolve) => { holdPut = resolve; }); }
+    const url = `blob:${count++}`;
+    blobs.set(url, Buffer.from(bytes));
+    return url;
+  };
+  store.readFile = async (url) => {
+    if (slowRead) { slowRead = false; await new Promise((resolve) => { holdRead = resolve; }); }
+    if (!blobs.has(url)) throw new Error("missing");
+    return blobs.get(url);
+  };
+  store.removeImages = async (urls) => { for (const url of urls) blobs.delete(url); };
+  const files = createFileHandler({ store, limited: false });
+  const file = zip("lamp-app.json", Buffer.alloc(5000, 7));
+  const part = (n, bytes) => files(new Request(`https://lamp.dev/api/wish-file?id=${id}&part=${n}&of=2`, {
+    method: "PUT", headers: { "content-type": "application/octet-stream", authorization: `Bearer ${secret}` }, body: bytes,
+  }));
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
+  // The first try at part 0 stores slowly, as one whose connection dropped can; Lamp sends it again, then part 1.
+  const late = part(0, file.subarray(0, 3000));
+  await tick();
+  assert.equal((await part(0, file.subarray(0, 3000))).status, 204);
+  assert.equal((await part(1, file.subarray(3000))).status, 204);
+  // Putting them together reads the parts while the late first try lands.
+  slowRead = true;
+  const done = files(new Request(`https://lamp.dev/api/wish-file?id=${id}`, { method: "POST", headers: { authorization: `Bearer ${secret}` } }));
+  await tick();
+  holdPut();
+  assert.equal((await late).status, 204);
+  holdRead();
+  assert.equal((await done).status, 200);
+  assert.deepEqual(blobs.get(store.records.get(id).file.url), file);
+});
+
 test("the wish itself goes with its link in parts, only as a file Lamp made, and goes with the link", async () => {
   const store = memoryStore();
   const handler = createShareHandler({ store, limited: false });
@@ -342,4 +383,15 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   assert.equal((await send_("&what=page", "PUT", zip("index.html", html), "&part=0&of=1")).status, 204);
   assert.equal((await send_("&what=page", "POST")).status, 200);
   assert.equal(store.records.get(id).page.version, 2);
+
+  // A new page leaves the one before it playable, for a game still open on it; the one before that goes.
+  const again = async () => {
+    assert.equal((await send_("&what=page", "PUT", zip("index.html", html), "&part=0&of=1")).status, 204);
+    assert.equal((await send_("&what=page", "POST")).status, 200);
+  };
+  const plays = async (v) => (await play(new Request(`https://${own}/api/wish-play?id=${id}&v=${v}&path=index.html`))).status;
+  await again();
+  assert.deepEqual([await plays(2), await plays(3)], [200, 200]);
+  await again();
+  assert.deepEqual([await plays(2), await plays(3), await plays(4)], [404, 200, 200]);
 });

@@ -228,8 +228,14 @@ iPad the app around the page enforces it (`LampPageGuard` in LampPage.swift): ev
 Content-Security-Policy naming only those sites; the page never leaves its own address in its window or a frame
 (redirects included); a link opens in the browser only on the person's click, once they've seen where it goes; what
 no policy covers (WebRTC, a link's preconnect and prefetch) is off (`NetworkPolicy.holdBack`). A page whose sheet said
-"May connect outside this app" shows what was blocked, and the person can allow that site, once they've seen it whole,
-or every site for good, on that device. A game's own controllers relay is the one way out the app adds: the rules name
+"May connect outside this app" shows what was blocked in a bar above it (`LampPageBlocked`, one site at a time, in
+room of its own that `LampPageHolder` lays the page out below, so the page's own top controls are never covered), and
+the person can allow that site, once they've seen it whole, or every site for good, on that device. Closing a site's
+bar keeps it blocked and its bar away for the rest of that launch, in every page and window (`LampPageRefusals`), since
+a page often asks for the same site again and again; a bar another window shows at that moment goes too when its site
+is the one closed or allowed, or when every site was allowed (`LampPageRefused.settle`). Allowing a site, or every site,
+opens every page of the app again under the new rules (`LampPageGuard.retirePages`), each as Lamp's Reload opens it (`LampPageView.reopen`: a game keeps where the player was), since a page's rules came with
+its files and one in another window would otherwise go on refusing what was allowed. A game's own controllers relay is the one way out the app adds: the rules name
 it at `ws://127.0.0.1:<port>` for connecting only, for that launch, never kept with the sites or taken from the page
 (`ControllerRuntime.pageSites`, "Lamp's player" in the devices guide). Lamp's previews serve the same rules (`StagedFiles.policy`), with Lamp's own relay open to a TV game's page in its preview (the TV guide). A copy of the wish
 (a remix, an update's copy) is held as the wish is (`SharedNetwork.carry`, `arrive`). What an update or Keep as Separate App records is the reading its review made of exactly that package (`Sharing.Inspection.readings`, kept as `PendingImport.readings`), not a second reading on the main actor; an update with no review (an original, a pull-in, an update's copy) reads it off the main actor (`Store.readings(of:reviewed:)`). A phone's controller page reads it
@@ -323,7 +329,12 @@ on `<owner>.github.io` or the account's own domain; and over the page Lamp's cre
 its link on a narrow screen). Its Open in Lamp is the wish's Share Link when the person has made one (`Publish.OpenInLamp`:
 that page works for someone without Lamp, whose Download Lamp carries the wish into the welcome, and for someone with
 it), else lamp.dev's remix of the repository; both it and Remix… name the repository at the commit pushed with the page,
-so they start from the game that's played. The bar is written as the page is pushed, once that commit is known
+so they start from the game that's played. Where the Share Link plays or opens the page itself (`WishLink.Shared.plays`,
+set as the link's page goes up), the GitHub page sends whoever opens it there (`OpenInLamp.plays`): lamp.dev shows the wish whole, with its ways to get it
+and change it, and a page too big for its link stays on GitHub. It stays, playing on GitHub, when it's framed, when the
+browser has saves of it there (`lamp:<repository>:`, which the link's own play address can't read), and when the link
+doesn't say it plays the page within four seconds (`/w/<id>/card.png?plays`, a pixel never cached, 404 for a link taken
+down or one whose page went with a later release that didn't update GitHub). The bar is written as the page is pushed, once that commit is known
 (`GitHubRepo.upload`). The page goes up after the code, as one commit on top of what's on its branch, or none when it's
 the same (`Publish.pushPage`); Pages is turned on for that branch, or asked to build, and the card waits until GitHub says
 it built that very commit (an earlier build's "built" is the page as it was), saying so if it's still building after ten
@@ -375,7 +386,13 @@ the file kept in lamp.dev's Blob store; the file always goes when the wish can g
 each Release Update sends the file again, which counts the link's version up (see "Releases" below). A wish with a page (a web app, a web
 game, a screen: `Publish.hasPage`) sends that too (`WishLink.playablePage`, the page a release puts on GitHub, which
 stays as it is), and its link's page opens on it, playing, with the ways to make one's own under it: whoever has the
-link tries the wish first and remixes it after (SHARED_WISHES.md). The version is what followers ask for (`latest` in
+link tries the wish first and remixes it after (SHARED_WISHES.md). A new page leaves the one before it playable
+(`previousPage` in lib/shared-wishes.js), since a game open on it goes on loading files as it's played (Ann Arbor's map
+as the player moves); the one before that goes. A file a game asks for through lamp-game.js's `asset` that doesn't come
+puts a bar with Reload on the page (`loadProblem`) rather than leaving the game on its loading screen: for a 404 only
+when the page itself is gone too, since a game may ask for a file it doesn't have. Keys reach a framed page only while its frame has
+focus: the link's page focuses it as it loads and after its own buttons, and lamp.js in the page takes focus back on any
+press inside it, since a game that cancels pointerdown (to drag its camera) also cancels the press that would have. The version is what followers ask for (`latest` in
 lib/shared-wishes.js, `GET /api/wishes?id=`, `WishLink.latest`). The page's Open in Lamp is `lamp://wish?shared=<id>`
 (`sharedWishLink` in lib/wish.js, `Wish.Shared`): Lamp asks for the file's latest, fetches it and reviews it as any shared
 file (`Store.takeShared`), and the copy it makes follows that link, marked as the one it started from, at the version it

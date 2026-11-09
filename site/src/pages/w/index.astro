@@ -72,7 +72,9 @@ import { DOWNLOAD_URL } from "../../lib/download";
          brings both back. -->
     <div data-bar data-remix-band class="bar bar-bottom">
     <aside class="remix-band h-16 border-t border-tape/15 bg-paper" aria-label="Make a change">
-      <form data-prompt class="mx-auto flex h-full max-w-[44rem] items-center gap-2 py-3 pr-14 pl-3 sm:pl-6 lg:px-6">
+      <form data-prompt class="mx-auto flex h-full max-w-[52rem] items-center gap-3 py-3 pr-14 pl-3 sm:pl-6 lg:px-6">
+        <!-- Says what the box is for beside it; on a phone, where there's no room, only to screen readers. -->
+        <label for="change" class="sr-only shrink-0 text-[15px] font-medium sm:not-sr-only">What would you change or fix?</label>
         <div class="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-tape/15 bg-paper py-1 pr-1 pl-3 shadow-xs transition focus-within:border-tape/50 focus-within:ring-3 focus-within:ring-tape/10">
           <svg aria-hidden="true" viewBox="0 0 16 16" class="size-4 shrink-0 fill-current text-muted-ink"><path d="M8 0.8l1.6 4.2 4.2 1.6-4.2 1.6L8 12.4 6.4 8.2 2.2 6.6 6.4 5zM13 10.5l0.7 1.8 1.8 0.7-1.8 0.7L13 15.5l-0.7-1.8-1.8-0.7 1.8-0.7z" /></svg>
           <input
@@ -81,7 +83,6 @@ import { DOWNLOAD_URL } from "../../lib/download";
             type="text"
             autocomplete="off"
             enterkeyhint="send"
-            aria-label="What would you change?"
             placeholder="What would you change?"
             class="min-w-0 flex-1 bg-transparent py-1.5 text-[15px] placeholder:text-muted-ink focus:outline-none"
           />
@@ -338,6 +339,11 @@ import { DOWNLOAD_URL } from "../../lib/download";
       stage.hidden = false;
       focusPlay = () => { if (document.activeElement !== $<HTMLInputElement>("[data-change]")) frame.focus(); };
       frame.addEventListener("load", focusPlay);
+      // A game whose version was replaced while it was open asks for the page again, which plays the newest
+      // (lamp-game.js's `loadProblem`). Only from this frame, and it only reloads.
+      window.addEventListener("message", (event) => {
+        if (event.source === frame.contentWindow && event.data?.lamp === "reload-page") location.reload();
+      });
       frame.src = wish.play;
       // The same button takes the wish out of full screen, and shows which way it goes.
       const button = $<HTMLButtonElement>("[data-fullscreen]");
@@ -421,6 +427,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
     // suggests for it turn in its placeholder, holding still while it's in use or where less motion is asked for.
     const change = $<HTMLInputElement>("[data-change]");
     change.value = askFrom(location.search) ?? "";
+    // That someone started writing a change, once a visit, to count those who begin one and never send it.
+    change.addEventListener("input", () => track("idea_change_started", { idea: wish.name, place: "shared" }), { once: true });
     const ideas = wish.ideas ?? [];
     let shown = 0;
     const placeholder = () => { change.placeholder = ideas.length ? ideas[shown] : "What would you change?"; };
@@ -447,7 +455,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
       event.preventDefault();
       const ask = asked();
       if (!ask) return change.focus();
-      if (!change.value.trim()) track("idea_suggestion", { idea: wish.name, place: "shared" });
+      // Which kind of change was sent, a suggestion or the visitor's own, never what they wrote.
+      track(change.value.trim() ? "idea_own_change" : "idea_suggestion", { idea: wish.name, place: "shared" });
       $<HTMLElement>("[data-remix-to]").textContent = ask;
       open.href = (wish.file && wish.shared ? sharedWishLink(wish.shared, ask) : wishLink(withAsk(wish.wish, ask))) ?? "/";
       dialog.showModal();

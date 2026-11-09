@@ -352,13 +352,17 @@ its file finds the wish it was remixed from by its chain, and the original's fil
 unsaved, and lines up every change either of you made since the copies last met on one timeline by date, each a switch: lit when it's kept, dimmed when it's left out, across the window's width. A thumb on
 its owner's side (yours left, theirs right) does what a click does: up to keep it, turned over to leave it out. A
 change's time shows while Option is held.
-Nothing of theirs starts in; Mix waits for the file's review (`Sharing.review`), as opening it would. The window's head
-names the wish being mixed into and how a click works, and Choose Another… starts over with another file.
+Nothing of theirs starts in; Mix waits for the file's review (`Sharing.review`), as opening it would: the import's own,
+whole, when it had finished before Mix… (`MixModel.adopt`), so the code is checked once; otherwise Mix checks it itself. The window's head
+names the wish being mixed into and how a click works, and Choose Another… starts over with another file. Under the
+two copies, every warning of the reviews in force, with its detail, as the import's review shows them
+(`ImportReviewCard.considerations`); and Mix follows their rule (`ImportReview.opening`): Return mixes only
+on a review Lamp vouches for, anything less takes a click, and "Mix Anyway" when there's something to be wary of.
 
 A wish file dropped on the desk opens as one opened from the Finder (`Store.importApp`). With the switch on, a file
 that carries its versions and finds a wish here it met at a version both have (`Mix.copy`, `Mix.meeting`) gets Mix…
 in place of Update on its review, waiting while another mix is saved
-(`PendingImport.mixFile`), beside Keep as Separate App: Mix… closes the review and opens the window on that file
+(`PendingImport.mixable`), beside Keep as Separate App: Mix… closes the review and opens the window on that file
 (`MixModel.shared`).
 
 - **What travels.** With the switch on, a shared file carries History/ (`MixHistory`): the sender's versions since
@@ -376,6 +380,19 @@ in place of Update on its review, waiting while another mix is saved
 - **Playing back.** What's in is replayed in date order from where they met with `git merge-tree -X theirs`: the
   later change wins wherever two touch the same lines (`Mix.replay`), and the window marks an earlier change a later
   one replaces in part. Lamp's own files stay as this copy has them.
+- **What no review read.** The file's review read its code at the top of the file, their latest; a pick can come to
+  something else (a change of theirs taken without a later one, a file both changed, a History/ that differs from the
+  code beside it), and so can each version saved on the way, which Undo reaches at once. Mix plays the pick back once
+  (`Mix.prepare`) into the trees it will save; a version holding a file (its content and mode, or its absence) that is
+  neither what the review read, as an import stages it (`Upstream.stage`), nor what this copy has had since the copies
+  met, needs a check. Mix then saves nothing: it checks the app as the mix leaves it, every file written as the tree holds it and
+  read as a shared file is (`Mix.checkInput`), with each such earlier version's code beside it under that version's title, in one review, which
+  adds to the file's and never takes any of it back: Mix shows what both say and follows the stricter rule. The check is of those trees only: a change to the pick drops it. A check that couldn't read what the mix comes to
+  shows why with Try Again beside it (`MixModel.retryCheck`), which plays the same pick back again and checks it, the
+  file's review kept as it was; Mix stays off until that check is in. `Mix.apply`
+  saves the very trees prepared, refusing one that needs a check without it or a copy that has moved on, before a file
+  is touched. Their changes to a file no shared copy carries don't come in; it stays as this copy has it. Each
+  preparation, preview and save builds its trees in an index of its own.
 - **Saving.** On top of this copy's history, never rewriting it: one version leaving out what of yours was taken
   out, tagged `Lamp-Left-Out: <commits>` and saved even when it changes no file, then one per change of theirs taken
   in, under its title, with `Lamp-Mixed: <their commit>` so neither copy offers it again. The next lineup reads both:
@@ -385,6 +402,5 @@ in place of Update on its review, waiting while another mix is saved
   then, and isn't made again (`Mix.mixedMark`). Every git it runs works on commits, so a git
   without `merge-tree -X` still mixes, a later change then winning whole files.
 
-Not yet: a review of the code in History/ beyond what the file's own review read (an early change of theirs taken
-without a later one brings code no review saw), Android's package rename, a wish of several apps (untried), and
+Not yet: Android's package rename, a wish of several apps (untried), and
 running their copy beside yours.
