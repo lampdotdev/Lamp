@@ -329,7 +329,12 @@ on `<owner>.github.io` or the account's own domain; and over the page Lamp's cre
 its link on a narrow screen). Its Open in Lamp is the wish's Share Link when the person has made one (`Publish.OpenInLamp`:
 that page works for someone without Lamp, whose Download Lamp carries the wish into the welcome, and for someone with
 it), else lamp.dev's remix of the repository; both it and Remix… name the repository at the commit pushed with the page,
-so they start from the game that's played. The bar is written as the page is pushed, once that commit is known
+so they start from the game that's played. Where the Share Link plays or opens the page itself (`WishLink.Shared.plays`,
+set as the link's page goes up), the GitHub page sends whoever opens it there (`OpenInLamp.plays`): lamp.dev shows the wish whole, with its ways to get it
+and change it, and a page too big for its link stays on GitHub. It stays, playing on GitHub, when it's framed, when the
+browser has saves of it there (`lamp:<repository>:`, which the link's own play address can't read), and when the link
+doesn't say it plays the page within four seconds (`/w/<id>/card.png?plays`, a pixel never cached, 404 for a link taken
+down or one whose page went with a later release that didn't update GitHub). The bar is written as the page is pushed, once that commit is known
 (`GitHubRepo.upload`). The page goes up after the code, as one commit on top of what's on its branch, or none when it's
 the same (`Publish.pushPage`); Pages is turned on for that branch, or asked to build, and the card waits until GitHub says
 it built that very commit (an earlier build's "built" is the page as it was), saying so if it's still building after ten

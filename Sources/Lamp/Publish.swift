@@ -91,9 +91,14 @@ enum Publish {
     /// page was put up with, at the commit pushed with it (`GitHubRepo.upload`). The Remix panel's request goes with it
     /// (`RemixLink.Origin`), so Lamp starts from a copy rather than its own version, and with no Share Link, Open in Lamp
     /// goes there too.
+    /// `plays` is that the Share Link plays or opens the page itself (`WishLink.Shared.plays`): the page on GitHub then
+    /// sends whoever opens it there, where the wish is shown whole with its ways to get it and change it, unless they
+    /// have saves under `saves` (the page's `LAMP_PAGE_SCOPE`) on GitHub, which the link's own page can't read.
     struct OpenInLamp: Equatable {
         var link: URL?
         var origin: RemixLink.Origin? = nil
+        var plays = false
+        var saves: String? = nil
     }
 
     /// Gives a published copy of lamp.js the repository's name to keep what the page saves under (`LAMP_PAGE_SCOPE`).
@@ -248,10 +253,30 @@ enum Publish {
             <script>setTimeout(function(){var c=document.getElementById('lamp-credit');if(c)c.className='settled'},8000)</script>
 
             """
-        if let end = html.range(of: "</body>", options: [.caseInsensitive, .backwards]) {
-            return html.replacingCharacters(in: end.lowerBound..<end.lowerBound, with: bar)
+        var page = html
+        if let end = page.range(of: "</body>", options: [.caseInsensitive, .backwards]) {
+            page.replaceSubrange(end.lowerBound..<end.lowerBound, with: bar)
+        } else {
+            page += bar
         }
-        return html + bar
+        // Where the Share Link plays it, the page opened on its own goes there. It stays, playing here as before, when it's
+        // framed (something is showing it on purpose), when this browser has saves of it here (the link's page plays
+        // from its own address, which can't read them), and when the link doesn't say it plays the page within a few
+        // seconds (`card.png?plays`: taken down since, or its page gone with a later release that didn't update GitHub).
+        guard open.plays, let link = open.link, let host = link.host, let scheme = link.scheme,
+              let id = link.lastPathComponent.split(separator: "-").first, !id.isEmpty else { return page }
+        let values = [link.absoluteString, "\(scheme)://\(host)/w/\(id)/card.png?plays", "lamp:" + (open.saves.map { $0.isEmpty ? "" : $0 + ":" } ?? "")]
+        guard let json = (try? JSONSerialization.data(withJSONObject: values, options: [.withoutEscapingSlashes])).flatMap({ String(data: $0, encoding: .utf8) })
+        else { return page }
+        let away = """
+            <script>(function(t){if(window.top!==window)return;try{for(var i=0;i<localStorage.length;i++)if((localStorage.key(i)||'').indexOf(t[2])===0)return;}catch(e){return}
+            var c=new Image(),s=0;c.onload=function(){if(!s){s=1;location.replace(t[0])}};c.onerror=function(){s=1};setTimeout(function(){s=1},4000);c.src=t[1];})(\(json.replacingOccurrences(of: "<", with: "\\u003c")))</script>
+            """
+        if let head = page.range(of: "<head[^>]*>", options: [.regularExpression, .caseInsensitive]) {
+            page.insert(contentsOf: "\n" + away, at: head.upperBound)
+            return page
+        }
+        return away + "\n" + page
     }
 
     /// What a README says of the wish's credits: what it's based on and under which licenses, what else it uses, the

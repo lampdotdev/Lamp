@@ -169,6 +169,13 @@ final class GitHubProjectsTests: XCTestCase {
         let bar = Publish.withCreditBar("<html><body></body></html>", credits: credits, open: Publish.OpenInLamp())
         XCTAssertFalse(bar.contains("Based on"))
         XCTAssertTrue(bar.contains("Uses <a href=\"https://github.com/ofrohn/d3-celestial\""))
+        // Where the Share Link plays it, the page opened on its own goes there first; otherwise it stays.
+        let link = URL(string: "https://lamp.dev/w/abc")!
+        let away = Publish.withCreditBar("<html><head lang=\"en\"><title>Game</title></head><body></body></html>", credits: credits,
+                                         open: Publish.OpenInLamp(link: URL(string: "https://lamp.dev/w/abc-a-game")!, plays: true, saves: "a-game"))
+        XCTAssertTrue(away.contains("<head lang=\"en\">\n<script>(function(t){"))
+        XCTAssertTrue(away.contains("})([\"https://lamp.dev/w/abc-a-game\",\"https://lamp.dev/w/abc/card.png?plays\",\"lamp:a-game:\"])</script><title>"))
+        XCTAssertFalse(Publish.withCreditBar("<html><body></body></html>", credits: credits, open: Publish.OpenInLamp(link: link)).contains("location.replace"))
 
         // Credits from before the mark: the first is what the wish is built on, as ever.
         let legacy = Credits(upstream: [Credits.Source(name: "Slop New York", author: "Mr.doob", url: "https://github.com/mrdoob/slop-newyork"),

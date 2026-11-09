@@ -75,12 +75,24 @@ export async function drawCard(wish, { fetcher = fetch } = {}) {
   return Buffer.from(await response.arrayBuffer());
 }
 
+/** A transparent GIF of one pixel. */
+const PIXEL = Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64");
+
 export function createCardHandler({ env = process.env, fetcher = fetch, store } = {}) {
   return async (request) => {
     if (request.method !== "GET" && request.method !== "HEAD") return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
-    const id = new URL(request.url).searchParams.get("id");
+    const asked = new URL(request.url).searchParams;
+    const id = asked.get("id");
     const wish = isID(id) ? await findWish(id, { env, fetcher, store }) : null;
     if (!wish) return new Response(null, { status: wish === undefined ? 503 : 404, headers: { "Cache-Control": "no-store" } });
+    // `?plays`: whether the link plays its page now, asked by the wish's page on GitHub before it sends a visitor here
+    // (`Publish.withCreditBar`). An image, which any page can load, and never kept, so the answer is today's.
+    if (asked.has("plays")) {
+      return new Response(wish.page ? PIXEL : null, {
+        status: wish.page ? 200 : 404,
+        headers: { ...(wish.page ? { "Content-Type": "image/gif" } : {}), "Cache-Control": "no-store" },
+      });
+    }
     try {
       const png = await drawCard(wish, { fetcher });
       // Linked with the wish's last change in its address, so a change is a new picture; a removal takes it out (`cacheTags`).
