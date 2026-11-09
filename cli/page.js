@@ -1,13 +1,21 @@
 // Given to every page lamp dev serves, before any script of its own. The server puts `LAMP` in front of it: `gen` the
 // last change the page's files had when they were served, `run` which run of the server served them.
 (() => {
+  // The browser's own functions, kept before the page changes them. The game runtime takes away the timers the
+  // game's code left running each time that code runs again, and a timer of lamp's set through the page's
+  // `setTimeout` would go with them, and the log with it.
+  const later = window.setTimeout.bind(window), ask = window.fetch.bind(window);
+  // A page opened again to show its beginning (`lamp look --reopen`) says so to the game runtime, which then starts
+  // the game from its start, its saves kept (`window.lampFreshStart` in lamp-game.js).
+  const FRESH = 'lamp.dev.fresh';
+  try { if (sessionStorage.getItem(FRESH)) { sessionStorage.removeItem(FRESH); window.lampFreshStart = true; } } catch (e) {}
   const id = Math.random().toString(36).slice(2, 10);
   // The tab, which stays the same as its page opens again: how a change went is told of the tab.
   let tab = id;
   try { tab = sessionStorage.getItem('lamp.dev.tab') || id; sessionStorage.setItem('lamp.dev.tab', tab); } catch (e) {}
   window.__lampTab = tab;
   const post = (path, body, lasting) => {
-    try { fetch('/__lamp/' + path, { method: 'POST', body: JSON.stringify({ page: id, ...body }), keepalive: !!lasting }).catch(() => {}); } catch (e) {}
+    try { ask('/__lamp/' + path, { method: 'POST', body: JSON.stringify({ page: id, ...body }), keepalive: !!lasting }).catch(() => {}); } catch (e) {}
   };
   const said = message => post('said', message, true);
 
@@ -27,7 +35,7 @@
     let text;
     try { text = parts.map(p => typeof p === 'string' ? p : p instanceof Error ? (p.stack || p.message) : JSON.stringify(p)).join(' '); } catch (e) { text = String(parts[0]); }
     lines.push({ level, text: String(text).slice(0, 4000) });
-    if (!timer) timer = setTimeout(() => { timer = null; const batch = lines; lines = []; post('log', { lines: batch }); }, 250);
+    if (!timer) timer = later(() => { timer = null; const batch = lines; lines = []; post('log', { lines: batch }); }, 250);
   };
   for (const level of ['log', 'info', 'warn', 'error']) {
     const real = console[level];
@@ -40,7 +48,15 @@
 
   // Changes. The line says which change this copy's files had, so one saved while the page was opening comes as soon
   // as the line is open; the browser says the last it heard when the line is opened again after a break.
-  const reopen = () => (window.__lampReloadNow || (() => location.reload()))();
+  // Opened again from where the player is, or from the game's beginning when that's asked: the page that opens next
+  // is told so before the runtime loads (see `FRESH` above). Any other page always starts over.
+  const reopen = e => {
+    if (e && e.data === 'fresh') {
+      try { sessionStorage.setItem(FRESH, '1'); } catch (e2) {}
+      return location.reload();
+    }
+    (window.__lampReloadNow || (() => location.reload()))();
+  };
   const events = new EventSource('/__lamp/events?page=' + id + '&tab=' + tab + '&since=' + LAMP.gen);
   // A server started again doesn't know what changed while it was away: the page opens again from the files as they are.
   events.addEventListener('hello', e => { if (e.data !== LAMP.run) location.reload(); });

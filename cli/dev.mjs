@@ -58,13 +58,25 @@ const OUTCOMES = {
   swapped: ["live", "swapped in while it ran"],
   rerun: ["reran", "the game's code ran again, the player where they were"],
   reloading: ["reopened", "the page opened again"],
-  held: ["held", "waiting for Reload to be pressed in the page"],
+  held: ["held", "waiting for Reload to be pressed in the page, since the page must open again for it"],
 };
+// A change that only waits for a pause in the game goes in by itself then.
+const HELD_FOR_A_PAUSE = "waiting for a pause in the game (the end of a round, a menu), and goes in by itself then";
 // What a page says once it has finished with a change, or with opening.
 const DONE = new Set(["swapped", "restored", "fresh", "held", "started", "shown"]);
 const READY = new Set(["page-playing", "restored", "fresh", "started", "shown"]);
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+/** Log lines as a look shows them: a line said over and over, or the same but for its numbers, is shown once. */
+function collapsed(lines) {
+  const shown = [];
+  for (const line of lines) {
+    const text = `${line.level !== "log" ? line.level + ": " : ""}${line.text}`, shape = text.replace(/[\d.]+/g, "#");
+    const last = shown[shown.length - 1];
+    if (last && last.shape === shape) { last.text = text; last.times += 1; } else shown.push({ text, shape, times: 1 });
+  }
+  return shown.map((line) => (line.times > 1 ? `${line.text} (the last of ${line.times} like it)` : line.text));
+}
 const isError = (line) => line.level === "error" || /^(\[[\d.]+ s\] )?Error: /.test(line.text);
 
 /**
@@ -186,7 +198,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
   }
 
   function said(message) {
-    const { page: id, gen: about, state, why } = message;
+    const { page: id, gen: about, state, why, pause } = message;
     if (state === "taken-over") { takenOver = why || "the person played"; return; }
     const page = pages.get(id);
     if (!page && id) {
@@ -207,13 +219,13 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     const change = changes.find((change) => change.gen === about);
     // How the change went in a tab is the last such thing its page said of it (code that couldn't run again opens the
     // page again), with the first reason it gave: why it wasn't simply swapped in.
-    if (change && OUTCOMES[state] && page) change.said.set(page.tab, { state, why: change.said.get(page.tab)?.why || why || "" });
+    if (change && OUTCOMES[state] && page) change.said.set(page.tab, { state, pause: !!pause, why: change.said.get(page.tab)?.why || why || "" });
     if (!OUTCOMES[state] && state !== "restored" && state !== "fresh") return;
     const key = `${about}:${state}`;
     if (printed.has(key)) return;
     printed.add(key);
     if (printed.size > 400) printed.clear();
-    const words = OUTCOMES[state]?.[1] ?? (state === "restored" ? "back where the player was" : "started fresh");
+    const words = state === "held" && pause ? HELD_FOR_A_PAUSE : OUTCOMES[state]?.[1] ?? (state === "restored" ? "back where the player was" : "started fresh");
     print(`${change ? named(change) + " → " : ""}${words}${why ? ` (${why})` : ""}`);
   }
 
@@ -296,8 +308,12 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
   }
 
   /** What the page shows now: how the changes since the last look went, a picture, the screen as text, and the log. */
-  async function look({ wait = 20 } = {}) {
+  async function look({ wait = 20, reopen = false } = {}) {
     checkAll();
+    if (reopen) {
+      // The page opens again from its beginning, a game with its saves kept: what a person opening it sees.
+      for (const page of pages.values()) { reopening.set(page.tab, Date.now() + 30_000); tell(page, "reload", "fresh"); }
+    }
     let target = null, problem = null;
     try { target = await watched(); } catch (error) { problem = error.message; }
     // Which tab that is, which lasts through the page opening again: only its page is waited for.
@@ -341,7 +357,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
         const bytes = await target.page.picture(seen ?? {});
         picture = join(state, `look-${++pictures}.png`);
         writeFileSync(picture, bytes);
-        rmSync(join(state, `look-${pictures - 8}.png`), { force: true });
+        rmSync(join(state, `look-${pictures - 40}.png`), { force: true });
       } catch (error) { problem = `No picture: ${error.message}.`; }
     } else if (pages.size) {
       // Any open page says what's on it; there's no picture without a browser lamp can look into.
@@ -356,13 +372,21 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     } else {
       problem ??= "No page is open, and lamp found no browser it can open one in (Chrome, Edge, Brave or Chromium). Open the address in a browser and look again.";
     }
-    // How each change since the last look went in the page looked at, or in any page when that one never said.
-    const since = changes.filter((change) => change.gen > lastLookGen).map((change) => {
+    // How each change since the last look went in the page looked at, or in any page when that one never said. A
+    // change a look said was held is said again once it has gone in.
+    const since = changes.map((change) => {
       const answer = change.said.get(seen?.tab ?? tab) ?? [...change.said.values()][0];
-      if (answer) return { files: named(change), outcome: OUTCOMES[answer.state][0], means: OUTCOMES[answer.state][1], why: answer.why };
+      const state = answer?.state ?? null;
+      if (change.gen <= lastLookGen && !(change.shown === "held" && state !== "held")) return null;
+      const wasHeld = change.shown === "held";
+      change.shown = state;
+      if (answer) {
+        const means = state === "held" && answer.pause ? HELD_FOR_A_PAUSE : OUTCOMES[state][1];
+        return { files: named(change), outcome: OUTCOMES[state][0], means: wasHeld ? `${means}; it was held, and has gone in now` : means, why: answer.why };
+      }
       return pages.size ? { files: named(change), outcome: "unanswered", means: "the page hasn't said how it went", why: "" }
         : { files: named(change), outcome: "opened", means: "no page was open; it's in the one opened now", why: "" };
-    });
+    }).filter(Boolean);
     const fresh = log.filter((line) => line.n > lastLookLine);
     // An error said over and over is said once, with how many times.
     const counts = new Map();
@@ -374,16 +398,26 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       where, opened: !!target?.fresh, address, picture, title: seen?.title ?? null, width: seen?.width ?? null, height: seen?.height ?? null,
       screen: seen?.screen ?? null, game: layout.game, unfinished, changes: since, errors: errors.slice(-20),
       // What the page logged since the last look: the end of it when there's a lot.
-      log: fresh.slice(-25).map((line) => `${line.level !== "log" ? line.level + ": " : ""}${line.text}`), logLines: fresh.length, logFile, problem,
+      log: collapsed(fresh).slice(-25), logLines: fresh.length, logFile, problem,
     };
   }
 
-  /** One thing done in the page as a person would, then a look. */
-  async function use(action) {
+  /** Things done in the page as a person would, one after another with nothing between them, then a look. */
+  async function use(asked) {
+    const moves = Array.isArray(asked?.moves) ? asked.moves : [asked];
     const target = await watched();
     if (!target) throw new Problem("lamp found no browser it can use the page in (Chrome, Edge, Brave or Chromium)");
-    const { page } = target;
-    await page.focus();
+    await target.page.focus();
+    const did = [];
+    for (const move of moves) {
+      did.push(await act(target.page, move));
+      // The game is the person's again: nothing more is pressed in it.
+      if (takenOver) { if (did.length < moves.length) did.push(`Left the other ${moves.length - did.length} undone.`); break; }
+    }
+    return { did: did.join("\n"), ...(await look({ wait: 5 })) };
+  }
+
+  async function act(page, action) {
     let did;
     const number = (value, what) => { const n = Number(value); if (!Number.isFinite(n)) throw new Problem(what); return n; };
     if (action.kind === "key") {
@@ -446,13 +480,13 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       await page.type(String(action.text ?? ""));
       did = `Typed "${action.text}".`;
     } else if (action.kind === "wait") {
-      const seconds = Math.min(Math.max(Number(action.seconds) || 1, 0), 30);
+      const asked = Math.max(Number(action.seconds) || 1, 0), seconds = Math.min(asked, 30);
       await sleep(seconds * 1000);
-      did = `Waited ${seconds} s.`;
+      did = `Waited ${seconds} s${asked > seconds ? " (the most one wait takes: wait again for longer)" : ""}.`;
     } else {
       throw new Problem("use takes key, click, type, drag, scroll, stick, button or wait");
     }
-    return { did, ...(await look({ wait: 5 })) };
+    return did;
   }
 
   // One look or use at a time: two at once would each start a copy of the page, and press keys over each other.
@@ -515,7 +549,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
         if (what === "look") return json(200, await inTurn(() => look(asked)));
         if (what === "use") return json(200, await inTurn(() => use(asked)));
         if (what === "open") return json(200, { opened: await openWindow(), url: address });
-        if (what === "reload") { for (const page of pages.values()) tell(page, "reload", "now"); return json(200, { pages: pages.size }); }
+        if (what === "reload") { for (const page of pages.values()) tell(page, "reload", asked.fresh ? "fresh" : "now"); return json(200, { pages: pages.size }); }
         if (what === "stop") { json(200, { stopped: true }); setTimeout(() => close().then(() => process.exit(0)), 50); return; }
         return json(404, { problem: `lamp dev doesn't know "${what}"` });
       } catch (error) {

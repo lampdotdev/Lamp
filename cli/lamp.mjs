@@ -19,6 +19,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Problem, layoutOf, stateOf, running, ask } from "./state.mjs";
 import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, LAMP_JS } from "./dev.mjs";
+import { allSkills } from "./skills.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -35,8 +36,9 @@ const USAGE = `lamp runs the web app or game in a folder and puts each saved cha
       network open it too.
   lamp open [folder]
       Show it in a window, running it in the background if it isn't running. Returns at once.
-  lamp look [folder] [--wait seconds] [--json]
+  lamp look [folder] [--reopen] [--wait seconds] [--json]
       How the changes since the last look went, a picture of the page, its screen as text, and its log.
+      --reopen opens the page again from its beginning first (a game's saves kept): what someone opening it sees.
   lamp use [folder] <one of these>
       Try it as a person would, then look:
         click <x> <y>                         a point of the picture
@@ -48,7 +50,10 @@ const USAGE = `lamp runs the web app or game in a folder and puts each saved cha
                                               a game's controller: x and y from -1 to 1, right and up being 1
         button <name> [seconds]               a game's controller: a, b, x, y, lb, rb, lt, rt, menu, view, up… (a+rt)
         wait <seconds>
-  lamp reload [folder]    Open the page again from its files, a game from where the player is.
+      Several at once, with "then" between them, go one after another with nothing in between and one look at the end:
+        lamp use key space then stick left 1 0 3 then button a
+  lamp reload [folder] [--fresh]
+      Open the page again from its files, a game from where the player is, or with --fresh from its beginning.
   lamp stop [folder]      Stop running it.
   lamp setup [--remove]   Teach Claude Code and Codex on this computer to work this way (a skill for each).
   lamp guide              What that skill says, for any other agent.
@@ -59,13 +64,31 @@ The folder is one Lamp made (its page is in Web/) or any folder with an index.ht
 // What tells a coding agent how to work with lamp: one file, installed as a skill by `lamp setup` and printed by
 // `lamp guide`. `{{lamp}}` in it is how lamp is run on this computer.
 const SKILL_MARK = "<!-- Written by lamp setup: run it again to update, or with --remove to take it away. -->";
-function skillText() {
-  // `lamp` when that name runs this very file, else the file itself.
+/** How lamp is run on this computer: `lamp` when that name runs this very file, else the file itself. */
+function lampCommand() {
   const me = fileURLToPath(import.meta.url);
   const found = spawnSync(process.platform === "win32" ? "where" : "which", ["lamp"], { encoding: "utf8" });
   const onPath = found.status === 0 && found.stdout.trim().split("\n").some((path) => { try { return realpathSync(path.trim()) === realpathSync(me); } catch { return false; } });
-  const lamp = onPath ? "lamp" : `node ${/\s/.test(me) ? JSON.stringify(me) : me}`;
-  return readFileSync(join(here, "skill", "SKILL.md"), "utf8").replaceAll("{{lamp}}", lamp);
+  return onPath ? "lamp" : `node ${/\s/.test(me) ? JSON.stringify(me) : me}`;
+}
+const skillText = () => readFileSync(join(here, "skill", "SKILL.md"), "utf8").replaceAll("{{lamp}}", lampCommand());
+const quoted = (path) => (/\s/.test(path) ? JSON.stringify(path) : path);
+
+/**
+ * Copies in Lamp's libraries that the page's import map names and its folder has none of (three.js, Phaser, Rapier:
+ * `Resources/WebLibraries`), as Lamp's app gives a game the ones its page uses. The names copied.
+ */
+function addLibraries(root) {
+  const lamps = join(here, "..", "Resources", "WebLibraries");
+  let map = "";
+  try { map = /<script[^>]*type=["']importmap["'][^>]*>([\s\S]*?)<\/script>/i.exec(readFileSync(join(root, "index.html"), "utf8"))?.[1] ?? ""; } catch {}
+  const added = [];
+  for (const name of ["three", "phaser", "rapier"]) {
+    if (!new RegExp(`["'](?:\\./)?${name}/`).test(map) || existsSync(join(root, name)) || !existsSync(join(lamps, name))) continue;
+    cpSync(join(lamps, name), join(root, name), { recursive: true });
+    added.push(`${name}/`);
+  }
+  return added;
 }
 
 function fail(problem) {
@@ -128,10 +151,11 @@ function report(seen) {
   for (const error of seen.errors) lines.push(`  ${error.split("\n").join("\n    ")}`);
   if (seen.screen) lines.push("Screen", ...seen.screen.split("\n").map((line) => `  ${line}`));
   if (seen.log.length) {
-    lines.push(`Log since the last look${seen.logLines > seen.log.length ? ` (the last ${seen.log.length} of ${seen.logLines} lines)` : ""}; all of it: ${seen.logFile}`, ...seen.log.map((line) => `  ${line.split("\n")[0].slice(0, 300)}`));
+    lines.push(`Log since the last look${seen.logLines > 25 ? ` (its end: all ${seen.logLines} lines are in ${seen.logFile})` : ""}`, ...seen.log.map((line) => `  ${line.split("\n")[0].slice(0, 300)}`));
   } else {
-    lines.push(`Log since the last look: nothing; all of it: ${seen.logFile}`);
+    lines.push("Log since the last look: nothing");
   }
+  if (seen.opened) lines.push(`The whole log is kept in ${seen.logFile}`);
   return lines.join("\n");
 }
 
@@ -155,13 +179,14 @@ async function main() {
       writeFileSync(join(folder, file), readFileSync(join(scaffold, file), "utf8").replaceAll("{{NAME}}", file.endsWith(".html") ? inPage : name.replace(/[\r\n]+/g, " ")));
     }
     for (const file of readdirSync(runtime)) cpSync(join(runtime, file), join(folder, file));
-    cpSync(three, join(folder, "three"), { recursive: true });
+    addLibraries(folder);
     // Lamp's own files beside the page, which its app writes at every build: with them the folder is a whole site,
     // and runs wherever it's served from. lamp.js is the stand-in until Lamp's app takes the folder on.
     cpSync(CONTROLLERS, join(folder, CONTROLLERS_FILE));
     writeFileSync(join(folder, DEVICE_FILE), ANY_BROWSER);
     writeFileSync(join(folder, "lamp.js"), LAMP_JS);
-    console.log(`Made ${folder}: a new game, "${name}", on Lamp's game runtime with three.js.\nShow it with: lamp open ${/\s/.test(folder) ? JSON.stringify(folder) : folder}`);
+    console.log(`Made ${folder}: a new game, "${name}", on Lamp's game runtime, with three.js and Phaser beside it.`);
+    console.log(`It shows a card until the game is written. Write the game, then see its real opening with: ${lampCommand()} look ${quoted(folder)} --reopen`);
     return;
   }
 
@@ -185,6 +210,8 @@ async function main() {
     }
     // lamp.js is Lamp's building blocks, which only its app writes: a stand-in where there's none, never over one.
     if (!existsSync(join(layout.root, "lamp.js"))) { writeFileSync(join(layout.root, "lamp.js"), LAMP_JS); wrote.push("lamp.js"); }
+    // And Lamp's libraries the page's import map names from beside it, where the folder has none.
+    wrote.push(...addLibraries(layout.root));
     console.log(wrote.length ? `Lamp's own files are beside the page in ${layout.root}: ${wrote.join(", ")}.` : `Lamp's own files were beside the page already in ${layout.root}.`);
     if (kept.length) console.log(`Left as they were: ${kept.join(", ")} (lamp init --update writes them again).`);
     console.log("The game takes the runtime up in its own code: Lamp's `web-game` skill says how (lamp skill web-game).");
@@ -217,7 +244,7 @@ async function main() {
     const { options, rest } = parse(args, ["wait"]);
     const layout = layoutOf(rest[0] ?? ".");
     const wait = options.wait === undefined ? 20 : Math.min(Math.max(Number(options.wait) || 0, 0), 120);
-    const seen = await ask(await serverFor(layout.folder), "look", { wait }, { timeout: (wait + 60) * 1000 });
+    const seen = await ask(await serverFor(layout.folder), "look", { wait, reopen: !!options.reopen }, { timeout: (wait + 60) * 1000 });
     console.log(options.json ? JSON.stringify(seen, null, 2) : report(seen));
     return;
   }
@@ -226,19 +253,26 @@ async function main() {
     const { options, rest } = parse(args, []);
     const kinds = ["key", "click", "type", "wait", "drag", "scroll", "stick", "button"];
     const folder = rest.length && !kinds.includes(rest[0]) ? rest.shift() : ".";
-    const [kind, ...values] = rest;
-    if (!kinds.includes(kind)) throw new Problem("use takes key, click, type, drag, scroll, stick, button or wait: lamp --help shows each");
-    const action = kind === "key" ? { kind, key: values[0], seconds: values[1] }
-      : kind === "click" ? { kind, x: values[0], y: values[1] }
-      : kind === "type" ? { kind, text: values.join(" ") }
-      : kind === "drag" ? { kind, x: values[0], y: values[1], toX: values[2], toY: values[3] }
-      : kind === "scroll" ? { kind, points: values[0], x: values[1], y: values[2] }
-      : kind === "stick" ? { kind, side: values[0], x: values[1], y: values[2], seconds: values[3], buttons: values[4] }
-      : kind === "button" ? { kind, buttons: values[0], seconds: values[1] }
-      : { kind, seconds: values[0] };
-    if (kind === "key" && !values[0]) throw new Problem("key takes a key's name: lamp use key w 2");
+    // Several moves, with "then" between them, are made one after another with nothing in between, and looked at once.
+    const moves = [];
+    for (let words = rest; words.length; ) {
+      const next = words.indexOf("then");
+      const [kind, ...values] = next < 0 ? words : words.slice(0, next);
+      words = next < 0 ? [] : words.slice(next + 1);
+      if (!kinds.includes(kind)) throw new Problem("use takes key, click, type, drag, scroll, stick, button or wait: lamp --help shows each");
+      if (kind === "key" && !values[0]) throw new Problem("key takes a key's name: lamp use key w 2");
+      moves.push(kind === "key" ? { kind, key: values[0], seconds: values[1] }
+        : kind === "click" ? { kind, x: values[0], y: values[1] }
+        : kind === "type" ? { kind, text: values.join(" ") }
+        : kind === "drag" ? { kind, x: values[0], y: values[1], toX: values[2], toY: values[3] }
+        : kind === "scroll" ? { kind, points: values[0], x: values[1], y: values[2] }
+        : kind === "stick" ? { kind, side: values[0], x: values[1], y: values[2], seconds: values[3], buttons: values[4] }
+        : kind === "button" ? { kind, buttons: values[0], seconds: values[1] }
+        : { kind, seconds: values[0] });
+    }
+    if (!moves.length) throw new Problem("use takes key, click, type, drag, scroll, stick, button or wait: lamp --help shows each");
     const layout = layoutOf(folder);
-    const seen = await ask(await serverFor(layout.folder), "use", action, { timeout: 120_000 });
+    const seen = await ask(await serverFor(layout.folder), "use", moves.length === 1 ? moves[0] : { moves }, { timeout: 60_000 + moves.length * 35_000 });
     console.log(options.json ? JSON.stringify(seen, null, 2) : report(seen));
     return;
   }
@@ -280,11 +314,11 @@ async function main() {
   }
 
   if (command === "reload" || command === "stop") {
-    const { rest } = parse(args, []);
+    const { options, rest } = parse(args, []);
     const layout = layoutOf(rest[0] ?? ".");
     const live = await running(layout.folder);
     if (!live) { console.log("lamp dev isn't running for this folder."); return; }
-    const answer = await ask(live, command, {});
+    const answer = await ask(live, command, { fresh: !!options.fresh });
     console.log(command === "stop" ? "Stopped." : answer.pages ? "The page is opening again." : "No page is open.");
     return;
   }
@@ -296,30 +330,22 @@ async function main() {
   }
 
   if (command === "skills" || command === "skill") {
-    // Lamp's skills, where they are beside this command in Lamp's own folder: the one place that says which of
-    // Lamp's building blocks to use and how.
-    const skills = join(here, "..", "Resources", "skills");
-    if (!existsSync(skills)) throw new Problem("Lamp's skills aren't beside this copy of lamp");
-    const name = command === "skill" ? args[0] : null;
-    if (command === "skill" && !name) throw new Problem("skill takes a name: lamp skills lists them");
-    // `lamp skills game` lists only those about a word.
-    const about = command === "skills" && args[0] ? args[0].toLowerCase() : null;
-    let listed = 0;
-    if (name) {
-      const file = join(skills, name, "SKILL.md");
-      if (!/^[\w-]+$/.test(name) || !existsSync(file)) throw new Problem(`there's no skill "${name}": lamp skills lists them`);
-      console.log(readFileSync(file, "utf8"));
+    // Lamp's skills, from Lamp's own folder beside this command: the one place that says which of Lamp's building
+    // blocks to use and how.
+    const skills = allSkills();
+    if (!skills.size) throw new Problem("Lamp's skills aren't beside this copy of lamp");
+    if (command === "skill") {
+      if (!args[0]) throw new Problem("skill takes a name: lamp skills lists them");
+      const skill = skills.get(args[0]);
+      if (!skill) throw new Problem(`there's no skill "${args[0]}": lamp skills lists them`);
+      console.log(`# ${skill.name}\n\n${skill.description}\n\n${skill.body}`);
       return;
     }
-    for (const entry of readdirSync(skills, { withFileTypes: true }).filter((entry) => entry.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
-      let text = "";
-      try { text = readFileSync(join(skills, entry.name, "SKILL.md"), "utf8"); } catch { continue; }
-      const description = /^description:\s*(.+)$/m.exec(text.split("\n---")[0] ?? "")?.[1] ?? "";
-      if (about && !`${entry.name} ${description}`.toLowerCase().includes(about)) continue;
-      listed += 1;
-      console.log(`${entry.name}: ${description.length > 170 ? description.slice(0, 170).replace(/\s+\S*$/, "") + "…" : description}`);
-    }
-    if (about && !listed) console.log(`No skill is about "${about}": lamp skills lists them all.`);
+    // `lamp skills game` lists only those about a word.
+    const about = args[0] ? args[0].toLowerCase() : null;
+    const listed = [...skills.values()].filter((skill) => !about || `${skill.name} ${skill.description}`.toLowerCase().includes(about)).sort((a, b) => a.name.localeCompare(b.name));
+    for (const skill of listed) console.log(`${skill.name}: ${skill.description.length > 170 ? skill.description.slice(0, 170).replace(/\s+\S*$/, "") + "…" : skill.description}`);
+    if (about && !listed.length) console.log(`No skill is about "${about}": lamp skills lists them all.`);
     else if (!about) console.log("\n`lamp skills <word>` lists only those about a word; `lamp skill <name>` prints one.");
     return;
   }

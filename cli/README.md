@@ -17,13 +17,13 @@ with an `index.html`; without one, the folder you're in.
 | `lamp init [--update]` | Puts Lamp's game runtime beside a page that's already there, changing none of the page's own files. |
 | `lamp dev [--open] [--lan] [--port N]` | Runs the page and says how each change went. Each save goes into every open copy of it. `--open` opens a window for it; `--lan` lets other devices on the network open it. |
 | `lamp open` | Shows the page in a window, running it in the background if it isn't running, and returns at once. |
-| `lamp look [--wait s] [--json]` | How the changes since the last look went, a picture of the page, its screen as text, new errors and the log. |
-| `lamp use key w 2` | Tries it as a person would, then looks: `click`, `type`, `key` (several at once with `w+d`), `drag`, `scroll`, `wait`, and in a game on Lamp's runtime `stick` and `button`, which hold Lamp's own controller as Lamp's app does (`window.__lampDrive`) and give it back when the person plays. |
-| `lamp reload` | Opens the page again from its files, a game from where the player is. |
+| `lamp look [--reopen] [--wait s] [--json]` | How the changes since the last look went, a picture of the page, its screen as text, new errors and the log. `--reopen` opens the page again from its beginning first. |
+| `lamp use key w 2` | Tries it as a person would, then looks: `click`, `type`, `key` (several at once with `w+d`), `drag`, `scroll`, `wait`, and in a game on Lamp's runtime `stick` and `button`, which hold Lamp's own controller as Lamp's app does (`window.__lampDrive`) and give it back when the person plays. Several moves with `then` between them go one after another, with one look at the end. |
+| `lamp reload [--fresh]` | Opens the page again from its files, a game from where the player is, or with `--fresh` from its beginning (`window.lampFreshStart`). |
 | `lamp stop` | Stops running it. |
 | `lamp setup [--remove]` | Teaches Claude Code and Codex on this computer to work this way: a skill for each. |
 | `lamp guide` | What that skill says, for any other agent. |
-| `lamp skills [word]`, `lamp skill <name>` | Lamp's skills (`Resources/skills`), the one place that says which building blocks to use and how: all of them or those about a word, and one in full. |
+| `lamp skills [word]`, `lamp skill <name>` | Lamp's skills (`Resources/skills`), the one place that says which building blocks to use and how: all of them or those about a word, and one in full, put together from its sections as Lamp's app does (`cli/skills.mjs` follows `Skills.assembled`). |
 
 ## For a coding agent
 
@@ -68,7 +68,8 @@ never runs and the page can't say so itself.
 ## A new game
 
 `lamp new` copies what Lamp gives a new web game: the starting page (`Resources/GameKit/scaffold-web`), the game
-runtime (`Resources/GameKit/web`), three.js, and Lamp's own files beside the page (the table above). The page is at
+runtime (`Resources/GameKit/web`), the libraries its import map names (three.js and Phaser), and Lamp's own files
+beside the page (the table above). `lamp init` gives a page that's already there the same, the starting page aside. The page is at
 the top of the folder with nothing that builds it, which is what Lamp's app opens as a site (`StaticSite.isPlain`).
 It isn't yet an app as Lamp's app makes one: it has no manifest and none of the app around the page, which Lamp's app
 adds when it takes the folder on. A plain web page needs no starting files.
@@ -83,7 +84,7 @@ come before the system says the file changed), waits for the page to finish taki
 
 - how each change since the last look went in, in the words above, and why;
 - a picture of the page, one pixel a point, so a point of the picture is a point to click (each look's is a file of
-  its own, and the last few are kept);
+  its own, and the last forty are kept);
 - the screen as text: each control and canvas with the point at its middle, and the words shown;
 - the errors and the log since the last look.
 

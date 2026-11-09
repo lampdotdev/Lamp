@@ -18,9 +18,14 @@ in `Web/`, beside the Swift of the app around it, which stays as it is. An app w
 ## A new game
 
 `{{lamp}} new path/to/folder --name "Its Name"` makes a new web game's folder from Lamp's starting files: the game
-runtime (`lamp-game.js`), three.js, and a page that shows a card until the game replaces it. Read Lamp's `web-game`
-skill before writing the game, then work on it as below. A plain web page needs no starting files: write its
-`index.html` in an empty folder.
+runtime (`lamp-game.js`), three.js and Phaser, and a page that shows a card until the game replaces it. The page is at
+the top of the folder (what Lamp's skills call `Web/` is the folder itself), and there's no `APP.md` to keep. Read
+Lamp's `web-game` skill before writing the game, and "Lamp's skills" below for what in it is Lamp's app's doing.
+
+The card is a small game of its own: it registers a camera and a state the runtime keeps through a change. Write the
+whole game before the first look, and make that look with `--reopen` (`{{lamp}} look --reopen`), so the game opens
+from its beginning and not from the card's place. A plain web page needs no starting files: write its `index.html`
+in an empty folder.
 
 ## A game that's already there
 
@@ -38,13 +43,14 @@ yourself.
    window they can use and play in while you work, and returns at once.
 2. **Change the files.**
 3. **Look**: `{{lamp}} look`. It waits for the change to go in, then answers how it went, a picture of the page (a
-   file: read it), the screen as text, and the errors and the log since your last look. Look after every change, and
-   read the errors and the picture before saying it works.
+   file: read it; the last forty are kept), the screen as text, and the errors and the log since your last look. Look
+   after every change, and read the errors and the picture before saying it works. `{{lamp}} look --reopen` opens the
+   page again from its beginning first, a game with its saves kept: what someone opening it sees.
 
 Nothing has to be running first. With no window open, `look` runs the app itself in a copy of the page nobody sees,
-opened from the files as they are, so the first look has no changes to report. The copy stays as it is from one
-command to the next (what you clicked and typed is still there) until a change opens the page again. It closes by
-itself when you've stopped using it: there's nothing to stop when you finish.
+opened from the files as they are, so the first look has no changes to report. The copy goes on running between
+commands, as a window would: what you clicked and typed is still there, and a game's clock doesn't wait for you. It
+closes by itself ten minutes after you last used it: there's nothing to stop when you finish.
 
 ## Trying it
 
@@ -57,7 +63,11 @@ Only when the person asks you to try, play or test the app: a request to change 
   and `w+d` holds two at once.
 - `{{lamp}} use drag 400 300 700 300` presses at one point, moves to the other and lets go.
 - `{{lamp}} use scroll 600` scrolls down, and up with a negative number. A look shows only what's in the window.
-- `{{lamp}} use wait 3` waits, for something that takes time.
+- `{{lamp}} use wait 3` waits, for something that takes time: thirty seconds at most, so wait again for longer.
+
+Several moves go in one command with `then` between them, one after another with nothing in between and one look at
+the end: `{{lamp}} use click 640 400 then key w 3 then key w+d 2`. Play anything with a clock that way, a whole
+stretch of it to a command: the game runs on while you read a picture.
 
 A game on Lamp's runtime is played with Lamp's own controller, as Lamp's game skills say (`use_app`'s `stick` and
 `button`):
@@ -80,8 +90,9 @@ Each answers with a look. With the window open it happens in the person's own wi
 - **reran**: the game's code ran again, with the player where they were.
 - **reopened**: the page opened again. A game opens from the player's place. A plain page always takes a change this
   way and starts over: what was typed or counted in it is gone, so change first and try after.
-- **held**: the game is at a moment it can't be interrupted, and waits for the person to press Reload in the page.
-  `{{lamp}} reload` does it for them: ask first.
+- **held**: the change waits. Either for a pause in the game (the end of a round, a menu), and it goes in by itself
+  then: a later look says so. Or for Reload to be pressed in the page, because the page must open again for it:
+  `{{lamp}} reload` presses it, so with a window open ask the person first.
 
 A game that takes changes live is written for it. When a change won't go in, needs Reload or loses the player's
 place, read Lamp's `game-live` skill before working around it.
@@ -91,9 +102,18 @@ place, read Lamp's `game-live` skill before working around it.
 An app Lamp made (its page loads `lamp.js`) is built from Lamp's own building blocks, and Lamp has guidance for each
 kind of work on one: a new web game, 3D, how a game feels, a web app's page. `{{lamp}} skills game` lists those about a
 word, `{{lamp}} skills` all of them, and `{{lamp}} skill <name>` prints one. Read the ones that fit before changing what
-they cover: they are the one place that says which building blocks to use and how. Where one names a tool of Lamp's,
-`look_at_app` is `{{lamp}} look` and `use_app` is `{{lamp}} use` (each of its actions is one command); putting a change
-in needs no tool here.
+they cover: they are the one place that says which building blocks to use and how.
+
+Those skills are written for Lamp's app, which builds the game, opens it and looks at it for you when your turn
+ends, and so tells you to write and finish without looking or playing. Nothing does that here: you look after every
+change, as above, and that comes first. Where one names a tool of Lamp's:
+
+- `look_at_app` is `{{lamp}} look`, and its `reopen` is `--reopen`. There's no `motion`: look twice.
+- `use_app` is `{{lamp}} use`, one move to each of its actions. A control on the page is clicked at its point from the
+  screen as text, not by an id.
+- `read_skill` is `{{lamp}} skill <name>`, and `make_app_for` is `{{lamp}} new`, for a web game only.
+- `delete_file` is deleting the file, and putting a change in needs no tool.
+- `assets`, `make_art` and `lampify` aren't here: make what's needed in code, or say what's missing.
 
 A plain site, with no `lamp.js`, uses none of them: skip the skills there.
 
