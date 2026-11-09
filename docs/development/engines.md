@@ -353,8 +353,16 @@ server and work on an app in a folder of its own (`OutsideServer`, `OutsideWork`
 Lamp starts no process for it and sees none of its commands, so its shell is under its own approvals, not
 `/agent/approve`. What Lamp does for it (building, opening, putting a change in) keeps Lamp's own checks.
 
-- **Reaching Lamp.** The agent runs `lamp-mcp` from Lamp's Helpers over stdio (`claude mcp add lamp -- "<Lamp.app>/Contents/Helpers/lamp-mcp"`).
-  The helper carries each JSON-RPC line to this Lamp's socket and back; Lamp answers `initialize`, `tools/list` and
+- **Setting it up.** The person asks their own agent to, in the Claude desktop app's Code tab or the ChatGPT desktop
+  app's Codex, and the agent does it: `lamp-mcp --help` prints the steps for both clients with its own path
+  (`setupSteps` in `Sources/LampMCP/main.swift`, the one place they're written), and `lamp-mcp --check` lists the tools.
+  Each desktop app reads the same settings as its command line (`~/.claude.json`, `~/.codex/config.toml`), so the
+  steps are one edit of that file, with the command line's own command after it. Nothing in Lamp's own screens offers
+  this. The steps say what each desktop app's agent runs into: Claude Code's sandbox refuses a shell write to its
+  settings and Auto mode refuses the edit outright, so the agent edits with its file tool after the person switches
+  the session to Manual; a sandboxed shell may not start Lamp for `--check`; and the tools only appear in a session or
+  chat started after the change.
+- **Reaching Lamp.** The agent's client runs `lamp-mcp` from Lamp's Helpers over stdio. The helper carries each JSON-RPC line to this Lamp's socket and back; Lamp answers `initialize`, `tools/list` and
   every call. The socket is in a 0700 folder of the Lamp's own named by its bundle id (`OutsideKit`, which `Edition.name`
   reads), and each connection's peer must be the person's user. The first line each way is a handshake with
   `OutsideKit.protocolVersion`. Lamp not running is started from the helper's own bundle; a call under way when Lamp

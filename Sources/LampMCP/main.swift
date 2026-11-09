@@ -2,8 +2,8 @@ import AppKit
 import Foundation
 import LampOutsideKit
 
-// Lamp's MCP server as a person's own coding agent starts it: `claude mcp add lamp -- "<Lamp.app>/Contents/Helpers/lamp-mcp"`,
-// or `codex mcp add lamp -- …`. It speaks MCP over stdio (one JSON-RPC message a line) and carries each message,
+// Lamp's MCP server as a person's own coding agent starts it, set up by that agent from what `lamp-mcp --help` says
+// (`setupSteps`), so the person never opens a Terminal. It speaks MCP over stdio (one JSON-RPC message a line) and carries each message,
 // unchanged, to the Lamp it was shipped inside, over that Lamp's private socket (`OutsideKit.socketPath`), and each
 // answer back. It knows nothing of the tools: Lamp answers `initialize`, `tools/list` and every call itself.
 //
@@ -37,6 +37,8 @@ final class Link {
     private var pending: [String: Any] = [:]
     /// Why the last connection couldn't be made, said to the agent with each call until one can.
     private(set) var refusal: String?
+    /// Takes Lamp's answers instead of standard output, for `--check`.
+    var onLine: ((Data) -> Void)?
 
     func idKey(_ id: Any) -> String {
         (try? JSONSerialization.data(withJSONObject: ["k": id])).map { String(decoding: $0, as: UTF8.self) } ?? "\(id)"
@@ -150,6 +152,7 @@ final class Link {
                     pending[idKey(id)] = nil
                     lock.unlock()
                 }
+                if let onLine { onLine(Data(line)); continue }
                 output.lock()
                 FileHandle.standardOutput.write(Data(line) + Data("\n".utf8))
                 output.unlock()
@@ -189,6 +192,92 @@ func readLine(_ fd: Int32) -> Data? {
         if line.count > 1 << 20 { return nil }
     }
     return nil
+}
+
+/// What an agent asked to "set up Lamp" reads and does, for the clients people run it in: Claude Code (the Claude
+/// desktop app's Code tab and the command line read the same `~/.claude.json`) and Codex (the ChatGPT desktop app and
+/// the command line read the same `~/.codex/config.toml`). It names this very helper, so the Lamp set up is the one
+/// it came in. The desktop apps come first; the command line's own command is the last line of each.
+func setupSteps() -> String {
+    let path = executable.path
+    let name = OutsideKit.editionName(bundleID: bundleID)
+    let quoted = path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+    return """
+    lamp-mcp lets your coding agent work with \(name): it builds and opens the app in a folder, puts each change into it \
+    while it runs, and shares it. It's a local MCP server over stdio; there's no port, key or sign-in.
+
+    To set it up, the agent does all of this itself; the person needs no Terminal.
+
+    Claude Code (the Claude desktop app's Code tab, or the command line):
+      In ~/.claude.json, add this to the top-level "mcpServers" object (make the object if there isn't one), and keep
+      everything else in the file as it is:
+        "lamp": {"type": "stdio", "command": "\(quoted)", "args": []}
+      In the desktop app, make the change with your file-editing tool, which asks the person to allow it: the app's
+      sandbox stops a shell command writing that file. In Auto mode, Claude Code's safety check stops any edit of that
+      file, even one the person agrees to; ask them first to set the session's permission mode, under the message box,
+      to Manual, then allow the edit.
+      Lamp's tools are in sessions started after this, so tell the person to start a new session (New, in the desktop
+      app) and ask there.
+      On the command line, the same in one step: claude mcp add --scope user lamp -- "\(quoted)"
+
+    Codex (the ChatGPT desktop app's Codex, or the command line):
+      In ~/.codex/config.toml, add this table (make the file if there isn't one), and keep everything else as it is:
+        [mcp_servers.lamp]
+        command = "\(quoted)"
+        tool_timeout_sec = 1800
+        default_tools_approval_mode = "approve"
+      The timeout lets a call wait while the person looks over what Lamp shows them; without the approval line Codex
+      asks before each of Lamp's calls, and refuses them under approval_policy = "never". Lamp's tools are in chats
+      started after this, so tell the person to start a new chat (New chat, in the desktop app) and ask there.
+      On the command line, the same in one step: codex mcp add lamp -- "\(quoted)", then the two lines above in its table.
+
+    To check it: "\(quoted)" --check starts \(name) in the background if it isn't running and lists its tools. A
+    sandboxed shell, such as the desktop apps', may not be allowed to start \(name): then the new session or chat is
+    the check, since the app starts the helper itself.
+
+    Then the person asks, in the new session or chat: "Open this folder in Lamp" (an app in Lamp's format, or a
+    plain site with index.html at its top). Lamp shows them what it found, and builds it after Build & Open.
+
+    """
+}
+
+/// `--check`: connects as the agent's client would, asks for the tools, and says what came back.
+func check() -> Int32 {
+    let name = OutsideKit.editionName(bundleID: bundleID)
+    let link = Link()
+    let answered = DispatchSemaphore(value: 0)
+    var tools: [String]?
+    var error: String?
+    link.onLine = { line in
+        guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any], (object["id"] as? Int) == 2 else { return }
+        tools = ((object["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String }
+        error = (object["error"] as? [String: Any])?["message"] as? String
+        answered.signal()
+    }
+    let initialize: [String: Any] = ["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": [
+        "protocolVersion": OutsideKit.mcpVersions[0], "capabilities": [:], "clientInfo": ["name": "lamp-mcp --check", "version": "1"]]]
+    let list: [String: Any] = ["jsonrpc": "2.0", "id": 2, "method": "tools/list"]
+    for message in [initialize, ["jsonrpc": "2.0", "method": "notifications/initialized"], list] {
+        guard let data = try? JSONSerialization.data(withJSONObject: message), link.forward(data, id: message["id"]) else {
+            print("Couldn't reach \(name): \(link.refusal ?? "unknown reason.")")
+            return 1
+        }
+    }
+    guard answered.wait(timeout: .now() + 60) == .success, let tools, !tools.isEmpty else {
+        print("\(name) didn't list its tools\(error.map { ": " + $0 } ?? " within 60 seconds.")")
+        return 1
+    }
+    print("Connected to \(name). Its tools: \(tools.joined(separator: ", ")).")
+    return 0
+}
+
+// Run by a person or an agent rather than by an MCP client: the steps, or the check. A Terminal's standard input is
+// what tells the two apart when nothing is asked for, so the helper never sits waiting for JSON there.
+let arguments = Array(CommandLine.arguments.dropFirst())
+if arguments.contains("--check") { exit(check()) }
+if !arguments.isEmpty || isatty(STDIN_FILENO) != 0 {
+    print(setupSteps(), terminator: "")
+    exit(arguments.allSatisfy { ["--help", "-h", "help", "setup", "--setup"].contains($0) } ? 0 : 2)
 }
 
 let link = Link()
