@@ -116,7 +116,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
       </form>
       <p data-sent-text hidden class="remix-popup-to"></p>
       <p data-notify-note class="remix-popup-note empty:hidden" role="status" aria-live="polite"></p>
-      <p data-own-lead class="remix-popup-lead">Or have Lamp make it for you now, free on your Mac.</p>
+      <p data-own-lead class="remix-popup-lead">Or have Lamp make it for you now. It's free on your Mac and works with your ChatGPT or Claude plan.</p>
       <div class="remix-popup-rows">
         <!-- One way on: on a Mac it opens Lamp with the idea, or gets Lamp when that doesn't open; elsewhere it gets Lamp. -->
         <a href={DOWNLOAD_URL} data-download data-download-place="shared-remix" class="shared-button shared-button-outline"><span data-download-label>Get Lamp</span></a>
@@ -517,7 +517,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
       ideaText.value = ask;
       confirm.hidden = false;
       sentText.hidden = true;
-      $<HTMLElement>("[data-own-lead]").textContent = "Or have Lamp make it for you now, free on your Mac.";
+      $<HTMLElement>("[data-own-lead]").textContent = "Or have Lamp make it for you now. It's free on your Mac and works with your ChatGPT or Claude plan.";
       notifyNote.textContent = "";
       pointOpen();
       dialog.showModal();
@@ -555,7 +555,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
       sentText.hidden = false;
       confirm.hidden = true;
       notifyNote.textContent = email ? "We'll email you once when it's in." : "";
-      $<HTMLElement>("[data-own-lead]").textContent = "Want it sooner? Lamp can make it for you now, free on your Mac.";
+      $<HTMLElement>("[data-own-lead]").textContent = "Want it sooner? Lamp can make it for you now. It's free on your Mac and works with your ChatGPT or Claude plan.";
     });
     $<HTMLButtonElement>("[data-remix-close]").addEventListener("click", () => dialog.close());
     dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
