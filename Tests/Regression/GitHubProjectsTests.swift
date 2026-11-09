@@ -172,8 +172,9 @@ final class GitHubProjectsTests: XCTestCase {
         // Where the Share Link plays it, the page opened on its own goes there first; otherwise it stays.
         let link = URL(string: "https://lamp.dev/w/abc")!
         let away = Publish.withCreditBar("<html><head lang=\"en\"><title>Game</title></head><body></body></html>", credits: credits,
-                                         open: Publish.OpenInLamp(link: link, plays: true))
-        XCTAssertTrue(away.contains("<head lang=\"en\">\n<script>if(window.top===window)location.replace(\"https://lamp.dev/w/abc\")</script><title>"))
+                                         open: Publish.OpenInLamp(link: URL(string: "https://lamp.dev/w/abc-a-game")!, plays: true, saves: "a-game"))
+        XCTAssertTrue(away.contains("<head lang=\"en\">\n<script>(function(t){"))
+        XCTAssertTrue(away.contains("})([\"https://lamp.dev/w/abc-a-game\",\"https://lamp.dev/w/abc/card.png\",\"lamp:a-game:\"])</script><title>"))
         XCTAssertFalse(Publish.withCreditBar("<html><body></body></html>", credits: credits, open: Publish.OpenInLamp(link: link)).contains("location.replace"))
 
         // Credits from before the mark: the first is what the wish is built on, as ever.

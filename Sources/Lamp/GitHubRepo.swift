@@ -663,7 +663,8 @@ enum GitHubRepo {
         keep(record, for: project)
         // The page's Open in Lamp and Remix… start from the code just pushed with it, which is the game it plays.
         step("Putting up its page on GitHub…")
-        let open = Publish.OpenInLamp(link: page.link, origin: .repository(url: url, commit: commit), plays: page.plays)
+        let open = Publish.OpenInLamp(link: page.link, origin: .repository(url: url, commit: commit), plays: page.plays,
+                                      saves: String(repo.split(separator: "/").last ?? ""))
         try Data(Publish.withCreditBar(page.html, credits: page.credits, open: open, suggestions: page.suggestions,
                                        name: project.name, about: page.about).utf8)
             .write(to: page.folder.appendingPathComponent("index.html"))

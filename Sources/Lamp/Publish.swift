@@ -92,11 +92,13 @@ enum Publish {
     /// (`RemixLink.Origin`), so Lamp starts from a copy rather than its own version, and with no Share Link, Open in Lamp
     /// goes there too.
     /// `plays` is that the Share Link plays or opens the page itself (`WishLink.Shared.plays`): the page on GitHub then
-    /// sends whoever opens it there, where the wish is shown whole with its ways to get it and change it.
+    /// sends whoever opens it there, where the wish is shown whole with its ways to get it and change it, unless they
+    /// have saves under `saves` (the page's `LAMP_PAGE_SCOPE`) on GitHub, which the link's own page can't read.
     struct OpenInLamp: Equatable {
         var link: URL?
         var origin: RemixLink.Origin? = nil
         var plays = false
+        var saves: String? = nil
     }
 
     /// Gives a published copy of lamp.js the repository's name to keep what the page saves under (`LAMP_PAGE_SCOPE`).
@@ -257,12 +259,19 @@ enum Publish {
         } else {
             page += bar
         }
-        // Where the Share Link plays it, the page opened on its own goes there before anything of the game loads. Framed
-        // by anything, it stays: something is showing it on purpose.
-        guard open.plays, let link = open.link,
-              let json = String(data: (try? JSONSerialization.data(withJSONObject: [link.absoluteString], options: [.withoutEscapingSlashes])) ?? Data(), encoding: .utf8)
+        // Where the Share Link plays it, the page opened on its own goes there. It stays, playing here as before, when it's
+        // framed (something is showing it on purpose), when this browser has saves of it here (the link's page plays
+        // from its own address, which can't read them), and when the link's card doesn't answer within a few seconds
+        // (the link taken down since: its card is gone with it).
+        guard open.plays, let link = open.link, let host = link.host, let scheme = link.scheme,
+              let id = link.lastPathComponent.split(separator: "-").first, !id.isEmpty else { return page }
+        let values = [link.absoluteString, "\(scheme)://\(host)/w/\(id)/card.png", "lamp:" + (open.saves.map { $0.isEmpty ? "" : $0 + ":" } ?? "")]
+        guard let json = (try? JSONSerialization.data(withJSONObject: values, options: [.withoutEscapingSlashes])).flatMap({ String(data: $0, encoding: .utf8) })
         else { return page }
-        let away = "<script>if(window.top===window)location.replace(\(json.dropFirst().dropLast().replacingOccurrences(of: "<", with: "\\u003c")))</script>"
+        let away = """
+            <script>(function(t){if(window.top!==window)return;try{for(var i=0;i<localStorage.length;i++)if((localStorage.key(i)||'').indexOf(t[2])===0)return;}catch(e){return}
+            var c=new Image(),s=0;c.onload=function(){if(!s){s=1;location.replace(t[0])}};c.onerror=function(){s=1};setTimeout(function(){s=1},4000);c.src=t[1];})(\(json.replacingOccurrences(of: "<", with: "\\u003c")))</script>
+            """
         if let head = page.range(of: "<head[^>]*>", options: [.regularExpression, .caseInsensitive]) {
             page.insert(contentsOf: "\n" + away, at: head.upperBound)
             return page
