@@ -54,8 +54,8 @@ heading in its binary (`Store.screenTextMarker`): such an app is told to be rebu
 
 The pictures themselves (`LampRuntime.snapshot`, screenshot.png and up to two more) are the window server's, tried a
 few times in under half a second when it gives none, a clear one or one of one color (`LampRuntime.capture`). A window
-that pictures clear shows nothing and is left out, as are Lamp's own windows over the app (the chat beside it, the
-note pointing at the wand, a change's effect), so the app's window is the first picture. A clear window stays out of
+that pictures clear shows nothing and is left out, as are Lamp's own windows over the app (the chat beside it and what it shows over its panel, such as its Share
+popover, `LampRuntime.isChats`; the note pointing at the wand; a change's effect), so the app's window is the first picture. A clear window stays out of
 `windowsOnScreen` until a later picture shows something in it, so the first picture, the screen as text and `use_app`'s
 actions are of the same window; a front window that can't be pictured is never replaced by the one behind it. When the window server gives
 no picture, the app's own drawing (`cacheDisplay`) is used only for a window with nothing drawn outside the app
