@@ -85,7 +85,8 @@ export async function asset(path) {
     let answer;
     try { answer = await fetch(fresh(path)); } catch (e) { log(`asset: couldn't fetch ${path}`); loadProblem(); return null; }
     if (!answer.ok) { log(`asset: no ${path}`); loadProblem(answer.status); return null; }
-    return answer.arrayBuffer();
+    // The body can still stop partway, after the answer's headers came.
+    try { return await answer.arrayBuffer(); } catch (e) { log(`asset: ${path} stopped partway`); loadProblem(); return null; }
 }
 
 // A file the game needed that didn't come, said on the page rather than only in its log, with Reload: a game that
@@ -95,11 +96,13 @@ let problemShown = false;
 async function loadProblem(status) {
     if (problemShown || !document.body) return;
     let words = "Part of the game didn't load.";
+    let updated = false;
     if (status === 404) {
         let gone = false;
         try { gone = (await fetch(new URL('./', location.href), { method: 'HEAD', cache: 'no-store' })).status === 404; } catch (e) {}
         if (!gone || problemShown) return;
         words = 'This game was just updated.';
+        updated = true;
     }
     problemShown = true;
     const bar = document.createElement('div');
@@ -113,8 +116,14 @@ async function loadProblem(status) {
     reload.type = 'button';
     reload.textContent = 'Reload';
     reload.style.cssText = 'border:0;border-radius:999px;padding:6px 14px;background:#fff;color:#111;font:600 13px/1 -apple-system,system-ui,sans-serif;cursor:pointer';
-    // Starting afresh keeps the player's place where the game saves it (`__lampReloadNow`).
-    reload.addEventListener('click', () => (window.__lampReloadNow || (() => location.reload()))());
+    // Starting afresh keeps the player's place where the game saves it (`__lampReloadNow`). A page that's been replaced
+    // can't come back at its own address: the page around it (a Share Link's on lamp.dev) is asked to load again, which
+    // brings the new version; on its own, it loads again.
+    reload.addEventListener('click', () => {
+        if (!updated) return (window.__lampReloadNow || (() => location.reload()))();
+        if (window.top !== window) window.parent.postMessage({ lamp: 'reload-page' }, '*');
+        else location.reload();
+    });
     bar.append(text, reload);
     document.body.append(bar);
 }
