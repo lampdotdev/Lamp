@@ -118,8 +118,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
       <p data-notify-note class="remix-popup-note empty:hidden" role="status" aria-live="polite"></p>
       <p data-own-lead class="remix-popup-lead">Or have Lamp make it for you now, free on your Mac.</p>
       <div class="remix-popup-rows">
+        <!-- One way on: on a Mac it opens Lamp with the idea, or gets Lamp when that doesn't open; elsewhere it gets Lamp. -->
         <a href={DOWNLOAD_URL} data-download data-download-place="shared-remix" class="shared-button shared-button-outline"><span data-download-label>Get Lamp</span></a>
-        <a data-open data-remix-open href="/" class="shared-button">Open in Lamp</a>
       </div>
       <!-- Empty until Download is pressed, when it says how the wish waits for Lamp. -->
       <p data-next class="remix-popup-note empty:hidden" role="status" aria-live="polite"></p>
@@ -475,9 +475,9 @@ import { DOWNLOAD_URL } from "../../lib/download";
     // Open in Lamp for whoever has it (on a Mac) beside Get Lamp for whoever doesn't. Open is the exact wish when it
     // came with the link, so the copy follows it (`Following` in Lamp); else its words.
     const mac = /Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2;
-    $<HTMLElement>("[data-remix-open]").hidden = !mac;
     const dialog = $<HTMLDialogElement>("[data-remix-dialog]");
-    const open = $<HTMLAnchorElement>("[data-open]");
+    // Where Lamp opens the idea: a lamp: link, which a page can follow but can't tell whether anything answered.
+    let lampLink = "/";
     // The box asks for ideas in the maker's name, as they gave it when they shared it.
     const maker = wish.by?.trim() || "";
     // "Send to Alex Kim" where there's room, "Send to Alex" on a phone or for a long name, else "Send".
@@ -496,7 +496,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
     // Open in Lamp takes the idea as it stands in the dialog.
     const pointOpen = () => {
       const ask = ideaText.value.trim();
-      open.href = (wish.file && wish.shared ? sharedWishLink(wish.shared, ask) : wishLink(withAsk(wish.wish, ask))) ?? "/";
+      lampLink = (wish.file && wish.shared ? sharedWishLink(wish.shared, ask) : wishLink(withAsk(wish.wish, ask))) ?? "/";
     };
     ideaText.addEventListener("input", pointOpen);
     // Each time the bar opens the dialog is a draft of its own: an answer to one sent earlier never changes a later one.
@@ -559,23 +559,55 @@ import { DOWNLOAD_URL } from "../../lib/download";
     });
     $<HTMLButtonElement>("[data-remix-close]").addEventListener("click", () => dialog.close());
     dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
-    open.addEventListener("click", () => track("idea_sent", { idea: wish.name, place: "shared-remix" }));
 
-    // Get Lamp copies the wish (and the change) with Lamp's mark, for Lamp to find when it first opens, and says so
-    // under it.
+    // One button. A page can't tell whether Lamp is on this Mac, so on a Mac it tries Lamp first: if this page loses the
+    // focus within a moment (the browser asking to open Lamp, or Lamp coming forward), Lamp has it; if not, Lamp isn't
+    // here and it's fetched instead. Either way the app and the idea are copied first, with Lamp's mark, for a Lamp just
+    // fetched to find when it first opens (and while the press still lets the page copy).
     const download = $<HTMLAnchorElement>("[data-download]");
+    const downloadLabel = $<HTMLElement>("[data-download-label]");
     const next = $<HTMLElement>("[data-next]");
-    download.addEventListener("click", () => {
-      track("idea_download", { idea: wish.name, place: "shared-remix" });
+    if (mac) downloadLabel.textContent = "Have Lamp Make It";
+    // Safari and Firefox show an error for a link nothing answers when the page itself goes to it; a frame of its own
+    // doesn't. Chrome's frames can't open apps, so there the page goes to it, which shows nothing when nothing answers.
+    const chromium = /Chrome\//.test(navigator.userAgent);
+    const tryLamp = (link: string) => {
+      if (chromium) { location.href = link; return; }
+      const frame = Object.assign(document.createElement("iframe"), { src: link, hidden: true });
+      document.body.append(frame);
+      setTimeout(() => frame.remove(), 3000);
+    };
+    download.addEventListener("click", (event) => {
       const ask = ideaText.value.trim();
       // The app itself with the change for it, when it came with its file; else its words with the change.
       const copy = wish.file && wish.shared ? copyWish(ask, { origin: { shared: wish.shared }, plain: withAsk(wish.wish, ask) }) : copyWish(withAsk(wish.wish, ask));
-      copy.then((copied) => {
-        $<HTMLElement>("[data-download-label]").textContent = "Downloading…";
-        next.textContent = copied === "marked" ? "Open Lamp when it's ready. This app will be there."
-          : copied === "plain" ? "It's copied. Paste it into Lamp when it's ready."
-          : "Copy the app's name, and ask Lamp for it when it's ready.";
-      });
+      const fetching = () => {
+        track("idea_download", { idea: wish.name, place: "shared-remix" });
+        copy.then((copied) => {
+          downloadLabel.textContent = "Downloading…";
+          next.textContent = copied === "marked" ? "Open Lamp when it's ready. This app will be there."
+            : copied === "plain" ? "It's copied. Paste it into Lamp when it's ready."
+            : "Copy the app's name, and ask Lamp for it when it's ready.";
+        });
+      };
+      if (!mac || lampLink === "/") return fetching();
+      event.preventDefault();
+      let answered = false;
+      const away = () => { answered = true; };
+      window.addEventListener("blur", away, { once: true });
+      document.addEventListener("visibilitychange", away, { once: true });
+      tryLamp(lampLink);
+      setTimeout(() => {
+        window.removeEventListener("blur", away);
+        document.removeEventListener("visibilitychange", away);
+        if (answered || !document.hasFocus()) {
+          track("idea_sent", { idea: wish.name, place: "shared-remix" });
+          next.textContent = "Opening in Lamp…";
+          return;
+        }
+        fetching();
+        location.href = download.href;
+      }, 1200);
     });
     track("idea_opened", { idea: wish.name, place: "shared" });
 
