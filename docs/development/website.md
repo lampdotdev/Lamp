@@ -63,8 +63,8 @@ reload doesn't bring it back. The ideas page keeps its own card
 is for playing it, and Lamp and remixing stay out of the way. It's on the same paper and ink as the rest of the site,
 in its type (the name in the heavy grotesque, "Made with Lamp" in the mono), with thin rules and no stripes or color
 of its own, so nothing competes with the wish. A header has the wish's name and who it's by on the left, then "updated <date>" for a link with releases (a sparkle and
-darker words until opened, opening what's new), and "Made with Lamp" in the lighter ink on the right, then the thing someone made fills the rest of the window, only as big as it is (a playing page in the shape Lamp
-sends with the link, else 16:9, the stage a web game is drawn on). What a playing page does isn't on the page (it's in
+darker words until opened, opening what's new), and "Made with Lamp" in the lighter ink on the right, then the thing someone made fills the rest of the window: a playing page all of it, as the app's window does on a
+Mac (a game's scene fitted inside with black around it where the shapes differ), a picture only as big as it is. What a playing page does isn't on the page (it's in
 the link's preview). One that doesn't play there (a Mac app, or one too big to play) shows its picture, or else its icon
 large, with its line under it and how to get it: Open in Lamp in ink beside Get Lamp in outline on a Mac, and anywhere
 else Email me the link, since it opens with Lamp on a Mac. It's never an empty page. Making one's own is a slim band at the foot: a box that reads as a prompt box, with the changes Lamp suggests
