@@ -399,6 +399,9 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   clock += 61_000;
   await remembering(new Request(`https://${own}/api/wish-play?id=${id}&v=${v}&path=index.html`));
   assert.equal(reads, 3, "after a minute");
+  clock += 61_000;
+  await Promise.all(Array.from({ length: 20 }, () => remembering(new Request(`https://${own}/api/wish-play?id=${id}&v=${v}&path=index.html`))));
+  assert.equal(reads, 4, "files asked for at once share one read");
 
   // A new page leaves the one before it playable, for a game still open on it; the one before that goes.
   const again = async () => {

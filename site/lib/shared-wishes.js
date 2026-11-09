@@ -737,15 +737,23 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
   // A link's record, remembered a minute per instance: a game asks for hundreds of files as it's played, and reading
   // the store for each used up its allowance of requests in a day, which took every link down. A version the memory
   // doesn't have (a release since) is read afresh; a link taken down plays on here for that minute at most.
-  const remembered = new Map();
+  // Files asked for together while it's being read share that one read; one that fails is let go, so the next asks again.
+  const remembered = new Map(), reading = new Map();
   const recordOf = async (id, version) => {
     const kept = remembered.get(id);
     if (kept && now() - kept.at < PLAY_MEMORY.ms && (kept.record?.page?.version === version || kept.record?.previousPage?.version === version)) return kept.record;
-    const record = await (store ?? cloudStore(env, fetcher)).get(id);
-    remembered.delete(id);
-    if (remembered.size >= PLAY_MEMORY.links) remembered.delete(remembered.keys().next().value);
-    remembered.set(id, { record, at: now() });
-    return record;
+    if (reading.has(id)) return reading.get(id);
+    const read = (async () => {
+      try {
+        const record = await (store ?? cloudStore(env, fetcher)).get(id);
+        remembered.delete(id);
+        if (remembered.size >= PLAY_MEMORY.links) remembered.delete(remembered.keys().next().value);
+        remembered.set(id, { record, at: now() });
+        return record;
+      } finally { reading.delete(id); }
+    })();
+    reading.set(id, read);
+    return read;
   };
   // Every answer the play host gives, errors too (a browser settles an origin's cluster on its first answer): the
   // play host is the same site as lamp.dev, so without this Chrome runs the framed page in the site's own process,
