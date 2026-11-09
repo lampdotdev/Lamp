@@ -444,6 +444,8 @@ open "build/Lamp Dev.app"</code></pre>
   const ownText = own.querySelector<HTMLInputElement>("[data-own-text]")!;
   const send = own.querySelector<HTMLButtonElement>("[data-send]")!;
   ownText.addEventListener("input", () => { send.disabled = !ownText.value.trim(); });
+  // That someone started writing their own change, once a visit, to count those who begin one and never send it.
+  ownText.addEventListener("input", () => track("home_own_change_started", {}), { once: true });
   own.addEventListener("submit", (event) => {
     event.preventDefault();
     if (!ownText.value.trim()) return;

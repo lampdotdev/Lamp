@@ -421,6 +421,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
     // suggests for it turn in its placeholder, holding still while it's in use or where less motion is asked for.
     const change = $<HTMLInputElement>("[data-change]");
     change.value = askFrom(location.search) ?? "";
+    // That someone started writing a change, once a visit, to count those who begin one and never send it.
+    change.addEventListener("input", () => track("idea_change_started", { idea: wish.name, place: "shared" }), { once: true });
     const ideas = wish.ideas ?? [];
     let shown = 0;
     const placeholder = () => { change.placeholder = ideas.length ? ideas[shown] : "What would you change?"; };
@@ -447,7 +449,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
       event.preventDefault();
       const ask = asked();
       if (!ask) return change.focus();
-      if (!change.value.trim()) track("idea_suggestion", { idea: wish.name, place: "shared" });
+      // Which kind of change was sent, a suggestion or the visitor's own, never what they wrote.
+      track(change.value.trim() ? "idea_own_change" : "idea_suggestion", { idea: wish.name, place: "shared" });
       $<HTMLElement>("[data-remix-to]").textContent = ask;
       open.href = (wish.file && wish.shared ? sharedWishLink(wish.shared, ask) : wishLink(withAsk(wish.wish, ask))) ?? "/";
       dialog.showModal();
