@@ -164,8 +164,10 @@ export const shown = (record) => record && ({
 });
 
 /** Every file kept for a record: its pictures, the wish's file and any parts of one still being sent. */
-const blobsOf = (record) => [record?.picture?.url, record?.icon?.url, record?.file?.url, ...Object.values(record?.parts?.urls ?? {}),
-  ...pageBlobs(record), ...Object.values(record?.pageParts?.urls ?? {})].filter(Boolean);
+const blobsOf = (record) => [record?.picture?.url, record?.icon?.url, record?.file?.url, ...partBlobs(record?.parts),
+  ...pageBlobs(record), ...partBlobs(record?.pageParts)].filter(Boolean);
+/** A file's parts so far, and those set aside (`spare`): replaced by a part sent again, or left by an earlier count. */
+const partBlobs = (parts) => [...Object.values(parts?.urls ?? {}), ...(parts?.spare ?? [])];
 const pageBlobs = (record) => Object.values(record?.page?.files ?? {});
 
 /**
@@ -233,6 +235,11 @@ export function cloudStore(env, fetcher = fetch) {
     async create(record) { return (await command(["SET", key(record.id), JSON.stringify(record), "NX"])) === "OK"; },
     /** False when the record is gone (taken down meanwhile): nothing was written. */
     async replace(record) { return (await command(["SET", key(record.id), JSON.stringify(record), "XX"])) === "OK"; },
+    /** Writes `after` only while the record is still `before` as read: false when it changed meanwhile, or is gone. */
+    async swap(before, after) {
+      return (await command(["EVAL", "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('SET', KEYS[1], ARGV[2]) end return false",
+        "1", key(after.id), JSON.stringify(before), JSON.stringify(after)])) === "OK";
+    },
     async remove(id) { await command(["DEL", key(id)]); },
     async putImage(id, name, image) {
       const { put } = await import("@vercel/blob");
@@ -305,6 +312,11 @@ export function memoryStore() {
     async get(id) { return records.has(id) ? structuredClone(records.get(id)) : null; },
     async create(record) { if (records.has(record.id)) return false; records.set(record.id, structuredClone(record)); return true; },
     async replace(record) { if (!records.has(record.id)) return false; records.set(record.id, structuredClone(record)); return true; },
+    async swap(before, after) {
+      if (!records.has(after.id) || JSON.stringify(records.get(after.id)) !== JSON.stringify(before)) return false;
+      records.set(after.id, structuredClone(after));
+      return true;
+    },
     async remove(id) { records.delete(id); },
     async putImage(_id, _name, image) { return `data:${image.type};base64,${image.bytes.toString("base64")}`; },
     async removeImages() {},
@@ -669,23 +681,33 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
       const record = await kept.get(id);
       if (!record || !secretMatches(bearer(request), record.secret)) return reply(404, { error: "not_found" });
       if (method === "PUT") {
-        // A new count starts a new file: parts of an earlier one that never came together go.
-        const earlier = record[partsKey];
-        const parts = earlier?.of === part.of ? earlier : { of: part.of, urls: {} };
-        const stale = earlier && earlier !== parts ? Object.values(earlier.urls) : [];
-        const replaced = parts.urls[part.n];
         const at = await kept.putFile(id, `${page ? "page-part" : "part"}-${part.n}`, part.bytes);
         uploaded.push(at);
-        // Taken down while the part went up: nothing leads to it, so it goes now (the catch below takes it away).
-        if (!(await kept.replace({ ...record, [partsKey]: { of: parts.of, urls: { ...parts.urls, [part.n]: at } } }))) throw new Error("Gone");
+        // The part goes into the record as it is when it's written, never as it was read before the part went up: Lamp
+        // sends a part again when its connection drops, and the first try can still be storing then, so another part
+        // may have gone in meanwhile, which a write from the old read would lose. What it replaces is only set aside,
+        // never removed here: putting the parts together may be reading it right now. It goes when they've been put
+        // together, or with the link.
+        for (let attempt = 0; ; attempt++) {
+          const current = attempt ? await kept.get(id) : record;
+          // Taken down while the part went up: nothing leads to it, so it goes now (the catch below takes it away).
+          if (!current || !secretMatches(bearer(request), current.secret)) throw new Error("Gone");
+          // A new count starts a new file: parts of an earlier one that never came together are set aside.
+          const earlier = current[partsKey];
+          const same = earlier?.of === part.of;
+          const urls = same ? earlier.urls : {};
+          const spare = [...(earlier?.spare ?? []), ...(same ? [] : Object.values(earlier?.urls ?? {})),
+            ...(urls[part.n] && urls[part.n] !== at ? [urls[part.n]] : [])];
+          if (await kept.swap(current, { ...current, [partsKey]: { of: part.of, urls: { ...urls, [part.n]: at }, spare } })) break;
+          if (attempt === 4) throw new Error("Busy");
+        }
         uploaded = [];
-        await kept.removeImages([...stale, replaced].filter(Boolean));
         return reply(204);
       }
       if (method === "DELETE") {
         // The page goes with the wish itself: a link that no longer carries the wish has nothing to play.
-        const gone = [...pageBlobs(record), ...Object.values(record.pageParts?.urls ?? {}),
-          ...(page ? [] : [record.file?.url, ...Object.values(record.parts?.urls ?? {})])].filter(Boolean);
+        const gone = [...pageBlobs(record), ...partBlobs(record.pageParts),
+          ...(page ? [] : [record.file?.url, ...partBlobs(record.parts)])].filter(Boolean);
         const { page: _page, pageParts: _pageParts, ...rest } = record;
         // The count stays with the link, so a file sent again later is newer to its followers than any before.
         const next = { ...(page ? rest : { ...rest, file: null, parts: undefined, fileVersion: record.file?.version ?? record.fileVersion }),
@@ -719,12 +741,12 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
         const version = (record.page?.version ?? record.pageVersion ?? 0) + 1;
         const { pageParts: _pageParts, ...rest } = record;
         if (!(await kept.replace({ ...rest, page: { version, files: urls, sizes }, pageVersion: version, updated: now().toISOString() }))) {
-          await kept.removeImages([...uploaded, ...Object.values(parts.urls)]);
+          await kept.removeImages([...uploaded, ...partBlobs(parts)]);
           uploaded = [];
           return reply(404, { error: "not_found" });
         }
         uploaded = [];
-        await kept.removeImages([...pageBlobs(record), ...Object.values(parts.urls)]);
+        await kept.removeImages([...pageBlobs(record), ...partBlobs(parts)]);
         await kept.forget(id);
         return reply(200, { version, files: files.length });
       }
@@ -736,12 +758,12 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
       const version = (record.file?.version ?? (record.file ? 1 : record.fileVersion ?? 0)) + 1;
       if (!(await kept.replace({ ...rest, file: { url: at, size: bytes.length, version }, fileVersion: version, updated: now().toISOString() }))) {
         // Taken down meanwhile: the file and its parts go with it.
-        await kept.removeImages([...uploaded, ...Object.values(parts.urls)]);
+        await kept.removeImages([...uploaded, ...partBlobs(parts)]);
         uploaded = [];
         return reply(404, { error: "not_found" });
       }
       uploaded = [];
-      await kept.removeImages([record.file?.url, ...Object.values(parts.urls)].filter(Boolean));
+      await kept.removeImages([record.file?.url, ...partBlobs(parts)].filter(Boolean));
       await kept.forget(id);
       return reply(200, { url: at, size: bytes.length });
     } catch (error) {
