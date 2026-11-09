@@ -224,6 +224,54 @@ final class ContributeTests: XCTestCase {
         XCTAssertNil(Contribute.sendableVersion(of: project))
     }
 
+    /// A wish whose apps are all in folders of their own: the app the wish is shared as (`Sharing.layout`'s root) is in
+    /// one too, and its own files there may differ as a part's do. Its code may not, nor a file outside every app's
+    /// folder, nor a renamed file; and the version is the one HEAD is at.
+    func testTheFirstAppsOwnFilesInItsFolderDoNotHoldTheChangeBack() async throws {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser.appendingPathComponent(".lamp-contribute-test-\(UUID().uuidString)")
+        folders.append(home)
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        let made = try Template.scaffold(name: "Remote", platform: .mac, in: home)
+        for (kind, folder) in [(Platform.tv, "TV"), (.universal, "iPhone")] {
+            let part = LampProject(id: Parts.id(wish: made.id, folder: folder), name: made.name, exe: made.exe,
+                                   dir: made.dir.appendingPathComponent(folder), instance: Parts.instance(wish: made, folder: folder),
+                                   platform: kind, partOf: made.id)
+            try fm.createDirectory(at: part.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+            try Template.saveMeta(part)
+            try Template.fill(part)
+            try write(["Sources/LampSupport.swift": "// runtime 1\n", "build.sh": "# \(folder)\n"], in: part.dir)
+        }
+        let kept = Parts.folders.union([".lamp", ".git", ".gitignore", "icon.json", AppDescription.file, Attachments.folder])
+        for name in try fm.contentsOfDirectory(atPath: made.dir.path) where !kept.contains(name) {
+            try fm.removeItem(at: made.dir.appendingPathComponent(name))
+        }
+        let wish = try XCTUnwrap(Store.readWish(at: made.dir))
+        XCTAssertFalse(wish.holdsApp)
+        let (root, parts) = Sharing.layout(of: wish)
+        let first = root.dir.lastPathComponent, other = try XCTUnwrap(parts.first).dir.lastPathComponent
+        XCTAssertNotEqual(root.dir.standardizedFileURL, wish.dir.standardizedFileURL, "the app it's shared as is in a folder")
+        let head = try git("git init -q -b main && git add -A && git -c user.name=Lamp -c user.email=lamp@localhost commit -qm first && git rev-parse HEAD", in: wish.dir)
+
+        try write(["\(first)/Sources/LampSupport.swift": "// runtime 2\n", "\(first)/build.sh": "# newer\n",
+                   "\(other)/Sources/LampSupport.swift": "// runtime 2\n"], in: wish.dir)
+        XCTAssertNil(Versions.savedVersion(of: wish.dir))
+        XCTAssertEqual(Contribute.sendableVersion(of: wish), head)
+
+        for unsaved in ["\(first)/Sources/Pad.swift", "Sources/LampSupport.swift", "Elsewhere/Sources/LampSupport.swift"] {
+            try write([unsaved: "// unsaved\n"], in: wish.dir)
+            XCTAssertNil(Contribute.sendableVersion(of: wish), unsaved)
+            try write([unsaved: nil], in: wish.dir)
+        }
+        XCTAssertEqual(Contribute.sendableVersion(of: wish), head)
+        _ = try git("git mv \(first)/build.sh \(first)/build2.sh", in: wish.dir)
+        XCTAssertNil(Contribute.sendableVersion(of: wish), "a rename")
+        _ = try git("git mv \(first)/build2.sh \(first)/build.sh", in: wish.dir)
+        let moved = try git("git -c user.name=Lamp -c user.email=lamp@localhost commit -qm later --allow-empty && git rev-parse HEAD", in: wish.dir)
+        XCTAssertEqual(Contribute.sendableVersion(of: wish), moved, "the version HEAD is at")
+        XCTAssertNotEqual(moved, head)
+    }
+
     /// What `prepare` stopped at, when it was blocked.
     private func blocked(_ project: LampProject, from repo: URL) async -> Contribute.Blocked? {
         do {

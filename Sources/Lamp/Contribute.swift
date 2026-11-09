@@ -96,7 +96,7 @@ enum Contribute {
         return candidate
     }
 
-    /// The version that goes: the wish's saved version, with only Lamp's own files (`GitHubRepo.isOwned`, a part's in its
+    /// The version that goes: the wish's saved version, with only Lamp's own files (`GitHubRepo.isOwned`, an app's in its
     /// folder) allowed to differ from it. A rebuild for a newer Lamp writes those afresh without saving a version
     /// (`Store.updateForThisForge`), and they never go (`Upstream.isLeftOut`), so they mustn't hold the changes back.
     /// Nil while anything else is unsaved, since then the files are no version at all.
@@ -105,15 +105,22 @@ enum Contribute {
         guard status.ok else { return nil }
         let entries = status.output.split(separator: "\0").map(String.init)
         if !entries.isEmpty {
+            // Each app with the folder its files are in, from the wish's: none for an app at the top, its own for one
+            // in a folder, which the root app is too when every app of the wish is in one (`Sharing.layout`).
             let (root, parts) = Sharing.layout(of: project)
+            let top = project.dir.standardizedFileURL.path
+            let apps: [(folder: String, app: LampProject)] = ([root] + parts).compactMap { app in
+                let dir = app.dir.standardizedFileURL.path
+                if dir == top { return ("", app) }
+                return dir.hasPrefix(top + "/") ? (String(dir.dropFirst(top.count + 1)) + "/", app) : nil
+            }
             for entry in entries {
                 // A rename or copy names two paths and is never one of Lamp's own rewrites.
                 guard entry.count > 3, !entry.prefix(2).contains(where: { $0 == "R" || $0 == "C" }) else { return nil }
                 let path = String(entry.dropFirst(3))
-                let part = parts.first { path.hasPrefix($0.dir.lastPathComponent + "/") }
-                let owned = part.map { GitHubRepo.isOwned(String(path.dropFirst($0.dir.lastPathComponent.count + 1)), in: $0) }
-                    ?? GitHubRepo.isOwned(path, in: root)
-                guard owned else { return nil }
+                // A path in an app's folder is that app's; any other is the app at the top's, when there is one.
+                let owner = apps.first { !$0.folder.isEmpty && path.hasPrefix($0.folder) } ?? apps.first { $0.folder.isEmpty }
+                guard let owner, GitHubRepo.isOwned(String(path.dropFirst(owner.folder.count)), in: owner.app) else { return nil }
             }
         }
         let head = Versions.gitBlocking("git rev-parse HEAD", cwd: project.dir)
