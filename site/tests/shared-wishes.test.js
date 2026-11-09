@@ -456,6 +456,16 @@ test("ideas reach the link's maker, and only the maker reads them", async () => 
   assert.deepEqual((await Promise.all(answers.map((one) => one.json()))).map((one) => one.notified).sort(), [false, true]);
   assert.equal(mails.length, 2);
   assert.equal(mails[1][1].to[0], "someone@example.com");
+  // The sender's browser asks after its own ideas, by number and token, and hears only their outcome.
+  const kept1 = await (await post({ text: "A lighthouse on the point" })).json();
+  const kept2 = await (await post({ text: "Fog in the mornings" })).json();
+  const mine = async (pairs) => (await (await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&mine=${pairs}`))).json()).ideas;
+  assert.deepEqual(await mine(`${kept1.n}.${kept1.token},${kept2.n}.${kept2.token}`), [{ n: kept1.n, status: "open" }, { n: kept2.n, status: "open" }]);
+  assert.deepEqual(await mine(`${kept1.n}.${"x".repeat(16)}`), [], "only with its token");
+  await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${kept1.n}&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
+  await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${kept2.n}`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
+  assert.deepEqual((await mine(`${kept1.n}.${kept1.token},${kept2.n}.${kept2.token}`)).map((one) => one.status), ["in", "dismissed"]);
+  assert.ok(!(await (await list()).json()).ideas.some((one) => one.n === kept1.n || one.n === kept2.n), "the maker sees only those still open");
   const quiet = await (await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=3&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }))).json();
   assert.equal(quiet.notified, false, "nobody asked");
   assert.equal(mails.length, 2);

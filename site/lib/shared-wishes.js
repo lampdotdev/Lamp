@@ -265,6 +265,22 @@ export function cloudStore(env, fetcher = fetch) {
     },
     /** True when this call took it away: two at once never both do. */
     async removeIdea(id, n) { return (await command(["HDEL", ideasKey(id), String(n)])) === 1; },
+    /**
+     * Gives idea `n` its outcome ("in" or "dismissed"), in one step, and answers it as it was, its address included, to
+     * whichever call gave it: null when it's gone or already has one, so it's told once. The address goes with this step.
+     */
+    async finishIdea(id, n, status, at) {
+      const text = await command(["EVAL", `local text = redis.call('HGET', KEYS[1], ARGV[1])
+        if not text then return false end
+        local idea = cjson.decode(text)
+        if idea.status then return false end
+        idea.status = ARGV[2]
+        idea.done = ARGV[3]
+        idea.email = nil
+        redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(idea))
+        return text`, "1", ideasKey(id), String(n), status, at]);
+      return typeof text === "string" ? { ...JSON.parse(text), n } : null;
+    },
     async putImage(id, name, image) {
       const { put } = await import("@vercel/blob");
       const blob = await put(`${scope}/w/${id}/${name}.${image.extension}`, image.bytes, {
@@ -352,6 +368,14 @@ export function memoryStore() {
     },
     async ideas(id) { return [...(ideas.get(id)?.all.values() ?? [])].map((idea) => structuredClone(idea)).sort((a, b) => a.n - b.n); },
     async removeIdea(id, n) { return ideas.get(id)?.all.delete(n) ?? false; },
+    async finishIdea(id, n, status, at) {
+      const idea = ideas.get(id)?.all.get(n);
+      if (!idea || idea.status) return null;
+      const before = structuredClone(idea);
+      Object.assign(idea, { status, done: at });
+      delete idea.email;
+      return before;
+    },
     async putImage(_id, _name, image) { return `data:${image.type};base64,${image.bytes.toString("base64")}`; },
     async removeImages() {},
     async putFile(_id, _name, bytes) { return `data:application/octet-stream;base64,${bytes.toString("base64")}`; },
@@ -480,7 +504,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
 // MARK: Ideas for the maker
 
 /** What someone playing a shared wish may send its maker: their idea, and an address to hear back at if they want. */
-export const IDEA_LIMITS = { text: 1000, email: 200, kept: 500 };
+export const IDEA_LIMITS = { text: 1000, email: 200, kept: 500, asked: 20, keptDone: 90 * 86400_000 };
 // A visitor sends a handful an hour; a link takes a few hundred a day; overall, a ceiling on a flood.
 export const IDEA_QUOTAS = [
   { name: "idea-ip", perIP: true, limit: 12, seconds: 3600 },
@@ -524,8 +548,10 @@ export function readIdea(body) {
 /**
  * Ideas for a link's maker (`/api/wish-ideas?id=`). POST, from the link's page once the sender confirms it, keeps one:
  * what someone using it would change, and an address to hear when it's in, if they gave one. GET, with the link's secret, answers them for Lamp to show the maker: never the keys or the addresses, only
- * whether someone wants to hear back. DELETE ?n= with the secret lets one go; with `built=1`, the site first writes to
- * whoever asked (`tellItsIn`). Kept only for the maker: never logged, never on the page, gone with the link.
+ * whether someone wants to hear back. DELETE ?n= with the secret lets one go: with `built=1` it's in, and the site writes
+ * to whoever asked (`tellItsIn`); without, it's dismissed. Either way it's kept a while with its outcome, for the
+ * sender's own browser, which kept the number and a token the POST answered, to ask after it on a later visit (GET
+ * `?id=&mine=<n>.<token>,…`, answering only those). Never logged, never on the page for anyone else, gone with the link.
  */
 export function createIdeasHandler({ env = process.env, fetcher = fetch, store, limited = true, now = () => new Date() } = {}) {
   return async (request) => {
@@ -562,19 +588,33 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
       const record = await kept.get(id);
       if (!record) return reply(404, { error: "not_found" });
       if (method === "POST") {
-        const number = await kept.addIdea(id, { ...idea, at: now().toISOString() });
-        return number ? reply(201, { n: number }) : reply(429, { error: "full" });
+        const token = randomBytes(12).toString("base64url");
+        const number = await kept.addIdea(id, { ...idea, token, at: now().toISOString() });
+        return number ? reply(201, { n: number, token }) : reply(429, { error: "full" });
+      }
+      // The sender's own ideas, asked by number and token from their browser: what became of each, nothing else.
+      const mine = method === "GET" ? url.searchParams.get("mine") : null;
+      if (mine != null) {
+        const asked = new Map(mine.split(",").slice(0, IDEA_LIMITS.asked).map((one) => one.split("."))
+          .filter(([n, token]) => /^\d{1,6}$/.test(n ?? "") && /^[A-Za-z0-9_-]{16}$/.test(token ?? "")).map(([n, token]) => [Number(n), token]));
+        const all = await kept.ideas(id);
+        return reply(200, { ideas: all.filter((one) => one.token && asked.get(one.n) === one.token)
+          .map((one) => ({ n: one.n, status: one.status ?? "open", ...(one.done ? { done: one.done } : {}) })) });
       }
       if (!secretMatches(bearer(request), record.secret)) return reply(404, { error: "not_found" });
-      // The maker sees whether someone wants to hear back, never their address: the site writes to them.
+      // The maker sees the ideas still open, and whether someone wants to hear back, never their address: the site
+      // writes to them. Those with an outcome are kept a while for their senders, then go.
       if (method === "GET") {
-        return reply(200, { ideas: (await kept.ideas(id)).map(({ email, ...shown }) => ({ ...shown, ...(email ? { wantsNews: true } : {}) })) });
+        const all = await kept.ideas(id);
+        const old = all.filter((one) => one.done && now() - new Date(one.done) > IDEA_LIMITS.keptDone);
+        for (const one of old) await kept.removeIdea(id, one.n);
+        return reply(200, { ideas: all.filter((one) => !one.status).map(({ email, token: _token, ...shown }) => ({ ...shown, ...(email ? { wantsNews: true } : {}) })) });
       }
-      // `built`: it's in, so whoever asked to hear back is told, once, before it goes.
-      // Taken away first: only the call that took it writes, so two at once, or one tried again, send one email.
-      const done = url.searchParams.get("built") === "1" ? (await kept.ideas(id)).find((one) => one.n === n) : null;
-      const took = await kept.removeIdea(id, n);
-      const notified = took && done?.email ? await tellItsIn(done, record, linkFor(url.origin, id, record.name), { env, fetcher, once: `idea-${id}-${n}` }) : false;
+      // An outcome, given once: only the call that gave it writes to the sender, so two at once, or one tried again,
+      // send one email.
+      const built = url.searchParams.get("built") === "1";
+      const was = await kept.finishIdea(id, n, built ? "in" : "dismissed", now().toISOString());
+      const notified = built && was?.email ? await tellItsIn(was, record, linkFor(url.origin, id, record.name), { env, fetcher, once: `idea-${id}-${n}` }) : false;
       return reply(200, { notified });
     } catch { return reply(503, { error: "service_unavailable" }); }
   };

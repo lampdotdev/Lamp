@@ -401,7 +401,10 @@ counted by the link, since a link made again counts from one), and the person go
 with Back: Build It asks the wish's chat for one, in the sender's words, marked as theirs (`WishIdeas.request`); It's In
 lets it go and has the site write once to whoever asked to hear back, through Resend (`tellItsIn`: `RESEND_API_KEY` and
 `LAMP_IDEAS_FROM` in the site's environment); Dismiss lets it go quietly. The maker sees only that someone wants to hear
-back, never their address. Making one's own with Lamp stays in the
+back, never their address. Either way the idea is kept with its outcome for 90 days (`finishIdea`, one step, so the
+email goes once): the sender's browser keeps each idea's number and a token the site answered, asks after them on its
+next visit (`?mine=`), and an idea that's in says so once in a bar over the app, with See What's New; one dismissed
+says nothing. Making one's own with Lamp stays in the
 dialog under the idea sent, and is all it offers when the idea couldn't go. A new page leaves the one before it playable
 (`previousPage` in lib/shared-wishes.js), since a game open on it goes on loading files as it's played (a big city's map
 as the player moves); the one before that goes. A file a game asks for through lamp-game.js's `asset` that doesn't come

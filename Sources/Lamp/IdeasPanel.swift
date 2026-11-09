@@ -207,7 +207,7 @@ struct IdeasPanel: View {
                 Button("It's In") { finish(idea, built: true) }
                     .buttonStyle(PaperButtonStyle(.outline, height: 28))
                     .disabled(finishing.contains(idea.n))
-                    .help(idea.wantsNews == true ? "Takes it off the list and emails them that it's in" : "Takes it off the list")
+                    .help(idea.wantsNews == true ? "Takes it off the list, emails them that it's in, and tells them on the link's page" : "Takes it off the list, and tells them on the link's page")
                 Button("Dismiss") { finish(idea, built: false) }
                     .buttonStyle(PaperButtonStyle(.outline, height: 28))
                     .disabled(finishing.contains(idea.n))

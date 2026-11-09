@@ -41,6 +41,14 @@ import { DOWNLOAD_URL } from "../../lib/download";
     <!-- The thing itself, as big as the room between the header and the band allows, and only as big as it is: a
          playing page in the shape Lamp sent with it, and a picture as it is. -->
     <main data-stage class="stage relative flex min-h-0 flex-1 items-center justify-center p-3 sm:px-6" aria-label="The app">
+      <!-- An idea this browser sent that the maker has since put in, said once on a later visit. -->
+      <div data-idea-in hidden role="status" class="idea-in">
+        <span data-idea-in-text></span>
+        <button type="button" data-idea-in-news hidden class="idea-in-news">See what's new</button>
+        <button type="button" data-idea-in-close aria-label="Close" class="idea-in-close">
+          <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+        </button>
+      </div>
       <div data-play hidden class="play-frame relative overflow-hidden bg-black">
         <button
           type="button"
@@ -229,6 +237,20 @@ import { DOWNLOAD_URL } from "../../lib/download";
   }
   .shared-button-outline:hover { background: color-mix(in srgb, var(--color-tape) 6%, transparent); }
   .shared-button[hidden] { display: none; }
+
+  /* An idea that's in: a dark bar over the top of the app, closed with its ×. */
+  .idea-in {
+    position: absolute; top: 0.75rem; left: 50%; translate: -50% 0; z-index: 20; display: flex; align-items: center; gap: 0.75rem;
+    max-width: calc(100% - 1.5rem); padding: 0.5rem 0.5rem 0.5rem 1rem; border-radius: 999px; background: var(--color-tape);
+    color: var(--color-paper); font-size: 0.875rem; box-shadow: 0 6px 20px rgb(0 0 0 / 0.25);
+  }
+  .idea-in[hidden], .idea-in-news[hidden] { display: none; }
+  /* Under the header while it's shown, which lies over the top of the app. */
+  [data-bars="shown"] .idea-in { top: 4.25rem; }
+  .idea-in span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .idea-in-news { flex: none; padding: 0.25rem 0.75rem; border-radius: 999px; background: var(--color-paper); color: var(--color-tape); font-weight: 600; cursor: pointer; }
+  .idea-in-close { flex: none; display: grid; place-items: center; width: 1.5rem; height: 1.5rem; border-radius: 999px; cursor: pointer; opacity: 0.8; }
+  .idea-in-close svg { width: 0.625rem; height: 0.625rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 
   /* The change dialog: a plain card on the paper, fading in. */
   .remix-popup {
@@ -523,6 +545,42 @@ import { DOWNLOAD_URL } from "../../lib/download";
       dialog.showModal();
       confirmSend.focus();
     });
+    // The ideas this browser sent to this link, by number and token, for a later visit to ask what became of them (only
+    // theirs, nothing else). Kept here alone: there's no account, and nothing of them goes anywhere but this link's site.
+    const MINE = `lamp.shared.ideas.${wish.id}`;
+    type Mine = { n: number; token: string; text: string; at: string };
+    const mineKept = (): Mine[] => { try { return JSON.parse(localStorage.getItem(MINE) ?? "[]"); } catch { return []; } };
+    const keepMine = (all: Mine[]) => { try { all.length ? localStorage.setItem(MINE, JSON.stringify(all.slice(-20))) : localStorage.removeItem(MINE); } catch {} };
+    const remember = (answer: { n: number; token: string }, text: string) => {
+      if (Number.isInteger(answer?.n) && typeof answer?.token === "string") keepMine([...mineKept(), { n: answer.n, token: answer.token, text, at: new Date().toISOString() }]);
+    };
+    // On a visit, one that's in says so once, over the app; one dismissed, or older than the site keeps them, is let go.
+    (async () => {
+      const all = mineKept();
+      if (!all.length) return;
+      let answers: { n: number; status: string }[] = [];
+      try {
+        const response = await fetch(`/api/wish-ideas?id=${encodeURIComponent(wish.id)}&mine=${all.map((one) => `${one.n}.${one.token}`).join(",")}`, { signal: AbortSignal.timeout(8000) });
+        if (!response.ok) return;
+        answers = (await response.json()).ideas ?? [];
+      } catch { return; }
+      const status = new Map(answers.map((one) => [one.n, one.status]));
+      const isIn = all.filter((one) => status.get(one.n) === "in");
+      keepMine(all.filter((one) => status.get(one.n) === "open"));
+      if (!isIn.length) return;
+      const bar = $<HTMLElement>("[data-idea-in]");
+      $<HTMLElement>("[data-idea-in-text]").textContent = isIn.length === 1
+        ? `Your idea is in: “${isIn[0].text}”` : `${isIn.length} of your ideas are in`;
+      const news = $<HTMLButtonElement>("[data-idea-in-news]");
+      const newsButton = $<HTMLButtonElement>("[data-news]");
+      news.hidden = newsButton.hidden;
+      // After this click has finished, or the list it opens takes it as a click outside and closes again.
+      news.addEventListener("click", () => { bar.hidden = true; setTimeout(() => $<HTMLElement>("[data-news-list]").showPopover(), 0); });
+      $<HTMLButtonElement>("[data-idea-in-close]").addEventListener("click", () => { bar.hidden = true; });
+      bar.hidden = false;
+      track("idea_in_seen", { idea: wish.name, place: "shared" });
+    })();
+
     // Confirmed: the idea goes to the maker (`/api/wish-ideas`), who sees it in Lamp, with the address if one was given.
     confirm.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -538,6 +596,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
           signal: AbortSignal.timeout(8000),
         });
         sent = response.status === 201;
+        if (sent) remember((await response.json()) as { n: number; token: string }, idea);
         if (!sent && response.status === 400 && email && mine === draft) { notifyNote.textContent = "Check the email address."; confirmSend.disabled = false; return; }
       } catch {}
       if (sent) {
