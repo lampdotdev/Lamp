@@ -233,6 +233,11 @@ export function cloudStore(env, fetcher = fetch) {
     async create(record) { return (await command(["SET", key(record.id), JSON.stringify(record), "NX"])) === "OK"; },
     /** False when the record is gone (taken down meanwhile): nothing was written. */
     async replace(record) { return (await command(["SET", key(record.id), JSON.stringify(record), "XX"])) === "OK"; },
+    /** Writes `after` only while the record is still `before` as read: false when it changed meanwhile, or is gone. */
+    async swap(before, after) {
+      return (await command(["EVAL", "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('SET', KEYS[1], ARGV[2]) end return false",
+        "1", key(after.id), JSON.stringify(before), JSON.stringify(after)])) === "OK";
+    },
     async remove(id) { await command(["DEL", key(id)]); },
     async putImage(id, name, image) {
       const { put } = await import("@vercel/blob");
@@ -305,6 +310,11 @@ export function memoryStore() {
     async get(id) { return records.has(id) ? structuredClone(records.get(id)) : null; },
     async create(record) { if (records.has(record.id)) return false; records.set(record.id, structuredClone(record)); return true; },
     async replace(record) { if (!records.has(record.id)) return false; records.set(record.id, structuredClone(record)); return true; },
+    async swap(before, after) {
+      if (!records.has(after.id) || JSON.stringify(records.get(after.id)) !== JSON.stringify(before)) return false;
+      records.set(after.id, structuredClone(after));
+      return true;
+    },
     async remove(id) { records.delete(id); },
     async putImage(_id, _name, image) { return `data:${image.type};base64,${image.bytes.toString("base64")}`; },
     async removeImages() {},
@@ -669,17 +679,26 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
       const record = await kept.get(id);
       if (!record || !secretMatches(bearer(request), record.secret)) return reply(404, { error: "not_found" });
       if (method === "PUT") {
-        // A new count starts a new file: parts of an earlier one that never came together go.
-        const earlier = record[partsKey];
-        const parts = earlier?.of === part.of ? earlier : { of: part.of, urls: {} };
-        const stale = earlier && earlier !== parts ? Object.values(earlier.urls) : [];
-        const replaced = parts.urls[part.n];
         const at = await kept.putFile(id, `${page ? "page-part" : "part"}-${part.n}`, part.bytes);
         uploaded.push(at);
-        // Taken down while the part went up: nothing leads to it, so it goes now (the catch below takes it away).
-        if (!(await kept.replace({ ...record, [partsKey]: { of: parts.of, urls: { ...parts.urls, [part.n]: at } } }))) throw new Error("Gone");
+        // The part goes into the record as it is when it's written, never as it was read before the part went up: Lamp
+        // sends a part again when its connection drops, and the first try can still be storing then, so another part
+        // may have gone in meanwhile, which a write from the old read would lose.
+        let stale = [], replaced;
+        for (let attempt = 0; ; attempt++) {
+          const current = attempt ? await kept.get(id) : record;
+          // Taken down while the part went up: nothing leads to it, so it goes now (the catch below takes it away).
+          if (!current || !secretMatches(bearer(request), current.secret)) throw new Error("Gone");
+          // A new count starts a new file: parts of an earlier one that never came together go.
+          const earlier = current[partsKey];
+          const parts = earlier?.of === part.of ? earlier : { of: part.of, urls: {} };
+          stale = earlier && earlier !== parts ? Object.values(earlier.urls) : [];
+          replaced = parts.urls[part.n];
+          if (await kept.swap(current, { ...current, [partsKey]: { of: parts.of, urls: { ...parts.urls, [part.n]: at } } })) break;
+          if (attempt === 4) throw new Error("Busy");
+        }
         uploaded = [];
-        await kept.removeImages([...stale, replaced].filter(Boolean));
+        await kept.removeImages([...stale, replaced].filter((url) => url && url !== at));
         return reply(204);
       }
       if (method === "DELETE") {
