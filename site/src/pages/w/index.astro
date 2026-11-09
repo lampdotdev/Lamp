@@ -172,6 +172,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
   .stage { padding-top: calc(3.5rem + 0.75rem); padding-bottom: calc(4rem + 0.75rem); }
   [data-bars="hidden"] .bar-top { translate: 0 -100%; }
   [data-bars="hidden"] .bar-bottom { translate: 0 100%; }
+  /* A playing page goes edge to edge between the header and the band, with none of the page's paper around it. */
+  .stage.plays { padding: 3.5rem 0 4rem; }
   [data-bars="hidden"] .stage { padding: 0; }
   [data-bars="hidden"] { background: #000; }
   .bars-toggle { color: var(--color-muted-ink); }
@@ -370,6 +372,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
     if (wish.play) {
       // The page plays from the link's own host (`playOrigin`), so it can't reach the site or another wish's storage.
       const stage = $<HTMLElement>("[data-play]");
+      $<HTMLElement>("[data-stage]").classList.add("plays");
       const frame = document.createElement("iframe");
       frame.title = wish.name;
       frame.allow = "fullscreen; gamepad; autoplay; clipboard-write";
