@@ -1,4 +1,5 @@
 import Foundation
+import LampOutsideKit
 
 /// Which Lamp this is: the release people install, Lamp Nightly (a release from every change merged, for people
 /// who want them early), or the development build made from source. They are separate apps on the Mac: different
@@ -18,7 +19,8 @@ enum Edition {
     static let instance: String = isDev && bundleID.hasPrefix("dev.lamp.host.dev.") ? String(bundleID.dropFirst("dev.lamp.host.dev.".count)) : ""
 
     /// What the app is called where a name appears: window title, folders.
-    static let name = isDev ? "Lamp Dev" + (instance.isEmpty ? "" : " " + instance) : isNightly ? "Lamp Nightly" : "Lamp"
+    /// The rule is in `OutsideKit`, which Lamp's MCP helper shares, so the two always name the same folders.
+    static let name = OutsideKit.editionName(bundleID: bundleID)
 
     /// The names of every Lamp's folder on this Mac (under Application Support, and "<name> Apps" under
     /// Applications): the release's, the plain development build's, and each instance's. What one Lamp closes to
