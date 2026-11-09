@@ -59,7 +59,8 @@ enum WishLink {
         /// The changes Lamp suggests for it, the page's to offer. Nil in links from before.
         var ideas: [String]? = nil
         /// The questions the page's box asks in turn, written by Lamp and the person's to change (`WishAsks`). Nil in
-        /// links from before, whose page asks its own.
+        /// links from before, which Lamp writes some for; empty when the person cleared them, which stays so, and the page
+        /// asks its own.
         var asks: [String]? = nil
         /// The shape its page plays in (`Publish.pageShape`): "fill", or its width over its height. Nil for a wish with no
         /// page, and in links from before.
@@ -474,7 +475,7 @@ enum WishLink {
             // wish, not a message.
             WishLink.Words(name: values.name.trimmed, by: values.by.trimmed, line: values.line.trimmed,
                            words: values.line.trimmed.isEmpty ? values.words.trimmed : values.line.trimmed,
-                           ideas: ideas.isEmpty ? nil : ideas, asks: { let asks = WishAsks.lines(from: values.asks); return asks.isEmpty ? nil : asks }(), shape: shape,
+                           ideas: ideas.isEmpty ? nil : ideas, asks: WishAsks.lines(from: values.asks), shape: shape,
                            picture: pictureDigest, file: values.includeFile ? true : nil)
         }
         /// A link that carries the wish is always worth sending again: the file is the wish as it is now. So is one with
