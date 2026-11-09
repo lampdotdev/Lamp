@@ -37,7 +37,7 @@ enum Provider {
 
     /// Suggested building models when using OpenRouter (any model from the full list also works).
     static let models: [ListedModel] = [
-        ListedModel(id: "anthropic/claude-fable-5.1", name: "Claude Fable", blurb: "Smartest, priciest", openRouter: "anthropic/claude-fable-5.1"),
+        ListedModel(id: "anthropic/claude-fable-5.2", name: "Claude Fable", blurb: "Smartest, priciest", openRouter: "anthropic/claude-fable-5.2"),
         ListedModel(id: "anthropic/claude-opus-5.5", name: "Claude Opus", blurb: "Best at coding", openRouter: "anthropic/claude-opus-5.5"),
         ListedModel(id: "anthropic/claude-sonnet-5.5", name: "Claude Sonnet", blurb: "Faster & cheaper", openRouter: "anthropic/claude-sonnet-5.5"),
     ]

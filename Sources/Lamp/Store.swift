@@ -1503,6 +1503,7 @@ final class Store: ObservableObject {
         // first request's note has it.
         showKnownDevices()
         Task { thisMac = await Device.readThisMac() }
+        Builder.moveSavedModels()
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
         }
