@@ -1121,7 +1121,9 @@ enum Gallery {
 
     /// The New York starter's own picture, standing in for a screenshot of the app.
     private static func shot(include: Bool, isPublic: Bool? = true, uploadFailed: Bool = false, locked: Bool = false) -> ContributeScreenshot {
+        // Lamp's own icon where a build has no starters' pictures.
         let picture = Starters.folder.flatMap { try? Data(contentsOf: $0.appendingPathComponent("newyork/\(Starters.treeFolder)/\(Starters.picturesFolder)/preview.png")) }
+            ?? NSApp.applicationIconImage.tiffRepresentation.flatMap { NSBitmapImageRep(data: $0)?.representation(using: .png, properties: [:]) }
         return ContributeScreenshot(picture: picture, digest: "0123456789ab", include: include, isPublic: isPublic, uploadFailed: uploadFailed, locked: locked)
     }
 
