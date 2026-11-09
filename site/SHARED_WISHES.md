@@ -9,9 +9,10 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
 
 - The wish to play (`/w/<id>` for a wish sent with its page): a web app, a web game or a screen (the wish's own, or its
   one app's when that's in a part of its own, `Publish.pageApp`) plays at the top of
-  the link's page, as large as the window allows in the shape Lamp sends with it (`shape` in the page's JSON: its width
-  over its height, or `"fill"` for a page that takes any shape; Lamp sends a web game's stage, and `"fill"` for a web app
-  or a screen, `Publish.pageShape`; without one, the 16:9 a web game is drawn in), with a button for full screen, so whoever opens the link tries it
+  the link's page, filling the room between its header and the bar under it, as the app's window fills a Mac's: a game's
+  controls reach its edges and its scene, drawn on a fixed stage, is fitted inside with black around it where the
+  shapes differ. The `shape` Lamp sends with the link (`Publish.pageShape`) stays in the page's JSON but no longer sizes
+  the frame. With a button for full screen, so whoever opens the link tries it
   first. Lamp sends the page with the wish's file (`WishLink.playablePage`: the page Lamp puts on
   GitHub Pages, what it saves kept under the link), zipped, in parts to `api/wish-file.js` with `what=page`; the site
   unpacks it (`readPage`: index.html at its root, never a link or a path that steps up, at most 3,000 files) into Blob,
@@ -25,8 +26,7 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
 - The page (`/w/<id>`, `src/pages/w/index.astro` filled by `lib/shared-wish-page.js`, served by `api/wish-page.js`
   through a rewrite in `vercel.json`): a page of the wish's own, for playing it, plain, on the site's paper and ink (the wish between thin-ruled bars, on black once they're put away),
   with Lamp only a quiet "Made with Lamp" in the header beside the wish's icon, name and who it's by. The wish fills the
-  rest of the window, playing or as its picture, only as big as it is (a page that plays takes the shape sent with it:
-  it can't say its shape from inside its frame, and the picture is of its Mac window). Making one's own is a slim band
+  rest of the window: a page that plays fills it, and a picture is only as big as it is (it's of the Mac window). Making one's own is a slim band
   at the foot, slid out of the window with the header by a chevron in the window's corner, which brings both back from the same
   place (remembered in that browser): a prompt box with
   the changes Lamp suggests for it (`RemixSuggestions`, sent with the link) turning in its placeholder, and a send
