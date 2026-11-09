@@ -508,8 +508,8 @@ offers to send (`Contribute.prepare`) from the saved version the card shows, whi
 goes (`Contribute.sendableVersion`: nothing unsaved but Lamp's own files, each app's in the folder it's in, which a
 rebuild for a newer Lamp writes afresh without saving a version and which never go). The change is measured in the
 wish's own history, never from the commit its credits name (a shared file names the commit before the one it went up
-in): from the snapshot of the last update it took in, kept by the commit its credits moved on to (`Upstream.snapshot`, so an update undone isn't counted), else the version it arrived as
-(`Contribute.base`), to the version sent, each side as a shared file carries it (`Upstream.filteredTree`: never Lamp's
+in): from the snapshot of the last update it took in, kept by the commit its credits moved on to (`Upstream.snapshot`,
+so an update undone isn't counted), else the version it arrived as (`Contribute.base`), to the version sent, each side as a shared file carries it (`Upstream.filteredTree`: never Lamp's
 own files, in each of the wish's apps), and only files the export of that version carries, as the export writes them
 (the same checks for licenses and keys, and `capabilities.json` written from what passed its checks, never the
 version's own bytes); a settings file Lamp writes (`icon.json`, `capabilities.json`) counts only when what it says
