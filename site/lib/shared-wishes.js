@@ -250,8 +250,11 @@ export function cloudStore(env, fetcher = fetch) {
     async remove(id) { await command(["DEL", key(id), ideasKey(id)]); },
     /** Keeps an idea for the link, numbered in the order they came: null when the link already holds `IDEA_LIMITS.kept`. */
     async addIdea(id, idea) {
-      // Its number is its field, given as it's kept, so two at once never share one.
-      const n = await command(["EVAL", `if redis.call('HLEN', KEYS[1]) > tonumber(ARGV[1]) then return false end
+      // Its number is its field, given as it's kept, so two at once never share one. The cap counts those still open
+      // (`open`, which an outcome counts down), so a maker who deals with them makes room; and, far above it, all kept.
+      const n = await command(["EVAL", `if tonumber(redis.call('HGET', KEYS[1], 'open') or '0') >= tonumber(ARGV[1]) then return false end
+        if redis.call('HLEN', KEYS[1]) > 10 * tonumber(ARGV[1]) then return false end
+        redis.call('HINCRBY', KEYS[1], 'open', 1)
         local n = redis.call('HINCRBY', KEYS[1], 'next', 1)
         redis.call('HSET', KEYS[1], tostring(n), ARGV[2])
         return n`, "1", ideasKey(id), String(IDEA_LIMITS.kept), JSON.stringify(idea)]);
@@ -260,7 +263,7 @@ export function cloudStore(env, fetcher = fetch) {
     async ideas(id) {
       const flat = (await command(["HGETALL", ideasKey(id)])) ?? [];
       const ideas = [];
-      for (let i = 0; i < flat.length; i += 2) if (flat[i] !== "next") ideas.push({ ...JSON.parse(flat[i + 1]), n: Number(flat[i]) });
+      for (let i = 0; i < flat.length; i += 2) if (flat[i] !== "next" && flat[i] !== "open") ideas.push({ ...JSON.parse(flat[i + 1]), n: Number(flat[i]) });
       return ideas.sort((a, b) => a.n - b.n);
     },
     /** True when this call took it away: two at once never both do. */
@@ -278,6 +281,7 @@ export function cloudStore(env, fetcher = fetch) {
         idea.done = ARGV[3]
         idea.email = nil
         redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(idea))
+        redis.call('HINCRBY', KEYS[1], 'open', -1)
         return text`, "1", ideasKey(id), String(n), status, at]);
       return typeof text === "string" ? { ...JSON.parse(text), n } : null;
     },
@@ -360,7 +364,7 @@ export function memoryStore() {
     async remove(id) { records.delete(id); ideas.delete(id); },
     async addIdea(id, idea) {
       const kept = ideas.get(id) ?? { next: 0, all: new Map() };
-      if (kept.all.size > IDEA_LIMITS.kept) return null;
+      if ([...kept.all.values()].filter((one) => !one.status).length >= IDEA_LIMITS.kept) return null;
       const n = ++kept.next;
       kept.all.set(n, { ...idea, n });
       ideas.set(id, kept);

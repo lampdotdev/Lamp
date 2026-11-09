@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { deflateSync, crc32 } from "node:zlib";
-import { createShareHandler, createFileHandler, createIdeasHandler, createPlayHandler, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, slugFor, wishIDFrom, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
+import { createShareHandler, createFileHandler, createIdeasHandler, IDEA_LIMITS, createPlayHandler, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, slugFor, wishIDFrom, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
 import { createPageHandler } from "../lib/shared-wish-page.js";
 import { createCardHandler } from "../lib/wish-card.js";
 
@@ -466,6 +466,15 @@ test("ideas reach the link's maker, and only the maker reads them", async () => 
   await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${kept2.n}`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
   assert.deepEqual((await mine(`${kept1.n}.${kept1.token},${kept2.n}.${kept2.token}`)).map((one) => one.status), ["in", "dismissed"]);
   assert.ok(!(await (await list()).json()).ideas.some((one) => one.n === kept1.n || one.n === kept2.n), "the maker sees only those still open");
+  // Dealing with ideas makes room for more: the cap counts those still open.
+  const full = memoryStore();
+  const { id: fullID, secret: fullSecret } = await (await send(createShareHandler({ store: full, limited: false }), "POST", share)).json();
+  const fullIdeas = createIdeasHandler({ store: full, limited: false });
+  for (let i = 0; i < IDEA_LIMITS.kept; i++) await full.addIdea(fullID, { text: `idea ${i}`, at: new Date().toISOString() });
+  const postFull = () => fullIdeas(new Request(`https://lamp.dev/api/wish-ideas?id=${fullID}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "one more" }) }));
+  assert.equal((await postFull()).status, 429);
+  await fullIdeas(new Request(`https://lamp.dev/api/wish-ideas?id=${fullID}&n=1`, { method: "DELETE", headers: { authorization: `Bearer ${fullSecret}` } }));
+  assert.equal((await postFull()).status, 201);
   const quiet = await (await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=3&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }))).json();
   assert.equal(quiet.notified, false, "nobody asked");
   assert.equal(mails.length, 2);

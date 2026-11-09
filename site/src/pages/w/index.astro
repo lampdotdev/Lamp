@@ -566,7 +566,9 @@ import { DOWNLOAD_URL } from "../../lib/download";
       } catch { return; }
       const status = new Map(answers.map((one) => [one.n, one.status]));
       const isIn = all.filter((one) => status.get(one.n) === "in");
-      keepMine(all.filter((one) => status.get(one.n) === "open"));
+      // Against what's kept now: one sent while this was being asked stays.
+      const asked = new Set(all.map((one) => one.n));
+      keepMine(mineKept().filter((one) => !asked.has(one.n) || status.get(one.n) === "open"));
       if (!isIn.length) return;
       const bar = $<HTMLElement>("[data-idea-in]");
       $<HTMLElement>("[data-idea-in-text]").textContent = isIn.length === 1
