@@ -730,7 +730,23 @@ export function playOrigin(base, id) {
  */
 export const DIRECT_FILE = 16_000_000;
 
-export function createPlayHandler({ env = process.env, fetcher = fetch, store, anyHost = false, direct = DIRECT_FILE } = {}) {
+/** How long a link's record is remembered for serving its page's files, and how many links at once. */
+export const PLAY_MEMORY = { ms: 60_000, links: 200 };
+
+export function createPlayHandler({ env = process.env, fetcher = fetch, store, anyHost = false, direct = DIRECT_FILE, now = () => Date.now() } = {}) {
+  // A link's record, remembered a minute per instance: a game asks for hundreds of files as it's played, and reading
+  // the store for each used up its allowance of requests in a day, which took every link down. A version the memory
+  // doesn't have (a release since) is read afresh; a link taken down plays on here for that minute at most.
+  const remembered = new Map();
+  const recordOf = async (id, version) => {
+    const kept = remembered.get(id);
+    if (kept && now() - kept.at < PLAY_MEMORY.ms && (kept.record?.page?.version === version || kept.record?.previousPage?.version === version)) return kept.record;
+    const record = await (store ?? cloudStore(env, fetcher)).get(id);
+    remembered.delete(id);
+    if (remembered.size >= PLAY_MEMORY.links) remembered.delete(remembered.keys().next().value);
+    remembered.set(id, { record, at: now() });
+    return record;
+  };
   // Every answer the play host gives, errors too (a browser settles an origin's cluster on its first answer): the
   // play host is the same site as lamp.dev, so without this Chrome runs the framed page in the site's own process,
   // sharing its memory with the page around it and other lamp.dev tabs. A big game ran out there and crashed the tab,
@@ -747,7 +763,7 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
     const missing = () => new Response(null, { status: 404, headers: { "Cache-Control": "no-store" } });
     if (!isID(id) || !Number.isInteger(version)) return missing();
     let record;
-    try { record = await (store ?? cloudStore(env, fetcher)).get(id); } catch { return new Response(null, { status: 503 }); }
+    try { record = await recordOf(id, version); } catch { return new Response(null, { status: 503 }); }
     // A page's other .html files are asked for by their clean names (the site's `cleanUrls` redirects to them), and a
     // folder's index.html by the folder, with its slash or without (a rewrite may not keep it): without, the page is
     // given its folder as its base, so its own files resolve there and not one folder up.

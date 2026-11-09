@@ -362,7 +362,9 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=dir/`))).status, 200);
   // A big file is played straight from the store, where it's kept as what it is: not a page's HTML, not a worker's own
   // script, and not from a store a browser can't reach.
-  const direct = createPlayHandler({ store, env, direct: 5 });
+  // Each ask a minute apart, so it reads the record as this test changes it.
+  let later = 0;
+  const direct = createPlayHandler({ store, env, direct: 5, now: () => (later += 61_000) });
   const ask = (path, dest) => direct(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=${path}`, dest ? { headers: { "sec-fetch-dest": dest } } : {}));
   assert.equal((await ask("lamp.js")).status, 200, "the dev server's memory isn't a browser's to reach");
   const stored = store.records.get(id).page.files, kept = stored["lamp.js"];
@@ -384,12 +386,27 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   assert.equal((await send_("&what=page", "POST")).status, 200);
   assert.equal(store.records.get(id).page.version, 2);
 
+  // A game's files are served from the link's record as remembered for a minute, not read from the store for each;
+  // a version the memory doesn't have is read afresh.
+  let reads = 0, clock = 0;
+  const counted = { ...store, get: async (id) => { reads += 1; return store.get(id); } };
+  const remembering = createPlayHandler({ store: counted, env, now: () => clock });
+  const v = store.records.get(id).page.version;
+  for (let i = 0; i < 5; i++) assert.equal((await remembering(new Request(`https://${own}/api/wish-play?id=${id}&v=${v}&path=index.html`))).status, 200);
+  assert.equal(reads, 1);
+  await remembering(new Request(`https://${own}/api/wish-play?id=${id}&v=${v + 1}&path=index.html`));
+  assert.equal(reads, 2, "a version it doesn't have");
+  clock += 61_000;
+  await remembering(new Request(`https://${own}/api/wish-play?id=${id}&v=${v}&path=index.html`));
+  assert.equal(reads, 3, "after a minute");
+
   // A new page leaves the one before it playable, for a game still open on it; the one before that goes.
   const again = async () => {
     assert.equal((await send_("&what=page", "PUT", zip("index.html", html), "&part=0&of=1")).status, 204);
     assert.equal((await send_("&what=page", "POST")).status, 200);
   };
-  const plays = async (v) => (await play(new Request(`https://${own}/api/wish-play?id=${id}&v=${v}&path=index.html`))).status;
+  // A handler of its own each time: one remembers a link's record for a minute.
+  const plays = async (v) => (await createPlayHandler({ store, env })(new Request(`https://${own}/api/wish-play?id=${id}&v=${v}&path=index.html`))).status;
   await again();
   assert.deepEqual([await plays(2), await plays(3)], [200, 200]);
   await again();
