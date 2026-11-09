@@ -62,3 +62,12 @@ final class SuggestionPartTests: XCTestCase {
         XCTAssertFalse(AppUpdates.mayOpen(copy))
     }
 }
+
+/// pi reaches each of Lamp's tools at a route of the gateway's; one the gateway doesn't serve fails every call with Not
+/// found (`suggested_changes` did, so pi could never read or bring in a suggested change).
+final class PiRouteTests: XCTestCase {
+    func testTheGatewayServesEveryRoutePiIsGiven() {
+        XCTAssertEqual(Set(Agent.piRoutes.values).subtracting(Store.gatewayPaths), [])
+        XCTAssertEqual(Agent.piRoutes["LAMP_SUGGESTED_URL"], "/agent/suggested")
+    }
+}

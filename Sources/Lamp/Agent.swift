@@ -56,6 +56,33 @@ enum AgentEvent {
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.
 /// pi only gets file tools: Lamp does the building and feeds compiler errors back.
 enum Agent {
+    /// Where pi's tools reach Lamp, by the variable its extension reads each from (`Agent.run`). Lamp's gateway
+    /// answers each of these (`Store.gatewayPaths`): a route given here and not served there would answer every call
+    /// with Not found.
+    static let piRoutes: [String: String] = [
+        "LAMP_LOOK_URL": "/agent/look",
+        "LAMP_USE_URL": "/agent/use",
+        "LAMP_VERSIONS_URL": "/agent/versions",
+        "LAMP_MEMORY_URL": "/agent/memory",
+        "LAMP_SETUP_URL": "/agent/setup",
+        "LAMP_KIND_URL": "/agent/kind",
+        "LAMP_REMOVE_URL": "/agent/remove",
+        "LAMP_RENAME_URL": "/agent/rename",
+        "LAMP_ICON_URL": "/agent/icon",
+        "LAMP_CONNECTORS_URL": "/agent/connectors",
+        "LAMP_LAMPIFY_URL": "/agent/lampify",
+        "LAMP_SHARED_URL": "/agent/shared",
+        "LAMP_SUGGESTED_URL": "/agent/suggested",
+        "LAMP_NETWORK_URL": "/agent/network",
+        "LAMP_INTEGRATION_URL": "/agent/integration",
+        "LAMP_TALK_URL": "/agent/talk",
+        "LAMP_ART_URL": "/agent/art",
+        "LAMP_ASSETS_URL": "/agent/assets",
+        "LAMP_SKILL_URL": "/agent/skill",
+        "LAMP_APPROVE_URL": "/agent/approve",
+        "LAMP_STEER_URL": "/agent/steer"
+    ]
+
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
