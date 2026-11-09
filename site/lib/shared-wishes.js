@@ -258,14 +258,19 @@ export function cloudStore(env, fetcher = fetch) {
       for (let i = 0; i < flat.length; i += 2) if (flat[i] !== "next") ideas.push({ ...JSON.parse(flat[i + 1]), n: Number(flat[i]) });
       return ideas.sort((a, b) => a.n - b.n);
     },
-    async removeIdea(id, n) { await command(["HDEL", ideasKey(id), String(n)]); },
+    /** True when this call took it away: two at once never both do. */
+    async removeIdea(id, n) { return (await command(["HDEL", ideasKey(id), String(n)])) === 1; },
     /** Adds the address to hear back at to idea `n`, given the key it was sent with: false when it's gone or the key isn't its. */
-    async addEmail(id, n, key, email) {
-      const text = await command(["HGET", ideasKey(id), String(n)]);
-      const idea = typeof text === "string" ? JSON.parse(text) : null;
-      if (!idea || typeof idea.key !== "string" || idea.key !== key) return false;
-      await command(["HSET", ideasKey(id), String(n), JSON.stringify({ ...idea, email })]);
-      return true;
+    // In one step, so an idea let go or a link taken down meanwhile is never written back.
+    async addEmail(id, n, ideaKey, email) {
+      return (await command(["EVAL", `if redis.call('EXISTS', KEYS[2]) == 0 then return 0 end
+        local text = redis.call('HGET', KEYS[1], ARGV[1])
+        if not text then return 0 end
+        local idea = cjson.decode(text)
+        if idea.key ~= ARGV[2] then return 0 end
+        idea.email = ARGV[3]
+        redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(idea))
+        return 1`, "2", ideasKey(id), key(id), String(n), ideaKey, email])) === 1;
     },
     async putImage(id, name, image) {
       const { put } = await import("@vercel/blob");
@@ -353,8 +358,9 @@ export function memoryStore() {
       return n;
     },
     async ideas(id) { return [...(ideas.get(id)?.all.values() ?? [])].map((idea) => structuredClone(idea)).sort((a, b) => a.n - b.n); },
-    async removeIdea(id, n) { ideas.get(id)?.all.delete(n); },
+    async removeIdea(id, n) { return ideas.get(id)?.all.delete(n) ?? false; },
     async addEmail(id, n, key, email) {
+      if (!records.has(id)) return false;
       const idea = ideas.get(id)?.all.get(n);
       if (!idea || idea.key !== key) return false;
       idea.email = email;
@@ -502,7 +508,7 @@ const EMAIL = /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[^\s@<>()",;:]+$/;
  * `LAMP_IDEAS_FROM`, an address on a domain Resend has verified). False, and nothing sent, without them or when Resend
  * refuses: the idea still goes. Their address is used for this one email and goes with the idea.
  */
-export async function tellItsIn(idea, record, link, { env = process.env, fetcher = fetch } = {}) {
+export async function tellItsIn(idea, record, link, { env = process.env, fetcher = fetch, once } = {}) {
   const key = env.RESEND_API_KEY, from = env.LAMP_IDEAS_FROM;
   if (!key || !from || !idea.email) return false;
   const maker = record.by?.trim() || "Whoever made it";
@@ -511,7 +517,8 @@ export async function tellItsIn(idea, record, link, { env = process.env, fetcher
   try {
     const response = await fetcher("https://api.resend.com/emails", {
       method: "POST", redirect: "error", signal: AbortSignal.timeout(5000),
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      // Resend sends one email for a key however often it's asked within a day.
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...(once ? { "Idempotency-Key": once } : {}) },
       body: JSON.stringify({ from, to: [idea.email], subject: `Your idea is in ${record.name}`, text }),
     });
     return response.ok;
@@ -585,12 +592,10 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
         return reply(200, { ideas: (await kept.ideas(id)).map(({ key: _key, email, ...shown }) => ({ ...shown, ...(email ? { wantsNews: true } : {}) })) });
       }
       // `built`: it's in, so whoever asked to hear back is told, once, before it goes.
-      let notified = false;
-      if (url.searchParams.get("built") === "1") {
-        const idea = (await kept.ideas(id)).find((one) => one.n === n);
-        if (idea?.email) notified = await tellItsIn(idea, record, linkFor(url.origin, id, record.name), { env, fetcher });
-      }
-      await kept.removeIdea(id, n);
+      // Taken away first: only the call that took it writes, so two at once, or one tried again, send one email.
+      const done = url.searchParams.get("built") === "1" ? (await kept.ideas(id)).find((one) => one.n === n) : null;
+      const took = await kept.removeIdea(id, n);
+      const notified = took && done?.email ? await tellItsIn(done, record, linkFor(url.origin, id, record.name), { env, fetcher, once: `idea-${id}-${n}` }) : false;
       return reply(200, { notified });
     } catch { return reply(503, { error: "service_unavailable" }); }
   };

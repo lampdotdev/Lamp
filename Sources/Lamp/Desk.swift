@@ -236,39 +236,42 @@ struct WishDesk: View {
         .overlay(alignment: .trailing) { Self.separator }
     }
 
-    /// The way to the changes and ideas people sent: as quiet as the rest of the column, there only once someone has sent
-    /// some, with how many are new. It opens at what has the most new: an app's changes, else an app's ideas.
+    /// The ways to what people sent: changes, and ideas from people playing a link, each a line of its own, as quiet as the
+    /// rest of the column, there only once someone has sent some, with how many are new. Each opens at the app with the
+    /// most new, and from either the other is a click away, seen or not.
     @ViewBuilder private var sentToYou: some View {
         let wishes = store.wishesWithSuggestions
         let withIdeas = store.wishesWithIdeas
-        if !wishes.isEmpty || !withIdeas.isEmpty {
-            let new = store.newSuggestionsInAll + store.newIdeasInAll
-            let open = store.suggestionsOpen != nil || store.ideasOpen != nil
-            Button {
-                if open { store.suggestionsOpen = nil; store.ideasOpen = nil; return }
-                let changes = wishes.max { store.newSuggestions($0) < store.newSuggestions($1) }
-                let ideas = withIdeas.first
-                if let changes, store.newSuggestions(changes) >= (ideas.map(store.newIdeas) ?? 0) || ideas == nil {
-                    store.suggestionsOpen = changes.id
-                } else {
-                    store.ideasOpen = ideas?.id
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "tray.and.arrow.down").font(.system(size: 13))
-                    Text("Sent to you").font(.system(size: 13))
-                    Spacer()
-                    if new > 0 { Text("\(new) new").font(.system(size: 12)).foregroundStyle(Paper.muted) }
-                }
-                .foregroundStyle(Paper.ink)
-                .padding(.horizontal, 10).frame(height: 30)
-                .background(Paper.ink.opacity(open ? 0.1 : 0.05), in: RoundedRectangle(cornerRadius: 7))
-                .contentShape(Rectangle())
+        if !wishes.isEmpty {
+            sentLine("Sent to you", symbol: "tray.and.arrow.down", new: store.newSuggestionsInAll, open: store.suggestionsOpen != nil) {
+                store.ideasOpen = nil
+                store.suggestionsOpen = store.suggestionsOpen == nil ? (wishes.max { store.newSuggestions($0) < store.newSuggestions($1) } ?? wishes[0]).id : nil
             }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 12).padding(.bottom, 8)
-            .accessibilityLabel(new > 0 ? "Sent to you, \(new) new" : "Sent to you")
         }
+        if !withIdeas.isEmpty {
+            sentLine("Ideas", symbol: "lightbulb", new: store.newIdeasInAll, open: store.ideasOpen != nil) {
+                store.suggestionsOpen = nil
+                store.ideasOpen = store.ideasOpen == nil ? withIdeas[0].id : nil
+            }
+        }
+    }
+
+    private func sentLine(_ title: String, symbol: String, new: Int, open: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: symbol).font(.system(size: 13))
+                Text(title).font(.system(size: 13))
+                Spacer()
+                if new > 0 { Text("\(new) new").font(.system(size: 12)).foregroundStyle(Paper.muted) }
+            }
+            .foregroundStyle(Paper.ink)
+            .padding(.horizontal, 10).frame(height: 30)
+            .background(Paper.ink.opacity(open ? 0.1 : 0.05), in: RoundedRectangle(cornerRadius: 7))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12).padding(.bottom, 8)
+        .accessibilityLabel(new > 0 ? "\(title), \(new) new" : title)
     }
 
     private var list: some View {

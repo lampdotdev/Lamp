@@ -442,7 +442,19 @@ test("ideas reach the link's maker, and only the maker reads them", async () => 
   assert.deepEqual(mails[0][1].to, ["someone@example.com"]);
   assert.match(mails[0][1].text, /Survival Flight helicopters[\s\S]*https:\/\/lamp\.dev\/w\//);
   assert.deepEqual((await (await list()).json()).ideas.map((idea) => idea.n), [3]);
+  assert.equal(mails.length, 1);
+  // Two at once for one idea: one email.
+  const both = await post({ text: "Fireworks over the Big House" });
+  const twice = await (await both.json());
+  await email({ key: twice.key, email: "someone@example.com" }, twice.n).catch(() => {});
+  const asked = () => built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${twice.n}&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
+  const answers = await Promise.all([asked(), asked()]);
+  assert.deepEqual((await Promise.all(answers.map((one) => one.json()))).map((one) => one.notified).sort(), [false, true]);
+  assert.equal(mails.length, 2);
+  assert.equal(mails[1][1].to[0], "someone@example.com");
+  // An address for an idea let go never brings it back.
+  assert.equal((await email({ key: twice.key, email: "someone@example.com" }, twice.n)).status, 404);
   const quiet = await (await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=3&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }))).json();
   assert.equal(quiet.notified, false, "nobody asked");
-  assert.equal(mails.length, 1);
+  assert.equal(mails.length, 2);
 });

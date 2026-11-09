@@ -17,12 +17,13 @@ function localAPI() {
       const { createIdeaHandler } = await import("./lib/first-idea.js");
       const env = { ...process.env, ...loadEnv("development", process.cwd(), "") };
       const idea = createIdeaHandler({ env, limited: false });
-      const { createShareHandler, createFileHandler, createPlayHandler, memoryStore } = await import("./lib/shared-wishes.js");
+      const { createShareHandler, createFileHandler, createPlayHandler, createIdeasHandler, memoryStore } = await import("./lib/shared-wishes.js");
       const { createPageHandler } = await import("./lib/shared-wish-page.js");
       const { createCardHandler } = await import("./lib/wish-card.js");
       const store = memoryStore();
       const share = createShareHandler({ store, limited: false });
       const file = createFileHandler({ store, limited: false });
+      const ideas = createIdeasHandler({ store, limited: false });
       // The shared wish's page, which this server draws as you work on it. A shared page plays from this same server:
       // there's no play host of its own here.
       const page = createPageHandler({ store, template: async (origin) => (await fetch(`${origin}/w/`)).text(), playOrigin: (url) => url.origin });
@@ -33,7 +34,7 @@ function localAPI() {
         const path = req.url.split("?")[0];
         const shared = /^\/w\/([^/]+)(\/card\.png)?$/.exec(path);
         const played = /^\/w\/([^/]+)\/play\/(\d+)\/(.*)$/.exec(path);
-        const handler = path === "/api/first-idea" ? idea : path === "/api/wishes" ? share : path === "/api/wish-file" ? file
+        const handler = path === "/api/first-idea" ? idea : path === "/api/wishes" ? share : path === "/api/wish-file" ? file : path === "/api/wish-ideas" ? ideas
           : played ? play : shared ? (shared[2] ? card : page) : null;
         if (!handler) return next();
         const target = played ? `/x?id=${encodeURIComponent(played[1])}&v=${played[2]}&path=${encodeURIComponent(decodeURIComponent(played[3]))}`

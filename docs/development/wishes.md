@@ -390,8 +390,9 @@ link tries the wish first and remixes it after (SHARED_WISHES.md). The box under
 first (`/api/wish-ideas`, `createIdeasHandler`): the site keeps it with the link, numbered, until the maker lets it go,
 and answers a key with which the sender can add an address to hear back at (the dialog's Tell Me). Only the link's
 secret reads them; they go with the link, and nothing of them is logged. Lamp asks for them for every wish with a link
-at launch and every five minutes (`WishIdeas`, `Store.checkIdeas`); the desk counts the new ones beside its changes
-("Sent to you", a line under the app's row), and the person goes to them in `IdeasPanel`, which takes the list's place
+at launch and every five minutes (`WishIdeas`, `Store.checkIdeas`); the desk shows them on a line of their own
+under its changes ("Ideas", with how many are new, and a line under the app's row while some are new; seen ones are
+counted by the link, since a link made again counts from one), and the person goes to them in `IdeasPanel`, which takes the list's place
 with Back: Build It asks the wish's chat for one, in the sender's words, marked as theirs (`WishIdeas.request`); It's In
 lets it go and has the site write once to whoever asked to hear back, through Resend (`tellItsIn`: `RESEND_API_KEY` and
 `LAMP_IDEAS_FROM` in the site's environment); Dismiss lets it go quietly. The maker sees only that someone wants to hear

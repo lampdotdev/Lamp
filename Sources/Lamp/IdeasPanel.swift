@@ -9,13 +9,19 @@ import SwiftUI
 /// where it came from; It's In lets it go, and the site writes to whoever asked to hear back (Lamp never sees where);
 /// Dismiss lets it go quietly.
 enum WishIdeas {
-    /// The highest numbered idea seen of each wish, kept between launches: numbers only go up on the site.
+    /// The highest numbered idea seen of each wish's link, kept between launches: numbers only go up on one link, and a
+    /// link made again (after one taken down) counts from one, so it's kept by the link as well as the wish.
     private static let seenKey = "LampIdeasSeen"
-    static func seen(_ project: LampProject) -> Int { (UserDefaults.standard.dictionary(forKey: seenKey)?[project.id] as? Int) ?? 0 }
+    private static func seenID(_ project: LampProject) -> String? { WishLink.kept(for: project).map { "\(project.id) \($0.id)" } }
+    static func seen(_ project: LampProject) -> Int {
+        guard let id = seenID(project) else { return 0 }
+        return (UserDefaults.standard.dictionary(forKey: seenKey)?[id] as? Int) ?? 0
+    }
     static func markSeen(_ number: Int, in project: LampProject) {
+        guard let id = seenID(project) else { return }
         var all = UserDefaults.standard.dictionary(forKey: seenKey) ?? [:]
-        guard number > (all[project.id] as? Int ?? 0) else { return }
-        all[project.id] = number
+        guard number > (all[id] as? Int ?? 0) else { return }
+        all[id] = number
         UserDefaults.standard.set(all, forKey: seenKey)
     }
 
