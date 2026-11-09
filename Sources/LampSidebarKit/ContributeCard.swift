@@ -47,6 +47,14 @@ public struct ContributeCard: View {
     let openRequest: () -> Void
     let copy: () -> Void
     let close: () -> Void
+    /// The screenshot the pull request can show, and what's done with it; nil where there's none to offer.
+    let screenshot: ContributeScreenshot?
+    /// Include Screenshot ticked or cleared.
+    let include: (Bool) -> Void
+    let retake: () -> Void
+    let remove: () -> Void
+    /// Send without the screenshot, after it couldn't be uploaded.
+    let sendWithout: () -> Void
     let width: CGFloat?
     /// Drawn in the chat's place: its words scroll when they don't fit, its buttons stay (`GitHubCardLayout`).
     let scrolls: Bool
@@ -55,7 +63,9 @@ public struct ContributeCard: View {
     public init(icon: NSImage?, name: String, stage: Stage, upstream: String?, fork: String?, credit: String?, notes: [String], terms: [String] = [],
                 size: String?, copied: Bool, canSend: Bool, send: @escaping () -> Void, fix: @escaping () -> Void,
                 settle: @escaping () -> Void = {}, openRequest: @escaping () -> Void,
-                copy: @escaping () -> Void, close: @escaping () -> Void, width: CGFloat? = 480, scrolls: Bool = false) {
+                copy: @escaping () -> Void, close: @escaping () -> Void, screenshot: ContributeScreenshot? = nil,
+                include: @escaping (Bool) -> Void = { _ in }, retake: @escaping () -> Void = {}, remove: @escaping () -> Void = {},
+                sendWithout: @escaping () -> Void = {}, width: CGFloat? = 480, scrolls: Bool = false) {
         self.icon = icon
         self.name = name
         self.stage = stage
@@ -73,6 +83,11 @@ public struct ContributeCard: View {
         self.openRequest = openRequest
         self.copy = copy
         self.close = close
+        self.screenshot = screenshot
+        self.include = include
+        self.retake = retake
+        self.remove = remove
+        self.sendWithout = sendWithout
         self.width = width
         self.scrolls = scrolls
     }
@@ -111,7 +126,7 @@ public struct ContributeCard: View {
                     } else {
                         Text("Send \(name)'s changes back").font(.title3.bold())
                         // What the person accepts: what goes, and where.
-                        Text("Your changes go to the repository this app came from, as a pull request its owner can take: what a shared app file holds, on your own GitHub account first. Never your chat or the app's data.")
+                        Text("Your changes go to the repository this app came from, as a pull request its owner can take: what a shared app file holds, on your own GitHub account first. Never your chat, and none of the app's data unless a screenshot you include shows it.")
                             .font(.callout).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -128,10 +143,48 @@ public struct ContributeCard: View {
                 ForEach(notes, id: \.self) { note in
                     Text(note).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
+                if let screenshot, !isDone { screenshotSection(screenshot) }
             }
             status
         } buttons: {
             buttons.cardButtons()
+        }
+    }
+
+    private var isDone: Bool {
+        if case .done = stage { true } else { false }
+    }
+
+    /// The screenshot as it will go, left out until it's ticked; once a send has begun it stays as it is.
+    private func screenshotSection(_ shot: ContributeScreenshot) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Screenshot").font(.callout.weight(.medium)).foregroundStyle(.secondary).accessibilityHidden(true)
+                Spacer(minLength: 8)
+                if !shot.locked {
+                    Button("Retake", action: retake).disabled(shot.taking)
+                    if shot.picture != nil { Button("Remove", action: remove).disabled(shot.taking) }
+                }
+            }
+            if let picture = shot.picture.flatMap(NSImage.init(data:)) {
+                Image(nsImage: picture).resizable().interpolation(.high).scaledToFit()
+                    .frame(maxHeight: 200)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
+                    .overlay { if shot.taking { ProgressView().controlSize(.small) } }
+                    .accessibilityLabel("Screenshot of the app")
+                Toggle("Include screenshot", isOn: Binding(get: { shot.include }, set: include))
+                    .toggleStyle(.checkbox).font(.callout).disabled(shot.locked || shot.taking)
+                Text(shot.isPublic == false
+                     ? "Includes everything visible in this screenshot. Visible to people with access to your fork."
+                     : "Includes everything visible in this screenshot. It's public: anyone can see it.")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            } else if shot.taking {
+                HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Taking a screenshot…").foregroundStyle(.secondary) }.font(.callout)
+            } else if shot.failed {
+                Text("Couldn't take a screenshot. Bring the app window into view and try again.")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -204,12 +257,47 @@ public struct ContributeCard: View {
                 Button("Try Again", action: settle)
                 Button("Done", action: close).keyboardShortcut(.defaultAction)
             }
+        case .failed where screenshot?.uploadFailed == true:
+            Button("Cancel", role: .cancel, action: close).keyboardShortcut(.cancelAction)
+            Button("Send Without Screenshot", action: sendWithout)
+            Button("Retry Upload", action: send).keyboardShortcut(.defaultAction).disabled(!canSend)
         default:
             Button("Cancel", role: .cancel, action: close).keyboardShortcut(.cancelAction).disabled(busy && stage != .preparing)
             Button("Send Changes Back", action: send)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canSend)
         }
+    }
+}
+
+/// The screenshot a Send Changes Back card offers to put in its pull request: the app's own window, taken when the card
+/// opens or on Retake, never a picture from before. It goes only when ticked, and only the one the card showed.
+public struct ContributeScreenshot: Codable, Equatable {
+    /// The picture as the card shows it: the one that goes, made smaller for the chat. Nil when there's none.
+    public var picture: Data?
+    /// Which picture goes (a digest of it): what the chat names when it sends, so one it didn't show never goes.
+    public var digest: String?
+    public var include: Bool
+    public var taking: Bool
+    /// The last try to take one gave nothing.
+    public var failed: Bool
+    /// Whether anyone can see it once it's up: the fork is public. Nil until that's known.
+    public var isPublic: Bool?
+    /// It couldn't be uploaded: the card offers to try again, or to send without it.
+    public var uploadFailed: Bool
+    /// A send has begun: the screenshot stays as it is, so a retry sends the same one.
+    public var locked: Bool
+
+    public init(picture: Data?, digest: String?, include: Bool, taking: Bool = false, failed: Bool = false, isPublic: Bool? = nil,
+                uploadFailed: Bool = false, locked: Bool = false) {
+        self.picture = picture
+        self.digest = digest
+        self.include = include
+        self.taking = taking
+        self.failed = failed
+        self.isPublic = isPublic
+        self.uploadFailed = uploadFailed
+        self.locked = locked
     }
 }
 

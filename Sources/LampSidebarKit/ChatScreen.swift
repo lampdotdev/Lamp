@@ -170,10 +170,13 @@ private struct Chat: View {
             if let card = state.contribute {
                 ContributeCard(icon: card.icon.flatMap(NSImage.init(data:)), name: card.name, stage: card.stage, upstream: card.upstream, fork: card.fork,
                                credit: card.credit, notes: card.notes, terms: card.terms ?? [], size: card.size, copied: card.copied, canSend: card.canSend,
-                               send: { link.send(.contribute(.send)) }, fix: { link.send(.contribute(.fix)) },
+                               send: { link.send(.contribute(.sendShowing(card.screenshot?.include == true ? card.screenshot?.digest : nil))) }, fix: { link.send(.contribute(.fix)) },
                                settle: { link.send(.contribute(.settle)) },
                                openRequest: { link.send(.contribute(.openRequest)) }, copy: { link.send(.contribute(.copy)) },
-                               close: { link.send(.contribute(.close)) }, width: nil, scrolls: true)
+                               close: { link.send(.contribute(.close)) }, screenshot: card.screenshot,
+                               include: { link.send(.contribute(.includeScreenshot($0 ? card.screenshot?.digest : nil))) },
+                               retake: { link.send(.contribute(.retakeScreenshot)) }, remove: { link.send(.contribute(.removeScreenshot)) },
+                               sendWithout: { link.send(.contribute(.sendShowing(nil))) }, width: nil, scrolls: true)
             } else {
                 switch state.panel {
                 case .versions: VersionsPanel(state: state)

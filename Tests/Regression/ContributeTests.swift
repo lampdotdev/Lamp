@@ -431,4 +431,49 @@ final class ContributeTests: XCTestCase {
         let credits = try XCTUnwrap(file(StaticSite.folder + "/" + Credits.file, at: prepared.commit, in: prepared.clone).flatMap { Credits.decoded(Data($0.utf8)) })
         XCTAssertEqual(credits.upstream.map(\.name), ["Tiny"])
     }
+
+    // MARK: The screenshot
+
+    /// The screenshot goes on a branch of the fork of its own, as a commit with no parent holding the picture alone and
+    /// byte for byte, so it's never among the pull request's changes; a try after the first pushes the same commit to the
+    /// same branch rather than making another.
+    func testTheScreenshotGoesOnABranchOfItsOwnAndATryAgainReusesIt() async throws {
+        let repo = try repository(["Sources/App.swift": "a\n"])
+        let (project, _) = try await remix(of: ["Sources/App.swift": "a\n"], commit: try git("git rev-parse HEAD", in: repo))
+        try await change(project, ["Sources/App.swift": "b\n"], "B")
+        let prepared = try await prepare(project, from: repo)
+        let fork = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("lamp-contribute-fork-\(UUID().uuidString)")
+        folders.append(fork)
+        _ = try git("git init -q --bare \(Sandbox.quoted(fork.path))", in: repo)
+        let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] + (0..<64).map { UInt8($0) })
+
+        var progress = Contribute.Progress(fork: "remixer/drive")
+        let commit = try await Contribute.uploadScreenshot(png, of: prepared, to: "file://" + fork.path, git: "/usr/bin/git", access: [], progress: &progress)
+        XCTAssertEqual(progress.screenshotCommit, commit)
+        let branch = "refs/heads/lamp/screenshots/" + prepared.submission
+        XCTAssertEqual(try git("git rev-parse \(branch)", in: fork), commit)
+        XCTAssertEqual(try git("git rev-list --parents -n 1 \(commit)", in: fork), commit, "a commit with no parent")
+        XCTAssertEqual(try git("git ls-tree --name-only \(commit)", in: fork), Contribute.screenshotFile, "the picture alone")
+        let blob = try git("git rev-parse \(commit):\(Contribute.screenshotFile)", in: fork)
+        XCTAssertEqual(try escape.loose("git cat-file blob \(blob) | /usr/bin/base64", in: fork).output.trimmingCharacters(in: .whitespacesAndNewlines),
+                       png.base64EncodedString(), "byte for byte")
+        XCTAssertNil(file(Contribute.screenshotFile, at: prepared.commit, in: prepared.clone), "never in the pull request's changes")
+
+        let again = try await Contribute.uploadScreenshot(png, of: prepared, to: "file://" + fork.path, git: "/usr/bin/git", access: [], progress: &progress)
+        XCTAssertEqual(again, commit, "the same commit")
+        XCTAssertEqual(try git("git for-each-ref --format='%(refname)' refs/heads/lamp/screenshots/", in: fork), branch, "on the same branch, and no other")
+    }
+
+    /// A screenshot goes only when Include Screenshot is ticked and the chat names the picture Lamp holds; a chat from
+    /// before the card showed one never sends one, whatever it says.
+    @MainActor func testOnlyTheScreenshotTheChatShowedGoes() throws {
+        let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        let held = ContributeCards.Screenshot(png: png, digest: WishLinkCards.digest(png), preview: png)
+        XCTAssertEqual(ContributeCards.authorized(held, included: true, shown: held.digest, wire: SidebarWire.version), held)
+        XCTAssertNil(ContributeCards.authorized(held, included: true, shown: held.digest, wire: 14), "a chat from before the card showed one")
+        XCTAssertNil(ContributeCards.authorized(held, included: true, shown: "0123456789ab", wire: SidebarWire.version), "another picture")
+        XCTAssertNil(ContributeCards.authorized(held, included: false, shown: held.digest, wire: SidebarWire.version), "not ticked")
+        XCTAssertNil(ContributeCards.authorized(held, included: true, shown: nil, wire: SidebarWire.version), "sent without it")
+        XCTAssertNil(ContributeCards.authorized(nil, included: true, shown: held.digest, wire: SidebarWire.version), "removed")
+    }
 }

@@ -541,7 +541,23 @@ nothing to send. What would be pushed is
 checked for keys once more as it is (`ShareCheck.secrets`). The fork is made with `gh` when
 the person has none (`Contribute.fork`), and the one commit is pushed to a branch of it and a pull request opened on
 the repository (`Contribute.send`). The request's text (`Contribute.summary`) is the wish's line, the names its
-versions since it arrived were given (never the requests themselves, never the chat) and the files changed. The person's own repository is refused (a release on its link updates it, `GitHubRelease`). The request's text tells
+versions since it arrived were given (never the requests themselves, never the chat) and the files changed; it's
+written before any screenshot exists, so a picture never goes into it. The card can put a screenshot of the app in the
+request: the running app's own window, asked of it when the card opens and on Retake as a link's card retakes its
+picture (`Runtime.requestScreenshots`, `Runtime.screenshots(of:since:)`: only a picture taken from then on, never an
+older one or the desktop), its bytes copied into the card (`ContributeCards.Screenshot`) so the app writing a new one
+changes nothing. It goes only when Include Screenshot is ticked, which starts cleared and is cleared again by Retake, and
+only when the chat sends the digest of the picture it showed (`SidebarContributeCommand.sendShowing`,
+`ContributeCards.authorized`); a chat from before wire 15 never sends one. The card says the picture includes everything
+visible in it, and who sees it: anyone for a public fork, people with access to it for a private one. It goes on a
+branch of the fork of its own (`lamp/screenshots/<submission>`, `Prepared.screenshotBranch`), as a commit with no parent
+holding only `screenshot.png`, made through `GitHubRepo.commit` (signed as the person's git signs, under the address the
+card showed), so it's never in the request's changes, and is kept after the request closes so the picture still shows.
+The request embeds it by a path pinned to that commit and resolved from the request's page
+(`Contribute.screenshotMarkdown`), with no token or expiring address. If it can't be uploaded nothing more goes, and the
+card offers Retry Upload or Send Without Screenshot. Every try at one submission (`Prepared.submission`) uses the same
+branches, fork and screenshot commit (`Contribute.Progress`), and looks for a request from its branch before opening one
+(`Contribute.existingRequest`), so a request never opens twice; the screenshot can't change once a send has begun. The person's own repository is refused (a release on its link updates it, `GitHubRelease`). The request's text tells
 its owner to open the app in Lamp, where the desk shows the request and brings it in (`SuggestedChanges`, in
 [wishes](wishes.md)); one merged on GitHub instead makes their Share Link card offer Bring In Changes before their next
 release (`BringIn`).

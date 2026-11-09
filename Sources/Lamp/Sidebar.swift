@@ -1339,7 +1339,12 @@ final class SidebarServer {
             let cards = ContributeCards.shared
             switch command {
             case .open: cards.open(project)
-            case .send: cards.send(project)
+            // A chat from before the card showed a screenshot sends without one.
+            case .send: cards.send(project, shown: nil, wire: wire)
+            case .sendShowing(let shown): cards.send(project, shown: shown, wire: wire)
+            case .includeScreenshot(let shown): cards.includeScreenshot(project, shown: shown, wire: wire)
+            case .retakeScreenshot: cards.takeScreenshot(project)
+            case .removeScreenshot: cards.removeScreenshot(project)
             case .fix: cards.fix(project)
             case .settle: cards.settle(project)
             case .openRequest: cards.openRequest(project)
@@ -1539,6 +1544,8 @@ final class SidebarServer {
                 card.stage = .refused(block.text)
                 state.contribute = card
             }
+            // Nor one from before the card showed a screenshot: it never sees one, so it's never sent one to show.
+            if version < 15 { state.contribute?.screenshot = nil }
             // A sidebar from before the summary line can't read one, and would drop the whole chat.
             if version < 2 { state.lines.removeAll { $0.kind == .summary } }
             // Nor one from before the notes receipt a receipt.
