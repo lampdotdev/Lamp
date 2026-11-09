@@ -59,6 +59,7 @@ public struct ContributeCard: View {
     /// Drawn in the chat's place: its words scroll when they don't fit, its buttons stay (`GitHubCardLayout`).
     let scrolls: Bool
     @State private var termsOpen = false
+    @State private var shotOpen = false
 
     public init(icon: NSImage?, name: String, stage: Stage, upstream: String?, fork: String?, credit: String?, notes: [String], terms: [String] = [],
                 size: String?, copied: Bool, canSend: Bool, send: @escaping () -> Void, fix: @escaping () -> Void,
@@ -155,7 +156,8 @@ public struct ContributeCard: View {
         if case .done = stage { true } else { false }
     }
 
-    /// The screenshot as it will go, left out until it's ticked; once a send has begun it stays as it is.
+    /// The screenshot as it will go, left out until it's ticked; once a send has begun it stays as it is. Small beside
+    /// its box so the card stays about what goes; clicked, it opens larger, and clicked again it folds back.
     private func screenshotSection(_ shot: ContributeScreenshot) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -167,18 +169,18 @@ public struct ContributeCard: View {
                 }
             }
             if let picture = shot.picture.flatMap(NSImage.init(data:)) {
-                Image(nsImage: picture).resizable().interpolation(.high).scaledToFit()
-                    .frame(maxHeight: 200)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
-                    .overlay { if shot.taking { ProgressView().controlSize(.small) } }
-                    .accessibilityLabel("Screenshot of the app")
-                Toggle("Include screenshot", isOn: Binding(get: { shot.include }, set: include))
-                    .toggleStyle(.checkbox).font(.callout).disabled(shot.locked || shot.taking)
-                Text(shot.isPublic == false
-                     ? "Includes everything visible in this screenshot. Visible to people with access to your fork."
-                     : "Includes everything visible in this screenshot. It's public: anyone can see it.")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if shotOpen { thumbnail(picture, shot: shot, height: 220) }
+                HStack(alignment: .top, spacing: 12) {
+                    if !shotOpen { thumbnail(picture, shot: shot, height: 64) }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle("Include screenshot", isOn: Binding(get: { shot.include }, set: include))
+                            .toggleStyle(.checkbox).font(.callout).disabled(shot.locked || shot.taking)
+                        Text(shot.isPublic == false
+                             ? "Includes everything visible in this screenshot. Visible to people with access to your fork."
+                             : "Includes everything visible in this screenshot. It's public: anyone can see it.")
+                            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             } else if shot.taking {
                 HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Taking a screenshot…").foregroundStyle(.secondary) }.font(.callout)
             } else if shot.failed {
@@ -186,6 +188,19 @@ public struct ContributeCard: View {
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private func thumbnail(_ picture: NSImage, shot: ContributeScreenshot, height: CGFloat) -> some View {
+        Button { shotOpen.toggle() } label: {
+            Image(nsImage: picture).resizable().interpolation(.high).scaledToFit()
+                .frame(maxWidth: shotOpen ? .infinity : 96, maxHeight: height, alignment: .leading)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
+                .overlay { if shot.taking { ProgressView().controlSize(.small) } }
+        }
+        .buttonStyle(.plain)
+        .help(shotOpen ? "Make the screenshot smaller" : "Show the screenshot larger")
+        .accessibilityLabel(shotOpen ? "Screenshot of the app, shown large" : "Screenshot of the app")
     }
 
     private func row(_ label: String, _ value: String) -> some View {

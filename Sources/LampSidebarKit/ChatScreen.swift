@@ -170,7 +170,11 @@ private struct Chat: View {
             if let card = state.contribute {
                 ContributeCard(icon: card.icon.flatMap(NSImage.init(data:)), name: card.name, stage: card.stage, upstream: card.upstream, fork: card.fork,
                                credit: card.credit, notes: card.notes, terms: card.terms ?? [], size: card.size, copied: card.copied, canSend: card.canSend,
-                               send: { link.send(.contribute(.sendShowing(card.screenshot?.include == true ? card.screenshot?.digest : nil))) }, fix: { link.send(.contribute(.fix)) },
+                               send: {
+                                   // A Lamp from before the card showed a screenshot sends none and knows only `send`.
+                                   guard let shot = card.screenshot else { return link.send(.contribute(.send)) }
+                                   link.send(.contribute(.sendShowing(shot.include ? shot.digest : nil)))
+                               }, fix: { link.send(.contribute(.fix)) },
                                settle: { link.send(.contribute(.settle)) },
                                openRequest: { link.send(.contribute(.openRequest)) }, copy: { link.send(.contribute(.copy)) },
                                close: { link.send(.contribute(.close)) }, screenshot: card.screenshot,

@@ -825,6 +825,8 @@ enum Contribute {
         cards[project.id]?.includeScreenshot = false
         cards[project.id]?.screenshotFailed = false
         guard let app = WishLinkCards.pictured(project) else {
+            // A picture from before is never kept in place of the one asked for.
+            cards[project.id]?.screenshot = nil
             cards[project.id]?.takingScreenshot = false
             cards[project.id]?.screenshotFailed = true
             return
@@ -838,7 +840,9 @@ enum Contribute {
             guard cards[project.id]?.screenshotTry == attempt else { return }
             cards[project.id]?.takingScreenshot = false
             cards[project.id]?.includeScreenshot = false
-            if let shot { cards[project.id]?.screenshot = shot } else { cards[project.id]?.screenshotFailed = true }
+            // A Retake that gives nothing drops the earlier picture, so the card never shows an old one as new.
+            cards[project.id]?.screenshot = shot
+            cards[project.id]?.screenshotFailed = shot == nil
         }
     }
 
