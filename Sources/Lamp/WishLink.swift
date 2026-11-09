@@ -322,11 +322,12 @@ enum WishLink {
     }
 
     /// An idea someone playing the wish sent from its link's page, for its maker (`/api/wish-ideas` on the site): their
-    /// words, when it came, and an address if they asked to hear back. All theirs, shown as theirs, never the agent's.
+    /// words, when it came, and whether they asked to hear when it's in (the site keeps their address and writes to them;
+    /// Lamp never has it). Theirs, shown as theirs, never the agent's.
     struct Idea: Codable, Equatable, Identifiable, Sendable {
         var n: Int
         var text: String
-        var email: String?
+        var wantsNews: Bool?
         var at: String
         var id: Int { n }
     }
@@ -348,13 +349,18 @@ enum WishLink {
         return try JSONDecoder().decode(Answer.self, from: data).ideas
     }
 
-    /// Lets an idea go from the link, once the maker has dealt with it.
-    static func removeIdea(_ number: Int, for shared: Shared) async throws {
-        var request = URLRequest(url: ideasAddress(for: shared.id, number: number))
+    /// Lets an idea go from the link. `built`: it's in, and the site first writes to whoever asked to hear back; answers
+    /// whether it did.
+    @discardableResult
+    static func removeIdea(_ number: Int, built: Bool, for shared: Shared) async throws -> Bool {
+        var address = URLComponents(url: ideasAddress(for: shared.id, number: number), resolvingAgainstBaseURL: false)!
+        if built { address.queryItems?.append(URLQueryItem(name: "built", value: "1")) }
+        var request = URLRequest(url: address.url!)
         request.httpMethod = "DELETE"
         request.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
-        let (_, status) = try await send(request)
-        guard status == 204 || status == 404 else { throw failure(status) }
+        let (data, status) = try await send(request)
+        guard status == 200 || status == 404 else { throw failure(status) }
+        return ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["notified"] as? Bool ?? false
     }
 
     /// Takes the link down: the page says the wish isn't shared any more. A link the site no longer has is down already.

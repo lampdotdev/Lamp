@@ -411,12 +411,27 @@ test("ideas reach the link's maker, and only the maker reads them", async () => 
 
   assert.equal((await list("x".repeat(43))).status, 404, "only with the link's secret");
   const kept = (await (await list()).json()).ideas;
-  assert.deepEqual(kept.map((idea) => [idea.n, idea.text, idea.email]), [[1, "Add geese that chase you", undefined], [2, "Survival Flight helicopters", "someone@example.com"]]);
-  assert.ok(kept.every((idea) => !("key" in idea) && typeof idea.at === "string"), "never the keys");
+  assert.deepEqual(kept.map((idea) => [idea.n, idea.text, idea.wantsNews]), [[1, "Add geese that chase you", undefined], [2, "Survival Flight helicopters", true]]);
+  assert.ok(kept.every((idea) => !("key" in idea) && !("email" in idea) && typeof idea.at === "string"), "never the keys or the addresses");
 
   const done = await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
-  assert.equal(done.status, 204);
+  assert.equal(done.status, 200);
   assert.deepEqual((await (await list()).json()).ideas.map((idea) => idea.n), [2]);
   assert.equal((await post({ text: "Night mode" })).status, 201);
   assert.deepEqual((await (await list()).json()).ideas.map((idea) => idea.n), [2, 3], "numbers never come back");
+
+  // Built: the site writes to whoever asked, once, through Resend, and the maker never sees where.
+  const mails = [];
+  const fetcher = async (url, init) => { mails.push([url, JSON.parse(init.body)]); return new Response("{}", { status: 200 }); };
+  const built = createIdeasHandler({ store, limited: false, fetcher, env: { RESEND_API_KEY: "re_test", LAMP_IDEAS_FROM: "Lamp <ideas@lamp.dev>" } });
+  const answer = await (await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=2&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }))).json();
+  assert.equal(answer.notified, true);
+  assert.equal(mails.length, 1);
+  assert.equal(mails[0][0], "https://api.resend.com/emails");
+  assert.deepEqual(mails[0][1].to, ["someone@example.com"]);
+  assert.match(mails[0][1].text, /Survival Flight helicopters[\s\S]*https:\/\/lamp\.dev\/w\//);
+  assert.deepEqual((await (await list()).json()).ideas.map((idea) => idea.n), [3]);
+  const quiet = await (await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=3&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }))).json();
+  assert.equal(quiet.notified, false, "nobody asked");
+  assert.equal(mails.length, 1);
 });

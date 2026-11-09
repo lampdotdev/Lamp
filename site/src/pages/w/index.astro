@@ -110,7 +110,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
       <p data-remix-text class="remix-popup-text">Lamp makes the change on your Mac. It's free, and needs no coding.</p>
       <p data-remix-to class="remix-popup-to"></p>
       <form data-notify hidden class="remix-popup-notify">
-        <label for="notify-email" class="remix-popup-label">Want to hear when it's in?</label>
+        <label for="notify-email" class="remix-popup-label">Want to hear when it's in? We'll email you once.</label>
         <div class="remix-popup-field">
           <input id="notify-email" data-notify-email type="email" autocomplete="email" required placeholder="Your email" />
           <button type="submit" class="shared-button shared-button-outline">Tell Me</button>
@@ -523,7 +523,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
       if (ok) {
         track("idea_notify", { idea: wish.name, place: "shared" });
         notify.hidden = true;
-        notifyNote.textContent = `Thanks. ${maker || "They"} can email you when it's in.`;
+        notifyNote.textContent = "Thanks. We'll email you once when it's in.";
       } else {
         notifyNote.textContent = "That didn't go. Check the address and try again.";
       }

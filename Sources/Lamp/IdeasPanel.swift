@@ -6,7 +6,8 @@ import SwiftUI
 /// kept it for the wish's maker (`/api/wish-ideas`). Lamp asks for them with the link's secret now and every few
 /// minutes, and the desk says quietly how many are new; nothing goes in the chat until the person picks one. The panel
 /// shows them in the desk's window in place of its list, newest first: Build It asks the wish's chat for it, saying
-/// where it came from; Write to Them opens an email to whoever left an address; Done lets it go from the link.
+/// where it came from; It's In lets it go, and the site writes to whoever asked to hear back (Lamp never sees where);
+/// Dismiss lets it go quietly.
 enum WishIdeas {
     /// The highest numbered idea seen of each wish, kept between launches: numbers only go up on the site.
     private static let seenKey = "LampIdeasSeen"
@@ -33,17 +34,6 @@ enum WishIdeas {
         "Someone playing \(project.name) sent this idea from its link:\n\n\(idea.text)"
     }
 
-    /// An email to the sender, saying their idea is in, with the link to play it.
-    static func reply(_ idea: WishLink.Idea, for project: LampProject, link: URL?) -> URL? {
-        guard let email = idea.email else { return nil }
-        var parts = URLComponents()
-        parts.scheme = "mailto"
-        parts.path = email
-        let play = link.map { " Play it here: \($0.absoluteString)" } ?? ""
-        parts.queryItems = [URLQueryItem(name: "subject", value: "Your idea for \(project.name)"),
-                            URLQueryItem(name: "body", value: "Thanks for your idea: “\(idea.text)”. It's in now.\(play)")]
-        return parts.url
-    }
 }
 
 extension Store {
@@ -91,10 +81,11 @@ extension Store {
         send(WishIdeas.request(idea, for: project), to: project)
     }
 
-    /// Done: the idea goes from the link, and from the panel once the site says so.
-    func finishIdea(_ idea: WishLink.Idea, in project: LampProject) async -> Bool {
+    /// It's In, or Dismiss: the idea goes from the link (built, the site first tells whoever asked), and from the panel
+    /// once the site says so.
+    func finishIdea(_ idea: WishLink.Idea, built: Bool, in project: LampProject) async -> Bool {
         guard let shared = WishLink.kept(for: project) else { return false }
-        do { try await WishLink.removeIdea(idea.n, for: shared) } catch { return false }
+        do { try await WishLink.removeIdea(idea.n, built: built, for: shared) } catch { return false }
         ideas[project.id]?.removeAll { $0.n == idea.n }
         if ideas[project.id]?.isEmpty == true { ideas[project.id] = nil }
         return true
@@ -102,7 +93,7 @@ extension Store {
 }
 
 /// The ideas sent to one wish, in the desk's window in place of its list, with Back and a menu of the wishes that have
-/// some. Each is its sender's words, when it came, and Build It, Write to Them (when they left an address) and Done.
+/// some. Each is its sender's words, when it came, and Build It, It's In and Dismiss.
 struct IdeasPanel: View {
     @EnvironmentObject private var store: Store
     let wish: String
@@ -173,6 +164,16 @@ struct IdeasPanel: View {
         .padding(.horizontal, 18).padding(.vertical, 12)
     }
 
+    private func finish(_ idea: WishLink.Idea, built: Bool) {
+        guard preview == nil, let project, !finishing.contains(idea.n) else { return }
+        finishing.insert(idea.n)
+        failed = nil
+        Task {
+            if !(await store.finishIdea(idea, built: built, in: project)) { failed = idea.n }
+            finishing.remove(idea.n)
+        }
+    }
+
     private func line(_ idea: WishLink.Idea) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
@@ -181,7 +182,7 @@ struct IdeasPanel: View {
                         .padding(.horizontal, 5).padding(.vertical, 1)
                         .background(Paper.ink.opacity(0.08), in: RoundedRectangle(cornerRadius: 4))
                 }
-                Text(verbatim: [WishIdeas.when(idea.at), idea.email.map { "wants to hear back at \($0)" }].compactMap { $0 }.joined(separator: " · "))
+                Text(verbatim: [WishIdeas.when(idea.at), idea.wantsNews == true ? "wants to hear when it's in" : nil].compactMap { $0 }.joined(separator: " · "))
                     .font(.system(size: 11.5)).foregroundStyle(Paper.muted).lineLimit(1).truncationMode(.middle)
             }
             Text(verbatim: idea.text).font(.system(size: 14)).foregroundStyle(Paper.ink).textSelection(.enabled)
@@ -197,21 +198,14 @@ struct IdeasPanel: View {
                     }
                     .buttonStyle(PaperButtonStyle(.ink, height: 28))
                 }
-                if let project, let mail = WishIdeas.reply(idea, for: project, link: WishLink.kept(for: project)?.url) {
-                    Button("Write to Them") { if preview == nil { NSWorkspace.shared.open(mail) } }
-                        .buttonStyle(PaperButtonStyle(.outline, height: 28))
-                }
-                Button(finishing.contains(idea.n) ? "Done…" : "Done") {
-                    guard preview == nil, let project, !finishing.contains(idea.n) else { return }
-                    finishing.insert(idea.n)
-                    failed = nil
-                    Task {
-                        if !(await store.finishIdea(idea, in: project)) { failed = idea.n }
-                        finishing.remove(idea.n)
-                    }
-                }
-                .buttonStyle(PaperButtonStyle(.outline, height: 28))
-                .help("Takes it off the list")
+                Button("It's In") { finish(idea, built: true) }
+                    .buttonStyle(PaperButtonStyle(.outline, height: 28))
+                    .disabled(finishing.contains(idea.n))
+                    .help(idea.wantsNews == true ? "Takes it off the list and emails them that it's in" : "Takes it off the list")
+                Button("Dismiss") { finish(idea, built: false) }
+                    .buttonStyle(PaperButtonStyle(.outline, height: 28))
+                    .disabled(finishing.contains(idea.n))
+                    .help("Takes it off the list. They aren't told.")
                 if failed == idea.n {
                     Text("Couldn't reach lamp.dev. Try again.").font(.system(size: 12)).foregroundStyle(Paper.muted)
                 }
@@ -238,9 +232,9 @@ extension Gallery {
             let now = Date()
             let at = { (hours: Double) in ISO8601DateFormatter().string(from: now.addingTimeInterval(-hours * 3600)) }
             let made = ideas ?? [
-                WishLink.Idea(n: 3, text: "Geese that chase you around the Diag", email: "someone@example.com", at: at(0.3)),
-                WishLink.Idea(n: 2, text: "Make the helicopters look like the Survival Flight ones, red and white with the U-M logo on the side.", email: nil, at: at(5)),
-                WishLink.Idea(n: 1, text: "More e-bikes downtown", email: nil, at: at(30)),
+                WishLink.Idea(n: 3, text: "Geese that chase you around the Diag", wantsNews: true, at: at(0.3)),
+                WishLink.Idea(n: 2, text: "Make the helicopters look like the Survival Flight ones, red and white with the U-M logo on the side.", wantsNews: nil, at: at(5)),
+                WishLink.Idea(n: 1, text: "More e-bikes downtown", wantsNews: nil, at: at(30)),
             ]
             return AnyView(IdeasPanel(wish: project.id, back: {}, preview: (project, made, [3]))
                 .frame(width: width, height: 600)

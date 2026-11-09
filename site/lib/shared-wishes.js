@@ -496,6 +496,27 @@ export const IDEA_QUOTAS = [
 ];
 const EMAIL = /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[^\s@<>()",;:]+$/;
 
+/**
+ * Writes to someone who asked to hear back that their idea is in, through Resend (`RESEND_API_KEY`, from
+ * `LAMP_IDEAS_FROM`, an address on a domain Resend has verified). False, and nothing sent, without them or when Resend
+ * refuses: the idea still goes. Their address is used for this one email and goes with the idea.
+ */
+export async function tellItsIn(idea, record, link, { env = process.env, fetcher = fetch } = {}) {
+  const key = env.RESEND_API_KEY, from = env.LAMP_IDEAS_FROM;
+  if (!key || !from || !idea.email) return false;
+  const maker = record.by?.trim() || "Whoever made it";
+  const text = `${maker} added your idea to ${record.name}:\n\n${idea.text}\n\nPlay it: ${link}\n\n` +
+    "You asked to hear when it's in, so this is the only email about it.";
+  try {
+    const response = await fetcher("https://api.resend.com/emails", {
+      method: "POST", redirect: "error", signal: AbortSignal.timeout(5000),
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from, to: [idea.email], subject: `Your idea is in ${record.name}`, text }),
+    });
+    return response.ok;
+  } catch { return false; }
+}
+
 /** An idea as sent from a link's page, or null: its words. */
 export function readIdea(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
@@ -512,10 +533,10 @@ export function readEmail(body) {
 
 /**
  * Ideas for a link's maker (`/api/wish-ideas?id=`). POST, from the link's page, keeps one: what someone playing it would
- * change. It answers the idea's number and a key, which PUT ?n= takes with an address, if they give one, for the maker
- * to tell them it's in. GET, with the link's secret, answers them for Lamp to show the maker (never the keys); DELETE ?n=
- * with the secret lets one go once the maker has dealt with it. Kept only for the maker: never logged, never on the
- * page, gone with the link.
+ * change. It answers the idea's number and a key, which PUT ?n= takes with an address, if they give one, to hear when
+ * it's in. GET, with the link's secret, answers them for Lamp to show the maker: never the keys or the addresses, only
+ * whether someone wants to hear back. DELETE ?n= with the secret lets one go; with `built=1`, the site first writes to
+ * whoever asked (`tellItsIn`). Kept only for the maker: never logged, never on the page, gone with the link.
  */
 export function createIdeasHandler({ env = process.env, fetcher = fetch, store, limited = true, now = () => new Date() } = {}) {
   return async (request) => {
@@ -558,9 +579,18 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
       }
       if (method === "PUT") return (await kept.addEmail(id, n, idea.key, idea.email)) ? reply(204) : reply(404, { error: "not_found" });
       if (!secretMatches(bearer(request), record.secret)) return reply(404, { error: "not_found" });
-      if (method === "GET") return reply(200, { ideas: (await kept.ideas(id)).map(({ key: _key, ...shown }) => shown) });
+      // The maker sees whether someone wants to hear back, never their address: the site writes to them.
+      if (method === "GET") {
+        return reply(200, { ideas: (await kept.ideas(id)).map(({ key: _key, email, ...shown }) => ({ ...shown, ...(email ? { wantsNews: true } : {}) })) });
+      }
+      // `built`: it's in, so whoever asked to hear back is told, once, before it goes.
+      let notified = false;
+      if (url.searchParams.get("built") === "1") {
+        const idea = (await kept.ideas(id)).find((one) => one.n === n);
+        if (idea?.email) notified = await tellItsIn(idea, record, linkFor(url.origin, id, record.name), { env, fetcher });
+      }
       await kept.removeIdea(id, n);
-      return reply(204);
+      return reply(200, { notified });
     } catch { return reply(503, { error: "service_unavailable" }); }
   };
 }

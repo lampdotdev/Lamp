@@ -392,8 +392,10 @@ and answers a key with which the sender can add an address to hear back at (the 
 secret reads them; they go with the link, and nothing of them is logged. Lamp asks for them for every wish with a link
 at launch and every five minutes (`WishIdeas`, `Store.checkIdeas`); the desk counts the new ones beside its changes
 ("Sent to you", a line under the app's row), and the person goes to them in `IdeasPanel`, which takes the list's place
-with Back: Build It asks the wish's chat for one, in the sender's words, marked as theirs (`WishIdeas.request`); Write to
-Them opens an email to whoever left an address; Done lets it go from the link. Making one's own with Lamp stays in the
+with Back: Build It asks the wish's chat for one, in the sender's words, marked as theirs (`WishIdeas.request`); It's In
+lets it go and has the site write once to whoever asked to hear back, through Resend (`tellItsIn`: `RESEND_API_KEY` and
+`LAMP_IDEAS_FROM` in the site's environment); Dismiss lets it go quietly. The maker sees only that someone wants to hear
+back, never their address. Making one's own with Lamp stays in the
 dialog under the idea sent, and is all it offers when the idea couldn't go. Keys reach a framed page only while its frame has
 focus: the link's page focuses it as it loads and after its own buttons, and lamp.js in the page takes focus back on any
 press inside it, since a game that cancels pointerdown (to drag its camera) also cancels the press that would have. The version is what followers ask for (`latest` in
