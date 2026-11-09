@@ -36,9 +36,10 @@ enum Publish {
         return apps.count == 1 ? apps[0] : nil
     }
 
-    /// The shape a page plays in, which the link's page frames it in: a web game is drawn on its fixed stage
-    /// (`GameKit.width` by `height`, fitted to any window with bars around it), so its frame is that shape and it shows
-    /// none; a web app or a screen lays itself out for whatever room it has, so it fills the frame. Nil without a page.
+    /// The shape a page plays in, sent with its link: a web game is drawn on its fixed stage (`GameKit.width` by
+    /// `height`, fitted to any window with bars around it); a web app or a screen lays itself out for whatever room it
+    /// has. The link's page gives either all the room it has, as the app's window on a Mac does, so a game's controls
+    /// reach its edges with its scene fitted inside. Nil without a page.
     enum PageShape: Equatable { case ratio(Double), fill }
     static func pageShape(_ project: LampProject) -> PageShape? {
         switch pageUse(project) {
