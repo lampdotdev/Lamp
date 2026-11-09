@@ -162,12 +162,14 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
 
   // The log: the last lines kept here, each with its number, and all of it in the file.
   const log = [];
-  let logCount = 0, lastLookLine = 0, errorsPrinted = 0, errorsFrom = 0;
+  let logCount = 0, lastLookLine = 0, errorsPrinted = 0, errorsFrom = 0, lastErrorAt = 0;
+  let takenOver = null;           // why the person has the game's controller back, when they took it from lamp
   function logged(lines) {
     for (const line of lines) {
       const entry = { n: ++logCount, level: String(line.level || "log"), text: String(line.text ?? "") };
       log.push(entry);
       if (isError(entry)) {
+        lastErrorAt = Date.now();
         // A page stuck on an error says it every frame: a few a second are enough here, and all are in the file.
         const now = Date.now();
         if (now - errorsFrom > 1000) { errorsFrom = now; errorsPrinted = 0; }
@@ -180,6 +182,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
 
   function said(message) {
     const { page: id, gen: about, state, why } = message;
+    if (state === "taken-over") { takenOver = why || "the person played"; return; }
     const page = pages.get(id);
     if (!page && id) {
       // Its line for changes isn't open yet: this is heard once it is.
@@ -194,8 +197,9 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       if (state === "reloading") reopening.set(page.tab, Date.now() + 30_000);
     }
     const change = changes.find((change) => change.gen === about);
-    // How the change went in a tab is the first thing its page said of it: what follows (shown, restored) is that ending.
-    if (change && OUTCOMES[state] && page && !change.said.has(page.tab)) change.said.set(page.tab, { state, why: why || "" });
+    // How the change went in a tab is the last such thing its page said of it (code that couldn't run again opens the
+    // page again), with the first reason it gave: why it wasn't simply swapped in.
+    if (change && OUTCOMES[state] && page) change.said.set(page.tab, { state, why: change.said.get(page.tab)?.why || why || "" });
     if (!OUTCOMES[state] && state !== "restored" && state !== "fresh") return;
     const key = `${about}:${state}`;
     if (printed.has(key)) return;
@@ -217,10 +221,12 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     const mine = [...pages.values()].filter((page) => !tab || page.tab === tab);
     if (tab && !mine.length) return "the page was opening";
     for (const page of mine) {
+      // A page that logged an error and then went quiet isn't going to say more: what it shows is looked at as it is.
+      const failed = (since) => lastErrorAt > since && now - lastErrorAt > 1500;
       // A game with an older runtime never says it's playing: it's taken as open after a while.
-      if (!page.ready && now - page.since < 25_000) return layout.game ? "the game was still loading" : "the page was still opening";
-      if (page.at < gen && now - page.told < 20_000) return "the page hadn't said how the last change went";
-      if (page.rerunning > now) return "the game's code was running again";
+      if (!page.ready && now - page.since < 25_000 && !failed(page.since)) return layout.game ? "the game was still loading" : "the page was still opening";
+      if (page.at < gen && now - page.told < 20_000 && !failed(page.told)) return "the page hadn't said how the last change went";
+      if (page.rerunning > now && !failed(page.told)) return "the game's code was running again";
     }
     return null;
   }
@@ -253,6 +259,8 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     const browser = await launch({ path, url: address, profile: join(state, "browser"), window: true });
     windowBrowser = browser;
     browser.onGone(() => { if (windowBrowser === browser) windowBrowser = null; });
+    // The window is what's looked at from now on: a copy running the same game beside it would only slow it.
+    copyBrowser?.close();
     return "window";
   }
 
@@ -345,11 +353,57 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     const { page } = target;
     await page.focus();
     let did;
+    const number = (value, what) => { const n = Number(value); if (!Number.isFinite(n)) throw new Problem(what); return n; };
     if (action.kind === "key") {
       const seconds = Math.min(Math.max(Number(action.seconds) || 0, 0), 10);
-      keyNamed(action.key);
+      for (const one of String(action.key).split("+")) keyNamed(one);
       await page.key(action.key, seconds);
       did = seconds ? `Held ${action.key} for ${seconds} s.` : `Pressed ${action.key}.`;
+    } else if (action.kind === "stick" || action.kind === "button") {
+      // Lamp's own controller in the game (lamp-game.js, "Lamp's hands on the controller"): the first player's, held
+      // in place of the person's own until the hold ends or they play.
+      const buttons = await page.evaluate("import(new URL('lamp-game.js', document.baseURI).href).then(m => window.__lampDrive ? m.BUTTON : null, () => null)");
+      if (!buttons) throw new Problem("this page has no controller of Lamp's to hold (it isn't a game on Lamp's runtime): use key");
+      const pad = { lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0, down: 0 };
+      const held = String(action.kind === "button" ? action.buttons ?? "" : action.buttons ?? "").toLowerCase().split("+").filter(Boolean);
+      for (const one of held) {
+        if (one === "lt" || one === "rt") pad[one] = 1;
+        else if (buttons[one.toUpperCase()]) pad.down |= buttons[one.toUpperCase()];
+        else throw new Problem(`${one} isn't a button: ${Object.keys(buttons).map((name) => name.toLowerCase()).join(", ")}, lt, rt`);
+      }
+      let words;
+      if (action.kind === "stick") {
+        const side = String(action.side ?? "").toLowerCase();
+        const x = number(action.x, "stick takes left or right, then x and y from -1 to 1 (right and up are 1): lamp use stick left 0 1 2");
+        const y = number(action.y, "stick takes left or right, then x and y from -1 to 1 (right and up are 1): lamp use stick left 0 1 2");
+        if ((side !== "left" && side !== "right") || Math.abs(x) > 1 || Math.abs(y) > 1) throw new Problem("stick takes left or right, then x and y from -1 to 1 (right and up are 1): lamp use stick left 0 1 2");
+        pad[side === "left" ? "lx" : "rx"] = x;
+        pad[side === "left" ? "ly" : "ry"] = y;
+        words = `the ${side} stick at ${x}, ${y}${held.length ? ` with ${held.join(" and ").toUpperCase()}` : ""}`;
+      } else {
+        if (!held.length) throw new Problem("button takes a button's name: lamp use button a");
+        words = held.join(" and ").toUpperCase();
+      }
+      const seconds = Math.min(Math.max(Number(action.seconds) || (action.kind === "stick" ? 1 : 0.15), 0.05), 10);
+      const batch = randomBytes(4).toString("hex"), name = `${batch}-1`, quoted = JSON.stringify;
+      takenOver = null;
+      await page.evaluate(`(() => { window.__lampOwn && window.__lampOwn(${seconds + 1}, ${quoted(batch)}); return window.__lampDrive(${quoted({ ...pad, seconds })}, ${quoted(name)}, ${quoted(batch)}); })()`);
+      const until = Date.now() + seconds * 1000;
+      while (Date.now() < until && !takenOver) await sleep(40);
+      await page.evaluate(`(() => { window.__lampDrive && window.__lampDrive(null, ${quoted(name)}); window.__lampOwn && window.__lampOwn(null, ${quoted(batch)}); })()`);
+      did = takenOver ? `Let go of ${words}: the person took the controller back (${takenOver}). The game is theirs; don't take it again unless they ask.`
+        : `Held ${words} for ${seconds} s.`;
+    } else if (action.kind === "drag") {
+      const usage = "drag takes where it starts and where it ends: lamp use drag 400 300 700 300";
+      const [x, y, toX, toY] = [action.x, action.y, action.toX, action.toY].map((value) => number(value, usage));
+      await page.drag(x, y, toX, toY);
+      did = `Dragged from ${x},${y} to ${toX},${toY}.`;
+    } else if (action.kind === "scroll") {
+      const points = number(action.points, "scroll takes how far, down being positive: lamp use scroll 600");
+      const size = (await page.evaluate("({ w: innerWidth, h: innerHeight })")) ?? { w: 800, h: 600 };
+      await page.scroll(Number.isFinite(Number(action.x)) ? Number(action.x) : size.w / 2, Number.isFinite(Number(action.y)) ? Number(action.y) : size.h / 2, points);
+      await sleep(250);
+      did = `Scrolled ${points > 0 ? "down" : "up"} ${Math.abs(points)}.`;
     } else if (action.kind === "click") {
       const x = Number(action.x), y = Number(action.y);
       if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Problem("click takes a point: lamp use click 640 400");
@@ -364,7 +418,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       await sleep(seconds * 1000);
       did = `Waited ${seconds} s.`;
     } else {
-      throw new Problem("use takes key, click, type or wait");
+      throw new Problem("use takes key, click, type, drag, scroll, stick, button or wait");
     }
     return { did, ...(await look({ wait: 5 })) };
   }

@@ -3,7 +3,8 @@
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request } from "node:http";
@@ -70,6 +71,25 @@ test("answers only this computer's own pages and lamp's own commands", async () 
   assert.equal(untold.status, 403);
   const told = await fetch(`${server.url}__lamp/cli/hello`, { headers: { "x-lamp-token": server.token } });
   assert.equal((await told.json()).folder, server.folder);
+});
+
+test("a new game is given what only Lamp's app writes, and a file that isn't there is an error", async () => {
+  const made = join(home, "new-game");
+  const run = spawnSync(process.execPath, [join(import.meta.dirname, "..", "lamp.mjs"), "new", made, "--name", "Harbor <Racer>"], { encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(readFileSync(join(made, "index.html"), "utf8"), /<title>Harbor &lt;Racer&gt;<\/title>/);
+  const game = await serve({ folder: made, quiet: true });
+  try {
+    // The runtime imports the first, and can't load without it; the rest are what a game's page may name.
+    for (const file of ["lamp-controllers.js", "lamp-device.js", "lamp-build.js", "lamp.js", "three/three.module.js", "phaser/phaser.esm.min.js"]) {
+      assert.equal((await fetch(game.url + file)).status, 200, file);
+    }
+    assert.match(await (await fetch(`${game.url}lamp-controllers.js`)).text(), /export default \{"base":/);
+    assert.equal((await fetch(`${game.url}missing.js`)).status, 404);
+    assert.match(readFileSync(game.logFile, "utf8"), /error: missing\.js isn't in the folder/);
+  } finally {
+    await game.close();
+  }
 });
 
 test("a saved change reaches the open page, and one saved while a page was opening reaches it too", async () => {

@@ -11,9 +11,13 @@
   };
   const said = message => post('said', message, true);
 
-  // The two things Lamp's app around a page gives it: with them the game runtime knows changes come while it's played,
-  // and says how each one went and when the game is past its loading screen.
-  const handlers = { lampLive: { postMessage: said }, lampPlaying: { postMessage: state => said({ state: 'page-' + state }) } };
+  // What Lamp's app around a page gives it: with these the game runtime knows changes come while it's played, and says
+  // how each one went and when the game is past its loading screen.
+  const handlers = {
+    lampLive: { postMessage: said }, lampPlaying: { postMessage: state => said({ state: 'page-' + state }) },
+    // The person played while lamp held the game's controller (`lamp use stick`), and has it back.
+    lampDriveTakenOver: { postMessage: why => said({ state: 'taken-over', why: String(why || '') }) },
+  };
   try { window.webkit = window.webkit || {}; window.webkit.messageHandlers = Object.assign(window.webkit.messageHandlers || {}, handlers); }
   catch (e) { try { Object.defineProperty(window, 'webkit', { value: { messageHandlers: handlers }, configurable: true }); } catch (e) {} }
 

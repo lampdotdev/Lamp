@@ -83,12 +83,14 @@ class Page {
   /** The page answers as the page in front, with the keyboard its own, however it's shown. */
   async focus() { await this.send("Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => {}); }
 
-  async key(name, seconds = 0) {
-    const { key, code, number, text } = keyNamed(name);
-    const common = { key, code, windowsVirtualKeyCode: number, nativeVirtualKeyCode: number };
-    await this.send("Input.dispatchKeyEvent", { type: text ? "keyDown" : "rawKeyDown", ...common, ...(text ? { text, unmodifiedText: text } : {}) });
+  /** Holds a key, or several at once (`w+a`), for some seconds. */
+  async key(names, seconds = 0) {
+    const keys = String(names).split("+").filter(Boolean).map(keyNamed).map(({ key, code, number, text }) => ({ text, common: { key, code, windowsVirtualKeyCode: number, nativeVirtualKeyCode: number } }));
+    for (const { text, common } of keys) {
+      await this.send("Input.dispatchKeyEvent", { type: text ? "keyDown" : "rawKeyDown", ...common, ...(text ? { text, unmodifiedText: text } : {}) });
+    }
     await sleep(Math.max(40, seconds * 1000));
-    await this.send("Input.dispatchKeyEvent", { type: "keyUp", ...common });
+    for (const { common } of keys.reverse()) await this.send("Input.dispatchKeyEvent", { type: "keyUp", ...common });
   }
 
   async click(x, y) {
@@ -98,6 +100,19 @@ class Page {
   }
 
   async type(text) { await this.send("Input.insertText", { text }); }
+
+  /** Presses at one point, moves to another and lets go, as a hand would: in steps. */
+  async drag(x, y, toX, toY) {
+    await this.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+    await this.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1 });
+    for (let step = 1; step <= 12; step++) {
+      await this.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: x + ((toX - x) * step) / 12, y: y + ((toY - y) * step) / 12, button: "left", buttons: 1 });
+      await sleep(16);
+    }
+    await this.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: toX, y: toY, button: "left", buttons: 0, clickCount: 1 });
+  }
+
+  async scroll(x, y, points) { await this.send("Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX: 0, deltaY: points }); }
 
   async front() { await this.send("Page.bringToFront").catch(() => {}); }
 }

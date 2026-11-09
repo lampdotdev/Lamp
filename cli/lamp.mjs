@@ -33,8 +33,17 @@ const USAGE = `lamp runs the web app or game in a folder and puts each saved cha
       Show it in a window, running it in the background if it isn't running. Returns at once.
   lamp look [folder] [--wait seconds] [--json]
       How the changes since the last look went, a picture of the page, its screen as text, and its log.
-  lamp use [folder] key <name> [seconds] | click <x> <y> | type <text> | wait <seconds>
-      Try it as a person would, then look.
+  lamp use [folder] <one of these>
+      Try it as a person would, then look:
+        click <x> <y>                         a point of the picture
+        type <text>                           into whatever has the keyboard
+        key <name> [seconds]                  a key, or several at once (w+a), held
+        drag <x> <y> <to x> <to y>            press, move and let go
+        scroll <points> [x y]                 down is positive
+        stick <left|right> <x> <y> [seconds] [buttons]
+                                              a game's controller: x and y from -1 to 1, right and up being 1
+        button <name> [seconds]               a game's controller: a, b, x, y, lb, rb, lt, rt, menu, view, up… (a+rt)
+        wait <seconds>
   lamp reload [folder]    Open the page again from its files, a game from where the player is.
   lamp stop [folder]      Stop running it.
   lamp setup [--remove]   Teach Claude Code and Codex on this computer to work this way (a skill for each).
@@ -180,13 +189,17 @@ async function main() {
 
   if (command === "use") {
     const { options, rest } = parse(args, []);
-    const kinds = ["key", "click", "type", "wait"];
+    const kinds = ["key", "click", "type", "wait", "drag", "scroll", "stick", "button"];
     const folder = rest.length && !kinds.includes(rest[0]) ? rest.shift() : ".";
     const [kind, ...values] = rest;
-    if (!kinds.includes(kind)) throw new Problem("use takes key <name> [seconds], click <x> <y>, type <text> or wait <seconds>");
+    if (!kinds.includes(kind)) throw new Problem("use takes key, click, type, drag, scroll, stick, button or wait: lamp --help shows each");
     const action = kind === "key" ? { kind, key: values[0], seconds: values[1] }
       : kind === "click" ? { kind, x: values[0], y: values[1] }
       : kind === "type" ? { kind, text: values.join(" ") }
+      : kind === "drag" ? { kind, x: values[0], y: values[1], toX: values[2], toY: values[3] }
+      : kind === "scroll" ? { kind, points: values[0], x: values[1], y: values[2] }
+      : kind === "stick" ? { kind, side: values[0], x: values[1], y: values[2], seconds: values[3], buttons: values[4] }
+      : kind === "button" ? { kind, buttons: values[0], seconds: values[1] }
       : { kind, seconds: values[0] };
     if (kind === "key" && !values[0]) throw new Problem("key takes a key's name: lamp use key w 2");
     const layout = layoutOf(folder);
