@@ -922,6 +922,8 @@ enum WishLink {
             do {
                 try await WishLink.remove(shared)
                 WishLink.keep(nil, for: project)
+                // Its ideas went with it: nothing can be done with them now, so the desk stops showing them.
+                Store.shared.ideas[project.id] = nil
                 Store.shared.refreshInstalled(project)
                 // Its window goes with it, as Cancel takes it.
                 close(project)
