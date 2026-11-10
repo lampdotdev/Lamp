@@ -7600,7 +7600,8 @@ final class Store: ObservableObject {
             default: total
             }
         }
-        let wait = Double(actions.count) * (0.4 + 0.45) + waits + 5
+        // And a file the actions are saving: the app waits for it before it answers (`LampSaves`).
+        let wait = Double(actions.count) * (0.4 + 0.45) + waits + 5 + Template.useAppSaveWait
         // Once stopped, the app answers at once; one inside a dialog of its own can't until that closes, and isn't waited for.
         let answer = await Runtime.useReport(of: project, id: id, waiting: wait) { [weak self] in
             !app.isTerminated && (stoppedAt.map { Date().timeIntervalSince($0) < 2 } ?? true)

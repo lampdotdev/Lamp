@@ -978,6 +978,8 @@ enum LampPageGuard {
     /// Each download is written beside where it goes, under a hidden name, and takes that place only once it's whole: a
     /// file it replaces is kept if it fails.
     private var places: [ObjectIdentifier: (writing: URL, final: URL)] = [:]
+    /// How each download set off by Lamp's builder goes, which `use_app` tells it (`LampSaves` in LampSupport.swift).
+    private var saves: [ObjectIdentifier: LampSaves.Save] = [:]
 
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String,
                   completionHandler: @escaping @MainActor @Sendable (URL?) -> Void) {
@@ -985,8 +987,14 @@ enum LampPageGuard {
         panel.nameFieldStringValue = suggestedFilename
         panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
         panel.canCreateDirectories = true
+        let save = LampSaves.began(suggestedFilename)
+        if let save { saves[ObjectIdentifier(download)] = save }
         let chosen: (NSApplication.ModalResponse) -> Void = { answer in
-            guard answer == .OK, let url = panel.url else { return completionHandler(nil) }
+            guard answer == .OK, let url = panel.url else {
+                LampSaves.ended(self.saves.removeValue(forKey: ObjectIdentifier(download)), .canceled)
+                return completionHandler(nil)
+            }
+            LampSaves.chose(save, url)
             let writing = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).download")
             self.places[ObjectIdentifier(download)] = (writing, url)
             completionHandler(writing)
@@ -995,20 +1003,24 @@ enum LampPageGuard {
     }
 
     func downloadDidFinish(_ download: WKDownload) {
+        let save = saves.removeValue(forKey: ObjectIdentifier(download))
         guard let place = places.removeValue(forKey: ObjectIdentifier(download)) else { return }
         let files = FileManager.default
         do {
             // The save panel asked before replacing a file of that name.
             if files.fileExists(atPath: place.final.path) { _ = try files.replaceItemAt(place.final, withItemAt: place.writing) }
             else { try files.moveItem(at: place.writing, to: place.final) }
+            LampSaves.ended(save, .saved)
         } catch {
             try? files.removeItem(at: place.writing)
+            LampSaves.ended(save, .notMoved(error.localizedDescription))
             FileHandle.standardError.write(Data("A download couldn't be saved: \(error.localizedDescription)\n".utf8))
         }
     }
 
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         if let place = places.removeValue(forKey: ObjectIdentifier(download)) { try? FileManager.default.removeItem(at: place.writing) }
+        LampSaves.ended(saves.removeValue(forKey: ObjectIdentifier(download)), .failed(error.localizedDescription))
         FileHandle.standardError.write(Data("A download failed: \(error.localizedDescription)\n".utf8))
     }
 }

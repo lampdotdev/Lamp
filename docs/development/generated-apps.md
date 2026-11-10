@@ -104,6 +104,17 @@ drives it with real events. The pill's outline, and the approval card's, take no
 a capsule's stroke counts a click on the line through its middle as its own, which is where Stop's middle is, and a
 click the outline took in that panel never reached the button.
 
+A save the actions set off is said in the answer, so the agent confirms it without reading the folder it went to
+(`LampSaves` in LampSupport.swift). A page's download (`LampPageDownloads` in LampPage.swift) tells it where the save
+panel sent it and how it ended: saved once the final move or replace into place succeeded, canceled in the panel, the
+download failed, or it finished but couldn't be put in place. A saved file is described by its path, its size and, for a
+zip, a bounded list of the names in it (never what's in them), or "not a zip archive" or that its list couldn't be read.
+Pressing return in the panel only says where it was told to save. The batch's answer waits up to
+`Template.useAppSaveWait` for a save still being written (Lamp waits that much longer for the answer), then says it's
+still saving; a save is the batch's that accepted its panel, and one that ends after that batch answered is said in the
+next answer, marked as from earlier. Each ending is said once. Only saves begun during a batch are kept, not the person's own. `UseAppSavesTests` compiles it out of
+the template and takes it through each case with real files.
+
 A Mac app can be changed while it's in use (apps show the wand while the file `MagicPanel.flag`, which Lamp writes
 at launch, is beside their folders, checked each time a window comes forward): `LampMagic` in LampSupport.swift puts a
 wand at the top right of each of its windows, which opens the app's chat beside that window

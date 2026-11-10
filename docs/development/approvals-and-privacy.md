@@ -125,6 +125,10 @@ checks and the Share Link card.
   file holds. Nothing there is run or built. The agent's file tools read it without asking and can't change it, and
   another wish's copies are refused, whatever the settings say (`Privacy.verdict`), as is a search that starts above them (`Privacy.wouldUncover`, for Claude Code's and pi's own find and grep); commands may read it and not write it
   (`(deny file-write*)` for it in Lamp's profile, a `read` entry for it in Codex's). It's cleared a day on.
+- **A file the app saved for `use_app`** (`LampSaves`, "use_app" in the generated apps guide): the app itself, not Lamp
+  or the agent, describes a download its actions saved, wherever the save panel sent it: the path, the size and a
+  bounded list of the names in a zip, nothing of what's in them. Only saves begun during the agent's batch are said, so
+  the agent can confirm a Save without reading the folder; reading or listing that folder itself is still checked.
 - **What Lamp fetches for itself** (`StarterDownloads`, `LlamaInstall`, `Downloads`): llama.cpp's server and libraries
   come from Lamp's own release at the size and SHA-256 the bundle pins, and each program and library is checked for the
   certificate that signed Lamp, once unpacked and again before the server starts; a starter's tree comes from its repository's
