@@ -1449,9 +1449,10 @@ typealias LampPageHolderBase = UIView
         case "click", "double_click":
             guard point != nil else { return nil }
             let clicks = action.action == "click" ? 1 : 2
-            // The thing's box in the page's own pixels: the page finds it by that and its middle, the point.
+            // The thing as the page's read listed it, with its box in the page's own pixels: the page clicks that very
+            // thing, once it's checked it's still there, at its middle (the point).
             let scale = LampRuntime.scale(of: window)
-            let want = meant.map { "{ w: \($0.frame.width / scale / zoom), h: \($0.frame.height / scale / zoom) }" } ?? "null"
+            let want = meant.map { "{ ref: \($0.ref ?? -1), w: \($0.frame.width / scale / zoom), h: \($0.frame.height / scale / zoom) }" } ?? "null"
             page.evaluateJavaScript(click + "(\(css.x), \(css.y), \(want), \(clicks))") { answer, error in
                 MainActor.assumeIsolated {
                     guard error == nil, let json = answer as? String,
@@ -1463,7 +1464,7 @@ typealias LampPageHolderBase = UIView
                     said(words + (did && action.page == true ? "; the picture shows whether the game took it" : ""), did)
                 }
             }
-            return "sent to the page, which hasn't said what it landed on"
+            return LampPageItems.sent
         case "type":
             let text = action.text ?? ""
             let quoted = String(decoding: (try? JSONSerialization.data(withJSONObject: [text])) ?? Data("[\"\"]".utf8), as: UTF8.self)
@@ -1553,7 +1554,7 @@ typealias LampPageHolderBase = UIView
             let role = ["button": "button", "field": "text field", "choice": "choice", "image": "picture"][kind] ?? "text"
             return LampScreen.Item(role: role, label: entry["name"] as? String ?? "", value: entry["value"] as? String ?? "",
                                    frame: CGRect(x: (box.minX + n("x")) * scale, y: (top + n("y")) * scale, width: n("w") * scale, height: n("h") * scale),
-                                   selected: entry["focused"] as? Bool ?? false)
+                                   selected: entry["focused"] as? Bool ?? false, ref: (entry["ref"] as? NSNumber)?.intValue)
         }
     }
 }

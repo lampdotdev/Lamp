@@ -946,9 +946,10 @@ tree LampSupport reads stops at a web view's edge, so the page lists its own thi
 with (`PageScreen`, written in by `GameKit.page`), each box turned into pixels of the window's picture, read again
 before each picture and after each action; clicks, keys and typing reach the page at those points as the person's do,
 and a remote's back, OK and enter are sent as Escape and Return. No preview opens then. A click is answered by the page
-(`PageScreen.click`, written in by `GameKit.page` and run by the preview too), never reported as done before it has: it
-names what WebKit's hit test put under the point, a thing named by `target` is found again by its box and clicked only
-if it's still there and not dimmed, and where another layer of the page lies over its middle it's clicked at a part that
+(`PageScreen.click`, written in by `GameKit.page` and run by the preview too), never reported as done before it has, and
+`use_app` waits for that answer (at most a few seconds) before its next action: it names what WebKit's hit test put
+under the point, a thing named by `target` is the very one the screen read listed (`ref`, its place in that list) and
+is clicked only if it's still where it was read and not dimmed, and where another layer of the page lies over its middle it's clicked at a part that
 shows, with the answer naming what covers the middle, or not at all ("missed", with what's on top) when none shows. A
 page's own stacking bug is reported, not patched: Lamp never rewrites a page's CSS to make a click land.
 

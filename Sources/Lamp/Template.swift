@@ -8978,6 +8978,9 @@ enum Template {
             var frame: CGRect         // in the picture's pixels
             var selected = false
             var disabled = false
+            /// A page's own thing: its place in the list the page's read made (`LampPageReader`), by which a click
+            /// finds that very thing. Nil for what the accessibility tree lists.
+            var ref: Int? = nil
         }
 
         /// The most things listed: a full window is a few dozen, and past this the list costs more than it tells.
@@ -9214,6 +9217,8 @@ enum Template {
         /// meant for the page's thing given, if any, and its outcome comes later, from the page: in words, and whether
         /// it clicked (a thing that was dimmed, gone or under another isn't).
         static var act: ((LampDriver.Action, NSPoint?, LampScreen.Item?, NSWindow, @escaping @MainActor (String, Bool) -> Void) -> String?)?
+        /// What `act` says of a click until the page answers it: the batch waits for that answer before going on.
+        static let sent = "sent to the page, which hasn't said what it landed on"
         /// Whether the game on a page is playing (`LampPagePlaying`): nil for an app with no game, false while it loads.
         @MainActor static var playing: Bool?
         /// Gives a game's controller to Lamp for batch `id` (seconds it may run) or back (nil): only that batch's own
@@ -9461,8 +9466,15 @@ enum Template {
             }
             /// `shown` is where Lamp's cursor was sent for this action during the pause before it, if anywhere;
             /// the spot is found again now that it's due, since the app may have moved it meanwhile.
+            /// A click whose answer the page hasn't given yet (its report line), and the step waiting for it: nothing goes on,
+            /// and the report isn't written, until the page has said what the click landed on, or `unanswered` has passed.
+            var awaiting: (line: Int, resume: (() -> Void)?)?
             func step(_ index: Int, shown: Aim?) {
                 guard batch.carriesOn else { return }
+                if awaiting != nil {
+                    awaiting?.resume = { step(index, shown: shown) }
+                    return
+                }
                 keepBarPanel()
                 note()
                 guard index < actions.count else {
@@ -9549,12 +9561,33 @@ enum Template {
                             goOn(after: Self.settle)
                         }
                     } else {
+                        // A click on a page is answered by the page (`LampPageItems.act`), in its own time.
+                        func goOn() {
+                            let resume = awaiting?.resume
+                            awaiting = nil
+                            resume?()
+                        }
+                        let mayWait = action.action.hasSuffix("click")
+                        if mayWait { awaiting = (line, nil) }
                         report[line] = run(action) { said, clicked in
-                            // The page's answer to a click, in place of "sent": kept with what `note` added since, and a
-                            // click that didn't happen isn't one that should have changed the screen.
-                            let unchanged = " (nothing changed on screen)"
-                            report[line] = said + (report[line].hasSuffix(unchanged) && clicked ? unchanged : "")
+                            guard awaiting?.line == line else { return }
+                            // The page's answer in place of "sent"; a click that didn't happen isn't one that should
+                            // have changed the screen.
+                            report[line] = said
                             if !clicked, last?.line == line { last = nil }
+                            goOn()
+                        }
+                        if mayWait, awaiting?.line == line {
+                            if report[line].hasSuffix(LampPageItems.sent) {
+                                after(Self.unanswered) {
+                                    guard awaiting?.line == line else { return }
+                                    report[line] = report[line].replacingOccurrences(of: LampPageItems.sent, with:
+                                        "the page didn't answer within \(LampScreen.number(Self.unanswered)) s, so whether it was clicked isn't known")
+                                    goOn()
+                                }
+                            } else {
+                                awaiting = nil
+                            }
                         }
                     }
                     // A page reads its things again, for the next action's target: ready well within the pause.
@@ -9575,7 +9608,7 @@ enum Template {
         /// How long after an action the next one's spot is looked for: a press is taken up on the run loop's
         /// next turn, so what it opened or changed is on screen by then.
         static let settle = 0.1
-        /// How long a game's page has to answer a hold of its controller before the batch goes on without it.
+        /// How long a game's page has to answer a hold of its controller, or a page a click, before the batch goes on without it.
         static let unanswered = 3.0
 
         /// Where an action happens on screen, what it's doing in a few words, which window that's in, and
