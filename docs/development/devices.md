@@ -557,7 +557,9 @@ modules can't rebind an importer's bindings, so a change a swap can't take (a cl
 read off its source without its methods, or that has private members, whose brand is the old class's; an exported
 function or value that changed; code outside the classes of a module exporting functions; the HTML; a module nothing
 takes changes for, the one that starts the game as a rule) runs the game's code again in place instead ("rerun", with
-the swap's reason as `why`, which the agent's look is told: `pageRanAgain`). That's a reload without the reload, chosen
+the swap's reason as `why`, which the agent's look is told: `pageRanAgain`; for a module nothing takes changes for,
+it names the changed file first, where an `accept()` would take it, then the module it's loaded through). That's a
+reload without the reload, chosen
 over carving out the swap's refusals one by one (rebinding exports by rewriting modules as they load, rebuilding a
 class's objects with their fields carried across), since most changes a person asks for change what a game's start
 built, which no swap of code puts in: the old code's frame loop stops, its `dispose` (a game() option) and the modules'
@@ -617,7 +619,11 @@ variables, which no runtime can rebind: what read the old part reads the new one
 code again meanwhile takes a built part with it, and goes on with a build its change doesn't touch. While the game is
 `busy()` the swap waits for a pause, as a run in place does. Every run in place also has its first frame's shaders compiled before it's drawn (`watchRender` puts
 `compileAsync` in front of that frame's render, the last frame held on screen meanwhile), so no game shows a frame
-stalled on compiling. The report is said at the new code's first drawn frame with how long the game stood still
+stalled on compiling. The old page stays over the new one until the new code has drawn (`lift`), and what the new page
+is fading across half the window or more as it starts is finished under it (`putAway`, an opacity or visibility
+transition of a second and a half at most): a game brought in with a loading screen of its own in its HTML gets that
+screen back with the body and fades it out, which the old page would otherwise give way to. The report is said at the
+new code's first drawn frame with how long the game stood still
 (`frozen`, from the old code's last frame) and that frame's time, and how long the game's own start took outside the parts
 built again (`outside`, said when it's 100 ms or more: a fetch from the network awaited in the starting module is waited
 for again at every change, which the game skill has go inside the part built from it); parts still being built are named apart, and a second
