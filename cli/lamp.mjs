@@ -96,7 +96,8 @@ function addLibraries(root) {
   try { map = /<script[^>]*type=["']importmap["'][^>]*>([\s\S]*?)<\/script>/i.exec(readFileSync(join(root, "index.html"), "utf8"))?.[1] ?? ""; } catch {}
   const added = [];
   for (const name of ["three", "phaser", "rapier"]) {
-    if (!new RegExp(`["'](?:\\./)?${name}/`).test(map) || existsSync(join(root, name)) || !existsSync(join(lamps, name))) continue;
+    // Named as a folder beside the page: one loaded from elsewhere (a CDN) is the page's own business.
+    if (!new RegExp(`:\\s*["'](?:\\./)?${name}/`).test(map) || existsSync(join(root, name)) || !existsSync(join(lamps, name))) continue;
     cpSync(join(lamps, name), join(root, name), { recursive: true });
     added.push(`${name}/`);
   }

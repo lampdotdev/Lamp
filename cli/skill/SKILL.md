@@ -115,8 +115,8 @@ Each answers with a look. With the window open it happens in the person's own wi
   the game (the end of a round, a menu), and goes in by itself then: a later look says so. Or for that button, because
   the page must open again for it: `{{lamp}} reload` presses it, so with a window open ask the person first.
 
-The reason given after one names the module that would have had to accept the change: the changed file itself, or
-the one that imports it. A game that takes changes live is written for it. When a change won't go in, needs Reload
+The reason given after one names the file that changed, where an `accept()` would have taken the change, and the
+module it's loaded through. A game that takes changes live is written for it. When a change won't go in, needs Reload
 or loses the player's place, read Lamp's `game-live` skill before working around it.
 
 ## Lamp's skills
