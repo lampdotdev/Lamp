@@ -2,7 +2,7 @@
 // started for the same folder.
 
 import { createHash } from "node:crypto";
-import { existsSync, statSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, statSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
@@ -26,17 +26,72 @@ export function layoutOf(given) {
 }
 
 /**
- * What the folder is to lamp: a page (as `layoutOf` reads it), or an app Lamp made in Swift for the Mac (its package
- * and the build script Lamp writes). A game Lamp made has both, a page with the Mac app around it: it's worked on as
- * its page.
+ * What Lamp's own record in the folder says it is (`lamp-app.json`, which an app Lamp shared or put on GitHub carries
+ * at its top, or a site in `.lamp-wish/`): its kind (`platform`), its name and the wish's other apps (`parts`). Null in
+ * a folder without one.
+ */
+export function manifestOf(folder) {
+  for (const at of ["lamp-app.json", join(".lamp-wish", "lamp-app.json")]) {
+    try {
+      const said = JSON.parse(readFileSync(join(folder, at), "utf8"));
+      if (said && typeof said === "object" && !Array.isArray(said)) return said;
+    } catch {}
+  }
+  return null;
+}
+
+/** Whether some Swift of the app's own imports RealityKit (`Template.importsRealityKit`), which Lamp builds a scene around. */
+function importsRealityKit(folder) {
+  let entries;
+  try { entries = readdirSync(folder, { withFileTypes: true }); } catch { return false; }
+  return entries.some((entry) => entry.isDirectory() ? importsRealityKit(join(folder, entry.name))
+    : entry.name.endsWith(".swift") && entry.name !== "LampSupport.swift" && entry.name !== "LampScene.swift"
+      && /^\s*(@\w+\s+)?import\s+RealityKit\b/m.test(readFileSync(join(folder, entry.name), "utf8")));
+}
+
+// The kinds Lamp makes that lamp doesn't build or run, in the words a person knows them by (`Platform`'s kinds).
+const ELSEWHERE = {
+  iphone: "an iPhone app", universal: "an app for both the Mac and the iPhone", android: "an Android app",
+  "android-tv": "an Android TV app", tv: "a TV app", device: "an app for a device through its integration",
+};
+
+/**
+ * What the folder is to lamp: a page (as `layoutOf` reads it), or an app Lamp made in Swift for the Mac (its code in
+ * Sources/; `missing` lists Lamp's own files it lacks, which a shared file never carries and lamp writes before it
+ * builds). A folder in Lamp's format is read by what its `lamp-app.json` says it is: a web app, a game or a screen is
+ * its page (a game Lamp made has the Mac app around its page too), a Mac app its code, and a kind lamp doesn't run, or
+ * a wish of several apps, is said so rather than taken for another.
  */
 export function projectOf(given) {
   const folder = resolve(given);
   if (!existsSync(folder) || !statSync(folder).isDirectory()) throw new Problem(`${folder} isn't a folder`);
   const real = realpathSync(folder);
-  if ([join(real, "Web"), real].some((candidate) => existsSync(join(candidate, "index.html")))) return { kind: "page", ...layoutOf(real) };
-  if (existsSync(join(real, "Package.swift")) && existsSync(join(real, "build.sh")) && existsSync(join(real, "Sources"))) return { kind: "mac", folder: real };
-  throw new Problem(`${real} has no page (no Web/index.html and no index.html), and isn't a Mac app Lamp made (no Package.swift with its build.sh)`);
+  const hasPage = [join(real, "Web"), real].some((candidate) => existsSync(join(candidate, "index.html")));
+  const owned = ["Package.swift", "build.sh", join("Sources", "LampSupport.swift")];
+  const manifest = manifestOf(real);
+  if (manifest) {
+    const parts = Array.isArray(manifest.parts) ? manifest.parts.length : 0;
+    if (parts) throw new Problem(`${real} is a wish of ${parts + 1} apps, and lamp works on one app in a folder: open it in Lamp's app`);
+    const kind = typeof manifest.platform === "string" ? manifest.platform : "mac";
+    if (ELSEWHERE[kind]) throw new Problem(`${real} is ${ELSEWHERE[kind]}, which lamp doesn't build or run: open it in Lamp's app`);
+    if (["web-app", "game", "screen"].includes(kind)) {
+      if (!hasPage) throw new Problem(kind === "game" ? `${real} is a game written in C++, which lamp doesn't run: open it in Lamp's app` : `${real} has no page: no Web/index.html and no index.html`);
+      return { kind: "page", ...layoutOf(real) };
+    }
+    if (kind === "mac") {
+      if (!existsSync(join(real, "Sources"))) throw new Problem(`${real} is a Mac app with no code: no Sources/`);
+      const missing = owned.filter((path) => !existsSync(join(real, path)));
+      // Lamp's starting files build an app alone: a widget, a share extension or a 3D scene is built with files of
+      // Lamp's that only its app writes (`Template.writeSwiftOwnedFiles`).
+      const more = missing.length && (["Widget", "Share"].find((extra) => existsSync(join(real, extra))) ?? (importsRealityKit(join(real, "Sources")) ? "a 3D scene" : null));
+      if (more) throw new Problem(`${real} is a Mac app with ${more.includes(" ") ? more : `a ${more === "Widget" ? "widget" : "share extension"}`}, which only Lamp's app builds from a shared file: open it in Lamp's app first`);
+      return { kind: "mac", folder: real, missing };
+    }
+    throw new Problem(`${real} is a kind of app this lamp doesn't know ("${kind}"): a newer Lamp made it`);
+  }
+  if (hasPage) return { kind: "page", ...layoutOf(real) };
+  if (existsSync(join(real, "Package.swift")) && existsSync(join(real, "build.sh")) && existsSync(join(real, "Sources"))) return { kind: "mac", folder: real, missing: [] };
+  throw new Problem(`${real} has no page (no Web/index.html and no index.html), and isn't a Mac app Lamp made (no Package.swift with its build.sh, and no lamp-app.json)`);
 }
 
 /**

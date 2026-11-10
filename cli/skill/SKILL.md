@@ -64,7 +64,8 @@ shows until its code in `Sources/` is written. The same commands work on it, wit
 - **The app stays open** when you finish, as the person's to use. `{{lamp}} stop` quits it, when they only wanted it
   checked.
 - **Lamp's own files** are `Sources/LampSupport.swift`, `build.sh` and `Package.swift`: never edit any of them.
-- **Not here:** putting a change in without opening the app again, the app's AI (`LampAI`), and sharing one. Those
+- **Not here:** putting a change in without opening the app again, the app's AI (`LampAI`), and a link to one on
+  lamp.dev (its Lamp app file is here: see "A Lamp app file"). Those
   are Lamp's app's: say so rather than working around it. What the app keeps secret (`LampSecrets`) is kept for it.
 
 ## A game that's already there
@@ -154,6 +155,17 @@ Each answers with a look. With the window open it happens in the person's own wi
 The reason given after one names the file that changed, where an `accept()` would have taken the change, and the
 module it's loaded through. A game that takes changes live is written for it. When a change won't go in, needs Reload
 or loses the player's place, read Lamp's `game-live` skill before working around it.
+
+## A Lamp app file
+
+A folder with `lamp-app.json` at its top (or in `.lamp-wish/`) is an app in Lamp's format, from GitHub or a shared file:
+every command here works on a web app, a game, a screen or a Mac app in one, and says so for a kind it doesn't run.
+
+- `{{lamp}} unpack Name.lampapp` unpacks a Lamp app file (what Lamp's Share… makes) into a new folder beside it, with
+  Lamp's own files put in, and says how to see it.
+- `{{lamp}} export` makes the app's Lamp app file beside its folder, for the person to send or open in Lamp: only when
+  they ask. It's refused when something in the app is shaped like a key, or a license its credits name is gone; when
+  it uses work that came with no license, ask the person before `--anyway`.
 
 ## Sharing it
 

@@ -14,12 +14,56 @@ import { spawn, spawnSync } from "node:child_process";
 import { watch, existsSync, statSync, mkdirSync, appendFileSync, writeFileSync, readFileSync, readdirSync, rmSync, copyFileSync, openSync, readSync, closeSync, cpSync, realpathSync, readlinkSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
-import { Problem, stateOf, serverFileOf, firstPortOf } from "./state.mjs";
+import { fileURLToPath } from "node:url";
+import { Problem, manifestOf, projectOf, stateOf, serverFileOf, firstPortOf } from "./state.mjs";
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 /** Whether the folder is an app Lamp made in Swift for the Mac: its package, and the build script Lamp writes. */
 export const isMacApp = (folder) => existsSync(join(folder, "Package.swift")) && existsSync(join(folder, "build.sh")) && existsSync(join(folder, "Sources"));
+
+// MARK: Lamp's own files
+
+const STARTER = join(dirname(fileURLToPath(import.meta.url)), "lamps", "mac-starter");
+
+/**
+ * A Mac app's starting files as Lamp's app makes them (`Template.scaffold`), from a copy Lamp's own code wrote under a
+ * stand-in name (scripts/cli-files.sh), named `title` (letters, digits and spaces). With `only`, just those of them
+ * (Lamp's own: Package.swift, build.sh, Sources/LampSupport.swift), each only where the folder has none: an app that
+ * came in a shared file, which carries none of Lamp's files, gets this Lamp's before it builds.
+ */
+export function writeMacStarter(folder, title, { only = null } = {}) {
+  if (!existsSync(join(STARTER, "lamp-starter.json"))) {
+    throw new Problem(`Lamp's starting files for a Mac app aren't made yet. In Lamp's folder, run scripts/cli-files.sh: it writes them from Lamp's own code.`);
+  }
+  const stood = JSON.parse(readFileSync(join(STARTER, "lamp-starter.json"), "utf8"));
+  // The program's name is the one the package already gives it, where it has one, so the script builds what's there.
+  const given = (() => { try { return /name:\s*"([A-Za-z][A-Za-z0-9]*)"/.exec(readFileSync(join(folder, "Package.swift"), "utf8"))?.[1]; } catch { return null; } })();
+  const exe = given ?? title.split(/\s+/).filter(Boolean).map((word) => word[0].toUpperCase() + word.slice(1)).join(""), slug = exe.toLowerCase();
+  const named = (text) => text.replaceAll(stood.bundle, `dev.lamp.cli.app.${slug}`).replaceAll(stood.name, title).replaceAll(stood.exe, exe).replaceAll(stood.slug, slug);
+  const copy = (from, to, at = "") => {
+    mkdirSync(to, { recursive: true });
+    for (const entry of readdirSync(from, { withFileTypes: true })) {
+      // What Lamp's app knows of the stand-in (.lamp) and the names it stood for aren't the new app's.
+      if (entry.name === ".lamp" || entry.name === "lamp-starter.json") continue;
+      const source = join(from, entry.name), path = at + named(entry.name), target = join(to, named(entry.name));
+      if (entry.isDirectory()) { copy(source, target, path + "/"); continue; }
+      if (!entry.isFile() || (only && (!only.includes(path) || existsSync(target)))) continue;
+      // Lamp's building blocks are the same for every app; the rest names this one.
+      if (entry.name === "LampSupport.swift" || !/\.(swift|sh|md|json|plist|txt)$|^\.gitignore$/.test(entry.name)) cpSync(source, target);
+      else writeFileSync(target, named(readFileSync(source, "utf8")));
+      chmodSync(target, statSync(source).mode);
+    }
+  };
+  copy(STARTER, folder);
+}
+
+/** A name Lamp's starting files can carry into a build script and code: letters, digits and spaces, a letter first. */
+export function safeTitle(name) {
+  const words = String(name ?? "").normalize("NFKD").replace(/[^A-Za-z0-9 ]+/g, " ").trim().split(/\s+/).filter(Boolean);
+  const title = words.join(" ").replace(/^[0-9 ]+/, "").slice(0, 40).trim();
+  return title || "App";
+}
 
 // MARK: The build's sandbox
 //
@@ -110,6 +154,9 @@ function post(name, info = null) {
  */
 export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } = {}) {
   if (process.platform !== "darwin") throw new Problem("an app made in Swift for the Mac is built and run on a Mac");
+  // An app that came without Lamp's own files (a shared file carries none) is given this Lamp's, as its app would.
+  const missing = projectOf(folder).missing ?? [];
+  if (missing.length) writeMacStarter(folder, safeTitle(manifestOf(folder)?.name ?? basename(folder)), { only: missing });
   const state = stateOf(folder), logFile = join(state, "log.txt"), runtime = join(folder, ".lamp", "runtime");
   mkdirSync(state, { recursive: true });
   // The app keeps its log and pictures here, as it does under Lamp's app, once the folder's .lamp is there.
