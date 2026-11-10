@@ -236,9 +236,13 @@ if [ -x "$XWIN" ]; then mkdir -p "$APP/Contents/Resources/bin" && install -m 755
 tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'
 # lamp's command line, which Lamp's app has do what's the command line's own (LampCLI.swift): its code alone, run on
 # the runtime pi is built on, so the app carries no second one.
-rm -rf "$APP/Contents/Resources/cli" && mkdir -p "$APP/Contents/Resources/cli" && cp cli/*.mjs "$APP/Contents/Resources/cli/"
+rm -rf "$APP/Contents/Resources/cli" && mkdir -p "$APP/Contents/Resources/cli" && cp cli/*.mjs cli/page.js "$APP/Contents/Resources/cli/"
 # and the site's limits for a shared link, which lamp reads from beside it as the site does (cli/link.mjs)
 rm -rf "$APP/Contents/Resources/site" && mkdir -p "$APP/Contents/Resources/site/lib" && cp site/lib/shared-wishes.js site/lib/quota.js "$APP/Contents/Resources/site/lib/"
+# What the app runs of it has to load from the bundle as it is: a file one of its modules reads as it loads, left out
+# here, would fail every call the app makes of lamp, which nothing else in the build would notice.
+CALLS="${APP:A}/Contents/Resources/cli/calls.mjs" BUN_BE_BUN=1 "$APP/Contents/Resources/pi/pi" --no-install --no-env-file \
+  -e 'await import(process.env.CALLS)' || { echo "lamp's calls don't load from the bundle: is a file they read missing from it?" >&2; exit 1; }
 # What Lamp fetches when it's needed rather than carrying it goes into the assets folder, which the release puts on
 # GitHub beside the DMG, each file named by edition and version and pinned in the bundle by address, size and SHA-256:
 # llama.cpp (here), and the starters' prebuilt apps (at the end). A build from source points at its own files.
