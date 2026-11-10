@@ -1176,8 +1176,12 @@ extension Store {
         cards.share(project)
         // The link, then GitHub, as the card goes through them: once it's going, the app is held until it's done, the
         // caller still waiting or not.
-        while cards.card(for: project)?.stage == .sending, Date().timeIntervalSince(began) < 20 * 60 { try? await Task.sleep(for: .milliseconds(500)) }
-        while case .working? = cards.card(for: project)?.gitHubStage, Date().timeIntervalSince(began) < 25 * 60 { try? await Task.sleep(for: .milliseconds(500)) }
+        // Waited out in a task of its own, which a cancelled call doesn't cancel: its sleeps would end at once, and the
+        // wait would spin.
+        await Task { @MainActor in
+            while cards.card(for: project)?.stage == .sending, Date().timeIntervalSince(began) < 20 * 60 { try? await Task.sleep(for: .milliseconds(500)) }
+            while case .working? = cards.card(for: project)?.gitHubStage, Date().timeIntervalSince(began) < 25 * 60 { try? await Task.sleep(for: .milliseconds(500)) }
+        }.value
         guard let after = cards.card(for: project) else { return .refused("The card closed before it was done.") }
         if let link = after.shared?.url.absoluteString { facts["link"] = link }
         facts["plays"] = after.shared?.plays == true
