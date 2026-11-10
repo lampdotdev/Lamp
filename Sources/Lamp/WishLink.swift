@@ -173,19 +173,22 @@ enum WishLink {
         return context.makeImage().flatMap { NSBitmapImageRep(cgImage: $0).representation(using: .png, properties: [:]) }
     }
 
-    // A redirect must not hand the wish, or the secret, to another address.
-    private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
+    /// The site a link is on, as lamp's command line is told it: lamp.dev, or a development build's dev server.
+    private static var site: String { endpoint.deletingLastPathComponent().deletingLastPathComponent().absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
+
+    /// One of lamp's command line's calls to the site (cli/link.mjs, the same lamp's own `share` speaks), with what it
+    /// turns down said in Lamp's words. `file` says a refusal of the file is about the file (or with `page`, its page).
+    private static func ask(_ name: String, _ given: [String: Any], file: Bool = false, page: Bool = false) async throws -> [String: Any] {
+        var all = given
+        all["site"] = site
+        do { return try await LampCLI.ask(name, all) } catch let failure as LampCLI.Failure {
+            if failure.kind == "unreachable" { throw Failure(message: "Lamp couldn't reach lamp.dev. Try again in a moment.") }
+            guard let status = failure.status else { throw Failure(message: failure.message) }
+            throw file ? fileFailure(status, page: page) : self.failure(status)
+        }
     }
-    private static let session: URLSession = {
-        let config = URLSessionConfiguration.ephemeral
-        config.httpShouldSetCookies = false
-        config.urlCache = nil
-        config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 60
-        return URLSession(configuration: config, delegate: NoRedirects(), delegateQueue: nil)
-    }()
+
+    private static func secret(_ shared: Shared) -> [String: Any] { ["id": shared.id, "secret": shared.secret] }
 
     /// Shares the wish, or changes what its link shows, and answers the link as it is now. `releases` is what's new in
     /// each version released, as `WishReleases.shown` gives it.
@@ -197,23 +200,11 @@ enum WishLink {
         if let shape = words.shape { body["shape"] = shape == "fill" ? shape : Double(shape) ?? NSNull() }
         body["picture"] = picture?.base64EncodedString() ?? NSNull()
         body["icon"] = icon?.base64EncodedString() ?? NSNull()
-        var request = URLRequest(url: earlier.map { address(for: $0.id) } ?? endpoint)
-        request.httpMethod = earlier == nil ? "POST" : "PUT"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let earlier { request.setValue("Bearer \(earlier.secret)", forHTTPHeaderField: "Authorization") }
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, status) = try await send(request)
-        // A change keeps the link; its address follows the wish's name, so a rename shows in it (the old one still works).
-        if let earlier, status == 200 {
-            let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: String]
-            let link = answer?["url"].flatMap(URL.init(string:)).flatMap { $0.scheme == endpoint.scheme && $0.host == endpoint.host ? $0 : nil }
-            return Shared(id: earlier.id, url: link ?? earlier.url, secret: earlier.secret, shown: words)
-        }
-        // The link is gone from the site (taken down there): a new one takes its place.
-        if earlier != nil, status == 404 { return try await publish(words, picture: picture, icon: icon, releases: releases, replacing: nil) }
-        guard status == 201, let answer = try? JSONSerialization.jsonObject(with: data) as? [String: String],
-              let id = answer["id"], let link = answer["url"].flatMap(URL.init(string:)), let secret = answer["secret"],
-              link.scheme == endpoint.scheme, link.host == endpoint.host else { throw failure(status) }
+        var given: [String: Any] = ["body": body]
+        if let earlier { given["earlier"] = ["id": earlier.id, "secret": earlier.secret, "url": earlier.url.absoluteString] }
+        let done = try await ask("linkPublish", given)
+        guard let id = done["id"] as? String, let secret = done["secret"] as? String,
+              let link = (done["url"] as? String).flatMap(URL.init(string:)) else { throw failure(0) }
         return Shared(id: id, url: link, secret: secret, shown: words)
     }
 
@@ -228,24 +219,9 @@ enum WishLink {
     }
 
     static func latest(_ id: String) async -> Latest? {
-        guard let answered = try? await send(URLRequest(url: address(for: id))), answered.1 == 200,
-              let answer = try? JSONSerialization.jsonObject(with: answered.0) as? [String: Any],
-              (answer["format"] as? Int) == 1, let version = answer["version"] as? Int else { return nil }
-        // The file only from where the site keeps them: https, never this Mac or an address the answer could pick.
-        let file = (answer["file"] as? String).flatMap(URL.init(string:)).flatMap { url in
-            url.scheme == "https" || (url.scheme == "data" && endpoint.scheme == "http") ? url : nil
-        }
-        let by = (answer["by"] as? String).map { clip($0.trimmed, Limit.by) }?.nilIfEmpty
-        return Latest(name: answer["name"] as? String, by: by, version: version, file: file)
-    }
-
-    /// Where the wish's file goes: beside the link's API (`site/api/wish-file.js`). `page` is its playable page instead.
-    private static func fileAddress(for id: String, part: Int? = nil, of count: Int? = nil, page: Bool = false) -> URL {
-        var parts = URLComponents(url: endpoint.deletingLastPathComponent().appendingPathComponent("wish-file"), resolvingAgainstBaseURL: false)!
-        parts.queryItems = [URLQueryItem(name: "id", value: id)]
-            + (part.map { [URLQueryItem(name: "part", value: String($0)), URLQueryItem(name: "of", value: String(count ?? 1))] } ?? [])
-            + (page ? [URLQueryItem(name: "what", value: "page")] : [])
-        return parts.url!
+        guard let said = (try? await ask("linkLatest", ["id": id]))?["latest"] as? [String: Any], let version = said["version"] as? Int else { return nil }
+        return Latest(name: said["name"] as? String, by: (said["by"] as? String)?.nilIfEmpty, version: version,
+                      file: (said["file"] as? String).flatMap(URL.init(string:)))
     }
 
     /// The wish's page, to play or use right on its link's page (a web app's, a web game's, a screen's: `Publish.hasPage`),
@@ -288,29 +264,18 @@ enum WishLink {
     }
 
     /// Sends the wish's file with its link, in parts, and has the site put them together in place of any file it had.
-    /// `page` sends its playable page (`playablePage`), which the site unpacks and serves on the link's page.
+    /// `page` sends its playable page (`playablePage`), which the site unpacks and serves on the link's page. It goes
+    /// from a file in Lamp's own work folder, which lamp's command line reads.
     static func uploadFile(_ data: Data, for shared: Shared, page: Bool = false) async throws {
         guard data.count <= Limit.fileTotal else {
             throw Failure(message: page ? "This app's page is too big to play on its link (over \(Limit.fileTotal / 1_000_000) MB)."
                           : "This app is too big to go with its link (over \(Limit.fileTotal / 1_000_000) MB).")
         }
-        let count = max(1, (data.count + Limit.filePart - 1) / Limit.filePart)
-        for n in 0..<count {
-            var request = URLRequest(url: fileAddress(for: shared.id, part: n, of: count, page: page))
-            request.httpMethod = "PUT"
-            request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
-            request.httpBody = data.subdata(in: (n * Limit.filePart)..<min(data.count, (n + 1) * Limit.filePart))
-            // A part is the same whenever it's sent, so one whose connection dropped partway goes again: a big app sends
-            // many, and one dropped part used to fail the whole release.
-            let (_, status) = try await send(request, tries: 4)
-            guard status == 204 else { throw fileFailure(status, page: page) }
-        }
-        var finish = URLRequest(url: fileAddress(for: shared.id, page: page))
-        finish.httpMethod = "POST"
-        finish.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
-        let (_, status) = try await send(finish)
-        guard status == 200 else { throw fileFailure(status, page: page) }
+        let file = Sharing.workFolder.appendingPathComponent("lamp-link-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: Sharing.workFolder, withIntermediateDirectories: true)
+        try data.write(to: file, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: file) }
+        _ = try await ask("linkUpload", secret(shared).merging(["file": file.path, "page": page]) { $1 }, file: true, page: page)
     }
 
     private static func fileFailure(_ status: Int, page: Bool) -> Failure {
@@ -322,11 +287,7 @@ enum WishLink {
     /// Takes the wish's file away from its link, which keeps showing the idea, and its page with it. `page` takes only
     /// the page away.
     static func removeFile(for shared: Shared, page: Bool = false) async throws {
-        var request = URLRequest(url: fileAddress(for: shared.id, page: page))
-        request.httpMethod = "DELETE"
-        request.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
-        let (_, status) = try await send(request, tries: 3)
-        guard status == 204 || status == 404 else { throw failure(status) }
+        _ = try await ask("linkRemoveFile", secret(shared).merging(["page": page]) { $1 })
     }
 
     /// An idea someone playing the wish sent from its link's page, for its maker (`/api/wish-ideas` on the site): their
@@ -340,76 +301,24 @@ enum WishLink {
         var id: Int { n }
     }
 
-    private static func ideasAddress(for id: String, number: Int? = nil) -> URL {
-        var parts = URLComponents(url: endpoint.deletingLastPathComponent().appendingPathComponent("wish-ideas"), resolvingAgainstBaseURL: false)!
-        parts.queryItems = [URLQueryItem(name: "id", value: id)] + (number.map { [URLQueryItem(name: "n", value: String($0))] } ?? [])
-        return parts.url!
-    }
-
     /// The ideas sent to the link so far, oldest first. Only the link's secret reads them.
     static func ideas(for shared: Shared) async throws -> [Idea] {
-        var request = URLRequest(url: ideasAddress(for: shared.id))
-        request.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
-        let (data, status) = try await send(request)
-        if status == 404 { return [] }
-        guard status == 200 else { throw failure(status) }
-        struct Answer: Decodable { var ideas: [Idea] }
-        return try JSONDecoder().decode(Answer.self, from: data).ideas
+        let done = try await ask("linkIdeas", secret(shared))
+        let data = try JSONSerialization.data(withJSONObject: done["ideas"] as? [Any] ?? [])
+        return try JSONDecoder().decode([Idea].self, from: data)
     }
 
     /// Lets an idea go from the link. `built`: it's in, and the site first writes to whoever asked to hear back; answers
     /// whether it did.
     @discardableResult
     static func removeIdea(_ number: Int, built: Bool, for shared: Shared) async throws -> Bool {
-        var address = URLComponents(url: ideasAddress(for: shared.id, number: number), resolvingAgainstBaseURL: false)!
-        if built { address.queryItems?.append(URLQueryItem(name: "built", value: "1")) }
-        var request = URLRequest(url: address.url!)
-        request.httpMethod = "DELETE"
-        request.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
-        let (data, status) = try await send(request)
-        guard status == 200 || status == 404 else { throw failure(status) }
-        return ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["notified"] as? Bool ?? false
+        try await ask("linkRemoveIdea", secret(shared).merging(["n": number, "built": built]) { $1 })["notified"] as? Bool ?? false
     }
 
     /// Takes the link down: the page says the wish isn't shared any more. A link the site no longer has is down already.
     static func remove(_ shared: Shared) async throws {
-        var request = URLRequest(url: address(for: shared.id))
-        request.httpMethod = "DELETE"
-        request.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
-        let (_, status) = try await send(request)
-        guard status == 204 || status == 404 else { throw failure(status) }
+        _ = try await ask("linkRemove", secret(shared))
     }
-
-    private static func address(for id: String) -> URL {
-        var parts = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)!
-        parts.queryItems = [URLQueryItem(name: "id", value: id)]
-        return parts.url!
-    }
-
-    /// Sends `request`, trying again up to `tries` times in all, a little later each time, when the connection drops or
-    /// times out on the way: only for a request that's the same however often it arrives.
-    private static func send(_ request: URLRequest, tries: Int = 1) async throws -> (Data, Int) {
-        var attempt = 1
-        while true {
-            do {
-                let (data, response) = try await session.data(for: request)
-                return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
-            } catch {
-                let code = (error as? URLError)?.code
-                if attempt < tries, let code, transient.contains(code) {
-                    try await Task.sleep(for: .seconds(attempt * 2))
-                    attempt += 1
-                    continue
-                }
-                throw Failure(message: code == .notConnectedToInternet
-                              ? "You're offline. Try again when you're connected." : "Lamp couldn't reach lamp.dev. Try again in a moment.")
-            }
-        }
-    }
-
-    /// A connection that dropped or stalled partway, rather than one that can't be made at all.
-    private static let transient: Set<URLError.Code> = [.networkConnectionLost, .timedOut, .secureConnectionFailed,
-                                                       .cannotConnectToHost, .dnsLookupFailed, .cannotFindHost]
 
     private static func failure(_ status: Int) -> Failure {
         switch status {

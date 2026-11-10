@@ -19,6 +19,8 @@ enum LampCLI {
         /// For a device that's away: the connection's own word for how (ECONNRESET), and whether it ran out of time.
         var code: String?
         var timedOut = false
+        /// The status a site gave when it turned the call down.
+        var status: Int?
         var errorDescription: String? { message }
     }
 
@@ -78,7 +80,8 @@ enum LampCLI {
         let answer = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] ?? [:]
         if let done = answer["done"] as? [String: Any] { return done }
         if let problem = answer["problem"] as? String {
-            throw Failure(message: problem, kind: answer["kind"] as? String, code: answer["code"] as? String, timedOut: answer["timedOut"] as? Bool ?? false)
+            throw Failure(message: problem, kind: answer["kind"] as? String, code: answer["code"] as? String, timedOut: answer["timedOut"] as? Bool ?? false,
+                          status: answer["status"] as? Int)
         }
         let said = (answer["failed"] as? String)?.split(separator: "\n").prefix(2).joined(separator: "\n") ?? ""
         throw Failure(message: "Lamp's own tools couldn't do that." + (said.isEmpty ? "" : "\n\n" + said))

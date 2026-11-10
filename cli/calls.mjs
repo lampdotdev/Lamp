@@ -22,6 +22,7 @@ import { lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSy
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Away, OffNetwork, Refused, Rejected, Runner, StillWorking, answersOn, bonjour, pinsAt, searchNetwork, send, ssdp } from "./devices.mjs";
+import { Unreachable, ideasOf, latestOf, publishLink, removeFile, removeIdea, removeLink, sendFile } from "./link.mjs";
 import { defaultRoute, homeNetwork, neighbours, samsungAt, subnetOn, tvsIn } from "./network.mjs";
 import { PUBLISHER, identityName, keptSigner, namesOf, packageOf, versionAfter } from "./msix.mjs";
 import { tile } from "./png.mjs";
@@ -74,7 +75,54 @@ function runnerOf(given, { stopped, event = () => {} } = {}) {
 /** What a sequence gave back, as Lamp's app reads it: a picture in base64, and the cookies its next part sends back. */
 const outcomeOf = (outcome) => ({ ...outcome, picture: outcome.picture ? Buffer.from(outcome.picture).toString("base64") : null });
 
+/** A shared link as Lamp's app keeps it: its id and secret, and the site it's on. */
+const linkOf = (given) => ({ id: text(given, "id"), secret: text(given, "secret") });
+const siteOf = (given) => text(given, "site").replace(/\/+$/, "");
+
 export const CALLS = {
+  /**
+   * Shares a wish's link, or changes what it shows (`earlier`: its id and secret), on `site`, with `body` as the site
+   * takes it. Its id, address and secret.
+   */
+  async linkPublish(given) {
+    const earlier = given.earlier && typeof given.earlier.id === "string" ? given.earlier : null;
+    return publishLink({ site: siteOf(given), body: given.body ?? {}, earlier });
+  },
+
+  /** What a followed link has now, asked with nothing of the person's; `latest` null when it can't be asked or is gone. */
+  async linkLatest(given) {
+    return { latest: await latestOf({ site: siteOf(given), id: text(given, "id") }) };
+  },
+
+  /** The link's file (or with `page`, its playable page), from a file of Lamp's at `file`, sent in parts. */
+  async linkUpload(given, how = {}) {
+    return { version: await sendFile({ site: siteOf(given), link: linkOf(given), bytes: readFileSync(text(given, "file")), page: given.page === true,
+      said: (line) => how.event?.({ said: line }) }) };
+  },
+
+  /** Takes the link's file away (with `page`, only its page). */
+  async linkRemoveFile(given) {
+    await removeFile({ site: siteOf(given), link: linkOf(given), page: given.page === true });
+    return {};
+  },
+
+  /** The ideas sent to the link that are still open. */
+  async linkIdeas(given) {
+    return { ideas: await ideasOf({ site: siteOf(given), link: linkOf(given) }) };
+  },
+
+  /** Lets an idea go; with `built` it's in, and the site writes to whoever asked to hear. */
+  async linkRemoveIdea(given) {
+    return removeIdea({ site: siteOf(given), link: linkOf(given), n: Number(given.n), built: given.built === true });
+  },
+
+  /** Takes the link down. */
+  async linkRemove(given) {
+    await removeLink({ site: siteOf(given), link: linkOf(given) });
+    return {};
+  },
+
+
   /**
    * One part of an integration's sequence on a device (`sequence`: its requests, waits and probes; what only Lamp's
    * app does, a command on the device or a sign-in page, is between parts), with `cookies` from the part before. The
@@ -216,7 +264,9 @@ function problemOf(error) {
   else if (error instanceof Rejected) said.kind = "rejected";
   else if (error instanceof StillWorking) said.kind = "still-working";
   else if (error instanceof OffNetwork) said.kind = "off-network";
+  else if (error instanceof Unreachable) said.kind = "unreachable";
   else if (error instanceof Away) Object.assign(said, { kind: "away", code: error.code ?? null, timedOut: error.timedOut });
+  if (Number.isInteger(error.status)) said.status = error.status;
   return said;
 }
 

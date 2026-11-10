@@ -158,8 +158,9 @@ for a team, and the chat beside the app.
 
 ## Sharing
 
-`lamp share` is Lamp's side of the site's API, as `Sources/Lamp/WishLink.swift` is in Lamp's app
-(`cli/share.mjs`; the limits are read from `site/lib/shared-wishes.js`, so the two can't disagree): the link's words
+`lamp share` speaks the site's API through `cli/link.mjs`, the one place Lamp does, for lamp and for Lamp's app's
+Share Link card alike (`WishLink` asks it: the `link…` calls); the limits are read from `site/lib/shared-wishes.js`, so
+the two can't disagree, and `build.sh` puts that file and the one it reads beside lamp in the app. `cli/share.mjs` sends the link's words
 and a picture of the page, then the page itself, zipped and sent in parts, which the site unpacks and plays on a host
 of the link's own.
 
