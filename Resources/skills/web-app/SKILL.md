@@ -91,6 +91,10 @@ turns it into text for `act`. Their comments in lamp.js have the details. The re
 
 ## The person's own things
 
+Opening and saving files the person picks needs no Swift: on the Mac a file field (`<input type="file">`, with
+`multiple` or `webkitdirectory`) shows the open panel, and a download (a link with `download`, often to a Blob the page
+made) asks where to save it, as a browser does. Never add Native.swift for that.
+
 A page can't read the person's mail, calendar, contacts, photos or where they are. Where Lamp's app is around the page
 (a Mac, an iPhone or iPad), that app can: register a call in Sources/Native.swift and ask for it from the page with
 `LampNative.call(name, args)`. Elsewhere `LampNative.available` is false and the calls reject, so the page shows
