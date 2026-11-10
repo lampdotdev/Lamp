@@ -44,9 +44,11 @@ export async function reachLamp(bundles = candidates()) {
 function connected(bundle) {
   return new Promise((done, failed) => {
     const socket = createConnection(socketOf(bundle));
-    let buffer = "", greeted = false, next = 1;
+    let buffer = "", greeted = false, next = 1, ended = null;
     const waiting = new Map();
+    // Once the connection is gone, every call is refused with why, those under way and those asked later alike.
     const fail = (problem) => {
+      ended ??= problem;
       for (const { failed: no } of waiting.values()) no(problem);
       waiting.clear();
       failed(problem);
@@ -56,6 +58,7 @@ function connected(bundle) {
     socket.on("close", () => fail(new Problem(`${editionName(bundle)} closed the connection`)));
     socket.on("connect", () => socket.write(JSON.stringify({ lamp_hello: { protocol: PROTOCOL, client: "lamp" } }) + "\n"));
     const send = (method, params) => new Promise((answered, no) => {
+      if (ended) return no(ended);
       const id = next++;
       waiting.set(id, { answered, failed: no });
       socket.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
@@ -82,7 +85,7 @@ function connected(bundle) {
               const result = await send("tools/call", { name: tool, arguments: args });
               return answerOf(result);
             },
-            close() { socket.removeAllListeners("close"); socket.end(); },
+            close() { ended ??= new Problem("the connection to Lamp was closed"); socket.removeAllListeners("close"); socket.end(); },
           });
           continue;
         }

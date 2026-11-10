@@ -450,6 +450,11 @@ async function applyInLamp(layout, lamp, { reopen = false } = {}) {
       await lamp.call("look_at_app", { path: layout.folder });
       answer = await lamp.call("apply_change", { path: layout.folder, ...(reopen ? { reopen: true } : {}) });
     }
+    // Nothing new to put in brings no picture: the app as it is now, which the person may have used since, is looked at.
+    if (!answer.pictures.length && ["unchanged", "held"].includes(answer.outcome)) {
+      const seen = await lamp.call("look_at_app", { path: layout.folder });
+      answer = { ...answer, words: [answer.words, seen.words].filter(Boolean).join("\n\n"), pictures: seen.pictures };
+    }
     console.log(lampReport(layout.folder, lamp, answer));
     if (answer.failed) process.exitCode = 1;
   } finally { lamp.close(); }
@@ -476,7 +481,7 @@ async function devInLamp(layout, lamp) {
     return found;
   };
   const same = (a, b) => a && a.size === b.size && [...a].every(([path, stamp]) => b.get(path) === stamp);
-  let busy = false, again = false, timer = null, applied = null;
+  let busy = false, again = false, timer = null, applied = null, retried = false;
   const apply = async () => {
     if (busy) { again = true; return; }
     const now = stamps();
@@ -488,25 +493,29 @@ async function devInLamp(layout, lamp) {
       let answer = await lamp.call("apply_change", { path: layout.folder });
       if (answer.facts?.restarted) { await lamp.call("look_at_app", { path: layout.folder }); answer = await lamp.call("apply_change", { path: layout.folder }); }
       // A folder that changed while Lamp built it is applied again by the next save, or now when it's said so.
-      applied = answer.facts?.stale || answer.outcome === "stale" ? null : now;
+      // A folder that changed while Lamp built it goes in again now, saved or not.
+      if (answer.facts?.stale || answer.outcome === "stale") { applied = null; again = true; } else applied = now;
+      retried = false;
       print(lampReport(layout.folder, lamp, answer));
     } catch (error) {
-      print(`${error.message}`);
       try { lamp?.close(); } catch {}
-      lamp = null;
+      // A connection Lamp closed (it quit, or started again) is opened again once, and the change goes in through it.
+      if (lamp && !retried) { lamp = null; retried = true; again = true; }
+      else { print(`${error.message}`); lamp = null; }
     } finally {
       busy = false;
       if (again) { again = false; apply(); }
     }
   };
   print(`${lamp.name} has the app: each save goes into it. Ctrl-C stops watching; the app stays open there.`);
-  await apply();
+  // Watching from before the first apply, so a save made while it runs goes in after it.
   const watcher = watch(layout.folder, { recursive: true }, (event, name) => {
     if (!name || ignored(String(name).split(sep).join("/"))) return;
     clearTimeout(timer);
     timer = setTimeout(apply, 300);
   });
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => { watcher.close(); try { lamp?.close(); } catch {} process.exit(0); });
+  await apply();
   await new Promise(() => {});
 }
 
@@ -731,10 +740,12 @@ async function main() {
       console.log(`Asking ${lamp.name} to take it on. The first time, it shows the person its review of the app, and builds it once they choose Build & Open.`);
       let answer;
       try { answer = await lamp.call("open_project", { path: layout.folder }); } finally { lamp.close(); }
-      if (!answer.failed && !["not_importable", "refused"].includes(answer.outcome)) giveTo(layout.folder, lamp.bundle);
+      // Taken on is taken on, whatever its first build did: a change that didn't build goes in with the next apply.
+      const taken = !["not_importable", "refused", "cancelled"].includes(answer.outcome);
+      if (taken) giveTo(layout.folder, lamp.bundle);
       console.log(lampReport(layout.folder, lamp, answer));
       if (answer.failed) process.exitCode = 1;
-      else console.log(`From here on, look, dev and reload go through ${lamp.name}. ${lampCommand()} open --here has lamp run its own copy again.`);
+      if (taken) console.log(`From here on, look, dev and reload go through ${lamp.name}. ${lampCommand()} open --here has lamp run its own copy again.`);
       return;
     }
     if (options.here) takeBack(layout.folder);
