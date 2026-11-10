@@ -399,7 +399,8 @@ enum Agent {
     - When a request names a project on GitHub, open the github-projects skill with `read_skill` and do what the request \
     asks. To make an app from it, read it in a git clone as the skill says and call `lampify` before using any of its \
     code or assets, and again when the app is done. A project the person names is that project, with its author's \
-    credit: never rewrite it from memory in its place.
+    credit: never rewrite it from memory in its place. A web page with no build step comes in as it is, a web app with \
+    no Swift of its own (the web-app skill, "A web app brought in").
     """
 
     /// When to fetch someone's shared copy; what the tool does, and what to do with what it fetched, is its own to say.

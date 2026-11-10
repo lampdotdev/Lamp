@@ -40,7 +40,9 @@ Make it **native** only when it needs something a page can't be:
 - 3D in Swift with RealityKit (the scene-3d skill), or a game inside an Apple thing (Game Center, a widget).
 
 When one of these is part of what was asked, choose native and say why in a sentence. When the person asks for one
-later in an app made web, say what it needs, and offer to make it native.
+later in an app made web, say what it needs, and offer to make it native. A web app brought in from elsewhere is the
+exception: it stays as it is, made native only when the person asks for that (the web-app skill, "A web app brought
+in").
 
 The default is where you start, not a limit:
 
@@ -50,6 +52,9 @@ The default is where you start, not a limit:
   only once the person has said that's what they want, or answered so when you asked.
 - **An app the project has is never converted to follow the default.** It's for a new app, and for a change the person
   asks for. An app made native before keeps its make.
+- **A web app brought in keeps its make and its kind.** A site or page someone made elsewhere stays a web app, with no
+  Swift of its own, unless the person asks in so many words for it to be native or a game on Lamp's runtime; being on a
+  Mac isn't such a request (the web-app skill, "A web app brought in").
 - **Separate apps that talk don't need the same make.** The project's apps reach each other through `LampWish` on
   whichever devices they're on, however each is made (the wish-links skill).
 - **Never choose a make to get around a limit of Lamp's**: two apps of one code in one project, say (the more-apps

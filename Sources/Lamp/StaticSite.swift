@@ -71,6 +71,12 @@ enum StaticSite {
             its scripts, styles and pictures beside it, and no build step). Lamp puts it back on GitHub the same way, so \
             its GitHub Pages address keeps working. Its own README.md, in Web/, says what it is.
 
+            Lamp's features (opening it, sharing it, its updates, changes going into the open app) need nothing from \
+            its code, so change only what the person asks for: no refactoring or redesign, no Swift of its own and no \
+            change of kind unless they ask for that in so many words. Being on a Mac isn't such a request, and a \
+            browser feature Lamp doesn't support yet is Lamp's limitation, not the site's (the web-app skill, "A web \
+            app brought in").
+
             """.utf8).write(to: copy.appendingPathComponent("APP.md"))
     }
 

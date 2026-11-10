@@ -36,20 +36,23 @@ its credit and licenses in place, and the rest of what a Lamp app has.
    code, an engine Lamp's devices can't run.
 2. Give the app its structure with `make_app_for` (a game or an app, the devices, web or native), and read the skill
    for that kind (`game`, `web-app`, `2d-game`, `3d-game`). The structure is Lamp's: its page or its Swift package,
-   `build.sh`, `Package.swift`, Lamp's own files, `icon.json`, `APP.md`.
+   `build.sh`, `Package.swift`, Lamp's own files, `icon.json`, `APP.md`. A web page with no build step (index.html with
+   its scripts and styles, a canvas or WebGL game among them) is a web app brought in: `kind` "app", `made` "web", and
+   the web-app skill's "A web app brought in" is the rule for everything after, whatever the person's devices are.
 3. Before using any of its code or assets, call `lampify` with its address and the commit your clone is at
    (`git -C .lamp/reference/name rev-parse HEAD`). Lamp gets its own untouched copy at that commit, credits it in
    credits.json, keeps every license and notice file under `Licenses/`, and answers with the manifest and what's still
    missing. `adapted` is true for the project the app is made from (the default): its updates come to the person from
    there. Anything else you bring in from GitHub (a library, a sprite pack) is cloned and lampified the same way with
    `adapted: false`. Every later call passes the same commit: lampify never moves on to a newer one by itself.
-4. Bring its code and assets into Lamp's structure: a web game's scripts, styles and assets into the page's folder,
-   loaded from Lamp's page; native code into the package's sources. Keep what makes it work and drop only what the
-   person asked to drop. Never copy its own build scripts, package manifests, workflows or wrapper page over Lamp's
+4. Bring its code and assets into Lamp's structure: a web page's files into `Web/` as they are, laid out as the project
+   has them, in place of the scaffold's; native code into the package's sources. Keep what makes it work and drop only
+   what the person asked to drop. Never copy its own build scripts, package manifests, workflows or wrapper page over Lamp's
    files (`Package.swift`, `build.sh`, `Sources/LampSupport.swift`, the `lamp*.js` files), and never run anything it
    holds (its installers, its build, its scripts). Keep its copyright headers, and its author's credit on screen.
 5. Give it what a Lamp app has that a project on GitHub doesn't: its line in `about.json`, its icon's design in
-   `icon.json`, and `APP.md` saying what it is and what it's based on. Never write `lamp-app.json`, the project's entry
+   `icon.json`, and `APP.md` saying what it is and what it's based on (and, for a web app brought in, that it came in
+   as it is). Never write `lamp-app.json`, the project's entry
    in `credits.json` or copies of its licenses yourself: lampify does.
 6. Look at it with `look_at_app` until it works.
 7. Call `lampify` again with the same address and commit, and fix whatever it says is still missing, until it says

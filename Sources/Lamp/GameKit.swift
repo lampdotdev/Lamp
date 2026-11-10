@@ -1356,7 +1356,7 @@ extension Agent.Rules {
     of Apple's tools; a call registered in Native.swift, or any other Swift in Sources/, makes Lamp compile the app \
     instead, which takes minutes the first time and needs Apple's tools on the person's Mac. So write Swift only for \
     what the page can't reach itself (the person's own things above), never for what the page or Lamp's scripts in \
-    Web/ already do.
+    Web/ already do, and in a web app brought in from elsewhere only when the person asks for it (the web-app skill).
     """
 
     static let gameWebKit = """
