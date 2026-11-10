@@ -60,8 +60,9 @@ enum OutsideWork {
     use and how. Lamp's own files (Sources/LampSupport.swift, build.sh, Package.swift, lamp.js) are rewritten at every \
     build: read them, never edit them. After \
     editing, call apply_change: it builds what the folder holds now and answers how the change reached the app, with \
-    pictures of its windows. look_at_app shows the open app as it is and never applies anything; you can't click or \
-    type in the app, so ask the person to try what needs a hand. export_app makes the app's shared file and \
+    pictures of its windows. look_at_app shows the open app as it is and never applies anything. Only when the person \
+    asks you to try or test the app, use_app clicks, types and presses keys in it as they would, in plain sight, and \
+    shows what each did; they can take the app back at any moment. export_app makes the app's shared file and \
     publish_link opens Lamp's Share Link card for the person; both share only what's built from the folder as it is. \
     Lamp writes in your folder only what it needs to read it as an app (a site gets Lamp's manifest), once, and says \
     so; its git is yours. When that would be disruptive, Lamp works in a copy instead and the answer says where: pass \
@@ -90,7 +91,23 @@ enum OutsideWork {
             ["name": "publish_link",
              "description": "Opens Lamp's Share Link card for the app, where the person shares it on lamp.dev, or releases what's new on a link it has, and waits for them. Only once the app is built from the folder as it is (apply first); nothing is applied until the card is done. Answers the link, or that the person closed the card, or what failed: a link can exist while its app file didn't finish going up, and the answer says so. Changing or taking a link down stays on the card.",
              "inputSchema": ["type": "object", "properties": ["path": path], "required": ["path"]]],
+            useApp,
         ] + Store.mcpTools.filter { $0["name"] as? String == "read_skill" }
+    }
+
+    /// use_app as Lamp's own engines have it (`Resources/lamp-tools.json`: its actions are the same, and so is what the
+    /// app does with them), on the folder's app: its own words, since what it says of looking, a game's controller and
+    /// the person's next message is about Lamp's own chat, and here a change is built by apply_change.
+    static var useApp: [String: Any] {
+        var schema = (Store.mcpTools.first { $0["name"] as? String == "use_app" }?["inputSchema"] as? [String: Any]) ?? ["type": "object"]
+        var properties = schema["properties"] as? [String: Any] ?? [:]
+        properties = properties.filter { $0.key == "actions" }
+        properties["path"] = ["type": "string", "description": "The folder's absolute path."]
+        schema["properties"] = properties
+        schema["required"] = ["path", "actions"]
+        return ["name": "use_app",
+                "description": "Only when the person asks you to try, play or test the app. Uses the open app the way a person would: clicks, types, presses keys, scrolls and picks from menus in its front window, then shows what each action did, a fresh picture with the screen as text, and what the app printed meanwhile. The screen as text lists every control and piece of text in the front window with an id (b2, f1, s3…), its name, what it holds and where it is: say what to act on with `target`, an id or the exact name from that list, and use x and y (pixels in the latest picture of the front window) only for what it doesn't have, such as a drawing or a canvas. `type` with a target puts the text into that field; `key` with `amount` holds a key down that many seconds. Menus are read out, never opened: click a pop-up, or right_click, and you get its items; repeat with `item` to pick one. `menu` does the same for the menu bar. The person sees each action and can take the app back at any moment: then the rest are dropped and it says how far it got. It uses the app as last applied: after editing, call apply_change first.",
+                "inputSchema": schema]
     }
 
     /// What open_project tells the agent about working on this kind of app: the skills Lamp offers it (the same index
@@ -659,6 +676,7 @@ extension Store {
                 if let id, !["refused", "cancelled"].contains(answer.outcome) { OutsideState.shared.answers[id] = answer }
                 return answer
             case "look_at_app": return await outsideLook(path)
+            case "use_app": return await outsideUse(path, actions: payload.values["actions"])
             case "export_app": return await outsideExport(path)
             case "publish_link": return await outsidePublish(path)
             default: return .refused("Lamp has no tool \(name).")
@@ -818,7 +836,9 @@ extension Store {
         let project = found.1
         let state = OutsideState.shared
         if state.fromBefore.contains(entry.repo) {
-            return .refused("Lamp started again since this folder was last applied, and what was under way then didn't finish for you. Call look_at_app to see the app as it is, then apply again.")
+            var answer = OutsideWork.Answer.refused("Lamp started again since this folder was last applied, and what was under way then didn't finish for you. Call look_at_app to see the app as it is, then apply again.")
+            answer.facts["restarted"] = true
+            return answer
         }
         guard let hold = begin(project) else {
             return .refused("Lamp is busy with this app (its own chat or a build). Try again in a moment.")
@@ -968,6 +988,25 @@ extension Store {
         if let note = drawn.note { answer.text += " " + note }
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { answer.text += "\n\nWhat it printed:\n\(tail)" }
         return answer
+    }
+
+    // MARK: use_app
+
+    /// The folder's open app used as Lamp's own agent uses it (`useNow`), held as an apply holds it, so nothing else of
+    /// Lamp's changes it meanwhile.
+    private func outsideUse(_ path: String, actions: Any?) async -> OutsideWork.Answer {
+        guard let (entry, project) = outsideFolder(path) else { return outsideRefusal(path) }
+        OutsideState.shared.fromBefore.remove(entry.repo)
+        guard let list = actions as? [[String: Any]], !list.isEmpty,
+              let body = try? JSONSerialization.data(withJSONObject: ["actions": list]) else { return .refused("use_app needs a list of actions.") }
+        guard isRunning(project) else { return OutsideWork.Answer(outcome: "not_open", text: "The app isn't open. apply_change opens it.") }
+        guard begin(project) != nil else { return .refused("Lamp is busy with this app. Try again in a moment.") }
+        defer { finish(current(project) ?? project) }
+        let (status, answer) = await useNow(project, request: body, outside: true)
+        guard status == 200 else { return .refused(answer["error"] as? String ?? "Lamp couldn't use the app.") }
+        var used = OutsideWork.Answer(outcome: "used", text: answer["text"] as? String ?? "")
+        used.pictures = Self.pictureData(answer["screenshots"] as? [String] ?? [], in: project)
+        return used
     }
 
     // MARK: Sharing

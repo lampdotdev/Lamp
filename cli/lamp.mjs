@@ -20,7 +20,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Problem, layoutOf, manifestOf, projectOf, stateOf, running, ask } from "./state.mjs";
-import { serveMac, writeMacStarter } from "./mac.mjs";
+import { macActions, serveMac, writeMacStarter } from "./mac.mjs";
 import { exportApp, unpack } from "./lampapp.mjs";
 import { editionName, giveTo, givenTo, keepPictures, reachLamp, takeBack } from "./outside.mjs";
 import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS } from "./dev.mjs";
@@ -56,8 +56,8 @@ Mac app Lamp made in Swift, built and run on this Mac.
       Show it in a window, running it in the background if it isn't running. Returns at once.
       --in-lamp gives a Mac app to Lamp's app, which must be running: it shows the person its review the first time,
       then builds the app and puts each change into it while it's open (live, or held for a Reload), as with its own
-      chat. From then on look, dev and reload go through Lamp's app and say how each change went in; use and stop are
-      the person's there. --here has lamp build and run its own copy again. LAMP_APP names another Lamp by its
+      chat. From then on look, dev and reload go through Lamp's app and say how each change went in, and use tries the
+      app it has open, in plain sight; stop is the person's there. --here has lamp build and run its own copy again. LAMP_APP names another Lamp by its
       bundle id.
       --on puts a page on one of the person's devices instead and opens it there (--on xbox): packaged, installed
       and opened, the copy that was there replaced. --on android builds Lamp's Android app around the page and
@@ -444,7 +444,12 @@ function lampReport(folder, lamp, answer) {
 /** Asks Lamp's app to put what the folder holds into the app (`reopen`: opened again for it), and says how it went. */
 async function applyInLamp(layout, lamp, { reopen = false } = {}) {
   try {
-    const answer = await lamp.call("apply_change", { path: layout.folder, ...(reopen ? { reopen: true } : {}) });
+    let answer = await lamp.call("apply_change", { path: layout.folder, ...(reopen ? { reopen: true } : {}) });
+    // Lamp started again since the last apply: it asks for a look at the app as it is first, and then takes the change.
+    if (answer.facts?.restarted) {
+      await lamp.call("look_at_app", { path: layout.folder });
+      answer = await lamp.call("apply_change", { path: layout.folder, ...(reopen ? { reopen: true } : {}) });
+    }
     console.log(lampReport(layout.folder, lamp, answer));
     if (answer.failed) process.exitCode = 1;
   } finally { lamp.close(); }
@@ -480,7 +485,8 @@ async function devInLamp(layout, lamp) {
     try {
       lamp = lamp ?? (await reachLamp([givenTo(layout.folder)]));
       if (!lamp) { print(`${editionName(givenTo(layout.folder))} isn't running: the change goes in once it is and the next save is made.`); return; }
-      const answer = await lamp.call("apply_change", { path: layout.folder });
+      let answer = await lamp.call("apply_change", { path: layout.folder });
+      if (answer.facts?.restarted) { await lamp.call("look_at_app", { path: layout.folder }); answer = await lamp.call("apply_change", { path: layout.folder }); }
       // A folder that changed while Lamp built it is applied again by the next save, or now when it's said so.
       applied = answer.facts?.stale || answer.outcome === "stale" ? null : now;
       print(lampReport(layout.folder, lamp, answer));
@@ -689,7 +695,16 @@ async function main() {
       return;
     }
     const layout = projectOf(folder);
-    if (layout.kind === "mac" && givenTo(layout.folder)) throw new Problem(`lamp can't press anything in an app Lamp's app has open: ask the person to try it, or run ${lampCommand()} open --here to have lamp run its own copy`);
+    // Given to Lamp's app: it uses the app it has open, in plain sight, as its own agent does.
+    const lamp = await inLamp(layout);
+    if (lamp) {
+      try {
+        const answer = await lamp.call("use_app", { path: layout.folder, actions: macActions(moves) });
+        console.log(lampReport(layout.folder, lamp, answer));
+        if (answer.failed) process.exitCode = 1;
+      } finally { lamp.close(); }
+      return;
+    }
     const seen = await ask(await serverFor(layout.folder), "use", moves.length === 1 ? moves[0] : { moves }, { timeout: 60_000 + moves.length * 35_000 });
     console.log(options.json ? JSON.stringify(seen, null, 2) : report(seen));
     return;

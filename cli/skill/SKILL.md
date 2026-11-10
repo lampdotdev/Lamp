@@ -67,7 +67,7 @@ shows until its code in `Sources/` is written. The same commands work on it, wit
 - **A change into the open app, without reopening it**, is Lamp's app's: when the person has Lamp open and wants that,
   `{{lamp}} open --in-lamp` gives the app to it (Lamp shows them its review the first time). From then on `look`, `dev`
   and `reload` say how each change went in (live, held for their Reload, reopened, not built), and the person tries it
-  there: `use` doesn't reach it. `{{lamp}} open --here` has lamp run its own copy again.
+  there, and `use` tries the app Lamp has open, in plain sight. `{{lamp}} open --here` has lamp run its own copy again.
 - **Not here:** the app's AI (`LampAI`), and a link to one on lamp.dev (its Lamp app file is here: see "A Lamp app
   file"). Those
   are Lamp's app's: say so rather than working around it. What the app keeps secret (`LampSecrets`) is kept for it.
