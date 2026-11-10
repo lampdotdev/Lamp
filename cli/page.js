@@ -130,7 +130,14 @@
     };
     if (document.body) walk(document.body);
     if (lines.length > 160) lines.push('… and more');
-    return { tab, title: document.title, path: location.pathname + location.search, width, height, dpr: devicePixelRatio || 1, game: !!window.__lampLive, screen: lines.join('\n') };
+    // A game drawn on a stage of its own shape, fitted in the window with bars beside or above it: the stage's size.
+    // One that fills the window, whatever its shape, has none.
+    let stage = null;
+    if (window.__lampLive) {
+      const canvas = [...document.querySelectorAll('canvas')].map(c => [c, c.getBoundingClientRect()]).sort((a, b) => b[1].width * b[1].height - a[1].width * a[1].height)[0];
+      if (canvas && canvas[0].width > 1 && canvas[0].height > 1 && (width - canvas[1].width >= 2 || height - canvas[1].height >= 2)) stage = [canvas[0].width, canvas[0].height];
+    }
+    return { tab, stage, title: document.title, path: location.pathname + location.search, width, height, dpr: devicePixelRatio || 1, game: !!window.__lampLive, screen: lines.join('\n') };
   };
 
   // What's at a point of the page, in the screen's own words, so a click says what it landed on.

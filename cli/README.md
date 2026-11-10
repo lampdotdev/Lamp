@@ -21,6 +21,9 @@ with an `index.html`; without one, the folder you're in.
 | `lamp use key w 2` | Tries it as a person would, then looks: `click`, `type`, `key` (several at once with `w+d`), `drag`, `scroll`, `wait`, and in a game on Lamp's runtime `stick` and `button`, which hold Lamp's own controller as Lamp's app does (`window.__lampDrive`) and give it back when the person plays. Several moves with `then` between them go one after another, with one look at the end. |
 | `lamp reload [--fresh]` | Opens the page again from its files, a game from where the player is, or with `--fresh` from its beginning (`window.lampFreshStart`). |
 | `lamp stop` | Stops running it. |
+| `lamp share --words "…"` | Puts the page on lamp.dev: anyone with the link plays it there and can send an idea. Again, it sends the page as it is now to the same link. |
+| `lamp ideas [in <n> \| dismiss <n>]` | The ideas people playing the link have sent, and saying what became of one. |
+| `lamp unshare` | Takes the link down. |
 | `lamp setup [--remove]` | Teaches Claude Code and Codex on this computer to work this way: a skill for each. |
 | `lamp guide` | What that skill says, for any other agent. |
 | `lamp skills [word]`, `lamp skill <name>` | Lamp's skills (`Resources/skills`), the one place that says which building blocks to use and how: all of them or those about a word, and one in full, put together from its sections as Lamp's app does (`cli/skills.mjs` follows `Skills.assembled`). |
@@ -103,6 +106,24 @@ over a pipe only lamp holds. `lamp use` acts in the same page, so with a window 
 itself half an hour after it was last used, unless its window is open, and a `lamp dev` run by hand takes its place
 when it has no window.
 
+## Sharing
+
+`lamp share` is Lamp's side of the site's API, as `Sources/Lamp/WishLink.swift` is in Lamp's app
+(`cli/share.mjs`; the limits are read from `site/lib/shared-wishes.js`, so the two can't disagree): the link's words
+and a picture of the page, then the page itself, zipped and sent in parts, which the site unpacks and plays on a host
+of the link's own.
+
+- **What goes up** is the page as it's served: every file in its folder (nothing hidden, no link followed, `APP.md`
+  left out), and for a game Lamp's own files beside it, as Lamp's app stages a page it publishes (`GamePage.stage`).
+- **The picture and the shape** come from the page as it runs: a picture of it for the link's card, and the stage a
+  game is drawn on (its width over its height) or `fill` for a page that takes any window. A page that's logging
+  errors isn't shared without `--anyway`.
+- **The link's secret**, which is what lets it be changed or taken down, is kept with lamp's state for the folder
+  (`link.json`, readable only by the person), never in the folder.
+- **Not sent:** the wish's own file, which only Lamp's app makes. The link plays the page and carries its words.
+- **`LAMP_SITE`** names another site to share to, for trying this against a copy of the site (`npm run dev` in
+  `site/` keeps links in memory). The tests run against the site's handlers the same way, and never reach lamp.dev.
+
 ## Where things are kept
 
 - **Nothing in the app's folder.** lamp reads the folder and never writes in it (`lamp new` and `lamp init` aside,
@@ -123,8 +144,8 @@ can read.
 
 ## What it doesn't do yet
 
-Phones, TVs and consoles as places to run; sharing; and anything that needs Lamp's Mac app around the page
-(`lamp.js`'s building blocks, `LampNative`, a game's phone controllers).
+Phones, TVs and consoles as places to run, and anything that needs Lamp's Mac app around the page (`lamp.js`'s
+building blocks, `LampNative`, a game's phone controllers).
 
 ## Tests
 

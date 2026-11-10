@@ -45,7 +45,7 @@ export const LAMP_JS = "// lamp's stand-in for lamp.js: Lamp's building blocks c
 export const CONTROLLERS_FILE = "lamp-controllers.js", CONTROLLERS = join(HERE, "lamps", CONTROLLERS_FILE);
 // The libraries Lamp puts beside a game's page when the page uses them (`DeviceSupport`), where they are in Lamp's
 // own folder: a game whose folder has none of one is served Lamp's copy.
-const LIBRARIES = join(HERE, "..", "Resources", "WebLibraries");
+export const LIBRARIES = join(HERE, "..", "Resources", "WebLibraries");
 function lampsCopy(name) {
   if (name === CONTROLLERS_FILE) return CONTROLLERS;
   if (!/^(three|phaser|rapier)\//.test(name)) return null;
@@ -428,6 +428,21 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     };
   }
 
+  /**
+   * What a link to the page shows of it: a picture of it as it is now (a JPEG, small enough for the link's card), the
+   * stage a game is drawn on when it has one, and the errors a look would report. No picture with no browser to look in.
+   */
+  async function card(options = {}) {
+    const seen = await look(options);
+    let target = null;
+    try { target = await watched(); } catch {}
+    if (!target) return { picture: null, stage: null, errors: seen.errors, playing: seen.playing };
+    const view = await target.page.evaluate("window.__lampLook ? window.__lampLook() : null");
+    let picture = null;
+    try { picture = (await target.page.picture({ ...(view ?? {}), jpeg: true })).toString("base64"); } catch {}
+    return { picture, stage: view?.stage ?? null, errors: seen.errors, playing: seen.playing };
+  }
+
   /** Things done in the page as a person would, one after another with nothing between them, then a look. */
   async function use(asked) {
     const moves = Array.isArray(asked?.moves) ? asked.moves : [asked];
@@ -574,6 +589,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
         const asked = (await body(request)) ?? {};
         if (what === "look") return json(200, await inTurn(() => look(asked)));
         if (what === "use") return json(200, await inTurn(() => use(asked)));
+        if (what === "card") return json(200, await inTurn(() => card(asked)));
         if (what === "open") return json(200, { opened: await openWindow(), url: address });
         if (what === "reload") { for (const page of pages.values()) tell(page, "reload", asked.fresh ? "fresh" : "now"); return json(200, { pages: pages.size }); }
         if (what === "stop") { json(200, { stopped: true }); setTimeout(() => close().then(() => process.exit(0)), 50); return; }

@@ -74,9 +74,9 @@ class Page {
   }
 
   /** A picture of the page as it is, one pixel of it for each point of the page, so a point of the picture is a point to click. */
-  async picture({ width, height, dpr = 1 }) {
+  async picture({ width, height, dpr = 1, jpeg = false }) {
     const clip = width && height ? { x: 0, y: 0, width, height, scale: 1 / dpr } : undefined;
-    const shot = await this.send("Page.captureScreenshot", { format: "png", ...(clip ? { clip } : {}) }, 8000);
+    const shot = await this.send("Page.captureScreenshot", { ...(jpeg ? { format: "jpeg", quality: 85 } : { format: "png" }), ...(clip ? { clip } : {}) }, 8000);
     return Buffer.from(shot.data, "base64");
   }
 

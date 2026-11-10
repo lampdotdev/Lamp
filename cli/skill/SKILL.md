@@ -119,6 +119,22 @@ The reason given after one names the file that changed, where an `accept()` woul
 module it's loaded through. A game that takes changes live is written for it. When a change won't go in, needs Reload
 or loses the player's place, read Lamp's `game-live` skill before working around it.
 
+## Sharing it
+
+Only when the person asks: a link is public, and anyone who has it can play the page.
+
+- `{{lamp}} share --words "What it is, in a sentence or a few"` puts the page on lamp.dev and answers its link. `--line`
+  is a line under its name, `--asks "Found a bug?|What's missing?"` what the box under the page asks people, and
+  `--by "Their Name"` who it's by: only a name the person gave you to show. A page that's logging errors isn't shared
+  until they're put right.
+- Again, after changes, it sends the page as it is now to the same link, with the same words unless you give new ones.
+- `{{lamp}} ideas` lists what people playing it have sent. Once one is in the game and the game shared again,
+  `{{lamp}} ideas in <number>` says so, and whoever asked to hear is written to; `{{lamp}} ideas dismiss <number>` lets
+  one go.
+- `{{lamp}} unshare` takes the link down.
+
+Tell the person the link, and that it's public.
+
 ## Lamp's skills
 
 An app Lamp made (its page loads `lamp.js`) is built from Lamp's own building blocks, and Lamp has guidance for each
@@ -144,5 +160,5 @@ A plain site, on neither `lamp.js` nor Lamp's runtime, uses none of them: skip t
 - Lamp's own files in the folder are rewritten by Lamp, so read them and never edit them: `lamp.js`, `lamp-game.js`,
   `lamp-phaser.js`, `lamp-controllers.js`, and the `three/` and `phaser/` folders.
 - The page's whole log is the file `look` names.
-- lamp runs the page in a browser on this computer. Phones, TVs and consoles, sharing, and whatever needs Lamp's Mac
-  app around the page aren't here: say so rather than working around it.
+- lamp runs the page in a browser on this computer. Phones, TVs and consoles, and whatever needs Lamp's Mac app
+  around the page, aren't here: say so rather than working around it.

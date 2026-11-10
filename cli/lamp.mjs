@@ -9,6 +9,7 @@
 //   lamp look [folder]    how the last change went, a picture, the screen as text and the log
 //   lamp use [folder] …   try it: a key, a click, some typing
 //   lamp stop [folder]    stop running it
+//   lamp share [folder]   a link on lamp.dev to play it, and lamp ideas for what people send back
 //   lamp setup            teach the coding agents on this computer to work this way
 //   lamp skills           Lamp's guidance for each kind of work; lamp skill <name> reads one
 
@@ -20,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { Problem, layoutOf, stateOf, running, ask } from "./state.mjs";
 import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, LAMP_JS } from "./dev.mjs";
 import { allSkills } from "./skills.mjs";
+import { share, unshare, ideas, finishIdea, readLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -58,6 +60,14 @@ const USAGE = `lamp runs the web app or game in a folder and puts each saved cha
   lamp reload [folder] [--fresh]
       Open the page again from its files, a game from where the player is, or with --fresh from its beginning.
   lamp stop [folder]      Stop running it.
+  lamp share [folder] --words "What it is" [--name N] [--line "A line under its name"] [--by "Who made it"]
+             [--asks "Found a bug?|What's missing?"] [--shape fill|16:9] [--no-picture] [--anyway]
+      Put the page on lamp.dev, where anyone with the link plays it and can send an idea. Public, so only when the
+      person asks. Again, it sends the page as it is now to the same link, with the same words unless new ones are given.
+  lamp unshare [folder]   Take the link down.
+  lamp ideas [folder] [in <n> | dismiss <n>]
+      The ideas people playing the link have sent. "in" says one is in the game now (whoever asked to hear is
+      written to); "dismiss" lets one go.
   lamp setup [--remove]   Teach Claude Code and Codex on this computer to work this way (a skill for each).
   lamp guide              What that skill says, for any other agent.
   lamp skills [word]      Lamp's guidance for each kind of work, those about a word; lamp skill <name> reads one.
@@ -329,6 +339,70 @@ async function main() {
       }
     }
     if (!any) console.log(options.remove ? "There was no skill of lamp's to take away." : "Neither Claude Code nor Codex is set up on this computer. `lamp guide` prints what to give another agent.");
+    return;
+  }
+
+  if (command === "share") {
+    const { options, rest } = parse(args, ["name", "words", "line", "by", "asks", "shape"]);
+    const layout = layoutOf(rest[0] ?? ".");
+    const before = readLink(layout.folder)?.site === siteOrigin() ? readLink(layout.folder) : null;
+    // The link's words: what's given now, else what it went out with before. Its name, where nothing says, is the page's.
+    const words = {
+      name: String(options.name ?? before?.name ?? nameOf(layout)).trim(), words: String(options.words ?? before?.words ?? "").trim(),
+      line: String(options.line ?? before?.line ?? "").trim(), by: String(options.by ?? before?.by ?? "").trim(),
+      asks: options.asks !== undefined ? String(options.asks).split("|").map((ask) => ask.trim()).filter(Boolean) : before?.asks ?? [],
+    };
+    const count = (text) => [...new Intl.Segmenter("en", { granularity: "grapheme" }).segment(text)].length;
+    if (!words.words) throw new Problem('a link says what the page is: share it with --words "What it is, in a sentence or a few"');
+    if (!words.name || count(words.name) > LIMITS.name) throw new Problem(`a link's name is at most ${LIMITS.name} characters: --name "Its Name"`);
+    if (count(words.words) > LIMITS.words) throw new Problem(`a link's words are at most ${LIMITS.words} characters`);
+    if (count(words.line) > LIMITS.line) throw new Problem(`a link's line is at most ${LIMITS.line} characters`);
+    if (count(words.by) > LIMITS.by) throw new Problem(`who it's by is at most ${LIMITS.by} characters`);
+    if (words.asks.length > LIMITS.asks || words.asks.some((ask) => count(ask) > LIMITS.ask)) throw new Problem(`a link asks at most ${LIMITS.asks} things, each of at most ${LIMITS.ask} characters`);
+    // The page as it runs now: its picture for the link's card, the shape it plays in, and whether it's working.
+    let card = { picture: null, stage: null, errors: [] };
+    if (!options["no-picture"]) card = await ask(await serverFor(layout.folder), "card", { wait: 30 }, { timeout: 120_000 });
+    if (card.errors.length && !options.anyway) {
+      throw new Problem(`the page logged errors, and a link shows it to anyone:\n  ${card.errors.slice(0, 5).join("\n  ")}\nPut them right, or share it as it is with --anyway.`);
+    }
+    let shape = card.stage ? Math.round((card.stage[0] / card.stage[1]) * 10000) / 10000 : "fill";
+    if (options.shape !== undefined) {
+      const ratio = /^(\d+(?:\.\d+)?)[:/x](\d+(?:\.\d+)?)$/.exec(String(options.shape));
+      if (options.shape !== "fill" && !ratio) throw new Problem("--shape is fill, for a page that takes any window, or a shape like 16:9");
+      shape = ratio ? Math.round((Number(ratio[1]) / Number(ratio[2])) * 10000) / 10000 : "fill";
+    }
+    const sent = await share({ layout, words, shape, picture: card.picture ? Buffer.from(card.picture, "base64") : null, said: (line) => console.log(line) });
+    console.log(`${before ? "Sent again to its link" : "Shared"}: ${sent.url}`);
+    console.log(`"${words.name}"${words.by ? ` by ${words.by}` : ""}: ${sent.files} files, ${(sent.bytes / 1_000_000).toFixed(1)} MB packed, ${shape === "fill" ? "filling the window" : "on its own stage"}${sent.picture ? ", with a picture of it" : ", with no picture"}.`);
+    console.log("Anyone with the link can play it and send an idea: lamp ideas shows them. lamp unshare takes it down.");
+    return;
+  }
+
+  if (command === "unshare") {
+    const { rest } = parse(args, []);
+    console.log(`Taken down: ${await unshare(layoutOf(rest[0] ?? ".").folder)}`);
+    return;
+  }
+
+  if (command === "ideas") {
+    const { rest } = parse(args, []);
+    const outcomes = ["in", "dismiss"];
+    const folder = rest.length && !outcomes.includes(rest[0]) ? rest.shift() : ".";
+    const layout = layoutOf(folder);
+    if (rest.length) {
+      const n = Number(rest[1]);
+      if (!outcomes.includes(rest[0]) || !Number.isInteger(n) || n < 1) throw new Problem("ideas takes in <number> or dismiss <number>: lamp ideas lists them with their numbers");
+      const answer = await finishIdea(layout.folder, n, rest[0] === "in");
+      console.log(rest[0] === "in" ? `Idea ${n} is in.${answer.notified ? " Whoever sent it asked to hear, and has been written to." : ""}` : `Idea ${n} is let go.`);
+      return;
+    }
+    const sent = await ideas(layout.folder);
+    if (!sent.ideas.length) { console.log(`No ideas waiting for ${sent.url}`); return; }
+    console.log(`Ideas sent to ${sent.url}`);
+    for (const idea of sent.ideas) {
+      console.log(`  ${idea.n}. ${String(idea.text).split("\n").join("\n     ")}${idea.wantsNews ? "  (wants to hear when it's in)" : ""}`);
+    }
+    console.log("Say what became of one with: lamp ideas in <number>, or lamp ideas dismiss <number>.");
     return;
   }
 

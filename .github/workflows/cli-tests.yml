@@ -4,11 +4,15 @@ on:
   pull_request:
     paths:
       - "cli/**"
+      - "site/lib/**"
+      - "Resources/GameKit/**"
       - ".github/workflows/cli-tests.yml"
   push:
     branches: [main]
     paths:
       - "cli/**"
+      - "site/lib/**"
+      - "Resources/GameKit/**"
       - ".github/workflows/cli-tests.yml"
   workflow_dispatch:
 
