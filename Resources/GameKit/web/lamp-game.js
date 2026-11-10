@@ -2547,12 +2547,15 @@ async function putPage(page, paths, still) {
     if (still) curtain.append(still);
     curtain.append(...old);
     // Scripts from the new page don't run as they go in: the modules run from runAgain.
-    body.replaceChildren(...[...page.body.childNodes].map(n => document.adoptNode(n)), curtain, ...[touchLayer, pill, hint].filter(Boolean));
+    fromPage = [...page.body.childNodes].map(n => document.adoptNode(n));
+    body.replaceChildren(...fromPage, curtain, ...[touchLayer, pill, hint].filter(Boolean));
 }
 
 // The frame just drawn, as a picture placed where the game's canvas is, for runAgain to hold on screen; asked of the
 // next frame, since a WebGL canvas keeps what it drew only until the frame is shown.
 let shooting = null, curtain = null, lifting = 0;
+// What the page's HTML put back in at the last run in place, where a loading screen of the game's own is.
+let fromPage = [];
 // The change whose new code is about to be on screen, for `shown`: after a run in place as the old frame goes, after a
 // reload at the first frame.
 let shownFor = null;
@@ -2592,9 +2595,9 @@ function lift() {
     after(250, () => going.remove());
 }
 
-// Finishes what the new page is fading in or out across most of the window: a screen of its own being put away (or
-// shown), which is a matter of a second at most. Nothing else is touched: a transition a game times its play by, or
-// one on something small, runs its course.
+// Finishes a screen of the page's own HTML being put away across most of the window (its loading screen, put back as
+// the page went in), which is a matter of a second at most. Only a fade out of what the HTML put back is: a scene the
+// game fades in, or one it times its play by and made itself, runs its course, as does anything small.
 function putAway(held) {
     try {
         if (typeof CSSTransition === 'undefined' || !document.getAnimations) return;
@@ -2602,6 +2605,9 @@ function putAway(held) {
         for (const fade of document.getAnimations()) {
             const el = fade instanceof CSSTransition && fade.effect && fade.effect.target;
             if (!el || held.contains(el) || !['opacity', 'visibility'].includes(fade.transitionProperty)) continue;
+            if (!fromPage.some(n => n === el || (n.contains && n.contains(el)))) continue;
+            const frames = fade.effect.getKeyframes(), to = frames.length ? frames[frames.length - 1] : {};
+            if (!(fade.transitionProperty === 'opacity' ? Number(to.opacity) === 0 : to.visibility === 'hidden')) continue;
             const timing = fade.effect.getComputedTiming(), r = el.getBoundingClientRect();
             if (!(timing.endTime <= 1500) || r.width * r.height < most) continue;
             fade.finish();
