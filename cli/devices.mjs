@@ -470,7 +470,8 @@ export async function send(request, address, values, { files = {}, pins, timeout
   // itself, only what the device's own challenge makes of it.
   if (!request.auth) return once(null);
   const user = request.auth.user, password = fill(request.auth.password, values, "auth"), door = `${address}:${request.port}`;
-  session.asked ??= new Set();
+  // A session that came back from Lamp's app as JSON holds its doors as a list.
+  if (!(session.asked instanceof Set)) session.asked = new Set(Array.isArray(session.asked) ? session.asked : []);
   if (request.auth.digest) {
     const first = await once(null), challenge = digestChallenge(first.asks);
     return first.status === 401 && challenge ? once(digestAnswer(challenge, { user, password, method, path })) : first;
@@ -784,7 +785,8 @@ export class Runner {
     for (const restore of changed.splice(0).reverse()) {
       const back = { ...restore.request, body: JSON.stringify({ [restore.request.restore]: restore.was }) };
       const values = { ...this.values(), ...Object.fromEntries(Object.entries(restore.cookies ?? {}).map(([name, value]) => [`cookie:${name}`, value])) };
-      const answer = await this.#send(back, values, { session: restore.session ?? {} }).catch(() => null);
+      // Put back even once the run was stopped: a setting left changed is the device's for good. Each is given a while, not forever.
+      const answer = await this.#send(back, values, { session: { ...(restore.session ?? {}) }, stopped: undefined, timeout: 15_000 }).catch(() => null);
       if (!answer?.ok) missed.push(`lamp couldn't set ${restore.request.path} on ${this.device.name} back to ${restore.was}`);
     }
     return missed;
@@ -813,7 +815,7 @@ export class Runner {
         const setting = `${request.port}${request.path}`;
         let wanted;
         try { wanted = jsonAt(Buffer.from(fill(request.body ?? "", values, "body")), request.restore); } catch {}
-        if (!changed.some((restore) => `${restore.request.port}${restore.request.path}` === setting) && was !== wanted) changed.push({ request, was, cookies: { ...cookies }, session });
+        if (!changed.some((restore) => `${restore.request.port}${restore.request.path}` === setting) && was !== wanted) changed.push({ request, was, cookies: { ...cookies }, session: { asked: [...(session.asked ?? [])] } });
       }
       const transfer = () => this.#send(request, values, { files, session });
       let asked = Date.now(), answer = await transfer();

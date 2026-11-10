@@ -621,6 +621,28 @@ struct IntegrationRunner {
     func open(_ launch: [IntegrationAction], running: [IntegrationAction]?, extra: [String: String], changed: ChangedSettings? = nil,
               tries: Int = 8, stillWanted: @escaping @MainActor () -> Bool = { true }) async throws {
         await prepare()
+        // A launch with something only Lamp's app does in it (a command over SSH, a tool, a log) is tried from here, each
+        // try a run of its own; one of requests, waits and probes alone is lamp's command line's whole.
+        let cliOnly = { (actions: [IntegrationAction]) in actions.allSatisfy { $0.http != nil || $0.probe != nil || $0.wait != nil } }
+        guard cliOnly(launch), cliOnly(running ?? []) else {
+            var launched = false, refused: String?, wait = 2.0
+            for attempt in 1...max(tries, 1) {
+                do {
+                    _ = try await run(launch, extra: extra, changed: changed)
+                    launched = true
+                    guard let running, !running.isEmpty else { return }
+                    do { _ = try await run(running, extra: extra, changed: changed); return } catch is Failure {}
+                } catch let failure as Failure {
+                    refused = failure.message
+                }
+                guard attempt < tries else { break }
+                onWaiting?()
+                try await Task.sleep(for: .seconds(wait))
+                wait = min(wait * 2, 8)
+                guard await stillWanted() else { throw Failure(message: "Stopped.") }
+            }
+            throw NotOpened(launched: launched, refused: refused)
+        }
         let settings = changed ?? ChangedSettings()
         let given: [String: Any] = ["launch": try Self.json(launch), "running": try running.map(Self.json) ?? NSNull(), "extra": extra,
                                     "changed": settings.restores, "tries": tries]
