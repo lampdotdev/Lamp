@@ -164,7 +164,9 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
     exited = null;
     quitting = false;
     launched = Date.now();
-    child = spawn(join(app, "Contents", "MacOS", exe), [], { stdio: ["ignore", "pipe", "pipe"] });
+    // Kept awake while nobody looks at it (a default macOS reads from an app's arguments): an app the system has
+    // put to sleep behind other windows, or with the display off, answers lamp's asking for a picture late or not at all.
+    child = spawn(join(app, "Contents", "MacOS", exe), ["-NSAppSleepDisabled", "YES"], { stdio: ["ignore", "pipe", "pipe"] });
     const mine = child;
     child.stdout.on("data", (chunk) => logged(chunk));
     child.stderr.on("data", (chunk) => logged(chunk));
@@ -255,7 +257,7 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
     // Opened again from its start, as someone opening it finds it: what it saved is still there.
     if (reopen && app && !building) { await quit(); launch(); }
     const unfinished = building || timer ? "the app was still being built" : null;
-    let picture = null, more = [], screen = null, problem = null, note = null;
+    let picture = null, more = [], screen = null, problem = null, remark = null;
     if (child) {
       // A moment for its first window, then the app pictures its own windows and says what's on them.
       if (Date.now() - launched < 2500) await sleep(2500 - (Date.now() - launched));
@@ -281,7 +283,7 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
         try { if (statSync(text).mtimeMs >= taken - 2000) screen = readFileSync(text, "utf8").trim() || null; } catch {}
         // The app reads its screen through accessibility, on itself, which answers only once the app has been in
         // front with the screen unlocked.
-        if (!screen) note = "The app gave no screen as text (it can read its own screen only once it has been in front, with the Mac unlocked): aim by the picture, whose points are the points to click.";
+        if (!screen) remark = "The app gave no screen as text (it can read its own screen only once it has been in front, with the Mac unlocked): aim by the picture, whose points are the points to click.";
         if (taken <= before) problem = "The app took no new picture just now (its windows can't be pictured while the screen is locked or the display is asleep): this is its last one.";
       } else {
         problem = "The app took no picture of its windows: they can't be pictured while the screen is locked, the display is asleep, or the app is hidden.";
@@ -300,7 +302,7 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
     lastLookLine = logCount;
     return {
       where: "mac", opened: false, playing: null, address: app, picture, pictures: more, title: shown, width: null, height: null, screen,
-      unfinished, changes: since, errors: errors.slice(-20), note,
+      unfinished, changes: since, errors: errors.slice(-20), note: remark,
       log: fresh.filter((line) => !isError(line)).slice(-25).map((line) => line.text), logLines: fresh.length, logFile, problem,
     };
   }
