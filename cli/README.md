@@ -27,6 +27,7 @@ Mac app, `projectOf`), or any folder with an `index.html`; without one, the fold
 | `lamp reload [--fresh]` | Opens the page again from its files, a game from where the player is, or with `--fresh` from its beginning (`window.lampFreshStart`). |
 | `lamp stop` | Stops running it. |
 | `lamp share --words "…"` | Puts the page on lamp.dev: anyone with the link plays it there and can send an idea. Again, it sends the page as it is now to the same link. |
+| `lamp share` (an app of Lamp's) | For a folder in Lamp's own (or a link to one), shared by Lamp's app over its socket (`share_link`, `OutsideWork`): its Share Link card filled as it fills itself (`WishLinkCards.prepare`: the link's last words, the questions and what's new Lamp writes, the app's file, the GitHub release) and shared without its window, with `--line`, `--by`, `--asks`, `--notes`, `--no-file`, `--no-github`, `--put-on-github` in place of the card's own, and `--preview` to see it first. The link's secret stays in Lamp. Which Lamp is the one whose folder it is (`lampOwning`). |
 | `lamp ideas [in <n> \| dismiss <n>]` | The ideas people playing the link have sent, and saying what became of one. |
 | `lamp unshare` | Takes the link down. |
 | `lamp devices [add \| forget <name>]` | The person's devices lamp puts a page on: an Xbox in Developer Mode (those set up and those found on the network), and Android (lamp's emulators, and the phones, tablets and TVs plugged in with USB debugging on). `add` sets one up, a step at a time; `add android` downloads Android's tools. |
