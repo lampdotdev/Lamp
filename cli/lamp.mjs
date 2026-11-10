@@ -18,7 +18,8 @@ import { cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rea
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Problem, layoutOf, stateOf, running, ask } from "./state.mjs";
+import { Problem, layoutOf, projectOf, stateOf, running, ask } from "./state.mjs";
+import { serveMac } from "./mac.mjs";
 import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, LAMP_JS } from "./dev.mjs";
 import { allSkills } from "./skills.mjs";
 import { share, unshare, ideas, finishIdea, readLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
@@ -152,6 +153,7 @@ async function serverFor(folder) {
 }
 
 const WHERE = {
+  mac: "the app as it runs on this Mac",
   window: "the window the person has open",
   copy: "lamp's own copy of the page, which nobody sees (no window is open)",
   page: "a page open in a browser lamp can't look into",
@@ -164,6 +166,7 @@ function report(seen) {
   if (seen.problem) lines.push(seen.problem);
   if (seen.unfinished) lines.push(`Taken while ${seen.unfinished}: look again.`);
   if (seen.picture) lines.push(`Picture   ${seen.picture}`);
+  for (const other of seen.pictures ?? []) lines.push(`          ${other}  (another of its windows)`);
   if (seen.changes.length) {
     lines.push("Changes since the last look");
     for (const change of seen.changes) lines.push(`  ${change.files} → ${change.outcome}: ${change.means}${change.why ? ` (${change.why})` : ""}`);
@@ -247,7 +250,7 @@ async function main() {
 
   if (command === "dev") {
     const { options, rest } = parse(args, ["port", "idle"]);
-    const layout = layoutOf(rest[0] ?? ".");
+    const layout = projectOf(rest[0] ?? ".");
     const port = options.port === undefined ? undefined : Number(options.port);
     if (port !== undefined && !(Number.isInteger(port) && port > 0 && port < 65536)) throw new Problem("--port takes a number from 1 to 65535");
     const live = await running(layout.folder);
@@ -261,16 +264,20 @@ async function main() {
       console.log(`lamp dev is already running for this folder: ${live.url}`);
       return;
     }
-    const server = await serve({ folder: layout.folder, port, lan: !!options.lan, quiet: !!options.quiet, idle: Number(options.idle) || 0 });
+    // A page is served and shown in a browser; a Mac app is built and run. Each is the folder's server from here on.
+    const server = layout.kind === "mac"
+      ? await serveMac({ folder: layout.folder, port, quiet: !!options.quiet, idle: Number(options.idle) || 0 })
+      : await serve({ folder: layout.folder, port, lan: !!options.lan, quiet: !!options.quiet, idle: Number(options.idle) || 0 });
     for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => server.close().then(() => process.exit(0)));
-    if (options.open) await server.openWindow();
+    if (options.open && layout.kind !== "mac") await server.openWindow();
     return;
   }
 
   if (command === "look") {
     const { options, rest } = parse(args, ["wait", "size"]);
-    const layout = layoutOf(rest[0] ?? ".");
-    const wait = options.wait === undefined ? 20 : Math.min(Math.max(Number(options.wait) || 0, 0), 120);
+    const layout = projectOf(rest[0] ?? ".");
+    // A Mac app's change is a build, which takes longer than a page's.
+    const wait = options.wait === undefined ? (layout.kind === "mac" ? 180 : 20) : Math.min(Math.max(Number(options.wait) || 0, 0), 600);
     const size = options.size === undefined ? null : /^(\d{3,4})x(\d{3,4})$/i.exec(options.size)?.slice(1).map(Number);
     if (options.size !== undefined && !size) throw new Problem("--size takes a width and a height: --size 800x600");
     const seen = await ask(await serverFor(layout.folder), "look", { wait, reopen: !!options.reopen, size }, { timeout: (wait + 60) * 1000 });
@@ -291,7 +298,7 @@ async function main() {
       if (!kinds.includes(kind)) throw new Problem("use takes key, click, type, drag, scroll, stick, button or wait: lamp --help shows each");
       if (kind === "key" && !values[0]) throw new Problem("key takes a key's name: lamp use key w 2");
       moves.push(kind === "key" ? { kind, key: values[0], seconds: values[1] }
-        : kind === "click" ? { kind, x: values[0], y: values[1] }
+        : kind === "click" ? (Number.isFinite(Number(values[0])) ? { kind, x: values[0], y: values[1] } : { kind, target: values.join(" ") })
         : kind === "type" ? { kind, text: values.join(" ") }
         : kind === "drag" ? { kind, x: values[0], y: values[1], toX: values[2], toY: values[3] }
         : kind === "scroll" ? { kind, points: values[0], x: values[1], y: values[2] }
@@ -300,7 +307,7 @@ async function main() {
         : { kind, seconds: values[0] });
     }
     if (!moves.length) throw new Problem("use takes key, click, type, drag, scroll, stick, button or wait: lamp --help shows each");
-    const layout = layoutOf(folder);
+    const layout = projectOf(folder);
     const seen = await ask(await serverFor(layout.folder), "use", moves.length === 1 ? moves[0] : { moves }, { timeout: 60_000 + moves.length * 35_000 });
     console.log(options.json ? JSON.stringify(seen, null, 2) : report(seen));
     return;
@@ -308,8 +315,9 @@ async function main() {
 
   if (command === "open") {
     const { rest } = parse(args, []);
-    const layout = layoutOf(rest[0] ?? ".");
+    const layout = projectOf(rest[0] ?? ".");
     const opened = await ask(await serverFor(layout.folder), "open", {}, { timeout: 30_000 });
+    if (opened.opened === "app") { console.log(`The app is open, or will be once it's built: ${opened.url}`); return; }
     console.log(opened.opened === "window" ? `Opened in a window: ${opened.url}` : `Opened in the browser: ${opened.url}\nlamp found no browser it can look into (Chrome, Edge, Brave or Chromium), so looks have no picture.`);
     return;
   }
@@ -408,11 +416,11 @@ async function main() {
 
   if (command === "reload" || command === "stop") {
     const { options, rest } = parse(args, []);
-    const layout = layoutOf(rest[0] ?? ".");
+    const layout = projectOf(rest[0] ?? ".");
     const live = await running(layout.folder);
     if (!live) { console.log("lamp dev isn't running for this folder."); return; }
     const answer = await ask(live, command, { fresh: !!options.fresh });
-    console.log(command === "stop" ? "Stopped." : answer.pages ? "The page is opening again." : "No page is open.");
+    console.log(command === "stop" ? "Stopped." : answer.pages ? (layout.kind === "mac" ? "The app is opening again." : "The page is opening again.") : "Nothing is open.");
     return;
   }
 

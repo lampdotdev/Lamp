@@ -1,6 +1,6 @@
 ---
 name: lamp
-description: Make, run, see and try a web app or web game with lamp's command line. Use when the person asks for a new web game, or when working in a folder made with Lamp (a page beside lamp-game.js, or in Web/ with APP.md) or in a plain site's folder and they ask to change the app, to see it, or to check that a change works. Every saved change goes into the open page, and a game keeps the player's place.
+description: Make, run, see and try an app with lamp's command line - a web app, a web game, or a Mac app Lamp made in Swift. Use when the person asks for a new web game, or when working in a folder made with Lamp (a page beside lamp-game.js or in Web/, or Package.swift with build.sh and Sources/LampSupport.swift) or in a plain site's folder and they ask to change the app, to see it, or to check that a change works. Every saved change goes into the open app, and a game keeps the player's place.
 ---
 
 # Working on an app with lamp
@@ -10,10 +10,9 @@ goes in. Never build, restart or reload anything for a change.
 
 Run the commands from the app's folder, or give the folder after the command (`{{lamp}} look path/to/app`).
 
-This is for an app that is a web page: a web game, a web app, a plain site. An app Lamp made that way has the page
-in `Web/`, beside the Swift of the app around it, which stays as it is. An app whose own screens are Swift (no
-`Web/index.html`) is built and run by Lamp's app, not here: use Lamp's own tools for one if you have them
-(`open_project`, `apply_change`), and say so if you don't.
+Most of this is about an app that is a web page: a web game, a web app, a plain site. An app Lamp made that way has
+the page in `Web/`, beside the Swift of the app around it, which stays as it is. An app whose own screens are Swift
+is a Mac app: "A Mac app" below says what's different for one.
 
 ## A new game
 
@@ -30,6 +29,23 @@ through a change, as it would the player's place. So write the whole game before
 with `--reopen` (`{{lamp}} look --reopen`): the game then opens from its beginning, not from the card's. If you
 looked earlier, `--reopen` puts it right. A plain web page needs no starting files: write its `index.html` in an
 empty folder.
+
+## A Mac app
+
+A folder with `Package.swift`, `build.sh` and `Sources/LampSupport.swift` and no page is a Mac app Lamp made in
+Swift. The same commands work on it, with these differences:
+
+- **A change is a build.** Each save builds the app again, a few seconds for a small change, and opens it again:
+  what was typed or open in it is gone, so change first and try after. `look` waits for the build.
+- **`look`** answers pictures of the app's windows (taken by the app itself, so nothing is asked of the person),
+  its screen as text when the app can read it, what it printed, and when it didn't build, the compiler's errors with
+  their file and line: the app is then as it was before the change.
+- **`use`** takes `click` (a point of the picture, or a name or id from the screen as text: `{{lamp}} use click "Add"`),
+  `type`, `key` (`return`, `escape`, `cmd+a`…), `drag`, `scroll` and `wait`. Only when asked to try it.
+- **Lamp's own files** are `Sources/LampSupport.swift`, `build.sh` and `Package.swift`: read `LampSupport.swift` for
+  what Lamp gives the app, and never edit any of them.
+- **Not here:** putting a change in without opening the app again, what the app asks of Lamp as it runs (its AI, its
+  secrets), a new Mac app, and sharing one. Those are Lamp's app's: say so rather than working around it.
 
 ## A game that's already there
 

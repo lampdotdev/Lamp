@@ -1,8 +1,8 @@
 # lamp, from a terminal
 
-Runs a web app or web game from its folder and puts each saved change into the open page, for whoever is making it: a
-person, or a coding agent in a terminal. It needs no Mac app and no build step, and has no dependencies (Node 20 or
-later).
+Runs an app from its folder and puts each saved change into it, for whoever is making it: a person, or a coding
+agent in a terminal. A web app or web game is served and shown in a browser; a Mac app Lamp made in Swift is built
+and run on the Mac. It needs no Lamp app open and has no dependencies (Node 20 or later).
 
 ```bash
 node cli/lamp.mjs dev path/to/app --open
@@ -106,6 +106,30 @@ over a pipe only lamp holds. `lamp use` acts in the same page, so with a window 
 itself half an hour after it was last used, unless its window is open, and a `lamp dev` run by hand takes its place
 when it has no window.
 
+## A Mac app
+
+A folder with `Package.swift`, `build.sh` and `Sources/` and no page is an app Lamp made in Swift (`cli/mac.mjs`).
+The folder holds all it takes, so nothing of Lamp's app is run:
+
+- **Building** is the app's own `build.sh`, which Lamp writes: it makes `build/<Name>.app`. lamp asks first for the
+  build Lamp's app makes while an app is being changed (`LAMP_LIVE`: a debug build of a copy of the sources in
+  `.lamp/live`, a few seconds for a small change), and when that doesn't build, for the plain one, whose errors are
+  in the app's own code at its own lines. An app whose copy doesn't build though its code does is built plainly from
+  then on.
+- **The app takes lamp for its Lamp.** Its support code reads where Lamp is from `LampInstall` in its Info.plist,
+  which Lamp's app writes into every copy it installs (`Template.installValues`). lamp writes those values into the
+  built app and signs it again: its folder, a token only the two have, and a name for what they say to each other.
+- **Looking** is the app's own doing: asked with a notification as Lamp's app asks (`snapshot`), it pictures its own
+  windows and writes what's on them as text beside its log, in the folder's `.lamp/runtime`. No permission is asked.
+- **Using** is the app's own driver (`LampDriver`): the actions go as Lamp's app sends them (`useApp`), signed with
+  the token, and the app answers what it did.
+- **A change** builds the app again and opens it again. The app's own build writes `build/`, `.build/` and
+  `.lamp/` in the folder, as it does under Lamp's app.
+
+What stays Lamp's app's for a Mac app: putting a change in while it runs (`LiveReload`), what the app asks of Lamp
+on its port (AI, secrets, sharing: here nothing answers, which the app takes as Lamp not running), signing for a
+team, the chat beside the app, and making a new one (its files are written from `Template.swift`).
+
 ## Sharing
 
 `lamp share` is Lamp's side of the site's API, as `Sources/Lamp/WishLink.swift` is in Lamp's app
@@ -126,8 +150,8 @@ of the link's own.
 
 ## Where things are kept
 
-- **Nothing in the app's folder.** lamp reads the folder and never writes in it (`lamp new` and `lamp init` aside,
-  which are asked to), so nothing of
+- **Nothing in a page's folder.** lamp reads the folder and never writes in it (`lamp new` and `lamp init` aside,
+  which are asked to; a Mac app's folder takes its own build, as above), so nothing of
   lamp's is committed or published with it, and a folder Lamp's app is running too keeps its own log.
 - **Everything lamp keeps** (the page's log, which `lamp look` names; the browser's files, so a game's saves last
   from one run to the next; the last few pictures; which server is running) is in

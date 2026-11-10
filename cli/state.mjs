@@ -26,6 +26,20 @@ export function layoutOf(given) {
 }
 
 /**
+ * What the folder is to lamp: a page (as `layoutOf` reads it), or an app Lamp made in Swift for the Mac (its package
+ * and the build script Lamp writes). A game Lamp made has both, a page with the Mac app around it: it's worked on as
+ * its page.
+ */
+export function projectOf(given) {
+  const folder = resolve(given);
+  if (!existsSync(folder) || !statSync(folder).isDirectory()) throw new Problem(`${folder} isn't a folder`);
+  const real = realpathSync(folder);
+  if ([join(real, "Web"), real].some((candidate) => existsSync(join(candidate, "index.html")))) return { kind: "page", ...layoutOf(real) };
+  if (existsSync(join(real, "Package.swift")) && existsSync(join(real, "build.sh")) && existsSync(join(real, "Sources"))) return { kind: "mac", folder: real };
+  throw new Problem(`${real} has no page (no Web/index.html and no index.html), and isn't a Mac app Lamp made (no Package.swift with its build.sh)`);
+}
+
+/**
  * Where lamp keeps what it needs for a folder: the browser's own files (so a game's saves last from one run to the
  * next), the picture of the last look, and which server is running. Outside the folder, so nothing of lamp's is
  * published or committed with a plain site.
