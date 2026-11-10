@@ -32,12 +32,17 @@ after(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-/** A page's line for changes: gives each event as it comes. */
+/**
+ * A page's line for changes: gives each event as it comes. Closing it ends the connection, as a page closed does:
+ * cancelling only the reader leaves the connection open on Bun, and the server would go on counting the page.
+ */
 async function line(since) {
-  const answer = await fetch(`${server.url}__lamp/events?page=p${Math.random()}&since=${since}`);
+  const id = `p${Math.random().toString(36).slice(2)}`, stop = new AbortController();
+  const answer = await fetch(`${server.url}__lamp/events?page=${id}&since=${since}`, { signal: stop.signal });
   const reader = answer.body.getReader(), decoder = new TextDecoder();
   let held = "";
   return {
+    id,
     async next(event) {
       for (;;) {
         const found = new RegExp(`event: ${event}\\ndata: (.*)\\n\\n`).exec(held);
@@ -47,9 +52,12 @@ async function line(since) {
         held += decoder.decode(value, { stream: true });
       }
     },
-    close: () => reader.cancel(),
+    close: () => { stop.abort(); reader.cancel().catch(() => {}); },
   };
 }
+
+/** What a page says to the server, as lamp's script in it says it. */
+const post = (path, body) => fetch(`${server.url}__lamp/${path}`, { method: "POST", body: JSON.stringify(body) });
 
 test("serves the page with lamp's script first, and nothing that isn't the page", async () => {
   const page = await (await fetch(server.url)).text();
@@ -139,10 +147,20 @@ test("with no browser lamp can drive, a look waits for a page to open and says w
   assert.ok(Date.now() - started < 2000);
   assert.match(none.problem, /No page has opened/);
   assert.match(none.problem, /Chrome, Edge, Brave or Chromium/);
-  // A page that opens while the look waits is the one looked at, without a picture.
-  setTimeout(async () => { const open = await line(99); setTimeout(() => open.close(), 5000); }, 300);
+  // A page that opens while the look waits is the one looked at, without a picture. It does what a page in any
+  // browser does: says it has loaded, and answers a look with what's on it.
+  let page;
+  setTimeout(async () => {
+    page = await line(99);
+    await page.next("hello");
+    await post("said", { page: page.id, state: "page-loaded" });
+    const ask = await page.next("look").catch(() => null);
+    if (ask) await post("looked", { ask, seen: { title: "T", width: 800, height: 600, screen: 'text "One"' } });
+  }, 300);
   const late = await cli("look", { wait: 3 });
+  page.close();
   assert.equal(late.where, "page");
+  assert.equal(late.title, "T");
   assert.match(late.problem, /no picture/i);
   assert.match(late.problem, /lamp use/);
 });

@@ -400,8 +400,9 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       // Any open page says what's on it; there's no picture without a browser lamp can look into.
       const ask = randomBytes(4).toString("hex"), page = [...pages.values()].pop();
       seen = await new Promise((resolve) => {
-        lookers.set(ask, resolve);
-        setTimeout(() => { lookers.delete(ask); resolve(null); }, 3000);
+        // An answer ends the wait for one, so nothing is left waiting after it.
+        const given = setTimeout(() => { lookers.delete(ask); resolve(null); }, 3000);
+        lookers.set(ask, (answer) => { clearTimeout(given); resolve(answer); });
         tell(page, "look", ask);
       });
       where = "page";
