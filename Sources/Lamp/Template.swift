@@ -3312,6 +3312,9 @@ enum Template {
     /// first of a batch above all (`LampDriver.lead` in LampSupport.swift, which must say the same). Every other
     /// action's spot is announced during the pause before it, with the time until it happens, so nothing waits.
     static let useAppLead = 0.2
+    /// How long a Mac app's `use_app` answer waits for a file its actions are saving (`LampSaves.wait` in LampSupport.swift,
+    /// which must say the same), and so how much longer Lamp waits for that answer.
+    static let useAppSaveWait = 8.0
 
     static let lampSupportSwift = Connectors.fill(lampSupportTemplate).replacingOccurrences(of: "{{WISH_LEAVES_LAMP_CLOSED}}", with: wishLeavesLampClosed)
         + "\n#if os(macOS)" + lampGlyphSwift + "#endif\n"
@@ -9229,6 +9232,116 @@ enum Template {
         static var hold: ((LampDriver.Action, NSWindow, LampDriver.Handover, @escaping @MainActor (String, Bool) -> Void) -> Bool)?
     }
 
+    // begin LampSaves
+    /// What a save that `use_app` set off came to: a page's download (`LampPageDownloads` in LampPage.swift) says here
+    /// where it was told to go and how it ended, and the driver's answer says it, so the builder knows the file is there,
+    /// how big it is and what a zip holds without reading the person's folders itself. Only saves whose panel a batch answered
+    /// are kept: the person's own are none of the builder's business. A save can end after that batch has answered, so
+    /// each is said again once it ends, in a later answer, marked as from earlier.
+    @MainActor
+    enum LampSaves {
+        enum State: Equatable { case saving, saved, canceled, failed(String), notMoved(String) }
+
+        final class Save {
+            let name: String
+            /// The batch that answered its panel.
+            let batch: String
+            var destination: URL?
+            var state = State.saving
+            /// What the builder was last told of it.
+            var told: State?
+            init(name: String, batch: String) { self.name = name; self.batch = batch }
+        }
+
+        /// How long a batch's answer waits for a file it's saving (`Store.use` waits as long beyond the actions).
+        static let wait = 8.0
+        /// The batch running now, if any (`LampDriver.perform` sets it).
+        static var batch: String?
+        private(set) static var all: [Save] = []
+
+        /// A save the batch running now answered the panel for (its Save or Cancel): kept only during a batch, so the person's
+        /// own saves are left out, and a download whose panel came up only after the batch that clicked it had answered is
+        /// still the batch's that answers its panel.
+        static func began(_ name: String) -> Save? {
+            guard let batch else { return nil }
+            let save = Save(name: name, batch: batch)
+            all.append(save)
+            return save
+        }
+
+        static func chose(_ save: Save?, _ url: URL) { save?.destination = url }
+
+        static func ended(_ save: Save?, _ state: State) { save?.state = state }
+
+        /// Whether a save that has somewhere to go is still being written.
+        static var writing: Bool { all.contains { $0.state == .saving && $0.destination != nil } }
+
+        /// What the builder hasn't been told yet, one line per save, for batch `id`; each said is marked told, and one that
+        /// has ended is forgotten. A save still waiting in its panel has nothing to say yet.
+        static func news(for id: String) -> [String] {
+            var lines: [String] = []
+            for save in all where save.told != save.state && !(save.state == .saving && save.destination == nil) {
+                save.told = save.state
+                let earlier = save.batch == id ? "" : " (from an earlier use of the app)"
+                let place = save.destination.map { ($0.path as NSString).abbreviatingWithTildeInPath } ?? "\"\(save.name)\""
+                switch save.state {
+                case .saving: lines.append("Still saving \(place)\(earlier): it isn't finished yet, so it isn't saved yet.")
+                case .saved: lines.append("Saved\(earlier): " + (save.destination.map(describe) ?? place))
+                case .canceled: lines.append("Not saved\(earlier): the save panel for \"\(save.name)\" was canceled.")
+                case .failed(let why): lines.append("Not saved\(earlier): the download of \(place) failed (\(why)).")
+                case .notMoved(let why): lines.append("Not saved\(earlier): the download of \(place) finished but couldn't be put there (\(why)).")
+                }
+            }
+            all.removeAll { $0.told == $0.state && $0.state != .saving }
+            return lines
+        }
+
+        /// The file at `url`: where it is, its size and, for a zip, the names of what it holds (never what's in them).
+        nonisolated static func describe(_ url: URL) -> String {
+            let path = (url.path as NSString).abbreviatingWithTildeInPath
+            guard let handle = try? FileHandle(forReadingFrom: url) else { return "\(path) (Lamp couldn't inspect it)" }
+            defer { try? handle.close() }
+            guard let size = try? handle.seekToEnd() else { return "\(path) (Lamp couldn't inspect it)" }
+            let bytes = size < 1000 ? "\(size) bytes" : ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file) + " (\(size) bytes)"
+            return "\(path), \(bytes), " + zip(handle, size: size)
+        }
+
+        /// A zip's list of files is at its end: the end record says where it starts, and each entry there names a file.
+        private nonisolated static func zip(_ handle: FileHandle, size: UInt64) -> String {
+            func read(_ offset: UInt64, _ count: Int) -> [UInt8]? {
+                guard (try? handle.seek(toOffset: offset)) != nil, let data = try? handle.read(upToCount: count), data.count == count else { return nil }
+                return [UInt8](data)
+            }
+            func u16(_ b: [UInt8], _ i: Int) -> Int { Int(b[i]) | Int(b[i + 1]) << 8 }
+            func u32(_ b: [UInt8], _ i: Int) -> UInt64 { UInt64(u16(b, i)) | UInt64(u16(b, i + 2)) << 16 }
+            guard size >= 4, let head = read(0, 4) else { return "not a zip archive" }
+            guard head[0] == 0x50, head[1] == 0x4b, (head[2] == 3 && head[3] == 4) || (head[2] == 5 && head[3] == 6) else {
+                return "not a zip archive"
+            }
+            let unreadable = "it starts like a zip archive but its list of files couldn't be read, so it may be cut short or damaged"
+            let tailCount = Int(min(size, 22 + 65_535))
+            guard let tail = read(size - UInt64(tailCount), tailCount), tailCount >= 22 else { return unreadable }
+            guard let end = stride(from: tailCount - 22, through: 0, by: -1).first(where: {
+                tail[$0] == 0x50 && tail[$0 + 1] == 0x4b && tail[$0 + 2] == 5 && tail[$0 + 3] == 6
+            }) else { return unreadable }
+            let total = u16(tail, end + 10), listSize = u32(tail, end + 12), listStart = u32(tail, end + 16)
+            if total == 0xffff || listStart == 0xffff_ffff { return "a large zip archive whose files Lamp didn't list" }
+            guard listStart + listSize <= size, listSize <= 1 << 20, let list = read(listStart, Int(listSize)) else { return unreadable }
+            var names: [String] = [], at = 0
+            for _ in 0..<total {
+                guard at + 46 <= list.count, list[at] == 0x50, list[at + 1] == 0x4b, list[at + 2] == 1, list[at + 3] == 2 else { return unreadable }
+                let nameLength = u16(list, at + 28), next = at + 46 + nameLength + u16(list, at + 30) + u16(list, at + 32)
+                guard next <= list.count else { return unreadable }
+                if names.count < 12 { names.append(String(String(decoding: list[(at + 46)..<(at + 46 + nameLength)], as: UTF8.self).prefix(100))) }
+                at = next
+            }
+            guard total > 0 else { return "an empty zip archive" }
+            let more = total > names.count ? ", and \(total - names.count) more" : ""
+            return "a zip archive of \(total) \(total == 1 ? "entry" : "entries"): " + names.joined(separator: ", ") + more
+        }
+    }
+    // end LampSaves
+
     /// Lets Lamp's builder use the app the way a person would: it clicks, types, presses keys and picks from
     /// menus in the front window, from inside the app, so no Accessibility permission is needed. An action names
     /// what it's for by `target`, an id or name from the screen as text (LampScreen, written beside each picture),
@@ -9422,7 +9535,15 @@ enum Template {
             let front = LampRuntime.windowsOnScreen.first
             let before = front.flatMap(LampRuntime.picture), dialog = front.map(isDialog) ?? false
             var report: [String] = []
+            // A download the actions set off is this batch's until it answers (`LampSaves`).
+            LampSaves.batch = id
             func answer(stopped: Bool) {
+                // A newer batch, begun meanwhile, says what's saved in its own answer. So does the next one after a stop:
+                // Lamp may stop reading for this answer once it has stopped, and what's saved would be said to no one.
+                if LampSaves.batch == id || LampSaves.batch == nil {
+                    LampSaves.batch = nil
+                    if !stopped { report += LampSaves.news(for: id) }
+                }
                 var answer = ["id": id, "report": report.joined(separator: "\n")]
                 if stopped { answer["stopped"] = "person" }
                 // Once the pictures are written, which Lamp reads with the answer.
@@ -9478,13 +9599,22 @@ enum Template {
                 keepBarPanel()
                 note()
                 guard index < actions.count else {
-                    batch.end()
-                    // Let the app react, then show the result.
-                    after(0.6) {
-                        keepBarPanel()
-                        report.append(outcome(since: front, before, wasDialog: dialog))
-                        answer(stopped: false)
+                    // Let the app react, then show the result: once a file the actions are saving is written, or up to
+                    // `LampSaves.wait` seconds, after which it's said to be still saving. The batch is still running till
+                    // then, so Lamp's Stop or the person's own click ends the wait and answers at once (`Handover`).
+                    func finish(waited: Double) {
+                        // Stopped (it has answered) or replaced by a newer batch.
+                        guard batch.carriesOn else { return }
+                        guard LampSaves.writing, waited < LampSaves.wait else {
+                            batch.end()
+                            keepBarPanel()
+                            report.append(outcome(since: front, before, wasDialog: dialog))
+                            answer(stopped: false)
+                            return
+                        }
+                        after(0.25) { finish(waited: waited + 0.25) }
                     }
+                    after(0.6) { finish(waited: 0) }
                     return
                 }
                 let action = actions[index]
@@ -9755,7 +9885,8 @@ enum Template {
                     // The panel's own Save button answers to the real keyboard only; end it as that would.
                     if let parent = panel.sheetParent { parent.endSheet(panel, returnCode: .OK) } else { NSApp.stopModal(withCode: .OK) }
                     panel.orderOut(nil)
-                    return "pressed return: saved as \(panel.url?.path ?? panel.nameFieldStringValue)"
+                    return "pressed return: the save panel accepted \(panel.url?.path ?? panel.nameFieldStringValue) as where to save. " +
+                        "That alone doesn't mean the file was written there"
                 case ("key", "escape"):
                     panel.cancel(nil)
                     return "pressed escape: canceled the panel"
