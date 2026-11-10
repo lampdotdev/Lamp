@@ -126,6 +126,26 @@ export function scaled(icon, side) {
   return encode(side, side, out);
 }
 
+/** A PNG made `width` pixels wide, its height in proportion; null for one this can't read. */
+export function resized(bytes, width) {
+  const picture = decode(bytes);
+  if (!picture) return null;
+  width = Math.max(1, Math.round(width));
+  const height = Math.max(1, Math.round((picture.height * width) / picture.width)), out = Buffer.alloc(width * height * 4);
+  const across = picture.width / width, down = picture.height / height;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const x0 = Math.floor(x * across), x1 = Math.max(x0 + 1, Math.min(picture.width, Math.ceil((x + 1) * across)));
+      const y0 = Math.floor(y * down), y1 = Math.max(y0 + 1, Math.min(picture.height, Math.ceil((y + 1) * down)));
+      const sum = [0, 0, 0, 0];
+      for (let sy = y0; sy < y1; sy++) for (let sx = x0; sx < x1; sx++) { const at = (sy * picture.width + sx) * 4; for (let c = 0; c < 4; c++) sum[c] += picture.rgba[at + c]; }
+      const count = (x1 - x0) * (y1 - y0), at = (y * width + x) * 4;
+      for (let c = 0; c < 4; c++) out[at + c] = Math.round(sum[c] / count);
+    }
+  }
+  return encode(width, height, out);
+}
+
 // The tile's color: Lamp's dark blue, the same one the package's manifest names for the tile behind it.
 const TILE = [27, 27, 58];
 

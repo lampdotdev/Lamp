@@ -22,7 +22,8 @@ import { lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSy
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Away, OffNetwork, Refused, Rejected, Runner, StillWorking, answersOn, bonjour, pinsAt, searchNetwork, send, ssdp } from "./devices.mjs";
-import { installTools, makeEmulator, toolsThere, useLamps } from "./android.mjs";
+import { adbCommand, connectTo, deviceListing, deviceProperties, displaySizeOf, dumpIn, installApk, installTools, launchApp, makeEmulator, pairWith, processIn, processOf,
+  rowsOf, saveState, screenItems, screenshotOf, tellApp, toolsThere, useLamps } from "./android.mjs";
 import { Unreachable, ideasOf, latestOf, publishLink, removeFile, removeIdea, removeLink, sendFile } from "./link.mjs";
 import { defaultRoute, homeNetwork, neighbours, samsungAt, subnetOn, tvsIn } from "./network.mjs";
 import { PUBLISHER, identityName, keptSigner, namesOf, packageOf, versionAfter } from "./msix.mjs";
@@ -80,7 +81,50 @@ const outcomeOf = (outcome) => ({ ...outcome, picture: outcome.picture ? Buffer.
 const linkOf = (given) => ({ id: text(given, "id"), secret: text(given, "secret") });
 const siteOf = (given) => text(given, "site").replace(/\/+$/, "");
 
+/** Lamp's app's Android, handed over with every adb call: its tools list, folders and environment (its own adb server and key). */
+const androidFor = (given) => useLamps(given.lamp ?? {});
+const serialOf = (given) => text(given, "serial");
+
 export const CALLS = {
+  /** One adb command for Lamp's app (`args` after the serial), with `input` on adb's input when given: what it said. */
+  async adb(given) {
+    androidFor(given);
+    return adbCommand(Array.isArray(given.args) ? given.args.map(String) : [], { serial: typeof given.serial === "string" ? given.serial : undefined,
+      timeout: Math.round((Number(given.timeout) > 0 ? Number(given.timeout) : 60) * 1000), input: typeof given.input === "string" ? given.input : undefined });
+  },
+  /** The devices adb can see, each with what it says of itself when it's ready, and what adb's search sees on the network. */
+  async androidDevices(given) { androidFor(given); return deviceListing(); },
+  /** adb's listing read into rows, for what Lamp's app was handed some other way. */
+  async androidRows(given) { return { rows: rowsOf(text(given, "listing")) }; },
+  /** What one device says of itself now. */
+  async androidProperties(given) { androidFor(given); return { properties: await deviceProperties(serialOf(given)) }; },
+  async androidConnect(given) { androidFor(given); return { connected: await connectTo(text(given, "target")) }; },
+  /** Pairs with a device by its code, which comes on the call's input and goes on adb's. */
+  async androidPair(given) { androidFor(given); return { pairing: await pairWith(text(given, "host"), Number(given.port), text(given, "code")) }; },
+  async androidInstallApp(given) { androidFor(given); await installApk(serialOf(given), text(given, "apk"), text(given, "package")); return {}; },
+  async androidTell(given) { androidFor(given); return { problem: await tellApp(serialOf(given), text(given, "package"), given.values ?? {}) }; },
+  async androidSaveState(given) { androidFor(given); return { saved: await saveState(serialOf(given), text(given, "package")) }; },
+  async androidLaunch(given) { androidFor(given); return { pid: await launchApp(serialOf(given), text(given, "package")) }; },
+  /** Whether the app runs on the device: running (with its process), gone, or unreachable. With `said`, what pidof said, read without asking. */
+  async androidProcess(given) {
+    if (given.said) return processIn(given.said);
+    androidFor(given);
+    return processOf(serialOf(given), text(given, "package"));
+  },
+  /** The screen as a PNG in base64, a pixel to a point by the device's density. */
+  async androidScreenshot(given) {
+    androidFor(given);
+    const png = await screenshotOf(serialOf(given), given.density);
+    return { png: png ? png.toString("base64") : null };
+  },
+  async androidDisplaySize(given) { androidFor(given); return { size: await displaySizeOf(serialOf(given)) }; },
+  /** The screen's dump, as `uiautomator dump` gave it (`said`), read into what's on it, in points at `scale`; null items when it held no dump. */
+  async androidScreenItems(given) {
+    const xml = dumpIn(text(given, "said"));
+    return { items: xml ? screenItems(xml, Number(given.scale) > 0 ? Number(given.scale) : 1) : null };
+  },
+
+
   /**
    * Downloads whichever of Android's tools Lamp's app is missing, into its tools folder, as its tools list says (each
    * archive checked against what its maker publishes, then Google's packages through its own package manager, which

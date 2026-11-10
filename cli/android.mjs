@@ -15,7 +15,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Problem, stateOf } from "./state.mjs";
-import { scaled, sizeOf, tile } from "./png.mjs";
+import { resized, scaled, sizeOf, tile } from "./png.mjs";
 import { nameOf, pageFiles } from "./share.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -747,3 +747,183 @@ export async function emulators() {
 }
 
 export { advice as androidAdvice };
+
+// MARK: What Lamp's app asks of adb
+
+// adb for Lamp's app: every command it sends a device, through its own server and with its own key (`useLamps`), and
+// what adb's words say read here, once, for lamp and for the app. What a device is to Lamp (a TV's record, which device
+// Try On means) is the app's; what's shown on its screen (the emulator's window, the fingertip) too.
+
+/** One adb command, as Lamp's app sends it: its words, and whether it ended well. */
+export async function adbCommand(args, { serial, timeout = 60_000, input } = {}) {
+  const ran = await adb(args, { serial, timeout, input });
+  return { ok: ran.ok, out: ran.out, err: ran.err, timedOut: ran.timedOut };
+}
+
+/** Each line of `adb devices -l`: the selector adb takes with -s, and its state. */
+export function rowsOf(listing) {
+  return String(listing).split("\n").slice(1).map((line) => line.trim().split(/\s+/)).filter((parts) => parts.length >= 2 && parts[0])
+    .map(([serial, state]) => ({ serial, state }));
+}
+
+const PROPERTY_KEYS = ["ro.product.manufacturer", "ro.product.model", "ro.product.device", "ro.build.version.release", "ro.build.version.sdk",
+  "ro.kernel.qemu", "ro.boot.qemu", "ro.serialno"];
+
+/** What a device says of itself: maker, model, Android's version, whether it's a TV, and its screen. */
+export function propertiesOf(said) {
+  const properties = {};
+  for (const line of String(said).split("\n").map((each) => each.trim())) {
+    const equals = line.indexOf("=");
+    if (equals >= 0) properties[line.slice(0, equals)] = line.slice(equals + 1);
+    else if (line.startsWith("Physical size:")) properties.size = line.slice("Physical size:".length).trim();
+    else if (line.startsWith("Physical density:")) properties.density = line.slice("Physical density:".length).trim();
+  }
+  return properties;
+}
+
+export async function deviceProperties(serial) {
+  // A TV says so by its leanback feature: Google TV, Android TV, Fire TV and the Android TV emulator alike.
+  const asked = PROPERTY_KEYS.map((key) => `echo ${key}=$(getprop ${key})`).join(";") + ";echo leanback=$(pm has-feature android.software.leanback);wm size;wm density";
+  return propertiesOf((await adb(["shell", asked], { serial, timeout: 20_000 })).out);
+}
+
+/** The devices adb can see, each with its state, what it says of itself when it's ready, and what adb's search sees on the network. */
+export async function deviceListing() {
+  const listing = (await adb(["devices", "-l"], { timeout: 30_000 })).out, services = (await adb(["mdns", "services"], { timeout: 10_000 })).out;
+  const rows = rowsOf(listing);
+  for (const row of rows) if (row.state === "device") row.properties = await deviceProperties(row.serial);
+  return { listing, rows, services };
+}
+
+/** Connects adb to a device listening at "address:port": only once adb says it's connected. */
+export async function connectTo(target) {
+  const said = (await adb(["connect", target], { timeout: 10_000 })).out.toLowerCase();
+  return said.includes("connected to") && !said.includes("failed") && !said.includes("cannot");
+}
+
+/** Pairs this computer's adb with a device by the code it shows, given on adb's input rather than in its arguments. */
+export async function pairWith(host, port, code) {
+  const ran = await adb(["pair", `${host}:${port}`], { timeout: 30_000, input: `${code}\n` });
+  const said = (ran.out + ran.err).toLowerCase();
+  return said.includes("successfully paired") ? "paired" : said.includes("wrong password") ? "wrongCode" : "unanswered";
+}
+
+/**
+ * Puts the app on the device in place of the copy there. One signed with another key can't be updated: it's taken
+ * off first, and its data with it, since Android allows no other way.
+ */
+export async function installApk(serial, apk, pkg) {
+  let ran = await adb(["install", "-r", "-t", apk], { serial, timeout: 300_000 });
+  if (!ran.ok && (ran.out + ran.err).includes("INSTALL_FAILED_UPDATE_INCOMPATIBLE")) {
+    await adb(["uninstall", pkg], { serial, timeout: 60_000 });
+    ran = await adb(["install", "-r", "-t", apk], { serial, timeout: 300_000 });
+  }
+  if (!ran.ok) throw new Problem(`Couldn't put the app on the device: ${(ran.out + ran.err).trim()}`);
+}
+
+/**
+ * Writes what the app is told about itself and Lamp into its own storage on the device: on adb's input, never in a
+ * command's arguments, and through `run-as`, which only a debuggable app allows, so it lands where only the app reads.
+ */
+export async function tellApp(serial, pkg, values) {
+  const ran = await adb(["shell", `run-as ${pkg} sh -c 'mkdir -p files && cat > files/lamp-install.json'`], { serial, timeout: 30_000, input: JSON.stringify(values) });
+  return ran.ok ? null : (ran.out + ran.err).trim();
+}
+
+/** Asks the running app to save where the person is; true once it says it saved. */
+export async function saveState(serial, pkg) {
+  const ran = await adb(["shell", "am", "broadcast", "-a", `${pkg}.LAMP_SAVE_STATE`, "-p", pkg], { serial, timeout: 10_000 });
+  return ran.ok && ran.out.includes('data="saved"');
+}
+
+/**
+ * What `pidof` says of an app: running (with its process), gone, or unreachable, when adb couldn't reach the device
+ * ("not found", "offline", "no devices") or said nothing in time, which isn't the app having quit.
+ */
+export function processIn({ ok, out = "", err = "", timedOut = false }) {
+  const pid = Number(out.trim());
+  if (Number.isInteger(pid) && pid > 0 && /^\d+$/.test(out.trim())) return { state: "running", pid };
+  const said = (out + err).toLowerCase();
+  if (timedOut || /not found|offline|no devices|unauthorized|closed/.test(said)) return { state: "unreachable" };
+  return { state: "gone" };
+}
+
+export async function processOf(serial, pkg) {
+  return processIn(await adb(["shell", "pidof", pkg], { serial, timeout: 20_000 }));
+}
+
+/** Starts the app's main activity afresh; its process once it's running. */
+export async function launchApp(serial, pkg) {
+  await adb(["shell", "am", "force-stop", pkg], { serial, timeout: 30_000 });
+  const ran = await adb(["shell", "am", "start", "-W", "-n", `${pkg}/.MainActivity`], { serial, timeout: 60_000 });
+  if (!ran.ok || ran.out.includes("Error")) throw new Problem(`The app didn't launch: ${(ran.out + ran.err).trim()}`);
+  for (let tries = 0; tries < 20; tries++) {
+    const now = await processOf(serial, pkg);
+    if (now.state === "running") return now.pid;
+    await sleep(250);
+  }
+  throw new Problem("The app started and quit at once.");
+}
+
+/** Android's own scale: 160 dpi is one pixel a point. */
+export const scaleOf = (density) => (Number(density) > 0 ? Math.max(1, Number(density) / 160) : 1);
+
+/** A picture of the screen as a PNG, made smaller by the device's density so a pixel in it is a point on the screen. */
+export async function screenshotOf(serial, density) {
+  const shot = await adb(["exec-out", "screencap", "-p"], { serial, timeout: 60_000, binary: true });
+  if (!shot.ok || !sizeOf(shot.out)) return null;
+  const scale = scaleOf(density);
+  return scale > 1 ? resized(shot.out, sizeOf(shot.out).width / scale) ?? shot.out : shot.out;
+}
+
+/** The screen's size in pixels as the system draws it now: a size set with `wm size` over the panel's own. */
+export async function displaySizeOf(serial) {
+  const sizes = [];
+  for (const line of (await adb(["shell", "wm", "size"], { serial, timeout: 20_000 })).out.split("\n")) {
+    const [label, value] = line.split(":");
+    const numbers = (value ?? "").trim().split("x").map(Number);
+    if (numbers.length === 2 && numbers.every((n) => n > 0)) sizes.push({ override: label.startsWith("Override"), width: numbers[0], height: numbers[1] });
+  }
+  const size = sizes.find((each) => each.override) ?? sizes[0];
+  return size ? { width: size.width, height: size.height } : null;
+}
+
+const UNESCAPE = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+const unescaped = (text) => text.replace(/&(#x?[0-9a-fA-F]+|[a-z]+);/g, (whole, name) =>
+  name[0] === "#" ? String.fromCodePoint(name[1] === "x" ? parseInt(name.slice(2), 16) : Number(name.slice(1))) : UNESCAPE[name] ?? whole);
+
+/**
+ * What's on the screen, from the system's own dump of it (`uiautomator dump`): one item per thing the person can see
+ * or act on, in reading order, its frame in points (the dump's pixels over `scale`), each with an id of its kind's
+ * letter and its count ("b3"). A layout with no words of its own is just structure, and isn't one.
+ */
+export function screenItems(xml, scale = 1) {
+  const items = [], counts = {};
+  for (const [, body] of String(xml).matchAll(/<node\b([^>]*?)\/?>/g)) {
+    const attributes = {};
+    for (const [, name, value] of body.matchAll(/([\w-]+)="([^"]*)"/g)) attributes[name] = unescaped(value);
+    const text = attributes.text ?? "", description = attributes["content-desc"] ?? "";
+    const className = (attributes.class ?? "").split(".").pop();
+    const clickable = attributes.clickable === "true", scrollable = attributes.scrollable === "true", checkable = attributes.checkable === "true";
+    const kind = { EditText: "field", Switch: "switch", ToggleButton: "switch", CheckBox: "checkbox", RadioButton: "checkbox", Button: "button" }[className]
+      ?? (className === "ImageView" || className === "ImageButton" ? (clickable ? "button" : "image")
+        : checkable ? "checkbox" : clickable ? "button" : scrollable ? "list" : "text");
+    if (!text && !description && !clickable && !checkable && className !== "EditText" && !scrollable) continue;
+    const numbers = (attributes.bounds ?? "").split(/[[\],]/).filter(Boolean).map(Number);
+    if (numbers.length !== 4 || numbers.some((n) => !Number.isFinite(n))) continue;
+    const frame = { x: numbers[0] / scale, y: numbers[1] / scale, width: (numbers[2] - numbers[0]) / scale, height: (numbers[3] - numbers[1]) / scale };
+    if (frame.width <= 0 || frame.height <= 0) continue;
+    const name = description || (kind === "field" ? attributes.hint ?? "" : text);
+    const value = kind === "field" || description ? text : "";
+    counts[kind[0]] = (counts[kind[0]] ?? 0) + 1;
+    items.push({ id: `${kind[0]}${counts[kind[0]]}`, kind, name, value: value === name ? "" : value, frame,
+      checked: checkable ? attributes.checked === "true" : null, enabled: attributes.enabled !== "false", clickable, scrollable, focused: attributes.focused === "true" });
+  }
+  return items;
+}
+
+/** The dump between its `<?xml` and its `</hierarchy>`, or null when it has none (a screen asleep, or still being laid out). */
+export function dumpIn(said) {
+  const start = String(said).indexOf("<?xml"), end = String(said).indexOf("</hierarchy>");
+  return start >= 0 && end > start ? String(said).slice(start, end + "</hierarchy>".length) : null;
+}

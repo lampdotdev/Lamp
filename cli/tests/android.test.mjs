@@ -96,3 +96,36 @@ test("a game goes on lamp's Android emulator, is looked at and tried there, stop
     assert.equal(await removeFromAndroid(layout, place), false, "nothing of lamp's left to take off");
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
+
+test("what adb says is read once, for lamp and for Lamp's app: devices, a device's own words, an app's process, the screen", async () => {
+  const { dumpIn, processIn, propertiesOf, rowsOf, screenItems } = await import("../android.mjs");
+  const { encode, resized, sizeOf } = await import("../png.mjs");
+  assert.deepEqual(rowsOf("List of devices attached\nemulator-5554          device product:sdk model:Pixel\n192.168.1.50:5555 unauthorized\n\n"),
+    [{ serial: "emulator-5554", state: "device" }, { serial: "192.168.1.50:5555", state: "unauthorized" }]);
+  assert.deepEqual(propertiesOf("ro.product.model=Den TV\nleanback=true\nPhysical size: 1920x1080\nPhysical density: 320\n"),
+    { "ro.product.model": "Den TV", leanback: "true", size: "1920x1080", density: "320" });
+  assert.deepEqual(processIn({ ok: true, out: "4242\n" }), { state: "running", pid: 4242 });
+  assert.deepEqual(processIn({ ok: false, out: "", err: "adb: device 'x' not found" }), { state: "unreachable" }, "a device adb can't reach isn't an app that quit");
+  assert.deepEqual(processIn({ ok: false, out: "" }), { state: "gone" });
+  assert.deepEqual(processIn({ ok: false, out: "", timedOut: true }), { state: "unreachable" });
+
+  const dump = `noise<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0">
+    <node class="android.widget.FrameLayout" bounds="[0,0][1080,2400]" clickable="false" text="" content-desc="">
+      <node class="android.widget.TextView" text="Tea &amp; Toast" bounds="[60,120][600,180]" clickable="false" enabled="true" />
+      <node class="android.widget.EditText" text="" hint="Name" bounds="[60,300][1020,420]" clickable="true" focused="true" />
+      <node class="android.widget.Switch" text="Sugar" bounds="[60,500][1020,600]" clickable="true" checkable="true" checked="true" />
+      <node class="android.widget.Button" text="Brew" bounds="[60,700][600,800]" clickable="true" enabled="false" />
+    </node></hierarchy>trailing`;
+  const xml = dumpIn(dump);
+  assert.ok(xml.startsWith("<?xml") && xml.endsWith("</hierarchy>"));
+  const items = screenItems(xml, 3);
+  assert.deepEqual(items.map((item) => `${item.id} ${item.kind} ${item.name}`), ["t1 text Tea & Toast", "f1 field Name", "s1 switch Sugar", "b1 button Brew"]);
+  assert.deepEqual(items[0].frame, { x: 20, y: 40, width: 180, height: 20 }, "in points, the dump's pixels over the scale");
+  assert.equal(items[1].focused, true);
+  assert.equal(items[2].checked, true);
+  assert.equal(items[3].enabled, false);
+  assert.equal(dumpIn("ERROR: null root node returned by UiTestAutomationBridge."), null, "a screen asleep has no dump");
+
+  const shot = encode(4, 2, Buffer.alloc(32, 120));
+  assert.deepEqual(sizeOf(resized(shot, 2)), { width: 2, height: 1 }, "a picture made smaller in proportion");
+});

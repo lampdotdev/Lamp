@@ -30,7 +30,11 @@ runtime, Google's command-line tools and Gradle, each checked against the checks
 Google's own package manager the platform tools, a build-tools, the platform and the emulator with one system image.
 The download, and making an emulator from its image, are lamp's command line's (`androidInstall` and
 `androidMakeEmulator` in cli/calls.mjs, the same as `lamp devices add android`), handed the tools list Lamp's code
-holds (`AndroidTools.spec`), its folders and its environment (`AndroidTools.lamp`).
+holds (`AndroidTools.spec`), its folders and its environment (`AndroidTools.lamp`). So is every adb command Lamp
+sends, and what adb's words say (`Adb`, a client of cli/android.mjs: its listing and a device's properties, an install,
+`run-as`, a launch and a process, the screenshot a pixel to a point, the screen read from `uiautomator`'s dump, pairing
+and connecting), on Lamp's own adb server with Lamp's key; what a device is to Lamp (a TV's record), the person's
+words, the app's log stream (`Adb.logcat`) and the emulator's window and hand-over are here.
 They go in `Edition.sharedDeveloperFolder` (~/Library/Developer/Lamp), one copy for every Lamp on this Mac, which the
 agent's sandbox lets a build read and never write, so what Lamp runs from there as itself (adb, the emulator) is what
 Lamp put there; Gradle's cache is in `Edition.sharedCachesFolder`, which the sandbox opens for writing, and each app's
