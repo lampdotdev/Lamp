@@ -6,7 +6,7 @@
 // when lamp asks it to, with no permission asked of anyone (an app may picture its own windows).
 //
 // A saved change builds the app again and opens it again. Putting a change into the app while it runs is Lamp's
-// app's still (`LiveReload`).
+// app's still (`LiveReload`): `lamp open --in-lamp` hands the folder to it (outside.mjs).
 
 import { createServer } from "node:http";
 import { randomBytes, createHash, createHmac } from "node:crypto";
