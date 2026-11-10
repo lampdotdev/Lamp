@@ -98,6 +98,34 @@ export function sizeOf(bytes) {
   return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
 }
 
+/**
+ * The app's icon as a square of that many pixels, clear where the icon is: what a phone's home screen shows. Null for
+ * no icon, or one this can't read.
+ */
+export function scaled(icon, side) {
+  const picture = icon && decode(icon);
+  if (!picture) return null;
+  const out = Buffer.alloc(side * side * 4), across = picture.width / side, down = picture.height / side;
+  for (let y = 0; y < side; y++) {
+    for (let x = 0; x < side; x++) {
+      const x0 = Math.floor(x * across), x1 = Math.max(x0 + 1, Math.min(picture.width, Math.ceil((x + 1) * across)));
+      const y0 = Math.floor(y * down), y1 = Math.max(y0 + 1, Math.min(picture.height, Math.ceil((y + 1) * down)));
+      let r = 0, g = 0, b = 0, a = 0;
+      for (let sy = y0; sy < y1; sy++) {
+        for (let sx = x0; sx < x1; sx++) {
+          const at = (Math.min(sy, picture.height - 1) * picture.width + Math.min(sx, picture.width - 1)) * 4, alpha = picture.rgba[at + 3];
+          r += picture.rgba[at] * alpha; g += picture.rgba[at + 1] * alpha; b += picture.rgba[at + 2] * alpha; a += alpha;
+        }
+      }
+      if (!a) continue;
+      const at = (y * side + x) * 4;
+      out[at] = Math.round(r / a); out[at + 1] = Math.round(g / a); out[at + 2] = Math.round(b / a);
+      out[at + 3] = Math.round(a / ((x1 - x0) * (y1 - y0)));
+    }
+  }
+  return encode(side, side, out);
+}
+
 // The tile's color: Lamp's dark blue, the same one the package's manifest names for the tile behind it.
 const TILE = [27, 27, 58];
 

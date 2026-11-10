@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Problem, stateOf } from "./state.mjs";
+import { androidDeviceNamed, emulatorNamed, knowsAndroid, lookOnAndroid, putOnAndroid, removeFromAndroid, stopOnAndroid, useOnAndroid } from "./android.mjs";
 import { Away, Runner, StillWorking, allKept, answersOn, devicesHome, integrationOf, isReady, kept, look, takesPages } from "./devices.mjs";
 import { PUBLISHER, WEB_HOST, identityName, keptSigner, namesOf, packageOf, versionAfter } from "./msix.mjs";
 import { sizeOf, tile } from "./png.mjs";
@@ -42,6 +43,45 @@ export function deviceNamed(word, { command = "lamp" } = {}) {
   if (found.length > 1) throw new Problem(`"${word}" could be ${found.map((device) => `"${device.name}"`).join(" or ")}: say which by its name.`);
   if (!isReady(found[0], integrationOf(found[0].integration))) throw new Problem(`${found[0].name} isn't all set up yet. ${setUp}.`);
   return found[0];
+}
+
+/**
+ * Where the word after --on says a page goes, each put on, looked at, stopped and taken off the same way: lamp's own
+ * Android emulator ("android", "android-tv"), a device lamp set up ("xbox", or its name), or an Android device of the
+ * person's that adb sees (its name, or adb's serial for it). Only an Android place can be tried (`use`): adb sends it
+ * taps and keys, where a console takes none.
+ */
+export async function placeNamed(word, { command = "lamp" } = {}) {
+  const android = (place) => ({
+    name: place.name, word: place.word,
+    put: (layout, options = {}) => putOnAndroid(layout, place, { ...options, command }),
+    look: (layout) => lookOnAndroid(layout, place, { command }),
+    use: (layout, moves) => useOnAndroid(layout, place, moves, { command }),
+    stop: (layout) => stopOnAndroid(layout, place),
+    remove: (layout) => removeFromAndroid(layout, place, { command }),
+  });
+  const emulator = emulatorNamed(word);
+  if (emulator) {
+    if (!knowsAndroid()) throw new Problem(process.platform === "darwin" ? "Lamp's Android app for a page isn't beside this copy of lamp: scripts/cli-files.sh writes it" : "lamp builds for Android on a Mac, so far");
+    return android(emulator);
+  }
+  let device, missing;
+  try { device = deviceNamed(word, { command }); } catch (error) { if (!(error instanceof Problem)) throw error; missing = error; }
+  if (device) {
+    return {
+      name: device.name, word,
+      put: async (layout, options = {}) => {
+        const put = await putOn(layout, device, options);
+        return { ...put, line: `${put.name} is open on ${device.name}${put.game ? ", installed as a game" : ""}: ${put.files} files, version ${put.identity.version}.` };
+      },
+      look: (layout) => lookOn(layout, device),
+      stop: (layout) => stopOn(layout, device),
+      remove: (layout) => removeFrom(layout, device),
+    };
+  }
+  const own = await androidDeviceNamed(word);
+  if (own) return android(own);
+  throw new Problem(`${missing.message}${knowsAndroid() ? ` lamp's Android emulator is --on android, and an Android device of the person's goes by its name once it's plugged in with USB debugging on (${command} devices lists them).` : ""}`);
 }
 
 /**

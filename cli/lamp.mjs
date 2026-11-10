@@ -10,7 +10,7 @@
 //   lamp use [folder] …   try it: a key, a click, some typing
 //   lamp stop [folder]    stop running it
 //   lamp share [folder]   a link on lamp.dev to play it, and lamp ideas for what people send back
-//   lamp devices          the person's devices; lamp open --on xbox puts a page on one
+//   lamp devices          the person's devices; lamp open --on xbox, or --on android, puts a page on one
 //   lamp setup            teach the coding agents on this computer to work this way
 //   lamp skills           Lamp's guidance for each kind of work; lamp skill <name> reads one
 
@@ -25,7 +25,8 @@ import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS 
 import { allSkills } from "./skills.mjs";
 import { share, unshare, ideas, finishIdea, readLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
 import { Runner, allKept, fields, forget, integrationOf, isReady, look as lookForDevices, takesPages } from "./devices.mjs";
-import { deviceNamed, lookOn, putOn, removeFrom, stopOn } from "./place.mjs";
+import { placeNamed } from "./place.mjs";
+import { androidAdvice, androidDevices, androidDone, emulatorNamed, emulators, forgetAndroid, installTools, knowsAndroid, toolsThere } from "./android.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -42,10 +43,12 @@ Mac app Lamp made in Swift, built and run on this Mac.
   lamp dev [folder] [--open] [--port N] [--lan]
       Run it, saying how each change went. --open opens a window for it; --lan lets other devices on the
       network open it too.
-  lamp open [folder] [--on <device>]
+  lamp open [folder] [--on <device>] [--hidden]
       Show it in a window, running it in the background if it isn't running. Returns at once.
       --on puts a page on one of the person's devices instead and opens it there (--on xbox): packaged, installed
-      and opened, the copy that was there replaced.
+      and opened, the copy that was there replaced. --on android builds Lamp's Android app around the page and
+      opens it in lamp's Android emulator (--on android-tv, its TV emulator), or on a phone, tablet or TV of the
+      person's by its name. --hidden starts the emulator with no window and no sound, for a check nobody watches.
   lamp look [folder] [--reopen] [--size 800x600] [--wait seconds] [--json]
       How the changes since the last look went, a picture of the page (or of a Mac app's windows), its screen as
       text, and its log. --reopen opens it again from its beginning first (what it saved kept): what someone
@@ -53,8 +56,9 @@ Mac app Lamp made in Swift, built and run on this Mac.
       --size looks at it as a window of that size shows it, when no window of the person's is open.
       --on <device> looks at the device instead: its screen as a picture, whether the app is open there, and what
       the app last logged there, which for a game says how many frames a second it gets.
-  lamp use [folder] <one of these>
-      Try it as a person would, then look:
+  lamp use [folder] [--on <android device>] <one of these>
+      Try it as a person would, then look. --on tries it on an Android place instead: a point of its picture
+      clicked or dragged from, typing, one key or one controller's button at a time (no stick), and wait.
         click <x> <y>                         a point of the picture
         click "A Name"                        a control by its name in the screen as text
         type <text>                           into whatever has the keyboard
@@ -73,13 +77,16 @@ Mac app Lamp made in Swift, built and run on this Mac.
       Open the page again from its files, a game from where the player is, or with --fresh from its beginning.
       A Mac app is quit and opened again.
   lamp stop [folder] [--on <device>]
-      Stop running it. A Mac app is quit. --on ends it on a device instead.
+      Stop running it. A Mac app is quit. --on ends it on a device instead (and closes an emulator lamp started
+      with no window).
   lamp remove [folder] --on <device>
       Take it off a device lamp put it on.
   lamp devices [add [name] | forget <name>]
-      The person's devices that lamp puts a page on (an Xbox in Developer Mode, so far): those set up, and those
-      found on the network. "add" sets one up, a step at a time; it asks for what only the person should type (an
-      Xbox's Device Portal password), so they run it in a terminal themselves. "forget" lets one go.
+      The person's devices that lamp puts a page on: an Xbox in Developer Mode, those set up and those found on the
+      network; and Android, lamp's emulators and the phones, tablets and TVs plugged in with USB debugging on.
+      "add" sets one up, a step at a time; it asks for what only the person should do (type an Xbox's Device Portal
+      password; accept Google's terms for Android's tools, with "add android"), so they run it in a terminal
+      themselves. "forget" lets one go ("forget android": lamp's emulators and its key to the person's devices).
   lamp share [folder] --words "What it is" [--name N] [--line "A line under its name"] [--by "Who made it"]
              [--asks "Found a bug?|What's missing?"] [--shape fill|16:9] [--no-picture] [--anyway]
       Put the page on lamp.dev, where anyone with the link plays it and can send an idea. Public, so only when the
@@ -177,7 +184,7 @@ async function serverFor(folder) {
 
 /** A look at a device, as words: whether the app is open there, where the picture of its screen is, and what the app logged. */
 function deviceReport(seen) {
-  const lines = [seen.installed ? (seen.running === false ? `On ${seen.device}: not open now (lamp open --on puts it there again).` : `On ${seen.device}: open.`)
+  const lines = [...(seen.did ? [seen.did] : []), seen.installed ? (seen.running === false ? `On ${seen.device}: not open now (lamp open --on puts it there again).` : `On ${seen.device}: open.`)
     : `On ${seen.device}: lamp hasn't put this there yet (lamp open --on does).`];
   if (seen.picture) lines.push(`Picture: ${seen.picture}${seen.size ? ` (${seen.size.width}x${seen.size.height})` : ""}, the device's screen now, whatever is on it.`);
   if (seen.log) {
@@ -212,10 +219,55 @@ function typed(label) {
 /** What a device is, by its maker and model, the maker said once. */
 const called = (device) => (String(device.model).startsWith(device.maker) ? device.model : `${device.maker} ${device.model}`);
 
+/** One line read from the person at the terminal. */
+async function answered(question) {
+  const { createInterface } = await import("node:readline/promises");
+  const terminal = createInterface({ input: process.stdin, output: process.stdout });
+  try { return (await terminal.question(question)).trim(); } finally { terminal.close(); }
+}
+
+/** What `lamp devices` says of Android: lamp's emulators, and the person's devices adb sees. Nothing where lamp can't build for it. */
+async function androidLines() {
+  if (!knowsAndroid()) return [];
+  if (!toolsThere().builds) return [`Android: its tools aren't on this computer yet. "${lampCommand()} devices add android" downloads them (about 2 GB); it accepts Google's terms for them, so run it in a terminal yourself.`];
+  const lines = ["Android:"];
+  for (const emulator of await emulators()) {
+    const standing = !emulator.downloaded ? `not downloaded yet (${lampCommand()} devices add ${emulator.word}, about a gigabyte)`
+      : emulator.running ? `running${emulator.hidden ? ", with no window" : ""}` : "started when a page is opened in it";
+    lines.push(`  ${emulator.name[0].toUpperCase()}${emulator.name.slice(1)} (--on ${emulator.word}): ${standing}`);
+  }
+  const own = await androidDevices();
+  for (const device of own) lines.push(`  ${device.name} (--on ${/\s/.test(device.name) ? `"${device.name}"` : device.name}): ${device.state === "device" ? `ready${device.tv ? ", a TV" : ""}` : androidAdvice(device.name, device.state)}`);
+  if (!own.length) lines.push("  A phone, tablet or TV of the person's is listed once it's plugged in with USB debugging on.");
+  return lines;
+}
+
+/** `lamp devices add android`: Android's tools, downloaded once the person says so, since it accepts Google's terms for them. */
+async function addAndroid(tv) {
+  if (!knowsAndroid()) throw new Problem(process.platform === "darwin" ? "Lamp's Android app for a page isn't beside this copy of lamp: scripts/cli-files.sh writes it" : "lamp builds for Android on a Mac, so far");
+  const there = toolsThere(), word = tv ? "android-tv" : "android";
+  if (there.builds && there.emulatorPackages && (!tv || there.tvImage)) {
+    console.log(`Android's tools are on this computer. Open a page in ${tv ? "the Android TV emulator" : "the Android emulator"} with: ${lampCommand()} open --on ${word}`);
+    return;
+  }
+  if (!process.stdin.isTTY) throw new Problem(`this downloads Google's Android tools and accepts Google's terms for them, which only the person does: they run "${lampCommand()} devices add ${word}" in a terminal themselves`);
+  console.log(`lamp makes Android apps with Google's free tools, and ${there.builds && there.emulatorPackages ? "the Android TV emulator isn't" : "they aren't all"} on this computer yet: ${there.builds && there.emulatorPackages ? "about a gigabyte" : "about 2 GB"}, kept in ~/Library/Developer/Lamp for every Lamp here.`);
+  console.log("Downloading them accepts Google's terms for them: https://developer.android.com/studio/terms");
+  if (!/^y(es)?$/i.test(await answered("Download them? (y/n) "))) { console.log("Nothing was downloaded."); return; }
+  await installTools({ tv, said: (line) => console.log(line) });
+  console.log(`\nAndroid's tools are ready. Open a page in ${tv ? "the Android TV emulator" : "the Android emulator"} with: ${lampCommand()} open --on ${word}`);
+}
+
 /** `lamp devices`: the person's devices that take a page, and setting one up. */
 async function devices(args) {
   const { rest } = parse(args, []);
   const [verb, ...words] = rest, name = words.join(" ").toLowerCase();
+  if (verb === "add" && emulatorNamed(name)) return addAndroid(emulatorNamed(name).emulator === "tv");
+  if (verb === "forget" && name === "android") {
+    console.log((await forgetAndroid()) ? "Forgot Android: lamp's emulators and its key to the person's devices are gone. Android's tools stay, for every Lamp here, and what lamp put on a device is still there."
+      : "lamp has made nothing for Android to forget.");
+    return;
+  }
   const fits = (device) => !name || device.name.toLowerCase().includes(name) || device.integration.startsWith(name) || device.id.toLowerCase() === name;
 
   if (verb === "forget") {
@@ -248,9 +300,11 @@ async function devices(args) {
     const elsewhere = all.filter((device) => !pages.includes(device) && device.found !== false);
     if (elsewhere.length) console.log(`${mine.length || others.length ? "\n" : ""}Also there, which lamp's command line doesn't put a page on: ${elsewhere.map((device) => `${device.name} (${called(device)})`).join(", ")}.`);
     if (!mine.length && !others.length) {
-      console.log("lamp found no device it puts a page on. It puts one on an Xbox in Developer Mode, on this network and switched on:");
+      console.log("lamp found no Xbox to put a page on. One is found in Developer Mode, on this network and switched on:");
       for (const line of integrationOf("xbox-one")?.steps?.[0]?.lines ?? []) console.log(`  - ${line}`);
     }
+    const android = await androidLines();
+    if (android.length) console.log("\n" + android.join("\n"));
     return;
   }
 
@@ -467,7 +521,7 @@ async function main() {
   if (command === "look") {
     const { options, rest } = parse(args, ["wait", "size", "on"]);
     if (options.on !== undefined) {
-      const seen = await lookOn(layoutOf(rest[0] ?? "."), deviceNamed(options.on, { command: lampCommand() }));
+      const seen = await (await placeNamed(options.on, { command: lampCommand() })).look(layoutOf(rest[0] ?? "."));
       console.log(options.json ? JSON.stringify(seen, null, 2) : deviceReport(seen));
       return;
     }
@@ -483,7 +537,6 @@ async function main() {
 
   if (command === "use") {
     const { options, rest } = parse(args, ["on"]);
-    if (options.on !== undefined) throw new Problem("lamp can't press a controller on a device: try it in its window on this computer (lamp use), and see how it runs on the device with lamp look --on");
     const kinds = ["key", "click", "type", "wait", "drag", "scroll", "stick", "button"];
     const folder = rest.length && !kinds.includes(rest[0]) ? rest.shift() : ".";
     // Several moves, with "then" between them, are made one after another with nothing in between, and looked at once.
@@ -504,6 +557,13 @@ async function main() {
         : { kind, seconds: values[0] });
     }
     if (!moves.length) throw new Problem("use takes key, click, type, drag, scroll, stick, button or wait: lamp --help shows each");
+    if (options.on !== undefined) {
+      const place = await placeNamed(options.on, { command: lampCommand() });
+      if (!place.use) throw new Problem(`lamp can't press a controller on ${place.name}: try it in its window on this computer (lamp use), and see how it runs there with lamp look --on`);
+      const seen = await place.use(layoutOf(folder), moves);
+      console.log(options.json ? JSON.stringify(seen, null, 2) : deviceReport(seen));
+      return;
+    }
     const layout = projectOf(folder);
     const seen = await ask(await serverFor(layout.folder), "use", moves.length === 1 ? moves[0] : { moves }, { timeout: 60_000 + moves.length * 35_000 });
     console.log(options.json ? JSON.stringify(seen, null, 2) : report(seen));
@@ -513,9 +573,9 @@ async function main() {
   if (command === "open") {
     const { options, rest } = parse(args, ["on"]);
     if (options.on !== undefined) {
-      const layout = layoutOf(rest[0] ?? "."), device = deviceNamed(options.on, { command: lampCommand() });
-      const put = await putOn(layout, device, { said: (line) => console.log(line) });
-      console.log(`${put.name} is open on ${device.name}${put.game ? ", installed as a game" : ""}: ${put.files} files, version ${put.identity.version}.`);
+      const layout = layoutOf(rest[0] ?? "."), place = await placeNamed(options.on, { command: lampCommand() });
+      const put = await place.put(layout, { said: (line) => console.log(line), hidden: !!options.hidden });
+      console.log(put.line);
       console.log(`${lampCommand()} look --on ${options.on} shows its screen and what it logged there; ${lampCommand()} stop --on ${options.on} ends it.`);
       return;
     }
@@ -624,8 +684,8 @@ async function main() {
   if (command === "remove") {
     const { options, rest } = parse(args, ["on"]);
     if (options.on === undefined) throw new Problem("remove takes the device to take it off: lamp remove --on xbox");
-    const device = deviceNamed(options.on, { command: lampCommand() });
-    console.log((await removeFrom(layoutOf(rest[0] ?? "."), device)) ? `Taken off ${device.name}.` : `lamp hasn't put this on ${device.name}.`);
+    const place = await placeNamed(options.on, { command: lampCommand() });
+    console.log((await place.remove(layoutOf(rest[0] ?? "."))) ? `Taken off ${place.name}.` : `lamp hasn't put this on ${place.name}.`);
     return;
   }
 
@@ -635,8 +695,8 @@ async function main() {
     const { options, rest } = parse(args, ["on"]);
     if (options.on !== undefined) {
       if (command !== "stop") throw new Problem("a change goes on a device by putting the page there again: lamp open --on " + options.on);
-      const device = deviceNamed(options.on, { command: lampCommand() });
-      console.log((await stopOn(layoutOf(rest[0] ?? "."), device)) ? `Stopped on ${device.name}.` : `lamp hasn't put this on ${device.name}.`);
+      const place = await placeNamed(options.on, { command: lampCommand() });
+      console.log((await place.stop(layoutOf(rest[0] ?? "."))) ? `Stopped on ${place.name}.` : `lamp hasn't put this on ${place.name}.`);
       return;
     }
     const layout = projectOf(rest[0] ?? ".");
@@ -731,7 +791,8 @@ async function main() {
   throw new Problem(`there's no "${command}"\n\n${USAGE}`);
 }
 
-main().catch((error) => {
+// Whatever a command did on Android, its adb server isn't left holding the person's devices (android.mjs).
+main().finally(() => androidDone().catch(() => {})).catch((error) => {
   if (error instanceof Problem) fail(error.message);
   throw error;
 });

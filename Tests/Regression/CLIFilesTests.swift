@@ -75,6 +75,51 @@ final class CLIFilesTests: XCTestCase {
         try gameJS.write(to: Self.cli.appendingPathComponent("lamp-for-games.js"), atomically: true, encoding: .utf8)
     }
 
+    /// Lamp's Android app around a page (`GameAndroid`), for `lamp open --on android`: its Gradle files, its manifest
+    /// and activity for a game and for any other page, and what answers the page's building blocks, each with the
+    /// app's own names still to be put in ({{PACKAGE}}, {{NAME}} and the rest, which the command line fills as
+    /// `Template.write` does). And the tools Lamp builds it with, as Lamp downloads them on this kind of Mac.
+    /// Made only when asked, and never committed, as a Mac app's starting files are.
+    func testWritesThePageHostForAndroid() throws {
+        guard ProcessInfo.processInfo.environment["LAMP_WRITE_CLI_FILES"] == "1" else { throw XCTSkip("Only when asked: scripts/cli-files.sh") }
+        let fm = FileManager.default
+        let host = Self.cli.appendingPathComponent("android-host")
+        try? fm.removeItem(at: host)
+        let files: [(String, String)] = [
+            ("settings.gradle.kts", Template.androidSettingsGradle),
+            ("build.gradle.kts", GameAndroid.rootBuildGradle),
+            ("gradle.properties", Template.androidGradleProperties),
+            ("gradle/libs.versions.toml", Template.androidVersionsCatalogue),
+            ("app/build.gradle.kts", GameAndroid.aloneBuildGradle),
+            ("game/AndroidManifest.xml", GameAndroid.manifest),
+            ("game/MainActivity.kt", GameAndroid.withoutWish(activity: GameAndroid.gameActivity)),
+            ("page/AndroidManifest.xml", GameAndroid.screenManifest),
+            ("page/MainActivity.kt", GameAndroid.withoutWish(activity: GameAndroid.screenActivity)),
+            ("LampPageGateway.kt", GameAndroid.pageGateway),
+        ]
+        for (path, text) in files {
+            let url = host.appendingPathComponent(path)
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        }
+        func release(_ release: AndroidTools.Release) -> [String: Any] {
+            ["url": release.url.absoluteString, "sha256": release.sha256, "size": release.size]
+        }
+        var machine = utsname()
+        uname(&machine)
+        let arch = withUnsafePointer(to: &machine.machine) { $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) } }
+        let tools: [String: Any] = [
+            "arch": arch, "gradle": AndroidTools.gradleVersion, "buildTools": AndroidTools.buildTools, "platform": AndroidTools.platformLevel,
+            "jdk": release(AndroidTools.jdk), "commandLineTools": release(AndroidTools.commandLineTools), "gradleRelease": release(AndroidTools.gradleRelease),
+            "buildPackages": AndroidTools.buildPackages, "emulatorPackages": AndroidTools.emulatorPackages,
+            "phone": ["avd": Emulator.Kind.phone.avd, "image": Emulator.Kind.phone.image, "profile": Emulator.Kind.phone.profile],
+            "tv": ["avd": Emulator.Kind.tv.avd, "image": Emulator.Kind.tv.image, "profile": Emulator.Kind.tv.profile],
+            "apk": "app/build/outputs/apk/debug/app-debug.apk", "banner": GameAndroid.banner, "folder": GameAndroid.folder,
+        ]
+        try JSONSerialization.data(withJSONObject: tools, options: [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes]).write(to: host.appendingPathComponent("tools.json"))
+        XCTAssertTrue(GameAndroid.gameActivity.contains("{{PACKAGE}}"))
+    }
+
     /// The command line makes an Xbox's package itself (cli/msix.mjs), and it must be the package Lamp makes: the same
     /// manifest, and the same files in the same layout, which the signature says (it signs the hashes of the records,
     /// the directory, the block map and the content types). So what's kept is the manifest and the signature of one

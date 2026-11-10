@@ -24,8 +24,9 @@ with an `index.html`; without one, the folder you're in.
 | `lamp share --words "…"` | Puts the page on lamp.dev: anyone with the link plays it there and can send an idea. Again, it sends the page as it is now to the same link. |
 | `lamp ideas [in <n> \| dismiss <n>]` | The ideas people playing the link have sent, and saying what became of one. |
 | `lamp unshare` | Takes the link down. |
-| `lamp devices [add \| forget <name>]` | The person's devices lamp puts a page on (an Xbox in Developer Mode): those set up and those found on the network. `add` sets one up, a step at a time. |
+| `lamp devices [add \| forget <name>]` | The person's devices lamp puts a page on: an Xbox in Developer Mode (those set up and those found on the network), and Android (lamp's emulators, and the phones, tablets and TVs plugged in with USB debugging on). `add` sets one up, a step at a time; `add android` downloads Android's tools. |
 | `lamp open --on xbox` | Packages the page, installs it on the device and opens it there. `lamp look --on xbox` is the device's screen and the app's log there, `lamp stop --on xbox` ends it, and `lamp remove --on xbox` takes it off. |
+| `lamp open --on android [--hidden]` | Builds Lamp's Android app around the page and opens it in lamp's Android emulator (`--on android-tv`: its TV emulator; a device of the person's by its name), with `look`, `stop` and `remove` as on any device, and `lamp use --on android` to tap, type and press there. `--hidden` starts the emulator with no window. |
 | `lamp setup [--remove]` | Teaches Claude Code and Codex on this computer to work this way: a skill for each. |
 | `lamp guide` | What that skill says, for any other agent. |
 | `lamp blocks [Name]` | Lamp's building blocks for a Mac app, each with what it's for, or one in full: read from the app's own `Sources/LampSupport.swift`, whose comments say how each is used. |
@@ -210,6 +211,49 @@ whose host for a page lamp packages for.
   answered on the console; a game's phone controllers; a wish's other apps; and the test run a device's setup
   offers in Lamp's app.
 
+## Android
+
+A page goes on Android in Lamp's Android app around it (`GameAndroid` in Lamp's app): one app for phones, tablets and
+TVs, which serves the page from its own assets in a WebView, reads the controllers itself and hands them to a game's
+runtime, and sends the page's console to the device's log. `cli/android.mjs` does what Lamp's app does to build it
+and put it somewhere.
+
+- **The app's files are Lamp's own**, written out by `scripts/cli-files.sh` (`cli/lamps/android-host`, not committed):
+  its Gradle files, its manifest and activity for a game and for any other page, and the list of tools Lamp builds
+  with (`tools.json`: the versions, where each is downloaded from and its checksum). lamp fills in the app's names as
+  `Template.write` does. Without that folder, or off a Mac, `--on android` says so.
+- **The project** is written in lamp's folder for the app (`~/.lamp/dev/<app>/android/`), never in the app's: Lamp's
+  host, and the page's files as `lamp share` gathers them, with `lamp-device.js` saying it's on Android. Nothing in
+  the app's folder runs in the build. A file is written only when it changed, so a build after a small change is a
+  few seconds. The package is `dev.lamp.cli.<the app's id>`, lamp's own, so a copy lamp installs never takes the
+  place of one Lamp's app installed.
+- **The tools** are the ones every Lamp on the Mac shares (`~/Library/Developer/Lamp/Android`: Java, Google's
+  command-line tools, Gradle, the platform, the emulator and its images), and so is Gradle's cache
+  (`~/Library/Caches/Lamp/gradle`). `lamp devices add android` downloads whichever are missing, as
+  `AndroidTools.install` does: each archive checked against the checksum its maker publishes, then Google's packages
+  through its own package manager. That accepts Google's terms for them, so it asks first, and only at a terminal:
+  an agent can't answer for the person.
+- **lamp's own** (`~/.lamp/android/`, `LAMP_ANDROID_HOME` moves it): its adb server's key to the person's devices,
+  and its emulators, a phone ("android") and a 1080p TV ("android-tv"), each made the first time a page opens in it
+  and a few gigabytes once it has run. Its adb server and its emulators are on ports no Lamp's app uses, and it
+  doesn't look for emulators on adb's usual ports: those are the person's, or another Lamp's.
+  `lamp devices forget android` closes the emulators and removes that folder.
+- **The emulator** opens as a window of its own, where the person plays. `--hidden` starts it with no window and no
+  sound, for a check nobody watches; `lamp stop --on android` then closes it too, since nobody could. In lamp's own
+  emulator Android's first-time tip on leaving full screen is taken as read, so it doesn't cover the first look.
+- **A device of the person's** is one adb lists: plugged in, with USB debugging on, and this computer allowed on it
+  (it asks on its own screen, once for lamp). It goes by its name, or adb's serial for it. Connecting one over Wi‑Fi
+  isn't here yet.
+- **Looking** is the device's screen as a picture, whether the app's process is running, and what the page said
+  since it was opened (its console, which Lamp's host logs, and how Android ended the app if it did).
+  **Using** is adb's own input: a tap or a drag at a point of the picture, typing, one key, or one of a controller's
+  buttons, which the host hands the game as a controller's. There's no stick, and nothing is held with another.
+- **Not here yet:** the page's AI (the app is told where Lamp is as it's installed, `Adb.tellApp`, and lamp has no
+  gateway), a wish's other apps, connecting a device over Wi‑Fi, and an Android app written in Kotlin.
+
+`cli/tests/android.test.mjs` holds what lamp writes and what it asks of Gradle and adb, with stand-ins for both; it
+runs where `cli/lamps/android-host` has been written.
+
 ## Where things are kept
 
 - **Nothing in a page's folder.** lamp reads the folder and never writes in it (`lamp new` and `lamp init` aside,
@@ -218,7 +262,7 @@ whose host for a page lamp packages for.
 - **Everything lamp keeps** (the page's log, which `lamp look` names; the browser's files, so a game's saves last
   from one run to the next; the last few pictures; which server is running) is in
   `~/.lamp/dev/<folder's name>-<hash>/`. `LAMP_DEV_HOME` moves it. What lamp made of the app for a device (its
-  package, and which version the device has) is in `device/` there.
+  package, and which version the device has) is in `device/` there, and its Android project and build in `android/`.
 - **The person's devices** are in `~/.lamp/devices/` (`LAMP_DEVICES_HOME` moves it), readable only by them: each
   device's record, its kept certificates and what was typed for it, and lamp's key for signing packages. They aren't
   Lamp's app's: a device set up in one is set up again in the other.
@@ -234,8 +278,8 @@ can read.
 
 ## What it doesn't do yet
 
-Phones and TVs as places to run; an app's AI and a game's phone controllers; and putting a change into a Mac app
-without opening it again.
+iPhones, and Samsung and LG TVs, as places to run; an app's AI and a game's phone controllers; and putting a change
+into a Mac app without opening it again.
 
 ## Tests
 

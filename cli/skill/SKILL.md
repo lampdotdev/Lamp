@@ -189,6 +189,26 @@ the console's controller. Only when the person asks for it there, and only on a 
   code, and tell the person what's left for them to try with the controller in their hands.
 - `{{lamp}} stop --on xbox` ends it, and `{{lamp}} remove --on xbox` takes it off the console.
 
+## On Android
+
+A page goes on Android in Lamp's own Android app around it: the same files, on a phone, a tablet or a TV. It needs a
+Mac with Android's tools, which `{{lamp}} devices` says are there or not. If they aren't, ask the person to run
+`{{lamp}} devices add android` in a terminal themselves: it downloads Google's tools and accepts Google's terms for
+them, which is theirs to do.
+
+- `{{lamp}} open --on android` builds the app and opens it in lamp's Android emulator, a phone in a window on the Mac;
+  `--on android-tv` is its TV emulator. Use these when the person asks to see it on Android.
+- For a check of your own, add `--hidden`: the emulator starts with no window and no sound, and
+  `{{lamp}} stop --on android` closes it when you're done. Don't leave one running.
+- A phone, tablet or TV of the person's goes by its name (`{{lamp}} devices` lists those plugged in with USB debugging
+  on): only when they ask for it there. If it says to allow debugging, that's a tap on the device's own screen, theirs.
+- `{{lamp}} look --on android` is the device's screen as a picture, whether the app is open, and what the page logged
+  there: a game on Lamp's runtime logs how many frames a second it gets.
+- `{{lamp}} use --on android click <x> <y>` taps a point of that picture; `drag`, `type`, `key` and `button` work too,
+  one key or button at a time, with no stick. A game shows touch controls until a controller's button is pressed.
+- A change isn't live there: `{{lamp}} open --on android` again builds and installs it, in a few seconds.
+- `{{lamp}} remove --on android` takes it off.
+
 ## Lamp's skills
 
 An app Lamp made (its page loads `lamp.js`) is built from Lamp's own building blocks, and Lamp has guidance for each
@@ -214,5 +234,6 @@ A plain site, on neither `lamp.js` nor Lamp's runtime, uses none of them: skip t
 - Lamp's own files in the folder are rewritten by Lamp, so read them and never edit them: `lamp.js`, `lamp-game.js`,
   `lamp-phaser.js`, `lamp-controllers.js`, and the `three/` and `phaser/` folders.
 - The page's whole log is the file `look` names.
-- lamp runs the page in a browser on this computer, and puts it on an Xbox ("On the person's Xbox"). Phones and TVs,
+- lamp runs the page in a browser on this computer, and puts it on an Xbox ("On the person's Xbox") and on Android
+  ("On Android"). iPhones, Samsung and LG TVs,
   and whatever needs Lamp's Mac app around the page, aren't here: say so rather than working around it.
