@@ -214,6 +214,19 @@ export const wishIDFrom = (part) => {
  * The record of each shared wish in Upstash (the store the site's quotas already use), its pictures in Vercel
  * Blob, public at addresses with a random part. Preview deployments keep theirs apart from production's.
  */
+/**
+ * A write to the blob store that answers in time: one that hasn't after `seconds` is cancelled and tried again, a few
+ * times, since a write that never answers held a whole page up until its function's time ran out.
+ */
+async function inTime(write, { seconds = 30, tries = 3, what = "a file" } = {}) {
+  for (let attempt = 1; ; attempt++) {
+    try { return await write(AbortSignal.timeout(seconds * 1000)); } catch (error) {
+      if (attempt >= tries) throw error;
+      console.warn(`Storing ${what} again (try ${attempt + 1} of ${tries}): ${error?.message ?? error}`);
+    }
+  }
+}
+
 export function cloudStore(env, fetcher = fetch) {
   const db = redis(env);
   const scope = env.VERCEL_ENV === "production" ? "production" : "preview";
@@ -304,19 +317,20 @@ export function cloudStore(env, fetcher = fetch) {
     // the pictures are, and only ever read back from the store's own host.
     async putFile(id, name, bytes) {
       const { put } = await import("@vercel/blob");
-      const blob = await put(`${scope}/w/${id}/${name}`, bytes, {
-        access: "public", contentType: "application/octet-stream", addRandomSuffix: true, cacheControlMaxAge: 300, ...auth,
-      });
+      const blob = await inTime((abortSignal) => put(`${scope}/w/${id}/${name}`, bytes, {
+        access: "public", contentType: "application/octet-stream", addRandomSuffix: true, cacheControlMaxAge: 300, abortSignal, ...auth,
+      }), { seconds: 60, what: name });
       return blob.url;
     },
     // One file of a playable page, under the version's own random folder: read back by the play handler, never served
     // from Blob itself (which hands HTML out as a download).
     async putPageFile(id, token, path, bytes) {
       const { put } = await import("@vercel/blob");
-      const blob = await put(`${scope}/w/${id}/page/${token}/${path}`, bytes, {
-        // Kept as what it is, so a browser sent straight to a big one (`DIRECT_FILE`) runs or reads it.
-        access: "public", contentType: pageType(path), addRandomSuffix: false, cacheControlMaxAge: 300, ...auth,
-      });
+      const blob = await inTime((abortSignal) => put(`${scope}/w/${id}/page/${token}/${path}`, bytes, {
+        // Kept as what it is, so a browser sent straight to a big one (`DIRECT_FILE`) runs or reads it. Written again
+        // in place when a try was cancelled after it got there.
+        access: "public", contentType: pageType(path), addRandomSuffix: false, allowOverwrite: true, cacheControlMaxAge: 300, abortSignal, ...auth,
+      }), { seconds: 30, what: path });
       return blob.url;
     },
     async readFile(url) {
@@ -968,14 +982,19 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
             // Each version in a folder of its own, under a random part, so an old one never mixes with a new one.
             const token = randomBytes(12).toString("base64url");
             const urls = {}, sizes = {};
-            // Many at a time, within what the blob store takes.
+            // Many at a time, within what the blob store takes. Said in the log as it goes, so a page that doesn't get in
+            // shows how far it got.
+            const began = Date.now();
+            console.log(`Page ${version} of ${id}: storing ${files.length} files`);
             for (let n = 0; n < files.length; n += PAGE_UPLOADS) {
               await Promise.all(files.slice(n, n + PAGE_UPLOADS).map(async (file) => {
                 urls[file.path] = await kept.putPageFile(id, token, file.path, file.bytes);
                 sizes[file.path] = file.bytes.length;
                 stored.push(urls[file.path]);
               }));
+              if ((n / PAGE_UPLOADS) % 5 === 4) console.log(`Page ${version} of ${id}: ${stored.length} of ${files.length} stored, ${Math.round((Date.now() - began) / 1000)}s`);
             }
+            console.log(`Page ${version} of ${id}: all ${files.length} stored in ${Math.round((Date.now() - began) / 1000)}s`);
             // As the record is now, not as it was when the parts were read: the link may have changed meanwhile.
             const current = await kept.get(id);
             if (!current || !secretMatches(bearer(request), current.secret)) throw new Error("Gone");
@@ -987,7 +1006,8 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
               pageVersion: Math.max(version, current.pageVersion ?? 0), updated: now().toISOString() }))) throw new Error("Gone");
             await kept.removeImages([...Object.values(current.previousPage?.files ?? {}), ...partBlobs(parts)]);
             await kept.forget(id);
-          } catch {
+          } catch (error) {
+            console.error(`Page ${version} of ${id} didn't get in: ${error?.message ?? error}`);
             try { await kept.removeImages(stored); } catch {}
           }
         });
