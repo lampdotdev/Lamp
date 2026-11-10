@@ -1333,6 +1333,8 @@ typealias LampPageHolderBase = UIView
     /// What each window's pages held when last read, by the window's number.
     private static var read: [Int: [LampScreen.Item]] = [:]
     private static let script = "{{PAGE_SCREEN_SCRIPT}}"
+    /// A click that says what it landed on, and won't click a thing named that's dimmed or under another (`PageScreen.click`).
+    private static let click = "{{PAGE_CLICK_SCRIPT}}"
 
     /// The page shown in a window, or, with none there, the first shown anywhere: what the app menu's Reload reopens.
     static func page(in window: NSWindow?) -> WKWebView? {
@@ -1344,7 +1346,7 @@ typealias LampPageHolderBase = UIView
         pages.add(view)
         LampPageItems.refresh = refresh
         LampPageItems.items = { read[$0.windowNumber] ?? [] }
-        LampPageItems.act = act
+        LampPageItems.act = { act($0, at: $1, meant: $2, in: $3, said: $4) }
         LampPageItems.own = { own($0, batch: $1) }
         LampPageItems.hold = { hold($0, in: $1, for: $2, said: $3) }
     }
@@ -1418,17 +1420,23 @@ typealias LampPageHolderBase = UIView
     ]
 
     /// A click, a key or typing on a page, carried out in the page: the point (in the window's frame view) turned into
-    /// the page's own, or, with none, whatever the page has focused while it holds the window's keyboard.
-    private static func act(_ action: LampDriver.Action, at point: NSPoint?, in window: NSWindow) -> String? {
+    /// the page's own, or, with none, whatever the page has focused while it holds the window's keyboard. A click's
+    /// outcome is the page's answer, given to `said` once it comes (with whether it clicked): what it landed on, and for
+    /// the thing `meant` (one of the page's own, as listed), whether it was that thing at all.
+    private static func act(_ action: LampDriver.Action, at point: NSPoint?, meant: LampScreen.Item?, in window: NSWindow,
+                            said: @escaping @MainActor (String, Bool) -> Void) -> String? {
         guard let frame = window.contentView?.superview ?? window.contentView else { return nil }
         let shown = pages.allObjects.filter { $0.window === window }
         let page: WKWebView, spot: String
+        var css = CGPoint.zero, zoom: CGFloat = 1
         if let point {
             guard let hit = shown.first(where: { $0.frame.contains($0.superview?.convert(point, from: frame) ?? .zero) }) else { return nil }
-            let local = hit.convert(point, from: frame), zoom = max(hit.pageZoom, 0.01)
+            let local = hit.convert(point, from: frame)
+            zoom = max(hit.pageZoom, 0.01)
             let y = hit.isFlipped ? local.y : hit.bounds.height - local.y
             page = hit
-            spot = "document.elementFromPoint(\(local.x / zoom), \(y / zoom))"
+            css = CGPoint(x: local.x / zoom, y: y / zoom)
+            spot = "document.elementFromPoint(\(css.x), \(css.y))"
         } else {
             guard let focused = shown.first(where: { page in
                 (window.firstResponder as? NSView).map { $0 === page || $0.isDescendant(of: page) } ?? false
@@ -1441,15 +1449,21 @@ typealias LampPageHolderBase = UIView
         case "click", "double_click":
             guard point != nil else { return nil }
             let clicks = action.action == "click" ? 1 : 2
-            run("""
-                var focusable = el.closest('[data-focus], button, a[href], input, select, textarea, [tabindex]') || el;
-                if (focusable.focus) focusable.focus();
-                for (var i = 0; i < \(clicks); i++) if (focusable.click) focusable.click();
-                if (\(clicks) === 2) focusable.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
-                """)
-            // Sent, not proof: a game takes a click in its own time, and may not take it at all.
-            if action.page == true { return (clicks == 1 ? "clicked" : "double-clicked") + " in the game's page; the picture shows whether the game took it" }
-            return clicks == 1 ? "clicked in the page" : "double-clicked in the page"
+            // The thing's box in the page's own pixels: the page finds it by that and its middle, the point.
+            let scale = LampRuntime.scale(of: window)
+            let want = meant.map { "{ w: \($0.frame.width / scale / zoom), h: \($0.frame.height / scale / zoom) }" } ?? "null"
+            page.evaluateJavaScript(click + "(\(css.x), \(css.y), \(want), \(clicks))") { answer, error in
+                MainActor.assumeIsolated {
+                    guard error == nil, let json = answer as? String,
+                          let told = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any], let words = told["said"] as? String else {
+                        return said("the page couldn't take the click (\(error?.localizedDescription ?? "it gave no answer")), so it may not have happened", false)
+                    }
+                    let did = told["did"] as? Bool ?? false
+                    // Sent, not proof: a game takes a click in its own time, and may not take it at all.
+                    said(words + (did && action.page == true ? "; the picture shows whether the game took it" : ""), did)
+                }
+            }
+            return "sent to the page, which hasn't said what it landed on"
         case "type":
             let text = action.text ?? ""
             let quoted = String(decoding: (try? JSONSerialization.data(withJSONObject: [text])) ?? Data("[\"\"]".utf8), as: UTF8.self)

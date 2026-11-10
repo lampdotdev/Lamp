@@ -9169,7 +9169,7 @@ enum Template {
             // which keeps running while the dialog is open only because the action isn't itself on that queue.
             after(0) {
                 guard Handover.current?.carriesOn == true else { return }
-                LampShowcase.note("did", run(action))
+                LampShowcase.note("did", run(action) { said, _ in LampShowcase.note("did", said) })
             }
             try? await Task.sleep(for: .milliseconds(150))
         }
@@ -9210,8 +9210,10 @@ enum Template {
         static var items: (NSWindow) -> [LampScreen.Item] = { _ in [] }
         /// Carries out an action aimed at a page (`point`, in the window's frame view, on it; or none, with the page
         /// holding the keyboard) in the page's own script, which takes it whether or not the app is in front, where
-        /// WebKit lets an event made by the app go. What it did, or nil when the action isn't the page's.
-        static var act: ((LampDriver.Action, NSPoint?, NSWindow) -> String?)?
+        /// WebKit lets an event made by the app go. What it did, or nil when the action isn't the page's. A click is
+        /// meant for the page's thing given, if any, and its outcome comes later, from the page: in words, and whether
+        /// it clicked (a thing that was dimmed, gone or under another isn't).
+        static var act: ((LampDriver.Action, NSPoint?, LampScreen.Item?, NSWindow, @escaping @MainActor (String, Bool) -> Void) -> String?)?
         /// Whether the game on a page is playing (`LampPagePlaying`): nil for an app with no game, false while it loads.
         @MainActor static var playing: Bool?
         /// Gives a game's controller to Lamp for batch `id` (seconds it may run) or back (nil): only that batch's own
@@ -9547,7 +9549,13 @@ enum Template {
                             goOn(after: Self.settle)
                         }
                     } else {
-                        report[line] = run(action)
+                        report[line] = run(action) { said, clicked in
+                            // The page's answer to a click, in place of "sent": kept with what `note` added since, and a
+                            // click that didn't happen isn't one that should have changed the screen.
+                            let unchanged = " (nothing changed on screen)"
+                            report[line] = said + (report[line].hasSuffix(unchanged) && clicked ? unchanged : "")
+                            if !clicked, last?.line == line { last = nil }
+                        }
                     }
                     // A page reads its things again, for the next action's target: ready well within the pause.
                     LampPageItems.refresh? {}
@@ -9663,7 +9671,9 @@ enum Template {
                 "clicked or typed in from here: press return to save there, or escape to cancel."
         }
 
-        private static func run(_ action: Action) -> String {
+        /// What `action` did. A click on a page says so later, from the page (`late`, with whether it clicked), once
+        /// the page has said what the click landed on; what's returned then is only that it was sent.
+        private static func run(_ action: Action, late: @escaping @MainActor (String, Bool) -> Void = { _, _ in }) -> String {
             if action.action == "menu" { return menuBar(action.item) }
             if action.action == "bar_icon" { return barIcon(action.item) }
             // A game's controller is held in the game's page (`step`): an app with none has nothing to hold.
@@ -9710,9 +9720,14 @@ enum Template {
                 }
             }
             // On a page (LampPage.swift's), the page carries the action out itself.
-            if let act = LampPageItems.act, !(window is NSSavePanel), ["click", "double_click", "type", "key"].contains(action.action),
-               let did = act(action, action.x != nil && action.y != nil ? point : nil, window) {
-                return (what.map { "\(action.action) \($0): " } ?? "\(action.action): ") + did
+            if let act = LampPageItems.act, !(window is NSSavePanel), ["click", "double_click", "type", "key"].contains(action.action) {
+                let label = what.map { "\(action.action) \($0): " }
+                    ?? (action.x != nil && action.y != nil && action.action.hasSuffix("click") ? "\(action.action) at \(Int(action.x ?? 0)), \(Int(action.y ?? 0)): " : "\(action.action): ")
+                // A page's own thing (what the accessibility tree has no element for) is the one the click is for.
+                let meant = named.flatMap { $0.element == nil ? $0.item : nil }
+                if let did = act(action, action.x != nil && action.y != nil ? point : nil, meant, window, { late(label + $0, $1) }) {
+                    return label + did
+                }
             }
             // A game's own: what isn't on its page (the window's edge, a dialog in front) is left alone. Lamp looks for
             // these words in the app (`Store.gamePageMarker`) before it sends a game's page any click.
