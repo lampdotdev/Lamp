@@ -193,6 +193,22 @@ Release builds of Lamp update themselves with [Sparkle](https://sparkle-project.
   - It deploys itself: the Vercel project is connected to this repo with `updates` as its root directory, so a push to `main` that touches `updates/` goes to production and a branch gets a preview, like the website in `site/`. `cd updates && vercel deploy --prod --scope roo-code` still works for a deploy by hand.
 - **Only newer releases appear:** releases before the first one with `sparkle.json` aren't in the feed, because Sparkle couldn't verify them. Copies of Lamp from before Sparkle was added need one manual update to a release that includes it.
 
+## Updates for lamp's command line (npm)
+
+The lamp in Lamp's app updates with Lamp. For a computer without Lamp, each release also publishes the same lamp to npm as
+`@lampdotdev/lamp`, at the release's version: the release workflow's last step runs `scripts/npm-package.sh "$VERSION"
+--publish` through npm's trusted publishing, so no npm token is kept anywhere. A failure there doesn't fail the release,
+which is out by then; the step says so, and lamp is published by hand. A copy installed from npm says once a day when a
+newer one is out (`cli/update.mjs`); it never updates itself.
+
+- **Trusted publisher:** on npmjs.com, `@lampdotdev/lamp` → Settings → Trusted Publisher → GitHub Actions: organization
+  `lampdotdev`, repository `Lamp`, workflow `mac-release.yml`, environment `release`. The workflow has
+  `id-token: write` for it. The package is owned by the `lampdotdev` organization on npm.
+- **By hand:** `npm login`, then `scripts/npm-package.sh <version> --publish` from a Mac with Xcode (the script runs
+  `scripts/cli-files.sh` first, which builds Lamp's tests).
+- **What it publishes:** lamp's code, the skill, and the Lamp resources lamp reads (the game kit, the libraries with their
+  licenses, the Xbox's host, the device integrations and the skills).
+
 ## Website
 
 `site/` is the page at `lamp.dev`: one static Astro page styled with Tailwind, in its own Vercel project

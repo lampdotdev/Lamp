@@ -46,7 +46,16 @@ runtime, so no Node is needed:
 /Applications/Lamp.app/Contents/Resources/cli/lamp setup
 ```
 
-From a checkout of this repository, `node cli/lamp.mjs setup`.
+On a computer without Lamp, lamp comes from npm, `npm install -g @lampdotdev/lamp` (it needs Node 20), and
+`lamp setup` sets it up the same way. From a checkout of this repository, `node cli/lamp.mjs setup`.
+
+The npm package is laid out as the repository is (`scripts/npm-package.sh <version>` packs it into `build/npm`, and with
+`--publish` publishes it): `cli/` with the files only Lamp's code makes written first (`scripts/cli-files.sh`), the
+site's limits for a link, and the Lamp resources lamp reads, with their licenses. A copy npm installed asks npm's
+registry for a newer one at most once a day, in a process of its own that never holds up the command, and the next
+command says so in one line, once a day, with the command that updates it (`cli/update.mjs`). It never updates itself.
+The copy in Lamp's app updates with Lamp and a checkout with its repository, so neither asks; nor does one in CI, or
+with `LAMP_NO_UPDATE_CHECK` set.
 
 writes one skill, [`skill/SKILL.md`](skill/SKILL.md), where each agent found on the computer reads its skills
 (`~/.claude/skills/lamp`, `~/.codex/skills/lamp`), with the command as it's run on this computer filled in. From its

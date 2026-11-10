@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write   # npm's trusted publishing for lamp (the last step): npm asks GitHub who's publishing, no token kept
 
 jobs:
   release:
@@ -95,3 +96,14 @@ jobs:
           gh release create "v$VERSION" "dist/Lamp-$VERSION.dmg" dist/sparkle.json dist/assets/* \
             --title "Lamp $VERSION" --notes-file dist/notes.md || \
           gh release upload "v$VERSION" "dist/Lamp-$VERSION.dmg" dist/sparkle.json dist/assets/* --clobber
+
+      - name: Publish lamp on npm
+        # lamp's command line for a computer without Lamp's app (@lampdotdev/lamp, scripts/npm-package.sh), at the same
+        # version as this Lamp, whose app carries the same lamp. Published by npm's trusted publishing: the package names
+        # this workflow and the release environment as its publisher, and npm takes GitHub's word for the run, so no
+        # npm token is kept anywhere (and npm no longer lets a token publish on its own). The release is out by now:
+        # a failure here is said, and lamp is published by hand (RELEASING.md).
+        continue-on-error: true
+        run: |
+          npm install --global npm@11
+          scripts/npm-package.sh "$VERSION" --publish
