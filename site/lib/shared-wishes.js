@@ -861,7 +861,17 @@ export const fileName = (name) => `${(name.normalize("NFKD").replace(/[^\w\s-]/g
  * within `FILE_LIMITS.total`, and gives it to the link in place of any it had; DELETE ?id= takes it away. The parts
  * are taken away once they're together, or with the link.
  */
-export function createFileHandler({ env = process.env, fetcher = fetch, store, limited = true, now = () => new Date() } = {}) {
+/**
+ * Work a request goes on with once it has answered (`waitUntil`, on Vercel), which the function is kept alive for up
+ * to its whole time; elsewhere (a test, `npm run dev`) it's done before the answer.
+ */
+async function afterAnswering(work, env) {
+  if (!env.VERCEL) return await work();
+  const { waitUntil } = await import("@vercel/functions");
+  waitUntil(work());
+}
+
+export function createFileHandler({ env = process.env, fetcher = fetch, store, limited = true, now = () => new Date(), later = (work) => afterAnswering(work, env) } = {}) {
   return async (request) => {
     const method = request.method;
     if (!["PUT", "POST", "DELETE"].includes(method)) return reply(405, { error: "method_not_allowed" }, { Allow: "PUT, POST, DELETE" });
@@ -947,33 +957,40 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
       if (page) {
         const files = readPage(bytes);
         if (!files) return reply(400, { error: "invalid_page" });
-        // Each version in a folder of its own, under a random part, so an old one never mixes with a new one.
-        const token = randomBytes(12).toString("base64url");
-        const urls = {}, sizes = {};
-        // Many at a time, within what the blob store takes: a game's page can be hundreds of files, and eight at a time
-        // took a minute for a page of about 600, the function's whole time then.
-        for (let n = 0; n < files.length; n += PAGE_UPLOADS) {
-          await Promise.all(files.slice(n, n + PAGE_UPLOADS).map(async (file) => {
-            urls[file.path] = await kept.putPageFile(id, token, file.path, file.bytes);
-            sizes[file.path] = file.bytes.length;
-            uploaded.push(urls[file.path]);
-          }));
-        }
         // The count is the link's (`pageVersion`), so a page taken away and sent again never reuses a play address.
         const version = (record.page?.version ?? record.pageVersion ?? 0) + 1;
-        // The page it replaces stays playable as the version before, so a game open on it goes on finding its files
-        // (a game loads its map as the player moves); the one before that goes now.
-        const { pageParts: _pageParts, ...rest } = record;
-        const previousPage = record.page ? { version: record.page.version, files: record.page.files, sizes: record.page.sizes } : undefined;
-        if (!(await kept.replace({ ...rest, page: { version, files: urls, sizes }, ...(previousPage ? { previousPage } : {}),
-          pageVersion: version, updated: now().toISOString() }))) {
-          await kept.removeImages([...uploaded, ...partBlobs(parts)]);
-          uploaded = [];
-          return reply(404, { error: "not_found" });
-        }
-        uploaded = [];
-        await kept.removeImages([...Object.values(record.previousPage?.files ?? {}), ...partBlobs(parts)]);
-        await kept.forget(id);
+        // Checked, it's answered at once, and its files are stored after: a big game's page is hundreds of files, which
+        // take longer than a Lamp waits for an answer, and a Lamp that heard nothing took the link's page down. The
+        // link plays the page it had until this one is in; if this one never gets in, it goes on playing that one.
+        await later(async () => {
+          const stored = [];
+          try {
+            // Each version in a folder of its own, under a random part, so an old one never mixes with a new one.
+            const token = randomBytes(12).toString("base64url");
+            const urls = {}, sizes = {};
+            // Many at a time, within what the blob store takes.
+            for (let n = 0; n < files.length; n += PAGE_UPLOADS) {
+              await Promise.all(files.slice(n, n + PAGE_UPLOADS).map(async (file) => {
+                urls[file.path] = await kept.putPageFile(id, token, file.path, file.bytes);
+                sizes[file.path] = file.bytes.length;
+                stored.push(urls[file.path]);
+              }));
+            }
+            // As the record is now, not as it was when the parts were read: the link may have changed meanwhile.
+            const current = await kept.get(id);
+            if (!current || !secretMatches(bearer(request), current.secret)) throw new Error("Gone");
+            // The page it replaces stays playable as the version before, so a game open on it goes on finding its
+            // files (a game loads its map as the player moves); the one before that goes now.
+            const { pageParts: _pageParts, ...rest } = current;
+            const previousPage = current.page ? { version: current.page.version, files: current.page.files, sizes: current.page.sizes } : undefined;
+            if (!(await kept.replace({ ...rest, page: { version, files: urls, sizes }, ...(previousPage ? { previousPage } : {}),
+              pageVersion: Math.max(version, current.pageVersion ?? 0), updated: now().toISOString() }))) throw new Error("Gone");
+            await kept.removeImages([...Object.values(current.previousPage?.files ?? {}), ...partBlobs(parts)]);
+            await kept.forget(id);
+          } catch {
+            try { await kept.removeImages(stored); } catch {}
+          }
+        });
         return reply(200, { version, files: files.length });
       }
       if (!isWishFile(bytes)) return reply(400, { error: "invalid_file" });
