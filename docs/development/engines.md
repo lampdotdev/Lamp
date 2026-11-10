@@ -431,7 +431,9 @@ Lamp starts no process for it and sees none of its commands, so its shell is und
   (`ImportReviewCard.ownFolder`). The agent uses the open app with `use_app` (`OutsideWork.useApp`), only when the
   person asks it to try the app: the actions and what the app does with them are Lamp's own engines' (`Store.useNow`,
   in plain sight under the person's Stop), held as an apply holds the app, with words of its own for what's about
-  Lamp's chat. An apply refused because Lamp started again carries `restarted` in its facts, so a client can look and
+  Lamp's chat. Once the person takes the app back, use_app is off for the folder until the agent's next apply (Lamp sees
+  none of their messages), and an app that presses on the person's devices (`DevicePermissions.useNeedsDevice`) isn't
+  used from outside at all: the device card that allows it is in Lamp's chat. An apply refused because Lamp started again carries `restarted` in its facts, so a client can look and
   apply again.
 - **Sharing.** Both tools share only a known snapshot: the folder must read as it did at the last apply that went
   in, which wrote the workspace from that reading, and nothing written since may be owed (an apply that didn't build

@@ -616,6 +616,9 @@ enum OutsideWork {
     var tails: [String: Task<Void, Never>] = [:]
     var answers: [String: OutsideWork.Answer] = [:]
     var ended: Set<Int> = []
+    /// Folders whose app the person took back from use_app (Stop, or their own click or key): use_app stays off for them
+    /// until the agent's next apply, the next work of its own the person's answer leads to.
+    var tookOver: Set<String> = []
     /// Records whether a folder's workspace holds files the open app may not run yet (`Adopted.owed`).
     func setOwed(_ owed: Bool, repo: String) {
         guard let index = adopted.firstIndex(where: { $0.repo == repo }), (adopted[index].owed ?? false) != owed else { return }
@@ -840,6 +843,8 @@ extension Store {
             answer.facts["restarted"] = true
             return answer
         }
+        // The agent's own next work after the person took the app back: use_app is on again.
+        state.tookOver.remove(entry.repo)
         guard let hold = begin(project) else {
             return .refused("Lamp is busy with this app (its own chat or a build). Try again in a moment.")
         }
@@ -992,6 +997,11 @@ extension Store {
 
     // MARK: use_app
 
+    /// What an outside agent hears once the person has taken the app back: Lamp sees none of their messages, so it's off
+    /// until the agent's next apply.
+    static let outsideTookOverNote = "The person took the app over while it was being tried, so use_app is off for it until your next apply_change. "
+        + "Don't try to use it again now. Finish what you were doing, and tell them in a sentence what's left for them to try."
+
     /// The folder's open app used as Lamp's own agent uses it (`useNow`), held as an apply holds it, so nothing else of
     /// Lamp's changes it meanwhile.
     private func outsideUse(_ path: String, actions: Any?) async -> OutsideWork.Answer {
@@ -999,12 +1009,22 @@ extension Store {
         OutsideState.shared.fromBefore.remove(entry.repo)
         guard let list = actions as? [[String: Any]], !list.isEmpty,
               let body = try? JSONSerialization.data(withJSONObject: ["actions": list]) else { return .refused("use_app needs a list of actions.") }
+        // An app that presses on the person's own devices is used only from Lamp's chat, where they choose the device
+        // on its card (`DevicePermissions`); there's no such card for an outside agent.
+        if DevicePermissions.useNeedsDevice(project) {
+            return .refused("This app controls the person's devices, so use_app doesn't reach it from outside Lamp: ask the person to try it.")
+        }
+        if OutsideState.shared.tookOver.contains(entry.repo) { return .refused(Self.outsideTookOverNote) }
         guard isRunning(project) else { return OutsideWork.Answer(outcome: "not_open", text: "The app isn't open. apply_change opens it.") }
-        guard begin(project) != nil else { return .refused("Lamp is busy with this app. Try again in a moment.") }
+        guard let turn = begin(project) else { return .refused("Lamp is busy with this app. Try again in a moment.") }
         defer { finish(current(project) ?? project) }
         let (status, answer) = await useNow(project, request: body, outside: true)
+        // Taken back by the person: off for this folder from now on, calls already queued included, until an apply.
+        if turn.tookOver { OutsideState.shared.tookOver.insert(entry.repo) }
         guard status == 200 else { return .refused(answer["error"] as? String ?? "Lamp couldn't use the app.") }
-        var used = OutsideWork.Answer(outcome: "used", text: answer["text"] as? String ?? "")
+        var text = answer["text"] as? String ?? ""
+        if turn.tookOver { text = text.replacingOccurrences(of: Self.tookOverNote, with: Self.outsideTookOverNote) }
+        var used = OutsideWork.Answer(outcome: turn.tookOver ? "taken_over" : "used", text: text)
         used.pictures = Self.pictureData(answer["screenshots"] as? [String] ?? [], in: project)
         return used
     }
