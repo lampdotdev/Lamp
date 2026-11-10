@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { deflateRawSync } from "node:zlib";
-import { Problem, stateOf } from "./state.mjs";
+import { NOTES_FILE, Problem, stateOf } from "./state.mjs";
 import { ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS, LIBRARIES } from "./dev.mjs";
 import { LIMITS, FILE_LIMITS, PAGE_LIMITS } from "../site/lib/shared-wishes.js";
 import { ideasOf, publishLink, removeFile, removeIdea, removeLink, sendFile, siteOrigin } from "./link.mjs";
@@ -83,7 +83,7 @@ export function pageFiles(layout, { device = ANY_BROWSER } = {}) {
   const walk = (dir, prefix) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const path = prefix + entry.name;
-      if (entry.name.startsWith(".") || entry.name === "node_modules" || path === "APP.md") continue;
+      if (entry.name.startsWith(".") || entry.name === "node_modules" || path === NOTES_FILE) continue;
       if (entry.isDirectory()) walk(join(dir, entry.name), path + "/");
       else if (entry.isFile()) files.set(path, readFileSync(join(dir, entry.name)));
     }

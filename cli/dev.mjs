@@ -13,8 +13,8 @@ import { networkInterfaces, hostname } from "node:os";
 import { join, resolve, extname, sep, relative, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { Problem, RESOURCES, layoutOf, stateOf, logFileOf, serverFileOf, firstPortOf } from "./state.mjs";
-import { findBrowser, launch, keyNamed } from "./browser.mjs";
+import { NOTES_FILE, Problem, RESOURCES, layoutOf, stateOf, logFileOf, serverFileOf, firstPortOf } from "./state.mjs";
+import { findBrowser, noBrowser, launch, keyNamed } from "./browser.mjs";
 
 const TYPES = {
   ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -109,9 +109,10 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
 
   // MARK: The files and their changes
 
-  // What's never part of a change: hidden files and folders, what tools keep beside the code, and Lamp's own two files.
+  // What's never part of a change: hidden files and folders, what tools keep beside the code, Lamp's own two files,
+  // and the app's notes, which no page runs (other Markdown may be content a page loads, so it is a change).
   const ignored = (path) => path.split("/").some((part) => part.startsWith(".") || part === "node_modules") || path.endsWith("~")
-    || path === DEVICE_FILE || path === BUILD_FILE;
+    || path === DEVICE_FILE || path === BUILD_FILE || path === NOTES_FILE;
   const filesUnder = (dir = root, prefix = "", found = []) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const path = prefix + entry.name;
@@ -331,6 +332,12 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     checkAll();
     let target = null, problem = null;
     try { target = await watched(); } catch (error) { problem = error.message; }
+    // With no browser lamp can drive, the page is opened in one it can't, and a look straight after can come before
+    // the page has said it's open: the look waits for it, as long as it's given to wait.
+    if (!target && !problem) {
+      const until = Date.now() + Math.max(0, wait) * 1000;
+      while (!pages.size && Date.now() < until) await sleep(100);
+    }
     // Another size is for lamp's own copy: the person's window is the size they made it.
     if (target?.where === "copy") {
       if (size || copySized) await target.page.size(size?.[0], size?.[1]).catch(() => {});
@@ -393,14 +400,15 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       // Any open page says what's on it; there's no picture without a browser lamp can look into.
       const ask = randomBytes(4).toString("hex"), page = [...pages.values()].pop();
       seen = await new Promise((resolve) => {
-        lookers.set(ask, resolve);
-        setTimeout(() => { lookers.delete(ask); resolve(null); }, 3000);
+        // An answer ends the wait for one, so nothing is left waiting after it.
+        const given = setTimeout(() => { lookers.delete(ask); resolve(null); }, 3000);
+        lookers.set(ask, (answer) => { clearTimeout(given); resolve(answer); });
         tell(page, "look", ask);
       });
       where = "page";
-      problem ??= "No picture: lamp found no browser it can look into (Chrome, Edge, Brave or Chromium).";
+      problem ??= `No picture. ${noBrowser()}`;
     } else {
-      problem ??= "No page is open, and lamp found no browser it can open one in (Chrome, Edge, Brave or Chromium). Open the address in a browser and look again.";
+      problem ??= `No page has opened${wait > 0 ? ` in ${wait} s` : ""}: open ${address} in a browser, then look again. ${noBrowser()}`;
     }
     // How each change since the last look went in the page looked at, or in any page when that one never said. A
     // change a look said was held is said again once it has gone in.
@@ -455,7 +463,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
   async function use(asked) {
     const moves = Array.isArray(asked?.moves) ? asked.moves : [asked];
     const target = await watched();
-    if (!target) throw new Problem("lamp found no browser it can use the page in (Chrome, Edge, Brave or Chromium)");
+    if (!target) throw new Problem(`Nothing was done. ${noBrowser()}`);
     // A page still opening, or opening again after a save, would lose what's pressed before it's in: each use waits
     // for its tab, and makes no move in a page that hasn't settled by then.
     let tab = null;

@@ -33,7 +33,7 @@ Mac app, `projectOf`), or any folder with an `index.html`; without one, the fold
 | `lamp devices [add \| forget <name>]` | The person's devices lamp puts a page on: an Xbox in Developer Mode (those set up and those found on the network), and Android (lamp's emulators, and the phones, tablets and TVs plugged in with USB debugging on). `add` sets one up, a step at a time; `add android` downloads Android's tools. |
 | `lamp open --on xbox` | Packages the page, installs it on the device and opens it there. `lamp look --on xbox` is the device's screen and the app's log there, `lamp stop --on xbox` ends it, and `lamp remove --on xbox` takes it off. |
 | `lamp open --on android [--hidden]` | Builds Lamp's Android app around the page and opens it in lamp's Android emulator (`--on android-tv`: its TV emulator; a device of the person's by its name), with `look`, `stop` and `remove` as on any device, and `lamp use --on android` to tap, type and press there. `--hidden` starts the emulator with no window. |
-| `lamp setup [--remove]` | Teaches Claude Code and Codex on this computer to work this way: a skill for each. |
+| `lamp setup [--remove]` | Teaches Claude Code and Codex on this computer to work this way: a skill for each. Says so when the computer has no browser lamp can drive, which web apps and games are looked at and played in; it's advice, never a failure. |
 | `lamp guide` | What that skill says, for any other agent. |
 | `lamp blocks [Name]` | Lamp's building blocks for a Mac app, each with what it's for, or one in full: read from the app's own `Sources/LampSupport.swift`, whose comments say how each is used. |
 | `lamp skills [word]`, `lamp skill <name>` | Lamp's skills (`Resources/skills`), the one place that says which building blocks to use and how: all of them or those about a word, and one in full, put together from its sections as Lamp's app does (`cli/skills.mjs` follows `Skills.assembled`). |
@@ -73,7 +73,8 @@ names its launcher, so the agent always runs the lamp of the Lamp that's install
 
 ## How a change goes in
 
-Files are watched; a save is handed to every open page a moment later.
+Files are watched; a save is handed to every open page a moment later. `APP.md` at the page's top is the app's
+notes, never part of the page, so saving it hands nothing over; any other Markdown may be content the page loads, and is a change.
 
 - **A game made with Lamp's runtime** (`lamp-game.js` beside the page) takes it the way it does inside Lamp. The
   runtime is handed the change exactly as Lamp's app around the page hands it over (`window.__lampLive`), so nothing
@@ -126,7 +127,10 @@ What it looks at:
 1. **The window `lamp open` or `lamp dev --open` opened**, when there is one: what the person sees, where they are in it.
 2. **A copy of the page with no window**, which lamp starts for itself otherwise and closes ten minutes after it was
    last looked at. It starts where the page starts.
-3. With no browser lamp can drive on the computer, **a page open in any browser** says what's on it, without a picture.
+3. With no browser lamp can drive on the computer, **a page open in any browser** says what's on it, without a picture,
+   and `lamp use` can't act in it. A look with no page open yet waits for one, as long as it's given to wait. `open`,
+   `look`, `use` and `setup` each say that Chrome, Edge, Brave or Chromium is what's missing (`noBrowser` in
+   `cli/browser.mjs`).
 
 The window and the copy are a Chromium-family browser already on the computer (Chrome, Edge, Brave, Chromium;
 `LAMP_BROWSER` names another), started with files of its own, never the person's own browser profile, and spoken to
