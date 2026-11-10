@@ -197,16 +197,17 @@ Release builds of Lamp update themselves with [Sparkle](https://sparkle-project.
 
 The lamp in Lamp's app updates with Lamp. For a computer without Lamp, each release also publishes the same lamp to npm as
 `@lampdotdev/lamp`, at the release's version: the release workflow's last step runs `scripts/npm-package.sh "$VERSION"
---publish` with `NPM_TOKEN` from the `release` environment, and skips it (saying so) while that secret isn't set. A copy
-installed from npm says once a day when a newer one is out (`cli/update.mjs`); it never updates itself.
+--publish` through npm's trusted publishing, so no npm token is kept anywhere. A failure there doesn't fail the release,
+which is out by then; the step says so, and lamp is published by hand. A copy installed from npm says once a day when a
+newer one is out (`cli/update.mjs`); it never updates itself.
 
-- **One-time setup:** the `lampdotdev` organization on npmjs.com, which owns the package, and an automation token of
-  it (Access Tokens → Generate New Token → Granular, read and write on `@lampdotdev/lamp`, or Classic → Automation), saved
-  as `NPM_TOKEN` in the repository's `release` environment.
-- **By hand:** `npm login`, then `scripts/npm-package.sh 0.36.0 --publish` from a Mac with Xcode (the script runs
+- **Trusted publisher:** on npmjs.com, `@lampdotdev/lamp` → Settings → Trusted Publisher → GitHub Actions: organization
+  `lampdotdev`, repository `Lamp`, workflow `mac-release.yml`, environment `release`. The workflow has
+  `id-token: write` for it. The package is owned by the `lampdotdev` organization on npm.
+- **By hand:** `npm login`, then `scripts/npm-package.sh <version> --publish` from a Mac with Xcode (the script runs
   `scripts/cli-files.sh` first, which builds Lamp's tests).
-- **What it publishes is public:** lamp's code, the skill, and the Lamp resources lamp reads (the game kit, the libraries
-  with their licenses, the Xbox's host, the device integrations and the skills).
+- **What it publishes:** lamp's code, the skill, and the Lamp resources lamp reads (the game kit, the libraries with their
+  licenses, the Xbox's host, the device integrations and the skills).
 
 ## Website
 

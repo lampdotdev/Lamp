@@ -5,7 +5,8 @@
 # site's limits for a link (site/lib), and the Lamp resources lamp reads (its game kit, libraries, the Xbox's host,
 # the device integrations and the skills, `RESOURCES`), with the licenses that go with them.
 #   scripts/npm-package.sh 0.4.0              writes build/npm/lampdotdev-lamp-0.4.0.tgz
-#   scripts/npm-package.sh 0.4.0 --publish    and publishes it (npm must be signed in to the lampdotdev organization)
+#   scripts/npm-package.sh 0.4.0 --publish    and publishes it (npm signed in to the lampdotdev organization, or the
+#                                             release workflow, its trusted publisher)
 set -euo pipefail
 cd "${0:A:h}/.."
 version="${1:?the version to give the package, e.g. 0.4.0}"

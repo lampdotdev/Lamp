@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write   # npm's trusted publishing for lamp (the last step): npm asks GitHub who's publishing, no token kept
 
 jobs:
   release:
@@ -98,11 +99,11 @@ jobs:
 
       - name: Publish lamp on npm
         # lamp's command line for a computer without Lamp's app (@lampdotdev/lamp, scripts/npm-package.sh), at the same
-        # version as this Lamp, whose app carries the same lamp. Skipped until the release environment has NPM_TOKEN (an
-        # npm automation token of the lampdotdev organization's), so a release never waits on npm.
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # version as this Lamp, whose app carries the same lamp. Published by npm's trusted publishing: the package names
+        # this workflow and the release environment as its publisher, and npm takes GitHub's word for the run, so no
+        # npm token is kept anywhere (and npm no longer lets a token publish on its own). The release is out by now:
+        # a failure here is said, and lamp is published by hand (RELEASING.md).
+        continue-on-error: true
         run: |
-          if [ -z "$NPM_TOKEN" ]; then echo "No NPM_TOKEN in the release environment: lamp isn't published on npm."; exit 0; fi
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > "$HOME/.npmrc"
+          npm install --global npm@11
           scripts/npm-package.sh "$VERSION" --publish
