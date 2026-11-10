@@ -675,17 +675,13 @@ enum WishLink {
                             shared.plays = false
                         }
                     } catch {
-                        // The old page goes, so the link shows the picture as the card says; if it can't be taken away,
-                        // the link still plays the earlier version, and the card says that instead.
-                        do {
-                            try await WishLink.removeFile(for: shared, page: true)
-                            shared.plays = false
-                            pageProblem = Self.problem(error)
-                        } catch {
-                            // Its earlier page still plays there.
-                            shared.plays = card.shared?.plays
-                            pageProblem = "\(project.name)'s page couldn't be updated on its link, so the link still plays its earlier version. Try again in a moment."
-                        }
+                        // The page it had stays: a link that plays its earlier version is better than one that can't be
+                        // played at all, which is what taking it down after one failed upload left (a big game's page,
+                        // say, that took longer than the site gave it). The card says why, and the next update tries again.
+                        shared.plays = card.shared?.plays
+                        pageProblem = (card.shared?.plays == true
+                            ? "\(project.name)'s page couldn't be updated on its link, so the link still plays its earlier version: "
+                            : "\(project.name)'s page couldn't go up with its link: ") + Self.problem(error)
                     }
                 } else if card.shared?.shown.file == true {
                     try await WishLink.removeFile(for: shared)

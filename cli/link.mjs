@@ -32,14 +32,14 @@ export class Unreachable extends Problem {}
  * a little later each time, when the site can't be reached or can't answer just now; any other is sent once. A refusal
  * carries the status the site gave it. No redirect is followed: a link's secret goes to the site and nowhere else.
  */
-export async function call(method, url, { secret, json, bytes, tries = 1 } = {}) {
+export async function call(method, url, { secret, json, bytes, tries = 1, seconds = 120 } = {}) {
   const headers = {
     ...(secret ? { authorization: `Bearer ${secret}` } : {}),
     ...(json ? { "content-type": "application/json" } : bytes ? { "content-type": "application/octet-stream" } : {}),
   };
   for (let attempt = 0; ; attempt++) {
     let answer = null;
-    try { answer = await fetch(url, { method, headers, body: json ? JSON.stringify(json) : bytes, redirect: "manual", signal: AbortSignal.timeout(120_000) }); } catch {}
+    try { answer = await fetch(url, { method, headers, body: json ? JSON.stringify(json) : bytes, redirect: "manual", signal: AbortSignal.timeout(seconds * 1000) }); } catch {}
     if (answer && answer.status < 500) {
       const said = await answer.json().catch(() => null);
       if (answer.ok) return { status: answer.status, said: said ?? {} };
@@ -108,7 +108,8 @@ export async function sendFile({ site = siteOrigin(), link, bytes, page = false,
     said(`Sending ${page ? "the page" : "the file"}: part ${n + 1} of ${count}`);
     await call("PUT", fileAddress(site, link.id, `${what}&part=${n}&of=${count}`), { secret: link.secret, bytes: bytes.subarray(n * FILE_LIMITS.part, (n + 1) * FILE_LIMITS.part), tries: 4 });
   }
-  return (await call("POST", fileAddress(site, link.id, what), { secret: link.secret })).said.version ?? null;
+  // Putting a page together stores each of its files, which for a big game's takes minutes (the site gives it five).
+  return (await call("POST", fileAddress(site, link.id, what), { secret: link.secret, seconds: 330 })).said.version ?? null;
 }
 
 /** Takes the link's file away, which keeps showing the idea, and its page with it; with `page` only the page. */
