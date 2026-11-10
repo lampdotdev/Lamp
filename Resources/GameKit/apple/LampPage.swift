@@ -987,14 +987,15 @@ enum LampPageGuard {
         panel.nameFieldStringValue = suggestedFilename
         panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
         panel.canCreateDirectories = true
-        let save = LampSaves.began(suggestedFilename)
-        if let save { saves[ObjectIdentifier(download)] = save }
         let chosen: (NSApplication.ModalResponse) -> Void = { answer in
+            // Kept from when its panel is answered, whenever the download began (`LampSaves.began`).
+            let save = LampSaves.began(suggestedFilename)
             guard answer == .OK, let url = panel.url else {
-                LampSaves.ended(self.saves.removeValue(forKey: ObjectIdentifier(download)), .canceled)
+                LampSaves.ended(save, .canceled)
                 return completionHandler(nil)
             }
             LampSaves.chose(save, url)
+            if let save { self.saves[ObjectIdentifier(download)] = save }
             let writing = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).download")
             self.places[ObjectIdentifier(download)] = (writing, url)
             completionHandler(writing)

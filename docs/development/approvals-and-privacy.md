@@ -127,7 +127,7 @@ checks and the Share Link card.
   (`(deny file-write*)` for it in Lamp's profile, a `read` entry for it in Codex's). It's cleared a day on.
 - **A file the app saved for `use_app`** (`LampSaves`, "use_app" in the generated apps guide): the app itself, not Lamp
   or the agent, describes a download its actions saved, wherever the save panel sent it: the path, the size and a
-  bounded list of the names in a zip, nothing of what's in them. Only saves begun during the agent's batch are said, so
+  bounded list of the names in a zip, nothing of what's in them. Only saves whose panel the agent's batch answered are said, so
   the agent can confirm a Save without reading the folder; reading or listing that folder itself is still checked.
 - **What Lamp fetches for itself** (`StarterDownloads`, `LlamaInstall`, `Downloads`): llama.cpp's server and libraries
   come from Lamp's own release at the size and SHA-256 the bundle pins, and each program and library is checked for the

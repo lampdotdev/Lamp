@@ -5,13 +5,15 @@ import XCTest
 /// went, its size and what a zip holds, so the builder needn't read the person's Downloads to know a Save worked. Only
 /// once it has really ended is it said to be saved, a save still being written is said to be still saving, one that ends
 /// after its batch answered is said in the next answer as from earlier, and nothing is said twice. A save is the batch's
-/// that pressed its panel's Save, not the one that opened the panel.
+/// that answered its panel, however late the download's panel came up.
 @MainActor
 final class UseAppSavesTests: XCTestCase {
     /// The app's half is cut out of the template, compiled into a small program and taken through a save's life, with
     /// real files: a zip made by the system's zip tool, the same zip cut short, and a file of plain text.
     func testASaveIsSaidOnceWhenItEndsAndAZipIsListed() throws {
         let support = Template.lampSupportSwift
+        // Lamp waits for the app's answer as long beyond its actions as the app waits for a save.
+        XCTAssertTrue(support.contains("static let wait = \(Template.useAppSaveWait)"))
         let start = try XCTUnwrap(support.range(of: "// begin LampSaves"))
         let end = try XCTUnwrap(support.range(of: "// end LampSaves", range: start.upperBound..<support.endIndex))
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-use-saves-\(UUID().uuidString)")
@@ -41,14 +43,10 @@ final class UseAppSavesTests: XCTestCase {
             // The person's own download, with no batch running, is none of the builder's business.
             say(LampSaves.began("Mine.zip") == nil ? ["person's own: not kept"] : ["person's own: kept"])
 
-            // Batch one clicks Save: the panel opens, and nothing is said yet.
-            LampSaves.batch = "one"
-            let robot = LampSaves.began("Robot.llsp3")
-            LampSaves.batch = nil
-            say(LampSaves.news(for: "one"))
-
-            // Batch two presses return in the panel: the download is still being written when it answers.
+            // Batch two presses return in the panel (opened by an earlier batch, or after it answered): the download is
+            // still being written when it answers.
             LampSaves.batch = "two"
+            let robot = LampSaves.began("Robot.llsp3")
             LampSaves.chose(robot, folder.appendingPathComponent("Robot.llsp3"))
             say(["writing: \\(LampSaves.writing)"])
             say(LampSaves.news(for: "two"))
@@ -93,7 +91,6 @@ final class UseAppSavesTests: XCTestCase {
         let size = whole.count, cut = whole.count - 30
         XCTAssertEqual(ran.output, """
         person's own: not kept
-        -
         writing: true
         Still saving DIR/Robot.llsp3: it isn't finished yet, so it isn't saved yet.
         -

@@ -3312,12 +3312,11 @@ enum Template {
     /// first of a batch above all (`LampDriver.lead` in LampSupport.swift, which must say the same). Every other
     /// action's spot is announced during the pause before it, with the time until it happens, so nothing waits.
     static let useAppLead = 0.2
-    /// How long a Mac app's `use_app` answer waits for a file its actions are saving (`LampSaves.wait` in the app, which
-    /// is this), and so how much longer Lamp waits for that answer.
+    /// How long a Mac app's `use_app` answer waits for a file its actions are saving (`LampSaves.wait` in LampSupport.swift,
+    /// which must say the same), and so how much longer Lamp waits for that answer.
     static let useAppSaveWait = 8.0
 
     static let lampSupportSwift = Connectors.fill(lampSupportTemplate).replacingOccurrences(of: "{{WISH_LEAVES_LAMP_CLOSED}}", with: wishLeavesLampClosed)
-        .replacingOccurrences(of: "{{USE_APP_SAVE_WAIT}}", with: String(useAppSaveWait))
         + "\n#if os(macOS)" + lampGlyphSwift + "#endif\n"
 
     private static let lampSupportTemplate = #"""
@@ -9229,17 +9228,17 @@ enum Template {
     // begin LampSaves
     /// What a save that `use_app` set off came to: a page's download (`LampPageDownloads` in LampPage.swift) says here
     /// where it was told to go and how it ended, and the driver's answer says it, so the builder knows the file is there,
-    /// how big it is and what a zip holds without reading the person's folders itself. Only saves begun during a batch are
-    /// kept: the person's own are none of the builder's business. A save can end after the batch that sent it on its way
-    /// has answered, so each is said again once it ends, in a later answer, marked as from earlier.
+    /// how big it is and what a zip holds without reading the person's folders itself. Only saves whose panel a batch answered
+    /// are kept: the person's own are none of the builder's business. A save can end after that batch has answered, so
+    /// each is said again once it ends, in a later answer, marked as from earlier.
     @MainActor
     enum LampSaves {
         enum State: Equatable { case saving, saved, canceled, failed(String), notMoved(String) }
 
         final class Save {
             let name: String
-            /// The batch it's whose: the one that began it, then the one that told it where to go (its panel's Save).
-            var batch: String
+            /// The batch that answered its panel.
+            let batch: String
             var destination: URL?
             var state = State.saving
             /// What the builder was last told of it.
@@ -9248,12 +9247,14 @@ enum Template {
         }
 
         /// How long a batch's answer waits for a file it's saving (`Store.use` waits as long beyond the actions).
-        static let wait = {{USE_APP_SAVE_WAIT}}
+        static let wait = 8.0
         /// The batch running now, if any (`LampDriver.perform` sets it).
         static var batch: String?
         private(set) static var all: [Save] = []
 
-        /// A save begun now: kept only during a batch.
+        /// A save the batch running now answered the panel for (its Save or Cancel): kept only during a batch, so the person's
+        /// own saves are left out, and a download whose panel came up only after the batch that clicked it had answered is
+        /// still the batch's that answers its panel.
         static func began(_ name: String) -> Save? {
             guard let batch else { return nil }
             let save = Save(name: name, batch: batch)
@@ -9261,10 +9262,7 @@ enum Template {
             return save
         }
 
-        static func chose(_ save: Save?, _ url: URL) {
-            save?.destination = url
-            if let batch { save?.batch = batch }
-        }
+        static func chose(_ save: Save?, _ url: URL) { save?.destination = url }
 
         static func ended(_ save: Save?, _ state: State) { save?.state = state }
 
@@ -9533,10 +9531,11 @@ enum Template {
             // A download the actions set off is this batch's until it answers (`LampSaves`).
             LampSaves.batch = id
             func answer(stopped: Bool) {
-                // A newer batch, begun meanwhile, says what's saved in its own answer.
+                // A newer batch, begun meanwhile, says what's saved in its own answer. So does the next one after a stop:
+                // Lamp may stop reading for this answer once it has stopped, and what's saved would be said to no one.
                 if LampSaves.batch == id || LampSaves.batch == nil {
                     LampSaves.batch = nil
-                    report += LampSaves.news(for: id)
+                    if !stopped { report += LampSaves.news(for: id) }
                 }
                 var answer = ["id": id, "report": report.joined(separator: "\n")]
                 if stopped { answer["stopped"] = "person" }
@@ -9586,12 +9585,14 @@ enum Template {
                 keepBarPanel()
                 note()
                 guard index < actions.count else {
-                    batch.end()
                     // Let the app react, then show the result: once a file the actions are saving is written, or up to
-                    // `LampSaves.wait` seconds, after which it's said to be still saving.
+                    // `LampSaves.wait` seconds, after which it's said to be still saving. The batch is still running till
+                    // then, so Lamp's Stop or the person's own click ends the wait and answers at once (`Handover`).
                     func finish(waited: Double) {
-                        // A newer batch has begun: this one answers now.
-                        guard Handover.current == nil, LampSaves.writing, waited < LampSaves.wait else {
+                        // Stopped (it has answered) or replaced by a newer batch.
+                        guard batch.carriesOn else { return }
+                        guard LampSaves.writing, waited < LampSaves.wait else {
+                            batch.end()
                             keepBarPanel()
                             report.append(outcome(since: front, before, wasDialog: dialog))
                             answer(stopped: false)

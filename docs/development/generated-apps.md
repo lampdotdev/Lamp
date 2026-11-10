@@ -111,8 +111,10 @@ download failed, or it finished but couldn't be put in place. A saved file is de
 zip, a bounded list of the names in it (never what's in them), or "not a zip archive" or that its list couldn't be read.
 Pressing return in the panel only says where it was told to save. The batch's answer waits up to
 `Template.useAppSaveWait` for a save still being written (Lamp waits that much longer for the answer), then says it's
-still saving; a save is the batch's that accepted its panel, and one that ends after that batch answered is said in the
-next answer, marked as from earlier. Each ending is said once. Only saves begun during a batch are kept, not the person's own. `UseAppSavesTests` compiles it out of
+still saving; Lamp's Stop or the person's own click ends that wait like any other part of the batch, and a stopped
+answer says no save, leaving them for the next. A save is the batch's that answered its panel, however late the download's
+panel came up, and one that ends after that batch answered is said in the next answer, marked as from earlier. Each
+ending is said once. Only saves whose panel a batch answered are kept, not the person's own. `UseAppSavesTests` compiles it out of
 the template and takes it through each case with real files.
 
 A Mac app can be changed while it's in use (apps show the wand while the file `MagicPanel.flag`, which Lamp writes
