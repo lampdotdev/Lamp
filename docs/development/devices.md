@@ -800,7 +800,9 @@ same `LampWebGame.swift`, `LampWebApp.swift`, `LampPage.swift`, the default `Nat
 compiled page app has, with `apple/LampPlayer.swift` as its main.swift), compiles it with the same `__RESTRICT` segment
 every app Lamp builds has, and keeps it in `.build/player` under a key of its sources and the compiler (a release builds
 it afresh); it's signed with the rest of Lamp. Its version is a hash of those sources (`LampPlayerVersion` in its
-Info.plist, `GameKit.playerVersion`).
+Info.plist, `GameKit.playerVersion`). A page on the Mac, copied or compiled, opens the person's files with a file field
+and saves its downloads where they say, as a browser does (`LampPageWatcher` and `LampPageDownloads` in LampPage.swift),
+so a site needs no Swift of its own, and so no compiling, for either.
 
 Nothing of one game is compiled in. What `Template.write` fills in for a compiled app is read by the copy from its own
 bundle: its name (`CFBundleDisplayName`), what kind of page it is, where the page is served and the fixed canvas a screen

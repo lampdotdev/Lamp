@@ -226,7 +226,9 @@ agent's commands can't write), never for a starter or an app made here, and writ
 (`LampNetwork`), so it holds with Lamp closed and no rebuild or live change widens it. On the Mac, the iPhone and the
 iPad the app around the page enforces it (`LampPageGuard` in LampPage.swift): every document and worker is served with a
 Content-Security-Policy naming only those sites; the page never leaves its own address in its window or a frame
-(redirects included); a link opens in the browser only on the person's click, once they've seen where it goes; what
+(redirects included), and a download is held to the sites it may fetch from, never taken as a navigation (a link to
+one of its sites goes ahead only to be saved if it answers with a file, never shown); a link opens
+in the browser only on the person's click, once they've seen where it goes; what
 no policy covers (WebRTC, a link's preconnect and prefetch) is off (`NetworkPolicy.holdBack`). A page whose sheet said
 "May connect outside this app" shows what was blocked in a bar above it (`LampPageBlocked`, one site at a time, in
 room of its own that `LampPageHolder` lays the page out below, so the page's own top controls are never covered), and
