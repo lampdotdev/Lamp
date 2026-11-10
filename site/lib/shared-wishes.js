@@ -996,6 +996,8 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
             console.log(`Page ${version} of ${id}: storing ${files.length} files`);
             for (let n = 0; n < files.length; n += PAGE_UPLOADS) {
               await Promise.all(files.slice(n, n + PAGE_UPLOADS).map(async (file) => {
+                // Each file named as it starts, so a page that stops shows on which.
+                console.log(`Page ${version} of ${id}: storing ${file.path} (${file.bytes.length} bytes)`);
                 urls[file.path] = await kept.putPageFile(id, token, file.path, file.bytes);
                 sizes[file.path] = file.bytes.length;
                 stored.push(urls[file.path]);
