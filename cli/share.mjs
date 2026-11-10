@@ -146,7 +146,8 @@ export async function share({ layout, words, picture = null, shape = "fill", sit
   // The folder's own link when it has one on this site, changed in place; a link that's gone is made again.
   let earlier = readLink(layout.folder);
   if (earlier && earlier.site !== site) earlier = null;
-  let link = { site, ...(await publishLink({ site, body, earlier })), ...words, shape };
+  // A file an earlier share sent stays on the record until it's taken away, so a retry after a failed removal tries again.
+  let link = { site, ...(await publishLink({ site, body, earlier })), ...words, shape, ...(earlier?.file ? { file: true } : {}) };
   // Kept before the page goes up: a link whose page didn't make it is still this folder's to send again or take down.
   writeLink(layout.folder, link);
 
@@ -155,9 +156,10 @@ export async function share({ layout, words, picture = null, shape = "fill", sit
     link.file = true;
     writeLink(layout.folder, link);
     await sendFile({ site, link, bytes: app.bytes, said });
-  } else if (earlier?.file) {
+  } else if (link.file) {
     await removeFile({ site, link });
     link.file = false;
+    writeLink(layout.folder, link);
   }
   const version = await sendFile({ site, link, bytes: zip, page: true, said });
   link = { ...link, version, shared: new Date().toISOString() };

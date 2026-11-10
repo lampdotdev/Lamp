@@ -533,10 +533,18 @@ async function devInLamp(layout, lamp) {
     clearTimeout(timer);
     timer = setTimeout(apply, 300);
   });
-  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => { watcher.close(); try { lamp?.close(); } catch {} process.exit(0); });
-  // Until it's stopped, or Lamp no longer has the app: then lamp dev goes on as for any folder (false).
+  const quit = () => { watcher.close(); try { lamp?.close(); } catch {} process.exit(0); };
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, quit);
+  // Until it's stopped, or Lamp no longer has the app: then lamp dev goes on as for any folder (false), its own
+  // runner answering Ctrl-C from then on.
   let stopWatching;
-  const watching = new Promise((done) => { stopWatching = (handled) => { watcher.close(); clearTimeout(timer); try { lamp?.close(); } catch {} done(handled); }; });
+  const watching = new Promise((done) => {
+    stopWatching = (handled) => {
+      watcher.close(); clearTimeout(timer); try { lamp?.close(); } catch {}
+      for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.off(signal, quit);
+      done(handled);
+    };
+  });
   await apply();
   return await watching;
 }
