@@ -1,15 +1,15 @@
 import Darwin
 import Foundation
-import dnssd
 
 /// Everything on the person's home network, one record per address, for when the person is looking for devices (Your
 /// Devices, Add a New Device, `network_devices`): never at launch or on a timer. SSDP and the integrations find what
 /// Lamp can work with; this finds the rest, so the list can say what else is there and the agent can work out what
 /// each one is. It only reads: one small datagram to each address of this Mac's own subnet, so the Mac's neighbor
-/// table fills (a phone that ignores everything else still answers the Mac's ARP), that table, the maker of each
-/// hardware address from the IEEE's registry (`Vendors`), and every Bonjour service on the network. Nothing is kept on
-/// disk: the names a network holds are often people's ("…'s iPhone"), so they're shown on this Mac and told to the
-/// agent the person uses, and go nowhere else.
+/// table fills (a phone that ignores everything else still answers the Mac's ARP), that table, and every Bonjour
+/// service on the network, all of it lamp's command line's (`network` and `neighbours` in cli/calls.mjs, cli/network.mjs);
+/// and here, the maker of each hardware address from the IEEE's registry (`Vendors`). Nothing is kept on disk: the
+/// names a network holds are often people's ("…'s iPhone"), so they're shown on this Mac and told to the agent the
+/// person uses, and go nowhere else.
 struct NetworkHost: Hashable, Identifiable {
     var id: String { address }
     let address: String
@@ -113,14 +113,16 @@ enum HomeNetwork {
         var swept: Subnet?
     }
 
-    /// Sweeps this Mac's subnet, browses Bonjour meanwhile, then reads the neighbor table. Sends nothing anywhere else.
+    /// Sweeps this Mac's subnet and browses Bonjour meanwhile, through lamp's command line, then reads the neighbor
+    /// table (`Neighbours`, here). Sends nothing anywhere else. One that fails finds nothing, and says why in Lamp's log.
     static func look() async -> Look {
-        async let services = Bonjour.everything()
-        let subnet = Subnet.current()
-        if let subnet { await Sweep.run(subnet) }
-        let table = Neighbours.table()
-        let gateway = Neighbours.gateway()
-        let mine = TVs.macAddresses()
+        let done: [String: Any]
+        do { done = try await LampCLI.ask("network", [:]) } catch {
+            NSLog("Lamp couldn't look at the network: \(error.localizedDescription)")
+            return Look()
+        }
+        let subnet = (done["swept"] as? [String: Any]).flatMap(Subnet.init(said:))
+        let table = Neighbours.table(), mine = TVs.macAddresses()
         var hosts: [String: NetworkHost] = [:]
         for (address, mac) in table where subnet?.contains(address) ?? DeviceAddress.isPrivate(address) || mine.contains(address) {
             var host = NetworkHost(address: address, mac: mac)
@@ -128,16 +130,39 @@ enum HomeNetwork {
             host.vendor = host.randomised ? nil : Vendors.maker(of: mac)
             hosts[address] = host
         }
-        for service in await services {
-            for address in service.addresses where subnet?.contains(address) ?? DeviceAddress.isPrivate(address) || mine.contains(address) {
-                hosts[address, default: NetworkHost(address: address)].services.append(service.service)
+        // The command line's hosts, each with its Bonjour services, are all within the subnet.
+        for said in done["hosts"] as? [[String: Any]] ?? [] {
+            guard let address = said["address"] as? String else { continue }
+            var host = hosts[address] ?? NetworkHost(address: address)
+            host.isThisMac = said["isThisMac"] as? Bool ?? false
+            host.isGateway = said["isGateway"] as? Bool ?? false
+            host.services = (said["services"] as? [[String: Any]] ?? []).compactMap { service in
+                guard let type = service["type"] as? String, let name = service["name"] as? String, let host = service["host"] as? String else { return nil }
+                return BonjourService(type: type, name: name, host: host, txt: service["txt"] as? [String: String] ?? [:])
             }
+            hosts[address] = host
         }
+        let gateway = done["gateway"] as? String
         for address in hosts.keys {
             hosts[address]?.isThisMac = mine.contains(address)
             hosts[address]?.isGateway = address == gateway
         }
         return Look(hosts: hosts.values.sorted { order($0.address) < order($1.address) }, swept: subnet)
+    }
+
+    /// The network as it is now, read with nothing sent: this Mac's subnet and its gateway, through lamp's command line,
+    /// and the neighbor table, here.
+    struct Now {
+        var table: [String: String] = [:]
+        var gateway: String?
+        var subnet: Subnet?
+    }
+
+    static func now() async -> Now {
+        let table = Neighbours.table()
+        guard let done = try? await LampCLI.ask("neighbours", [:]) else { return Now(table: table) }
+        return Now(table: table, gateway: done["gateway"] as? String,
+                   subnet: (done["subnet"] as? [String: Any]).flatMap(Subnet.init(said:)))
     }
 
     /// What the SSDP scan and the UPnP descriptions already read said of each host, added to its record.
@@ -161,16 +186,15 @@ enum HomeNetwork {
     /// Whether this Mac is still on the network a whole look swept: the same subnet, and the same router at its gateway.
     /// The hosts of the last whole look still at their address now, by the neighbor table (read, nothing sent): one
     /// gone, or another device at its address, is left out.
-    static func stillHere(_ hosts: [NetworkHost]) -> [NetworkHost] {
-        let table = Neighbours.table()
-        return hosts.filter { host in host.mac.map { table[host.address] == $0 } ?? false }
+    static func stillHere(_ hosts: [NetworkHost], now: Now) -> [NetworkHost] {
+        hosts.filter { host in host.mac.map { now.table[host.address] == $0 } ?? false }
     }
 
-    static func sameNetwork(as swept: Subnet?, router: String?) -> Bool {
-        guard let swept, let now = Subnet.current(), now.network == swept.network, now.prefix == swept.prefix else { return false }
+    static func sameNetwork(as swept: Subnet?, router: String?, now: Now) -> Bool {
+        guard let swept, let subnet = now.subnet, subnet.network == swept.network, subnet.prefix == swept.prefix else { return false }
         // Without the router's hardware address the network can't be told from another on the same subnet.
         guard let router else { return false }
-        return Neighbours.gateway().flatMap { Neighbours.table()[$0] } == router
+        return now.gateway.flatMap { now.table[$0] } == router
     }
 
     private static func order(_ address: String) -> UInt32 { Subnet.value(address) ?? .max }
@@ -353,77 +377,27 @@ struct Subnet: Hashable {
 
     static func text(_ value: UInt32) -> String { (0..<4).reversed().map { String(value >> UInt32($0 * 8) & 0xFF) }.joined(separator: ".") }
 
-    /// The subnet of the interface the default route uses, when it's a private IPv4 one.
-    static func current() -> Subnet? {
-        guard let index = Neighbours.gatewayInterface(), let name = interfaceName(index) else { return nil }
-        var list: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&list) == 0, let first = list else { return nil }
-        defer { freeifaddrs(list) }
-        for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
-            let entry = pointer.pointee
-            guard String(cString: entry.ifa_name) == name, let address = entry.ifa_addr, let netmask = entry.ifa_netmask,
-                  Int32(address.pointee.sa_family) == AF_INET else { continue }
-            let mine = address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { UInt32(bigEndian: $0.pointee.sin_addr.s_addr) }
-            let mask = netmask.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { UInt32(bigEndian: $0.pointee.sin_addr.s_addr) }
-            return make(mine: mine, mask: mask)
-        }
-        return nil
+    /// The subnet as lamp's command line says it: its network, how much of it is swept, the prefix the network really
+    /// has, and this Mac's address on it.
+    init?(said: [String: Any]) {
+        guard let network = (said["network"] as? String).flatMap(Subnet.value), let mine = (said["mine"] as? String).flatMap(Subnet.value),
+              let prefix = said["prefix"] as? Int, let actual = said["actualPrefix"] as? Int, (8...32).contains(prefix) else { return nil }
+        self.init(network: network, prefix: prefix, actualPrefix: actual, mine: mine)
     }
 
-    /// The subnet to sweep for an address and its mask; nil for one that isn't on a private network.
-    static func make(mine: UInt32, mask: UInt32) -> Subnet? {
-        let actual = mask.nonzeroBitCount
-        guard actual >= 8, actual <= 30 else { return nil }
-        let prefix = max(actual, widest)
-        let network = mine & (~UInt32(0) << UInt32(32 - prefix))
-        let subnet = Subnet(network: network, prefix: prefix, actualPrefix: actual, mine: mine)
-        return DeviceAddress.onNetwork(text(mine)) ? subnet : nil
-    }
-
-    private static func interfaceName(_ index: UInt16) -> String? {
-        var buffer = [CChar](repeating: 0, count: Int(IF_NAMESIZE))
-        return if_indextoname(UInt32(index), &buffer).map { String(cString: $0) }
-    }
-}
-
-/// One datagram to each address of the subnet, so the Mac asks who has it (ARP) and its neighbor table fills. The
-/// datagram is one byte to the discard port (9), which nothing answers; it's sent a few addresses at a time, paced.
-enum Sweep {
-    static let batch = 16
-    static let pause: Duration = .milliseconds(25)
-    /// How long the neighbors have to answer the Mac's ARP after the last datagram.
-    static let settle: Duration = .milliseconds(1500)
-
-    static func run(_ subnet: Subnet) async {
-        let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
-        guard fd >= 0 else { return }
-        defer { close(fd) }
-        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
-        let addresses = subnet.addresses
-        var start = 0
-        while start < addresses.count {
-            for value in addresses[start..<min(start + batch, addresses.count)] {
-                var address = sockaddr_in()
-                address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-                address.sin_family = sa_family_t(AF_INET)
-                address.sin_port = UInt16(9).bigEndian
-                address.sin_addr.s_addr = value.bigEndian
-                var byte: UInt8 = 0
-                _ = withUnsafePointer(to: &address) {
-                    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { sendto(fd, &byte, 1, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
-                }
-            }
-            start += batch
-            try? await Task.sleep(for: pause)
-        }
-        try? await Task.sleep(for: settle)
+    init(network: UInt32, prefix: Int, actualPrefix: Int, mine: UInt32) {
+        self.network = network
+        self.prefix = prefix
+        self.actualPrefix = actualPrefix
+        self.mine = mine
     }
 }
 
 // MARK: - The neighbor table
 
-/// This Mac's neighbor table and default route, read from the kernel's routing table (what `arp -a` and `route` read),
-/// with no program run and nothing sent.
+/// This Mac's neighbor table, read from the kernel's routing table (what `arp -a` reads), with no program run and
+/// nothing sent. It's read here, not by lamp's command line: macOS shows the table only to a process it lets on the
+/// local network, and the runtime Lamp carries isn't one, even run by Lamp (it reads the table as empty).
 enum Neighbours {
     /// Each neighbor's IPv4 address and hardware address, for those that answered; never multicast or broadcast.
     static func table() -> [String: String] {
@@ -437,14 +411,6 @@ enum Neighbours {
             table[address] = bytes.map { String(format: "%02x", $0) }.joined(separator: ":")
         }
         return table
-    }
-
-    static func gateway() -> String? {
-        routes(flags: RTF_GATEWAY).first { ipv4($0.destination) == "0.0.0.0" }.flatMap { ipv4($0.gateway) }
-    }
-
-    static func gatewayInterface() -> UInt16? {
-        routes(flags: RTF_GATEWAY).first { ipv4($0.destination) == "0.0.0.0" && ipv4($0.gateway) != nil }?.interface
     }
 
     private struct Route { var destination: [UInt8]?; var gateway: [UInt8] = []; var interface: UInt16 }
@@ -527,159 +493,5 @@ enum Vendors {
             list[String(line[..<tab])] = String(line[line.index(after: tab)...])
         }
         return list
-    }
-}
-
-// MARK: - Bonjour, all of it
-
-/// Every Bonjour service on the network: the types it offers (`_services._dns-sd._udp`), the services of each, and each
-/// one's host, address and record, all read with mDNS (`dns_sd`) and no connection to the device.
-enum Bonjour {
-    struct Found: Hashable {
-        let service: BonjourService
-        let addresses: [String]
-    }
-
-    static let browseFor: Duration = .seconds(3)
-    /// Browsed whether or not the meta-query names them: a device that's asleep often misses that one answer, and
-    /// these are the services that say most about what a quiet device is (a Cast device, a printer, a gadget's web page).
-    static let alwaysBrowse = ["_googlecast._tcp", "_androidtvremote2._tcp", "_ipp._tcp", "_printer._tcp", "_http._tcp", "_esphomelib._tcp"]
-
-    static func everything() async -> [Found] {
-        let types = await browse("_services._dns-sd._udp").map { name, type in
-            // The meta-query's answers are "_airplay" in "_tcp.local.".
-            name + "." + (type.components(separatedBy: ".").first ?? "_tcp")
-        }
-        let unique = Array(Set(types + alwaysBrowse)).filter { $0.range(of: #"^_[A-Za-z0-9-]{1,40}\._(tcp|udp)$"#, options: .regularExpression) != nil }.prefix(60)
-        var services: [BonjourService] = []
-        await withTaskGroup(of: [BonjourService].self) { group in
-            for type in unique {
-                group.addTask {
-                    var found: [BonjourService] = []
-                    let instances = Array(Set(await browse(type).map(\.name))).prefix(40)
-                    await withTaskGroup(of: BonjourService?.self) { each in
-                        for name in instances { each.addTask { await resolve(name: name, type: type) } }
-                        for await one in each { if let one { found.append(one) } }
-                    }
-                    return found
-                }
-            }
-            for await some in group { services += some }
-        }
-        // Each host's address is looked up once for all its services: a device with many (a printer has eight) answered
-        // some of them and not others when each asked for itself.
-        var byHost: [String: [String]] = [:]
-        await withTaskGroup(of: (String, [String]).self) { group in
-            for host in Set(services.map(\.host)) { group.addTask { (host, await addresses(of: host)) } }
-            for await (host, addresses) in group { byHost[host] = addresses }
-        }
-        return services.compactMap { service in
-            byHost[service.host].flatMap { $0.isEmpty ? nil : Found(service: service, addresses: $0) }
-        }
-    }
-
-    /// The names a browse hears for a while, with the type each answered for.
-    private static func browse(_ type: String) async -> [(name: String, type: String)] {
-        final class Heard: @unchecked Sendable { var items: [(String, String)] = []; let lock = NSLock() }
-        let heard = Heard()
-        let queue = DispatchQueue(label: "lamp.bonjour.browse")
-        var ref: DNSServiceRef?
-        let reply: DNSServiceBrowseReply = { _, flags, _, error, name, type, _, context in
-            guard error == DNSServiceErrorType(kDNSServiceErr_NoError), flags & DNSServiceFlags(kDNSServiceFlagsAdd) != 0, let name, let type, let context else { return }
-            let heard = Unmanaged<Heard>.fromOpaque(context).takeUnretainedValue()
-            heard.lock.lock(); heard.items.append((String(cString: name), String(cString: type))); heard.lock.unlock()
-        }
-        let retained = Unmanaged.passRetained(heard)
-        guard DNSServiceBrowse(&ref, 0, 0, type, "local.", reply, retained.toOpaque()) == DNSServiceErrorType(kDNSServiceErr_NoError), let ref else {
-            retained.release()
-            return []
-        }
-        DNSServiceSetDispatchQueue(ref, queue)
-        try? await Task.sleep(for: browseFor)
-        queue.sync { DNSServiceRefDeallocate(ref) }
-        retained.release()
-        return heard.lock.withLock { heard.items }
-    }
-
-    /// A TXT record's entries, read by hand: `NetService.dictionary(fromTXTRecord:)` aborts the app when an entry
-    /// is a bare key with no "=" (some devices on the network send these), because it can't bridge the null value.
-    static func entries(ofTXTRecord data: Data) -> [String: Data] {
-        var entries: [String: Data] = [:]
-        let bytes = [UInt8](data)
-        var index = 0
-        while index < bytes.count {
-            let length = Int(bytes[index])
-            index += 1
-            guard index + length <= bytes.count else { break }
-            if length == 0 { continue }
-            let entry = bytes[index..<index + length]
-            index += length
-            let equals = entry.firstIndex(of: UInt8(ascii: "="))
-            let key = String(decoding: entry[..<(equals ?? entry.endIndex)], as: UTF8.self)
-            // The first value for a key wins, as the record format says.
-            guard !key.isEmpty, entries[key] == nil else { continue }
-            entries[key] = equals.map { Data(entry[($0 + 1)...]) } ?? Data()
-        }
-        return entries
-    }
-
-    /// One service's host and record, waited for up to three seconds.
-    private static func resolve(name: String, type: String) async -> BonjourService? {
-        final class Resolved: @unchecked Sendable { var host: String?; var txt: [String: String] = [:]; let lock = NSLock() }
-        let resolved = Resolved()
-        let queue = DispatchQueue(label: "lamp.bonjour.resolve")
-        let retained = Unmanaged.passRetained(resolved)
-        defer { retained.release() }
-        var ref: DNSServiceRef?
-        let reply: DNSServiceResolveReply = { _, _, _, error, fullName, host, _, length, record, context in
-            guard error == DNSServiceErrorType(kDNSServiceErr_NoError), let host, let context else { return }
-            let resolved = Unmanaged<Resolved>.fromOpaque(context).takeUnretainedValue()
-            var txt: [String: String] = [:]
-            if let record {
-                let data = Data(bytes: record, count: Int(length))
-                for (key, value) in Bonjour.entries(ofTXTRecord: data) where BonjourService.modelKeys.contains(key) {
-                    // A Cast device's "md" is its model; AirPlay's is the kinds of metadata it takes.
-                    // Its "fn" is the name the person gave it ("Living Room TV"), kept as the host's other names are.
-                    if key == "md" || key == "fn", !(fullName.map { String(cString: $0) } ?? "").contains("._googlecast._tcp.") { continue }
-                    let text = String(decoding: value, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !text.isEmpty, text.count <= 80, !text.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) { txt[key] = text }
-                }
-            }
-            resolved.lock.lock(); resolved.host = String(cString: host); resolved.txt = txt; resolved.lock.unlock()
-        }
-        guard DNSServiceResolve(&ref, 0, 0, name, type, "local.", reply, retained.toOpaque()) == DNSServiceErrorType(kDNSServiceErr_NoError), let ref else { return nil }
-        DNSServiceSetDispatchQueue(ref, queue)
-        for _ in 0..<30 {
-            try? await Task.sleep(for: .milliseconds(100))
-            if (resolved.lock.withLock { resolved.host }) != nil { break }
-        }
-        queue.sync { DNSServiceRefDeallocate(ref) }
-        guard let host = resolved.lock.withLock({ resolved.host }) else { return nil }
-        return BonjourService(type: type, name: name, host: host, txt: resolved.lock.withLock { resolved.txt })
-    }
-
-    /// A Bonjour host's IPv4 addresses, waited for up to three seconds.
-    private static func addresses(of host: String) async -> [String] {
-        final class Heard: @unchecked Sendable { var addresses: [String] = []; let lock = NSLock() }
-        let heard = Heard()
-        let queue = DispatchQueue(label: "lamp.bonjour.address")
-        let retained = Unmanaged.passRetained(heard)
-        defer { retained.release() }
-        var lookup: DNSServiceRef?
-        let reply: DNSServiceGetAddrInfoReply = { _, _, _, error, _, socket, _, context in
-            guard error == DNSServiceErrorType(kDNSServiceErr_NoError), let socket, let context, Int32(socket.pointee.sa_family) == AF_INET else { return }
-            let heard = Unmanaged<Heard>.fromOpaque(context).takeUnretainedValue()
-            let text = socket.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { String(cString: inet_ntoa($0.pointee.sin_addr)) }
-            heard.lock.lock(); if !heard.addresses.contains(text) { heard.addresses.append(text) }; heard.lock.unlock()
-        }
-        guard DNSServiceGetAddrInfo(&lookup, 0, 0, DNSServiceProtocol(kDNSServiceProtocol_IPv4), host, reply, retained.toOpaque()) == DNSServiceErrorType(kDNSServiceErr_NoError),
-              let lookup else { return [] }
-        DNSServiceSetDispatchQueue(lookup, queue)
-        for _ in 0..<30 {
-            try? await Task.sleep(for: .milliseconds(100))
-            if !(heard.lock.withLock { heard.addresses }).isEmpty { break }
-        }
-        queue.sync { DNSServiceRefDeallocate(lookup) }
-        return heard.lock.withLock { heard.addresses }
     }
 }

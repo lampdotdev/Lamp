@@ -33,7 +33,10 @@ the part it governs. Only a rule that every change must follow belongs here.
 - **Approvals and privacy hold for every engine.** Shell commands go through `/agent/approve` whichever engine runs
   them, and file access outside the app's folder is checked the same way (`Privacy.verdict`); a command never skips
   approval because it looks like a read. Lamp's own commands over what's in an app's folder run in the app's
-  sandbox (`Sandbox.run`, never `Shell.run` directly). Details: [approvals and privacy](docs/development/approvals-and-privacy.md).
+  sandbox (`Sandbox.run`, never `Shell.run` directly). The one exception is the person's own coding agent driving
+  Lamp over MCP (`OutsideWork`): it isn't one of Lamp's engines, so its own shell and file edits are under its own
+  approvals, never `/agent/approve`; everything Lamp does for it (taking a folder on, building, opening, sharing) keeps
+  Lamp's checks. Details: [approvals and privacy](docs/development/approvals-and-privacy.md).
 - **Lamp's own files in generated apps are written afresh, so fix them at their source.** `Sources/LampSupport.swift`,
   `build.sh` and `Package.swift` in every app are rewritten before each build (`Template.writeOwnedFiles`); a change
   to them belongs in `Sources/Lamp/Template.swift`. That file holds `LampSupport.swift` as a Swift string: after
@@ -104,3 +107,4 @@ Read the guide for the part you're changing before you change it. A section name
 | [services](docs/development/services.md) | Services the person already uses: sign-in on the service's page, personal tokens, open data, the app's secrets |
 | [interface](docs/development/interface.md) | Any screen: Settings, the welcome, the chat's cards, the gallery |
 | [website](docs/development/website.md) | `site/` (lamp.dev) |
+| [lamp from a terminal](cli/README.md) | `cli/`: lamp's command line in Node, which makes, runs, looks at, uses and shares an app from its folder with Lamp's app closed (a web app or game in a browser, a Mac app built and run, a page put on an Xbox or on Android), and the skill that teaches a coding agent to use it; `scripts/cli-files.sh` for the files it takes from Lamp's own code; and `LampCLI`, through which Lamp's app has it do what's its own instead of doing it again in Swift |

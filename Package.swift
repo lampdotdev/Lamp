@@ -11,7 +11,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Lamp",
-            dependencies: [.product(name: "Sparkle", package: "Sparkle"), "LampSidebarKit", "LampFileLook", "LampRelayKit"],
+            dependencies: [.product(name: "Sparkle", package: "Sparkle"), "LampSidebarKit", "LampFileLook", "LampRelayKit", "LampOutsideKit"],
             path: "Sources/Lamp",
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
         ),
@@ -19,6 +19,10 @@ let package = Package(
         // phone pages and its players join (`LampRelay`, in Lamp's Helpers), and the credentials Lamp hands out for it.
         .target(name: "LampRelayKit", path: "Sources/LampRelayKit"),
         .executableTarget(name: "LampRelay", dependencies: ["LampRelayKit"], path: "Sources/LampRelay"),
+        // The person's own coding agent starting Lamp as a local MCP server: the helper it runs over stdio (`lamp-mcp`, in
+        // Lamp's Helpers), which carries each message to Lamp's socket, and what the two agree on (`OutsideKit`).
+        .target(name: "LampOutsideKit", path: "Sources/LampOutsideKit"),
+        .executableTarget(name: "LampMCP", dependencies: ["LampOutsideKit"], path: "Sources/LampMCP"),
         // What Lamp and the chat inside an app's window say to each other.
         .target(name: "LampSidebarKit", path: "Sources/LampSidebarKit"),
         // That chat: an extension Lamp puts in every Mac app it builds. It starts as Apple's own extensions do,

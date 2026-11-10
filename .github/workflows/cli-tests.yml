@@ -1,0 +1,55 @@
+name: CLI tests
+
+on:
+  pull_request:
+    paths:
+      - "cli/**"
+      - "site/lib/**"
+      - "Resources/GameKit/**"
+      - "Resources/Devices/**"
+      - "Resources/WebHost/**"
+      - "Tests/Fixtures/lg-webos-tv/**"
+      - ".github/workflows/cli-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "cli/**"
+      - "site/lib/**"
+      - "Resources/GameKit/**"
+      - "Resources/Devices/**"
+      - "Resources/WebHost/**"
+      - "Tests/Fixtures/lg-webos-tv/**"
+      - ".github/workflows/cli-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run tests
+        run: node --test cli/tests/*.test.mjs
+
+      # Lamp's app runs what it asks of lamp (cli/calls.mjs) on Bun, the runtime its bundled agent is built on
+      # (LampCLI.swift): lamp is held to it too, at the version the pi that build.sh pins carries.
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Run tests on Bun
+        run: bun test cli/tests

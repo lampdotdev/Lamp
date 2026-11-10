@@ -721,6 +721,10 @@ final class Store: ObservableObject {
         didSet {
             // Its check goes with it: a review closed, or replaced by another, is never shown.
             if let old = oldValue, pendingImport?.id != old.id, reviewWork?.sheet == old.id { endReview() }
+            // A folder the person's own agent asked Lamp to take on: its review closed without Build & Open is a no.
+            if let old = oldValue, pendingImport?.id != old.id, let job = old.outside, !job.confirmed {
+                job.finish(nil, "The person chose not to build it.")
+            }
             if pendingImport == nil, oldValue != nil { openWaitingImport() }
         }
     }
@@ -841,6 +845,7 @@ final class Store: ObservableObject {
         reviewTimer?.cancel()
         let work = reviewWork
         if work?.wish == nil, work?.sheet == nil {
+            if let outside = outsideReview { outside.finish(nil, detail.map { "\(why) \($0)" } ?? why) }
             endReview()
             let alert = NSAlert()
             alert.messageText = why
@@ -1456,6 +1461,9 @@ final class Store: ObservableObject {
     nonisolated static let installDir = Edition.appsFolder
 
     let root: URL
+
+    /// The folder taken on for the person's own agent whose review is being made, until its sheet is up (`importApp`).
+    var outsideReview: OutsideImport?
 
     /// A turn in progress on an app, for tests of what a tool call does under one.
     func beginTurnForTest(_ turn: Turn, on project: LampProject) { turns[project.id] = turn }
@@ -2720,11 +2728,7 @@ final class Store: ObservableObject {
         guard let integration = kept else {
             return (400, ["error": "Lamp didn't take the integration. Fix these and call device_integration again:\n" + problems.map { "- " + $0 }.joined(separator: "\n")])
         }
-        let scan = await Integrations.Scan.now()
-        var found: [Device] = []
-        for address in await Integrations.addresses(for: integration, scan: scan) {
-            if let device = await Integrations.identify(integration, at: address, scan: scan) { found.append(device) }
-        }
+        let found = Integrations.found(integration, in: await Integrations.Scan.now(for: [integration]))
         Integrations.remember(found)
         linkSetupConversations(to: found)
         // In the list at once, for the card below; the next look for devices keeps them while they answer.
@@ -3435,21 +3439,22 @@ final class Store: ObservableObject {
         Task {
             async let apple = Devices.list()
             async let android = Adb.devices()
+            async let now = HomeNetwork.now()
             // Started at once: the sweep and Bonjour take a few seconds, as the SSDP search does.
             let network = everything ? Task.detached { await HomeNetwork.look() } : nil
             // What answers on the network: one search, which the TVs and the integrations share.
-            let scan = await Integrations.Scan.now()
+            let scan = await Integrations.Scan.now(tvs: true, unknown: true)
             localNetworkRefused = scan.refused
             // Refused the first time is macOS's question still up; refused after it is the person's answer.
             let firstAsked = scan.refused && !UserDefaults.standard.bool(forKey: Self.localNetworkAskedKey)
             UserDefaults.standard.set(true, forKey: Self.localNetworkAskedKey)
             if firstAsked { answerAwaited = Task { await lookAgainOnceAllowed(everything: everything) } }
-            async let tvs = TVs.devices(answers: scan.answers)
-            async let integrated = Integrations.devices(scan: scan)
+            let tvs = TVs.devices(scan: scan)
+            let known = Integrations.devices(scan: scan)
             let kits = await apple + android + tvs
-            let known = await integrated
+            let here = await now
             // What's on the network that nothing Lamp has knows, after the rest.
-            let unknown = await Integrations.unknown(scan, except: Set((kits + known).compactMap(\.address)))
+            let unknown = Integrations.unknown(scan, except: Set((kits + known).compactMap(\.address)))
             var found = kits + known + unknown
             if found != devices { devices = found }
             if let look = await network?.value {
@@ -3462,7 +3467,7 @@ final class Store: ObservableObject {
                 if merged != hosts { hosts = merged }
                 swept = look.swept
                 sweptRouter = merged.first(where: \.isGateway)?.mac
-            } else if !HomeNetwork.sameNetwork(as: swept, router: sweptRouter) {
+            } else if !HomeNetwork.sameNetwork(as: swept, router: sweptRouter, now: here) {
                 // Another network since the last whole look: its hosts aren't here, and an address may be another's now.
                 if !hosts.isEmpty { hosts = [] }
                 swept = nil
@@ -3470,8 +3475,8 @@ final class Store: ObservableObject {
             } else {
                 // A look of SSDP alone keeps what the last whole look learned of the rest, on the same network, for the
                 // hosts still at their address.
-                let here = HomeNetwork.stillHere(hosts)
-                if here != hosts { hosts = here }
+                let still = HomeNetwork.stillHere(hosts, now: here)
+                if still != hosts { hosts = still }
                 let taken = Set(found.compactMap(\.address))
                 found += hosts.filter { !taken.contains($0.address) && HomeNetwork.couldLearn($0) }.map(HomeNetwork.device(for:))
                 if found != devices { devices = found }
@@ -4160,6 +4165,8 @@ final class Store: ObservableObject {
         /// What each of its apps may reach, from the reading its review made of exactly this package
         /// (`Sharing.Inspection.readings`): Update and Keep as Separate App apply these, rather than reading it again.
         var readings: [String: NetworkPolicy]? = nil
+        /// A folder the person's own coding agent asked Lamp to take on (`OutsideWork`): told what came of the review.
+        var outside: OutsideImport? = nil
     }
 
     /// Whether the wish's files differ from the version that arrived last (a shared file opened, or updated from): any
@@ -4195,20 +4202,34 @@ final class Store: ObservableObject {
     /// AI's check being a part of it only when AI is set up (`Sharing.review`), and building it always takes a click on
     /// that review (`ImportReview.opening`). During the welcome the file is kept and the welcome gives way to it
     /// (`OnboardingView.arrive`); its review opens as the welcome ends.
+    /// `outside`: a folder the person's own coding agent asked Lamp to take on (`OutsideWork`). It gets the same review as
+    /// any app that comes to Lamp, always as a new app, and is told what came of it: the app made, or why there's none.
     func importApp(from file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil,
-                   bringingIn: BringIn.Pull? = nil, trying: Bool = false) {
+                   bringingIn: BringIn.Pull? = nil, trying: Bool = false, outside: OutsideImport? = nil) {
         NSApp.activate()
         Task {
             // Each file waits for Lamp's first look at setup on its own, before it takes the one review there is: files
             // opened together at launch, during the welcome, are each kept for it, in the order they came.
             await setupLook.wait()
+            if let outside {
+                // Told already (the review failed, and this is its Try Again): an app made now would be one the agent never
+                // hears of, and its next open_project would make another.
+                guard !outside.isFinished else { return }
+                guard reviewsCanOpen else { return outside.finish(nil, "Lamp's welcome isn't finished yet. Ask the person to finish it, then call open_project again.") }
+            }
             guard reviewsCanOpen else { return keepForWelcome(file, updating: target, fetched: fetched, following: following) }
-            guard let id = beginReview(wish: target, stage: .unpacking) else { return }
+            guard let id = beginReview(wish: target, stage: .unpacking) else {
+                outside?.finish(nil, "Lamp is already reviewing an app. Try again once that's done.")
+                return
+            }
+            outsideReview = outside
             runReview(id, retry: { [weak self] in
-                self?.importApp(from: file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn, trying: trying)
+                self?.importApp(from: file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn, trying: trying, outside: outside)
             }) { [weak self] in
                 await self?.openForReview(file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn, trying: trying,
-                                          waitForWelcome: false, id: id)
+                                          waitForWelcome: false, id: id, outside: outside)
+                // A review that ended before its sheet came up (it failed, or another took its place) is a no.
+                if let outside, self?.pendingImport?.outside !== outside { outside.finish(nil, "Lamp's review of it stopped before it could be shown.") }
             }
         }
     }
@@ -4233,7 +4254,8 @@ final class Store: ObservableObject {
     /// Unpacks a shared app and shows its review, as the review `id`'s work. `waitForWelcome` is false for one that has
     /// waited already (`importApp`) and for one kept during the welcome, taken only once that's over (`openWaitingImport`).
     private func openForReview(_ file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil,
-                               bringingIn: BringIn.Pull? = nil, trying: Bool = false, waitForWelcome: Bool = true, id: UUID) async {
+                               bringingIn: BringIn.Pull? = nil, trying: Bool = false, waitForWelcome: Bool = true, id: UUID,
+                               outside: OutsideImport? = nil) async {
         if waitForWelcome {
             // A file that launched Lamp arrives before Lamp has looked at setup: the look is waited for, so
             // the same file on the same Mac always goes the same way.
@@ -4248,19 +4270,24 @@ final class Store: ObservableObject {
         // Unpacking is a process and some file reads: off the main actor, so Lamp stays responsive.
         let package: Sharing.Package
         do {
-            package = try await Self.offMain { Result { try Sharing.open(file, fetched: fetched) } }.get()
+            // A folder of the person's agent: the very package open_project captured and checked, which is what's built.
+            let snapshot = outside?.snapshot
+            package = try await Self.offMain { Result { try snapshot.map(OutsideImport.copy(of:)) ?? Sharing.open(file, fetched: fetched) } }.get()
         } catch {
             guard owns(id) else { return }
             let failure = error as? Sharing.ImportError
             return failReview(id, failure?.message ?? "Lamp couldn't open this app.", detail: failure?.detail ?? (failure == nil ? error.localizedDescription : nil))
         }
         guard owns(id) else { try? FileManager.default.removeItem(at: package.folder); return }
-        var pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file), existing: existingCopy(of: package, updating: target))
+        // A folder taken on by the person's agent is always an app of its own: its workspace is what Lamp builds the folder in.
+        var pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file),
+                                    existing: outside == nil ? existingCopy(of: package, updating: target) : nil)
         pending.following = following
         pending.bringingIn = bringingIn
         pending.trying = trying
+        pending.outside = outside
         // Only where the two met: a wish that can't be lined up keeps Update.
-        if Mix.isOn, !trying, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
+        if Mix.isOn, !trying, outside == nil, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
            let into = Mix.copy(of: package, among: projects), await Mix.meeting(package, history: history, with: into) != nil {
             pending.existing = into
             pending.mixable = true
@@ -4322,6 +4349,8 @@ final class Store: ObservableObject {
 
     func confirmImport() {
         guard let pending = pendingImport else { return }
+        // Marked before the review closes, which would otherwise tell the agent's folder the person said no.
+        pending.outside?.confirmed = true
         pendingImport = nil
         if pending.copy != nil {
             try? FileManager.default.removeItem(at: pending.package.folder)
@@ -4332,7 +4361,7 @@ final class Store: ObservableObject {
             return
         }
         finishImport(pending.package, request: pending.request, following: pending.following, readings: pending.readings,
-                     separateFrom: pending.existing?.id)
+                     separateFrom: pending.existing?.id, outside: pending.outside)
     }
 
     /// Update: the app already here takes the file's code, files, description and icon, in place, so it keeps
@@ -4479,14 +4508,21 @@ final class Store: ObservableObject {
                 return
             }
             if await Versions.hasUnsavedChanges(project) {
-                guard await Versions.save(project, message: pending.prepared != nil ? "Updated" : "Updated from a shared file") else {
+                // Part of someone's suggested change is one version named for it, which Undo takes back whole.
+                let message = pending.prepared?.suggestion.map { "Brought in part of @\($0.login)'s changes" }
+                    ?? (pending.prepared != nil ? "Updated" : "Updated from a shared file")
+                guard await Versions.save(project, message: message) else {
                     let iconBack = await putBack()
                     await followRestored(project)
                     setApps(project, appsBefore)
                     log(project, .error, Self.updateFailed + (iconBack ? "" : Self.updateChangedIcon))
                     return
                 }
-                Versions.rememberUpdate(project)
+                if let suggestion = pending.prepared?.suggestion {
+                    Versions.rememberPartBroughtIn(project, from: suggestion.login)
+                } else {
+                    Versions.rememberUpdate(project)
+                }
                 versionsRevision += 1
             } else if !newArtwork {
                 log(project, .status, "You already have this version.")
@@ -4494,7 +4530,7 @@ final class Store: ObservableObject {
             }
             // In place: the copy it was prepared in has done its work.
             if let job = pending.prepared {
-                updateChecks[AppUpdates.key(job.url)]?.tip = job.target
+                if job.suggestion == nil { updateChecks[AppUpdates.key(job.url)]?.tip = job.target }
                 if let copy = pending.copy { await discardPreparedCopy(copy, movingQueuedTo: project) }
             }
             updateApplied(project)
@@ -4718,8 +4754,10 @@ final class Store: ObservableObject {
     /// `following` is the link it was opened by (`takeShared`), which the new wish follows from now on.
     /// `readings` is what its review read each app may reach (`PendingImport.readings`).
     /// `separateFrom` is the wish it's a second copy of (Keep as Separate App), whose desk line then says so.
+    /// `outside`: a folder the person's own agent asked Lamp to take on. Its app is made as any other, then handed to
+    /// `OutsideWork`, which builds and opens it from the folder; no chat is opened beside it, since the agent is the chat.
     private func finishImport(_ package: Sharing.Package, request: String? = nil, following: Following.Followed? = nil,
-                              readings: [String: NetworkPolicy]? = nil, separateFrom: String? = nil) {
+                              readings: [String: NetworkPolicy]? = nil, separateFrom: String? = nil, outside: OutsideImport? = nil) {
         let project: LampProject
         do {
             project = try Template.scaffold(name: uniqueName(package.name), platform: package.platform, family: package.family, in: root)
@@ -4735,6 +4773,7 @@ final class Store: ObservableObject {
             }
         } catch {
             try? FileManager.default.removeItem(at: package.folder)
+            outside?.finish(nil, "Lamp couldn't make the app: \(error.localizedDescription)")
             NSAlert(error: error).runModal()
             return
         }
@@ -4742,11 +4781,11 @@ final class Store: ObservableObject {
         if let following, let version = following.pulling { Following.brought(version, from: following, into: project) }
         reload()
         if let separateFrom { updateOutcomes[separateFrom] = .separate(project.id) }
-        showChat(project.id)
+        if outside == nil { showChat(project.id) }
         // A request that came with the wish's link (an app's remix panel, `RemixLink`, through `take(exact:)`) is in the
         // box, ready to send once the wish is built.
         if let request { updateDraft(Draft(text: request), for: project) }
-        log(project, .status, "Imported from a shared file. Building it now…")
+        log(project, .status, outside == nil ? "Imported from a shared file. Building it now…" : "Your coding agent is working on this from \(outside?.repo ?? "a folder").")
         Task {
             defer { try? FileManager.default.removeItem(at: package.folder) }
             // The wish's other apps, each made in its folder as `make_app_for` makes one and given the file's code. One
@@ -4755,6 +4794,7 @@ final class Store: ObservableObject {
             // made goes, and the file can be opened again, rather than a wish missing an app with no way to get it.
             let notIn = await installParts(of: package, into: project, readings: readings)
             guard notIn.isEmpty else {
+                outside?.finish(nil, "\(notIn.joined(separator: ", ")) couldn't be put in place.")
                 await delete(current(project) ?? project)
                 let alert = NSAlert()
                 alert.messageText = "Lamp couldn't open “\(package.name)”"
@@ -4763,6 +4803,7 @@ final class Store: ObservableObject {
                 return
             }
             _ = await initRepo(project, message: "Imported from a shared file")
+            if let outside { return outside.finish(current(project) ?? project, nil) }
             await run(project)
             await rebuildParts(of: current(project) ?? project)
         }
@@ -5485,7 +5526,7 @@ final class Store: ObservableObject {
     }
 
     /// Whether the app is open on this Mac.
-    private func isRunning(_ project: LampProject) -> Bool { !macCopies(of: project).isEmpty }
+    func isRunning(_ project: LampProject) -> Bool { !macCopies(of: project).isEmpty }
 
     /// Every copy of the app open on this Mac: by its id, and by where Lamp installs it. One found only by its
     /// place has another id: built before the app's id changed, or by Lamp with other settings (after a fresh
@@ -6838,6 +6879,9 @@ final class Store: ObservableObject {
     /// Lamp's own request to carry on after the held change is in (`Agent.afterReload`), first in line.
     private func queueCarryOn(_ project: LampProject) {
         let project = Self.requestOwner(of: project, among: projects)
+        // A folder the person's own coding agent works on (`OutsideWork`): there's no request of Lamp's to carry on, and
+        // Lamp's own agent never starts on it by itself.
+        if OutsideState.shared.isOutside(project.id) { return }
         guard !(queued[project.id] ?? []).contains(where: \.afterReload) else { return }
         // Messages queued before it keep copies of their files too, now that the line outlives a relaunch.
         queued[project.id] = [QueuedMessage(text: Agent.afterReload, byLamp: true, afterReload: true)]
@@ -8722,7 +8766,7 @@ final class Store: ObservableObject {
     private nonisolated static let toolsTemplate: String? = Bundle.main.resourceURL
         .flatMap { try? String(contentsOf: $0.appendingPathComponent("lamp-tools.json"), encoding: .utf8) }
     // `label` is pi's: MCP clients see name, description and inputSchema.
-    static var mcpTools: [[String: Any]] {
+    nonisolated static var mcpTools: [[String: Any]] {
         ((try? JSONSerialization.jsonObject(with: toolsJSON)) as? [[String: Any]] ?? []).map { tool in tool.filter { $0.key != "label" } }
     }
     /// `toolsJSON` as pi's extension reads it, in Lamp's own pi folder: written again as each pi starts, so it has the
@@ -10062,7 +10106,7 @@ final class Store: ObservableObject {
 
     /// A step's own build (`ownStep`, from `stepPage`) keeps out of it: every other build already waits for the step under
     /// way (`turn.applying`), and a step waiting here on a build that waits on it would never end.
-    private func build(_ project: LampProject, inPlace: Bool = true, ownStep: Bool = false, phone: String? = nil) async -> String? {
+    func build(_ project: LampProject, inPlace: Bool = true, ownStep: Bool = false, phone: String? = nil) async -> String? {
         let (ended, end) = AsyncStream<Void>.makeStream()
         let mine = Task { for await _ in ended {} }
         if !ownStep {
@@ -11025,7 +11069,7 @@ final class Store: ObservableObject {
     /// `onDevice`: a look the agent asked to see on the device itself, which a kind with a preview otherwise opens there.
     /// `quiet` is a place Try On doesn't point at, kept current in the background (`updatePlaces`): nothing is opened
     /// that wasn't open, and a copy that is open takes the change as a request's would.
-    private func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false, reload: Bool = false,
+    func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false, reload: Bool = false,
                          early: Bool = false, saysReady: Bool = true, onDevice: Bool = false, quiet: Bool = false) async -> String? {
         markLog(project)
         let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload, early: early, saysReady: saysReady, onDevice: onDevice, quiet: quiet)
@@ -11538,11 +11582,7 @@ final class Store: ObservableObject {
     private func deviceForApp(_ project: LampProject) async -> Device? {
         if let device = DeviceApps.device(for: project, among: devices), device.connected { return device }
         guard let integration = DeviceApps.integration(for: project) else { return nil }
-        let scan = await Integrations.Scan.now()
-        var found: [Device] = []
-        for address in await Integrations.addresses(for: integration, scan: scan) {
-            if let device = await Integrations.identify(integration, at: address, scan: scan) { found.append(device) }
-        }
+        let found = Integrations.found(integration, in: await Integrations.Scan.now(for: [integration]))
         Integrations.remember(found)
         for device in found { devices.removeAll { $0.id == device.id }; devices.append(device) }
         return DeviceApps.device(for: project, among: devices)
@@ -12715,6 +12755,9 @@ final class Store: ObservableObject {
         guard let crashed = current(project) else { return true }
         // A part's crash is fixed by its wish's turn, which knows the part as one of its own.
         let project = Self.requestOwner(of: crashed, among: projects)
+        // A folder the person's own coding agent works on: the crash is in that agent's answer (`OutsideWork`), and it's
+        // the one that fixes it; Lamp's own agent never starts on it by itself.
+        if OutsideState.shared.isOutside(project.id) { return true }
         let report = Runtime.newestCrash(of: crashed)?.date
         if let report, crashesAnswered[project.id] == report { return true }
         // While a turn runs or a request waits, the agent hears of the crash with it.
@@ -14119,6 +14162,8 @@ final class Store: ObservableObject {
         } catch {
             NSLog("Lamp AI gateway failed to start: \(error)")
         }
+        // The person's own coding agent reaches Lamp through its MCP helper, on a socket of this Lamp's (`OutsideServer`).
+        OutsideServer.shared.start()
     }
 
     /// The gateway answers on the local network only while an app is set to open on the person's own phone or
@@ -14227,13 +14272,18 @@ final class Store: ObservableObject {
     /// The type a page's file is served as: the list a game's own phone page is served by too (`PhonePageServer`).
     nonisolated static func pageType(_ ext: String) -> String { PhonePageServer.type(for: ext) }
 
+    /// Every route the gateway answers: pi's tools (`Agent.piRoutes`), and the AI, MCP and apps' own. Anything else is
+    /// Not found.
+    nonisolated static let gatewayPaths: Set<String> = Set(Agent.piRoutes.values).union([
+        "/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/setup", "/ai/computer", "/agent/computer", "/agent/approve",
+        "/agent/versions/name", "/agent/versions/restore", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/reload", "/app/credits", "/app/releases", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state", "/app/page/saved"
+    ])
+
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
-        let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/setup", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/icon", "/agent/connectors", "/agent/lampify", "/agent/shared", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/reload", "/app/credits", "/app/releases", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state", "/app/page/saved"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
-        guard request.method == "POST", paths.contains(route) else {
+        guard request.method == "POST", Self.gatewayPaths.contains(route) else {
             return (404, ["error": "Not found"])
         }
         // Only requests addressed to this Mac: a web page that resolved its own name to 127.0.0.1 (DNS

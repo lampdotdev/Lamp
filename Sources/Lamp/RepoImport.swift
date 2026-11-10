@@ -133,28 +133,53 @@ enum RepoImport {
     static func open(folder: URL, fetched: RepoArchive.Fetched? = nil) throws -> Sharing.Package {
         let fm = FileManager.default
         let repository = fetched.map { (url: $0.url, commit: Optional($0.commit)) } ?? repository(of: folder)
-        // A site's tree (`StaticSite`): put up by Lamp with its page at the root, or a plain site Lamp hasn't seen.
-        let site = StaticSite.holdsWish(folder) || (!fm.fileExists(atPath: folder.appendingPathComponent("lamp-app.json").path)
-                                                     && !hasSharedFile(folder) && StaticSite.isPlain(folder))
-        if site || fm.fileExists(atPath: folder.appendingPathComponent("lamp-app.json").path) {
+        let layout = layout(of: folder)
+        switch layout {
+        case .wish, .site:
             let copy = Sharing.workFolder.appendingPathComponent("forge-import-\(UUID().uuidString)")
             var opened = false
             defer { if !opened { try? fm.removeItem(at: copy) } }
-            if site { try StaticSite.unpack(folder, into: copy, repository: repository?.url) } else { try copyTree(folder, to: copy) }
+            if layout == .wish { try copyTree(folder, to: copy) } else { try StaticSite.unpack(folder, into: copy, repository: repository?.url) }
             var package = try Sharing.open(unpacked: copy)
             package.credits = naming(package.credits, repository: repository?.url, commit: repository?.commit, name: package.name, identity: package.identity)
             opened = true
             return package
+        case .sharedFile(let file):
+            var package = try Sharing.open(file)
+            package.credits = naming(package.credits, repository: repository?.url, commit: repository?.commit, name: package.name, identity: package.identity)
+            return package
+        case .unknown:
+            throw Sharing.ImportError("This isn't an app Lamp can open.", detail: "An app put on GitHub has lamp-app.json and its code at the top of the repository.")
         }
+    }
+
+    /// What a folder is to the importer, which `open` reads it as: one answer, so whatever asks first (the person's own
+    /// coding agent, `OutsideWork`) and the import itself never disagree.
+    enum Layout: Equatable {
+        /// lamp-app.json and the code at the top, as Lamp lays a wish out on GitHub: read as it is.
+        case wish
+        /// A site's tree (`StaticSite`): its page at the top, read into Web/. `laidOut` when Lamp put it there, with the
+        /// rest of the wish in Lamp's folder; otherwise a plain site Lamp hasn't seen, made a new web app.
+        case site(laidOut: Bool)
+        /// Only a shared file an older Lamp put in the repository, which is what opens.
+        case sharedFile(URL)
+        /// Nothing Lamp reads as an app: the words say what's missing.
+        case unknown(String)
+    }
+
+    static func layout(of folder: URL) -> Layout {
+        let fm = FileManager.default
+        if StaticSite.holdsWish(folder) { return .site(laidOut: true) }
+        if fm.fileExists(atPath: folder.appendingPathComponent("lamp-app.json").path) { return .wish }
         let files = ((try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isRegularFileKey])) ?? [])
             .filter { $0.pathExtension == "lampapp" && (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
-        guard let file = files.first else {
-            throw Sharing.ImportError("This isn't an app Lamp can open.", detail: "An app put on GitHub has lamp-app.json and its code at the top of the repository.")
+        if let file = files.first { return .sharedFile(file) }
+        if StaticSite.isPlain(folder) { return .site(laidOut: false) }
+        if let step = StaticSite.buildStep(folder) {
+            return .unknown("It's a site that's built before it's served (it has \(step)), and Lamp opens a site only as it is: index.html at the top with its scripts, styles and pictures beside it.")
         }
-        var package = try Sharing.open(file)
-        package.credits = naming(package.credits, repository: repository?.url, commit: repository?.commit, name: package.name, identity: package.identity)
-        return package
+        return .unknown("It has neither a Lamp app's lamp-app.json with its code at the top nor a site's index.html at the top.")
     }
 
     /// Whether a fetched tree is a wish (laid out as Lamp lays one out on GitHub, or holding a shared file) rather than
@@ -185,6 +210,8 @@ enum RepoImport {
             let values = try? item.resourceValues(forKeys: keys)
             if values?.isSymbolicLink == true { items.skipDescendants(); continue }
             if values?.isDirectory == true, skipped.contains(item.lastPathComponent) { items.skipDescendants(); continue }
+            // A git worktree's or submodule's .git is a file naming where its repository is: git's, never the app's.
+            if item.lastPathComponent == ".git", skipped.contains(".git") { continue }
             guard values?.isRegularFile == true, item.pathExtension != "lampapp" else { continue }
             files += 1
             bytes += values?.fileSize ?? 0

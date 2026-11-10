@@ -64,7 +64,7 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
 - The API Lamp talks to (`api/wishes.js`, `lib/shared-wishes.js`): `POST` shares and answers `{id, url, secret}`;
   `PUT ?id=` with `Authorization: Bearer <secret>` changes what the link shows and keeps the link; `DELETE ?id=`
   with the secret takes it down. Lamp keeps the secret in its own folder (`Wish Links.json`, readable only by the
-  user), never in the app's. Lamp's side is `Sources/Lamp/WishLink.swift`; the tests check the two agree on the limits.
+  user), never in the app's. Lamp's side is `cli/link.mjs`, which Lamp's app asks (`WishLink`) and `lamp share` uses; it reads the limits from here.
 
 ## Setup (one time)
 

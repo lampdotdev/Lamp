@@ -64,14 +64,14 @@ final class DeviceSetupModel: ObservableObject {
     /// test gives them for a made-up device; otherwise the device's own, Lamp's, and the network.
     private var given: Integration?
     private var skills = Skills.all
-    private var testSend: ((Request, String, [String: String], DeviceTLS.Pins?) async throws -> DeviceHTTP.Answer)?
+    private var testCLI: (@Sendable (String, [String: Any], (@Sendable ([String: Any]) -> Void)?) async throws -> [String: Any])?
 
     init(testing device: Device, integration: Integration, skills: [String: Skills.Skill],
-         send: @escaping (Request, String, [String: String], DeviceTLS.Pins?) async throws -> DeviceHTTP.Answer) {
+         cli: @escaping @Sendable (String, [String: Any], (@Sendable ([String: Any]) -> Void)?) async throws -> [String: Any]) {
         self.device = device
         given = integration
         self.skills = skills
-        testSend = send
+        testCLI = cli
         following = guided.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
     }
 
@@ -114,7 +114,7 @@ final class DeviceSetupModel: ObservableObject {
         var runner = IntegrationRunner(integration: integration, device: device, approve: { [weak self] approval in
             await self?.ask(approval) ?? false
         })
-        if let testSend { runner.send = testSend }
+        if let testCLI { runner.cli = testCLI }
         return runner
     }
 

@@ -491,7 +491,15 @@ made goes when it ends, whatever ends it (its build stopped and waited for first
 and at the next launch; it's pinned to the request's head and a
 fingerprint of what it copied, files git ignores included. The `suggested_changes` tool (the same for every
 engine) lays a request out in the wish's folder of fetched copies (`SharedCopies`), read-only: its words marked as the
-sender's, never Lamp's, and its change as a diff; with `bring_in` the review opens once the turn ends. Bring Into My App
+sender's, never Lamp's, and its change as a diff; with `bring_in` the review opens once the turn ends, and with `take`
+(part of a request, in the agent's words for what the person wants) a separate copy of the wish is prepared once the
+turn ends, as an adapted wish's update is (`Store.prepareSuggestion`, an `AppUpdates.Job` with a `suggestion`), whose
+review is the update's. The copy gets the request laid out as an update's (`SuggestedChanges.layOutForCopy`: the
+whole diff, `latest/` with links left out, and `repo`, or nothing when a commit is missing), kept until the copy is
+put in place, kept or deleted, and any turn there that changes the copy or asks the person something is the part's
+(`AppUpdates.outcome`). Part of a request moves no credit and is never `accept`ed, so no release marks it merged.
+Bring Into My App in the panel asks the wish's chat what the request does (`talkAboutSuggestion`): the agent lists it,
+and the person says what they want. All of it
 is Bring In Changes with the request's head (`refs/pull/<n>/head`) in the repository's latest's place,
 measured from where the request branched (GitHub's `merge_base_commit`), or from the head last brought in of it while the
 wish still has that; it counts once saved, pinned at the head reviewed (`SuggestedChanges.accept`). The next release

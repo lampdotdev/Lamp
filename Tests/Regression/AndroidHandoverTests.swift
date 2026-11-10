@@ -38,7 +38,7 @@ final class AndroidHandoverTests: XCTestCase {
                          taken: @escaping @MainActor () -> Bool,
                          stillMine: (@MainActor () async -> Bool)? = nil) async -> String {
         let actions = try! JSONDecoder().decode([Simulator.Driver.Action].self, from: Data(json.utf8))
-        let screen = Adb.Screen.parse(FakeAdb.screen, scale: 1)
+        let screen = await Adb.Screen.parse(FakeAdb.screen, scale: 1)
         return await Adb.perform(actions, on: "emulator-0", density: 160, screen: screen, aim: aim, tookOver: taken,
                                  adb: adb.run, stillMine: stillMine ?? { !taken() })
     }

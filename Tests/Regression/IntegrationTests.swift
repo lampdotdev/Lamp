@@ -133,87 +133,55 @@ final class IntegrationTests: XCTestCase {
         let own = DeviceAddress.thisMac().filter { $0.count == 4 }.map { $0.map(String.init).joined(separator: ".") }
         for address in ["127.0.0.1", "::1", "8.8.8.8", "172.32.0.1", "roku.local", "example.com", "0.0.0.0", "::ffff:127.0.0.1"] + own {
             XCTAssertFalse(DeviceAddress.isPrivate(address), address)
-            XCTAssertThrowsError(try DeviceHTTP.url(address: address, port: 80, path: "/"), address)
-        }
-        XCTAssertEqual(try DeviceHTTP.url(address: "192.168.1.20", port: 8060, path: "/query/device-info").absoluteString,
-                       "http://192.168.1.20:8060/query/device-info")
-        for path in ["//evil.example/", "/a/../b", "/x@evil.example", "x", "/a b"] {
-            XCTAssertThrowsError(try DeviceHTTP.url(address: "192.168.1.20", port: 80, path: path), path)
         }
     }
 
-    /// A device with its own certificate is held to the one it showed first, and nothing secret goes to one whose
-    /// certificate Lamp doesn't keep.
-    func testHTTPSKeepsTheFirstCertificateAndSendsNoSecretWithoutIt() async {
-        XCTAssertEqual(try DeviceHTTP.url(address: "10.0.0.138", port: 11443, path: "/api/os/info", https: true).absoluteString,
-                       "https://10.0.0.138:11443/api/os/info")
-        XCTAssertEqual(DeviceTLS.judge("aa", kept: nil, keeping: true), .keep)
-        XCTAssertEqual(DeviceTLS.judge("aa", kept: "aa", keeping: true), .trust)
-        XCTAssertEqual(DeviceTLS.judge("bb", kept: "aa", keeping: true), .refuse)
-        XCTAssertEqual(DeviceTLS.judge("bb", kept: nil, keeping: false), .trust, "a read while finding keeps nothing")
+    /// A request to a device is lamp's command line's to make, with every guard it has (cli/devices.mjs, held by
+    /// cli/tests/devices.test.mjs): Lamp's app asks the run of it that stays, many at once, and hears each refusal as
+    /// the kind it was. Nothing secret goes over HTTPS to a device whose certificate Lamp doesn't keep, and nothing at
+    /// all to this Mac.
+    func testARequestIsAskedOfLampsCommandLineWithItsGuards() async throws {
+        guard LampCLI.launch != nil else { throw XCTSkip("No Node here to run lamp's command line on") }
         let signIn = Request(port: 11443, path: "/api/os/info", auth: .init(digest: false, user: "lamp", password: "{field:password}"), https: true)
         do {
             _ = try await DeviceHTTP.send(signIn, to: "10.0.0.138", values: ["field:password": "secret"])
             XCTFail("a password went to a device whose certificate isn't kept")
         } catch {
-            XCTAssertTrue(error.localizedDescription.contains("certificate"), error.localizedDescription)
+            XCTAssertTrue(error is DeviceHTTP.Failure && error.localizedDescription.contains("certificate"), error.localizedDescription)
         }
-    }
-
-    func testNoRedirectAndThePasswordOnlyForTheDevicesOwnChallenge() {
-        let guardian = DeviceHTTP.Guardian(address: "192.168.1.20", credential: ("rokudev", "secret", true))
-        let followed = expectation(description: "redirect answered")
-        let response = HTTPURLResponse(url: URL(string: "http://192.168.1.20/")!, statusCode: 302, httpVersion: nil, headerFields: nil)!
-        guardian.urlSession(URLSession.shared, task: URLSession.shared.dataTask(with: URL(string: "http://192.168.1.20/")!),
-                            willPerformHTTPRedirection: response, newRequest: URLRequest(url: URL(string: "https://example.com/")!)) {
-            XCTAssertNil($0)
-            followed.fulfill()
+        let refused = await withTaskGroup(of: Bool.self) { group in
+            for _ in 0..<24 {
+                group.addTask {
+                    do { _ = try await DeviceHTTP.send(Request(port: 80, path: "/"), to: "127.0.0.1", values: [:]); return false } catch { return error is DeviceAddress.NotOnNetwork }
+                }
+            }
+            return await group.reduce(0) { $0 + ($1 ? 1 : 0) }
         }
-        wait(for: [followed], timeout: 1)
-        let digest = NSURLAuthenticationMethodHTTPDigest, basic = NSURLAuthenticationMethodHTTPBasic
-        XCTAssertTrue(DeviceHTTP.Guardian.answers(space: ("192.168.1.20", digest), address: "192.168.1.20", digest: true, tried: false))
-        XCTAssertFalse(DeviceHTTP.Guardian.answers(space: ("10.0.0.9", digest), address: "192.168.1.20", digest: true, tried: false))
-        XCTAssertFalse(DeviceHTTP.Guardian.answers(space: ("192.168.1.20", basic), address: "192.168.1.20", digest: true, tried: false),
-                       "a device asking for basic when digest was declared doesn't get the password in the clear")
-        XCTAssertFalse(DeviceHTTP.Guardian.answers(space: ("192.168.1.20", digest), address: "192.168.1.20", digest: true, tried: true))
-        XCTAssertFalse(DeviceHTTP.Guardian.answers(space: ("192.168.1.20", digest), address: "192.168.1.20", digest: nil, tried: false))
+        XCTAssertEqual(refused, 24, "each of many asked at once hears its own answer")
+        do { _ = try await LampCLI.ask("no-such-call", [:]); XCTFail("an unknown call") } catch { XCTAssertTrue(error is LampCLI.Failure) }
     }
 
     /// A look makes one ssdp:all search: an integration's own target, and where its description is, come from the
     /// answers to it, so no integration searches again.
-    func testAnIntegrationFindsItsDeviceInTheLooksOneScan() async throws {
-        let xbox = """
-        {
-          "id": "xbox-test", "name": "Xbox", "maker": "Microsoft",
-          "find": [{ "ssdp": "urn:schemas-upnp-org:device:MediaRenderer:1", "contains": "UPnP-Device-Host" }],
-          "identity": { "os": "Xbox OS", "id": { "description": true, "xml": "device/UDN" },
-                        "model": { "description": true, "xml": "device/modelName", "contains": "Xbox" } },
-          "steps": []
-        }
-        """
-        let integration = try JSONDecoder().decode(Integration.self, from: Data(xbox.utf8))
-        func answer(_ address: String, _ target: String, _ server: String, _ location: String) -> DeviceProbe.SSDPAnswer {
-            DeviceProbe.answer("HTTP/1.1 200 OK\r\nST: \(target)\r\nSERVER: \(server)\r\nLOCATION: \(location)\r\n", from: address)
-        }
-        let scan = Integrations.Scan(answers: [
-            answer("192.168.1.30", "upnp:rootdevice", "Microsoft-Windows/10.0 UPnP/1.0 UPnP-Device-Host/1.0", "http://192.168.1.30:1/root.xml"),
-            answer("192.168.1.30", "urn:schemas-upnp-org:device:mediarenderer:1", "Microsoft-Windows/10.0 UPnP/1.0 UPnP-Device-Host/1.0",
-                   "http://192.168.1.30:10247/renderer.xml"),
-            answer("192.168.1.40", "urn:schemas-upnp-org:device:MediaRenderer:1", "Linux UPnP/1.0 Sonos/86.10", "http://192.168.1.40:1400/xml"),
-        ])
-        let addresses = await Integrations.addresses(for: integration, scan: scan)
-        XCTAssertEqual(addresses, ["192.168.1.30"])
-        XCTAssertEqual(Integrations.describedAt("192.168.1.30", by: integration, scan: scan), Request(port: 10247, path: "/renderer.xml"))
-    }
-
-    func testValuesAreReadFromJSONAndXML() {
-        let xml = Data("<device-info><serial-number>X01</serial-number><developer-enabled>true</developer-enabled></device-info>".utf8)
-        XCTAssertEqual(DeviceHTTP.xml("developer-enabled", in: xml), "true")
-        XCTAssertEqual(DeviceHTTP.xml("device-info/serial-number", in: xml), "X01")
-        let json = Data(#"{"device": {"modelName": "QN50", "on": true}, "items": [{"id": 7}]}"#.utf8)
-        XCTAssertEqual(DeviceHTTP.json("device.modelName", in: json), "QN50")
-        XCTAssertEqual(DeviceHTTP.json("device.on", in: json), "true")
-        XCTAssertEqual(DeviceHTTP.json("items.0.id", in: json), "7")
+    /// The look is lamp's command line's (cli/tests/devices.test.mjs holds it); what Lamp's app makes of it is its own:
+    /// each integration's reading as a device, named by its maker and model when it gave no name, and the devices
+    /// nobody knows apart from those another part of Lamp has.
+    func testTheLooksReadingsBecomeTheIntegrationsDevices() throws {
+        let roku = try JSONDecoder().decode(Integration.self, from: Data(roku.utf8))
+        let read = try XCTUnwrap(Integrations.Scan.Identified(said: ["integration": roku.id, "address": "192.168.1.20", "serial": "X01", "model": "Roku Ultra",
+                                                                        "modelID": "4800X", "osVersion": "14.0"]))
+        let other = try XCTUnwrap(Integrations.Scan.Identified(said: ["integration": "someone-else", "address": "192.168.1.21", "serial": "Y", "model": "Z"]))
+        var unknown = Device(id: "found:192.168.1.40", kind: .other, maker: "Made Up", model: "Speaker", modelID: "", name: "Den Speaker", os: "", osVersion: "", reach: .network)
+        unknown.address = "192.168.1.40"
+        let scan = Integrations.Scan(answers: [], found: [read, other], unknown: [unknown])
+        let devices = Integrations.found(roku, in: scan)
+        XCTAssertEqual(devices.map(\.id), ["\(roku.id):X01"])
+        XCTAssertEqual(devices.first?.name, "\(roku.maker) Roku Ultra")
+        XCTAssertEqual(devices.first?.address, "192.168.1.20")
+        XCTAssertEqual(devices.first?.osVersion, "14.0")
+        XCTAssertEqual(Integrations.unknown(scan, except: []).map(\.name), ["Den Speaker"])
+        XCTAssertTrue(Integrations.unknown(scan, except: ["192.168.1.40"]).isEmpty, "a device another part of Lamp has isn't unknown")
+        XCTAssertNil(Integrations.Scan.Identified(said: ["integration": roku.id, "address": "192.168.1.20"]), "a reading with no serial is none")
     }
 
     // MARK: ssh
@@ -245,95 +213,5 @@ final class IntegrationTests: XCTestCase {
         var changed = action
         changed.ssh?.command += " ; reboot"
         XCTAssertFalse(DeviceApprovals.isApproved(DeviceApprovals.subject(of: changed)!, on: device))
-    }
-    /// A device that turns the password away has said so: the step fails with words to fix it instead of waiting on
-    /// the device for ever, and the same step still passes once the device lets Lamp in.
-    func testARejectedSignInFailsTheStepAndAnAcceptedOnePassesIt() async throws {
-        let roku = try JSONDecoder().decode(Integration.self, from: Data(roku.utf8))
-        let step = roku.steps[1]
-        var device = Device(id: "roku:TEST", kind: .other, maker: "Roku", model: "Roku Ultra", modelID: "4800X",
-                            name: "Test Roku", os: "Roku OS", osVersion: "14.0", reach: .network)
-        device.address = "192.168.1.20"
-        func runner(answering status: Int) -> IntegrationRunner {
-            var runner = IntegrationRunner(integration: roku, device: device)
-            runner.send = { _, _, _, _ in DeviceHTTP.Answer(status: status, body: Data()) }
-            return runner
-        }
-
-        let rejected = await runner(answering: 401).check(step)
-        XCTAssertFalse(rejected.passed)
-        XCTAssertTrue(rejected.failed, "a rejected sign-in is shown as a failure, not as waiting with a spinner")
-        XCTAssertEqual(rejected.why, "The device rejected the sign-in. Check the user name and password, then try again.")
-
-        let accepted = await runner(answering: 200).check(step)
-        XCTAssertTrue(accepted.passed)
-        XCTAssertFalse(accepted.failed)
-    }
-
-    /// An Xbox says an install is done before the app can be opened: Lamp waits until the console lists the package,
-    /// asks again while it refuses the launch, and launches again while the app isn't seen running.
-    func testAnXboxAppIsWaitedForUntilItsInstalledAndLaunchedUntilItRuns() async throws {
-        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Resources/Devices/xbox-one.json")
-        let xbox = try JSONDecoder().decode(Integration.self, from: Data(contentsOf: file))
-        let bridge = try XCTUnwrap(xbox.bridge)
-        var device = Device(id: "xbox-one:TEST", kind: .other, maker: "Microsoft", model: "Xbox Series X", modelID: "",
-                            name: "Test Xbox", os: "Xbox OS", osVersion: "10.0", reach: .network)
-        device.address = "192.168.1.30"
-        let extra = ["packageFullName": "Lamp.test_1.0.0.0_x64__abc", "appUserModelID": "Lamp.test_abc!App"]
-        func listing(_ key: String, has: Bool) -> DeviceHTTP.Answer {
-            let names = (has ? [extra["packageFullName"]!] : []) + ["Other.app_1.0.0.0_x64__xyz"]
-            return DeviceHTTP.Answer(status: 200, body: try! JSONSerialization.data(withJSONObject: [key: names.map { ["PackageFullName": $0] }]))
-        }
-        /// A made-up console answering each path from its own script, in turn, the last answer over and over.
-        final class Console: @unchecked Sendable {
-            var script: [String: [DeviceHTTP.Answer]] = [:]
-            var asked: [String: Int] = [:]
-            func answer(_ path: String) -> DeviceHTTP.Answer {
-                let key = String(path.split(separator: "?")[0])
-                asked[key, default: 0] += 1
-                guard var answers = script[key], !answers.isEmpty else { return DeviceHTTP.Answer(status: 200, body: Data("{}".utf8)) }
-                let next = answers.count > 1 ? answers.removeFirst() : answers[0]
-                script[key] = answers
-                return next
-            }
-        }
-        func runner(_ console: Console) -> IntegrationRunner {
-            var runner = IntegrationRunner(integration: xbox, device: device)
-            runner.send = { request, _, _, _ in console.answer(request.path) }
-            runner.pause = { _ in }
-            return runner
-        }
-
-        // Installed: the state says so, and the package is listed on the second ask.
-        let installed = Console()
-        installed.script["/api/app/packagemanager/state"] = [DeviceHTTP.Answer(status: 200, body: Data(#"{"Success":true}"#.utf8))]
-        installed.script["/api/app/packagemanager/packages"] = [listing("InstalledPackages", has: false), listing("InstalledPackages", has: true)]
-        _ = try await runner(installed).run(Array(try XCTUnwrap(bridge.install).suffix(2)), extra: extra)
-        XCTAssertEqual(installed.asked["/api/app/packagemanager/packages"], 2)
-
-        // Refused twice with the console's 0x8D160120, then opened and running.
-        let refused = Console()
-        let failed = DeviceHTTP.Answer(status: 400, body: Data(#"{"ErrorMessage":"Failed to launch the application.","ErrorCode":-1927937760}"#.utf8))
-        refused.script["/api/taskmanager/app"] = [failed, failed, DeviceHTTP.Answer(status: 200, body: Data())]
-        refused.script["/api/resourcemanager/processes"] = [listing("Processes", has: true)]
-        try await runner(refused).open(try XCTUnwrap(bridge.launch), running: bridge.running, extra: extra)
-        XCTAssertEqual(refused.asked["/api/taskmanager/app"], 3)
-
-        // Taken, but not running through the whole check, so launched again; then running.
-        let notReady = Console()
-        notReady.script["/api/resourcemanager/processes"] = Array(repeating: listing("Processes", has: false), count: 5) + [listing("Processes", has: true)]
-        try await runner(notReady).open(try XCTUnwrap(bridge.launch), running: bridge.running, extra: extra)
-        XCTAssertEqual(notReady.asked["/api/taskmanager/app"], 2)
-
-        // Never running: said, not claimed open.
-        let never = Console()
-        never.script["/api/resourcemanager/processes"] = [listing("Processes", has: false)]
-        do {
-            try await runner(never).open(try XCTUnwrap(bridge.launch), running: bridge.running, extra: extra, tries: 3)
-            XCTFail("an app never seen running isn't open")
-        } catch let notOpened as IntegrationRunner.NotOpened {
-            XCTAssertTrue(notOpened.launched)
-        }
     }
 }

@@ -42,8 +42,10 @@ whether the code has changed since, `Runtime.putOnTV`, which records what the st
 app runs there now among them. Lamp's tools don't reach a TV, but the agent is told it may find another way to see one,
 not that it can't. Closing the window, by the person or by
 Lamp, ends the page (its sound and timers): WebKit runs a page as long as its web view lives, so the preview lets go of
-its script handlers and web view when its window closes. TVs are found on the network (`TVs.scan`:
-SSDP, then a Samsung TV's own API at port 8001, an LG TV's UPnP description) and listed with the other devices; a
+its script handlers and web view when its window closes. TVs are found on the network in the look, by lamp's command
+line (`tvsIn` in cli/network.mjs: SSDP, then a Samsung TV's own API at port 8001, an LG TV's UPnP descriptions, its own
+service's first), and which TV each is to Lamp is Lamp's (`TVs.adopt`: an LG TV seen under another of its ids keeps
+that one); they're listed with the other devices; a
 found TV is kept (`TVs.keep`, Lamp's TV folder) only once a setup step has worked, since a scan sees neighbors'
 TVs too. Setup is a window of its own per TV (`TVSetup`), each step checked by Lamp. Samsung: developer mode on with
 this Mac's address (read off the TV's API), a connection over sdb (`SdbConnection`: adb's protocol on port 26101,

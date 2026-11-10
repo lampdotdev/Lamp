@@ -266,16 +266,6 @@ struct Integration: Codable, Hashable {
         guard !parts.isEmpty, parts.allSatisfy({ $0 != nil }) else { return nil }
         return parts.compactMap { $0 }
     }
-
-    /// Whether `value` is a version at least `minimum`, a missing number counting as 0 ("15" is "15.0").
-    static func isVersion(_ value: String, atLeast minimum: String) -> Bool {
-        guard let have = version(value), let need = version(minimum) else { return false }
-        for index in 0..<max(have.count, need.count) {
-            let (a, b) = (index < have.count ? have[index] : 0, index < need.count ? need[index] : 0)
-            if a != b { return a > b }
-        }
-        return true
-    }
 }
 
 /// One of Lamp's primitives. Exactly one is set; everything a step or bridge does is one of these.

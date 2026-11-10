@@ -26,13 +26,17 @@ enum StaticSite {
     /// Whether a tree is a plain site Lamp can open as it is: index.html at its root, and nothing that builds it first
     /// (a package.json, Jekyll's _config.yml or Gemfile), which a page in Lamp's app would never run.
     static func isPlain(_ tree: URL) -> Bool {
-        let fm = FileManager.default
         func regular(_ name: String) -> Bool {
             let values = try? tree.appendingPathComponent(name).resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
             return values?.isRegularFile == true && values?.isSymbolicLink != true
         }
         guard regular("index.html") else { return false }
-        return !["package.json", "_config.yml", "Gemfile"].contains { fm.fileExists(atPath: tree.appendingPathComponent($0).path) }
+        return buildStep(tree) == nil
+    }
+
+    /// The file at a tree's top that says it's built before it's served, if there is one.
+    static func buildStep(_ tree: URL) -> String? {
+        ["package.json", "_config.yml", "Gemfile"].first { FileManager.default.fileExists(atPath: tree.appendingPathComponent($0).path) }
     }
 
     /// Reads a site's tree into `copy` as a shared file's contents: Lamp's folder at its top, the rest in Web/. A plain
@@ -43,7 +47,8 @@ enum StaticSite {
         let web = copy.appendingPathComponent(TVTemplate.webFolder)
         try RepoImport.copyTree(tree, to: web, skipped: [".git"])
         let lamps = web.appendingPathComponent(folder)
-        if fm.fileExists(atPath: lamps.path) {
+        // Lamp's folder only when it holds the manifest (`holdsWish`): anything else by that name is the site's own.
+        if fm.fileExists(atPath: lamps.appendingPathComponent("lamp-app.json").path) {
             for item in try fm.contentsOfDirectory(at: lamps, includingPropertiesForKeys: nil) {
                 try fm.moveItem(at: item, to: copy.appendingPathComponent(item.lastPathComponent))
             }

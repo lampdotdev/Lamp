@@ -16,7 +16,9 @@ a secure timestamp. Nested code is signed first:
   (`LlamaInstall.swift`). A build from source does the same with its own zip (`build/assets`, by file), kept in
   `.build/llama` while the llama.cpp build and the signing identity are the same.
 - pi's native module and the pi executable, with `Resources/pi.entitlements`: pi is Bun-compiled, and Bun's
-  JIT needs `allow-jit` and friends under hardened runtime
+  JIT needs `allow-jit` and friends under hardened runtime. The same executable is the runtime lamp's command line
+  runs on inside the app (`LampCLI.swift`; its code is `Resources/cli`, plain files under the app's own seal), so a
+  pi built on anything else needs another runtime found for it
 - Lamp's player (`Resources/LampPlayer.bundle`), the Mac app every game and screen is a copy of: `build.sh` compiles
   it afresh for a release, before the starters, and each copy is signed again as its own app when Lamp makes it
 - the starters' prebuilt apps: `build.sh` has the new Lamp build each starter as a person's Mac would
@@ -114,11 +116,11 @@ tag itself, `0.3.1+6` six commits later. Without git or without the tags fetched
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-It builds with the Xcode named in `.github/xcode-version`, which `.github/workflows/mac-build.yml` builds and tests
-every pull request with too, so code only a newer Xcode accepts fails on the pull request rather than at release.
-Both run on GitHub's `xcode-27` runner image (macOS 27 with Xcode 27, a preview image for now): the Xcode the team
-builds with, and the one generated apps are compiled with on their Macs. Raise the file when that image gets a newer
-Xcode, and move both workflows together when GitHub makes a newer image.
+It builds with the Xcode named in `.github/xcode-version`, which `.github/workflows/mac-build.yml` uses to build
+every pull request too, so code only a newer Xcode accepts fails on the pull request rather than at release.
+That workflow runs the Swift regression suite with the same Xcode nightly on `main` and on demand.
+The workflows name their runners separately; they share the Xcode version, not necessarily the runner image.
+When raising `.github/xcode-version`, make sure both runners provide it.
 
 The signing secrets live in the repo's **`release` environment**, which only `v*` tags can use. A ruleset
 ("Protect release tags") lets only repo admins create, move or delete `v*` tags, so nobody else can

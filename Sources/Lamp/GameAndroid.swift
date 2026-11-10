@@ -153,8 +153,13 @@ enum GameAndroid {
         // The page and the icon, which build.sh puts in the game's build/ before Gradle runs.
         sourceSets["main"].assets.srcDirs("../../../build/android-assets")
         sourceSets["main"].res.srcDirs("../../../build/android-res")
-        // The page's files are served as they are: a compressed asset can't be streamed to the WebView.
-        androidResources { noCompress += listOf("js", "html", "css", "json", "glb", "gltf", "bin", "png", "jpg", "wav", "ogg", "mp3", "m4a") }
+        // The page's files are served as they are: a compressed asset can't be streamed to the WebView. And every
+        // folder of the page's goes in: Android's own list of what an app's assets leave out drops any folder whose
+        // name starts with an underscore, which is where a built site keeps its scripts (_next, _astro).
+        androidResources {
+            noCompress += listOf("js", "html", "css", "json", "glb", "gltf", "bin", "png", "jpg", "wav", "ogg", "mp3", "m4a")
+            ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~"
+        }
     }
 
     kotlin {

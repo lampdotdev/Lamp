@@ -30,7 +30,7 @@ final class AndroidKitTests: XCTestCase {
         XCTAssertEqual(emulator.name, AndroidTools.avdName)
     }
 
-    func testTheScreenIsReadAsText() {
+    func testTheScreenIsReadAsText() async {
         let xml = """
         <?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0">
         <node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="a" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2424]">
@@ -39,7 +39,7 @@ final class AndroidKitTests: XCTestCase {
         <node index="2" text="milk" resource-id="" class="android.widget.EditText" package="a" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="true" scrollable="false" long-clickable="true" password="false" selected="false" bounds="[0,400][1080,520]" hint="What to buy" />
         </node></hierarchy>
         """
-        guard let screen = Adb.Screen.parse(xml, scale: 3) else { return XCTFail("the dump didn't parse") }
+        guard let screen = await Adb.Screen.parse(xml, scale: 3) else { return XCTFail("the dump didn't parse") }
         XCTAssertEqual(screen.items.map(\.id), ["t1", "b1", "f1"])
         XCTAssertEqual(screen.find("Add")?.id, "b1")
         XCTAssertEqual(Int(screen.find("b1")!.frame.midX), 313)
