@@ -19,7 +19,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFi
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Problem, layoutOf, manifestOf, projectOf, stateOf, running, ask } from "./state.mjs";
+import { Problem, RESOURCES, layoutOf, manifestOf, projectOf, stateOf, running, ask } from "./state.mjs";
 import { macActions, serveMac, writeMacStarter } from "./mac.mjs";
 import { exportApp, unpack } from "./lampapp.mjs";
 import { editionName, giveTo, givenTo, keepPictures, reachLamp, takeBack } from "./outside.mjs";
@@ -128,6 +128,8 @@ const SKILL_MARK = "<!-- Written by lamp setup: run it again to update, or with 
 /** How lamp is run on this computer: `lamp` when that name runs this very file, else the file itself. */
 function lampCommand() {
   const me = fileURLToPath(import.meta.url);
+  // The copy in Lamp's app is run by its launcher beside it, on the app's own runtime, and updates with Lamp.
+  if (process.env.LAMP_FROM_APP === "1") { const launcher = join(here, "lamp"); return /\s/.test(launcher) ? JSON.stringify(launcher) : launcher; }
   const found = spawnSync(process.platform === "win32" ? "where" : "which", ["lamp"], { encoding: "utf8" });
   const onPath = found.status === 0 && found.stdout.trim().split("\n").some((path) => { try { return realpathSync(path.trim()) === realpathSync(me); } catch { return false; } });
   return onPath ? "lamp" : `node ${/\s/.test(me) ? JSON.stringify(me) : me}`;
@@ -155,7 +157,7 @@ const quoted = (path) => (/\s/.test(path) ? JSON.stringify(path) : path);
  * the page and its code are the project's. `update` writes the game's again over what's there.
  */
 function lampsFilesBeside(root, { game, update = false }) {
-  const runtime = join(here, "..", "Resources", "GameKit", "web");
+  const runtime = join(RESOURCES, "GameKit", "web");
   const wrote = [], kept = [];
   if (game) {
     if (![runtime, CONTROLLERS].every(existsSync)) throw new Problem("Lamp's own files aren't beside this copy of lamp");
@@ -179,7 +181,7 @@ function lampsFilesBeside(root, { game, update = false }) {
 }
 
 function addLibraries(root) {
-  const lamps = join(here, "..", "Resources", "WebLibraries");
+  const lamps = join(RESOURCES, "WebLibraries");
   let map = "";
   try { map = /<script[^>]*type=["']importmap["'][^>]*>([\s\S]*?)<\/script>/i.exec(readFileSync(join(root, "index.html"), "utf8"))?.[1] ?? ""; } catch {}
   const added = [];
@@ -599,7 +601,7 @@ async function main() {
       return;
     }
     // What Lamp gives a new web game: its starting page, the game runtime and three.js, from Lamp's own folder.
-    const lamps = join(here, "..", "Resources"), scaffold = join(lamps, "GameKit", "scaffold-web", "Web");
+    const lamps = RESOURCES, scaffold = join(lamps, "GameKit", "scaffold-web", "Web");
     const runtime = join(lamps, "GameKit", "web"), three = join(lamps, "WebLibraries", "three");
     if (![scaffold, runtime, three, CONTROLLERS].every(existsSync)) throw new Problem("Lamp's starting files aren't beside this copy of lamp");
     const name = String(options.name ?? basename(folder).split(/[-_\s]+/).filter(Boolean).map((word) => word[0].toUpperCase() + word.slice(1)).join(" "));
