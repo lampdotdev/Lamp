@@ -56,6 +56,33 @@ enum AgentEvent {
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.
 /// pi only gets file tools: Lamp does the building and feeds compiler errors back.
 enum Agent {
+    /// Where pi's tools reach Lamp, by the variable its extension reads each from (`Agent.run`). Lamp's gateway
+    /// answers each of these (`Store.gatewayPaths`): a route given here and not served there would answer every call
+    /// with Not found.
+    static let piRoutes: [String: String] = [
+        "LAMP_LOOK_URL": "/agent/look",
+        "LAMP_USE_URL": "/agent/use",
+        "LAMP_VERSIONS_URL": "/agent/versions",
+        "LAMP_MEMORY_URL": "/agent/memory",
+        "LAMP_SETUP_URL": "/agent/setup",
+        "LAMP_KIND_URL": "/agent/kind",
+        "LAMP_REMOVE_URL": "/agent/remove",
+        "LAMP_RENAME_URL": "/agent/rename",
+        "LAMP_ICON_URL": "/agent/icon",
+        "LAMP_CONNECTORS_URL": "/agent/connectors",
+        "LAMP_LAMPIFY_URL": "/agent/lampify",
+        "LAMP_SHARED_URL": "/agent/shared",
+        "LAMP_SUGGESTED_URL": "/agent/suggested",
+        "LAMP_NETWORK_URL": "/agent/network",
+        "LAMP_INTEGRATION_URL": "/agent/integration",
+        "LAMP_TALK_URL": "/agent/talk",
+        "LAMP_ART_URL": "/agent/art",
+        "LAMP_ASSETS_URL": "/agent/assets",
+        "LAMP_SKILL_URL": "/agent/skill",
+        "LAMP_APPROVE_URL": "/agent/approve",
+        "LAMP_STEER_URL": "/agent/steer"
+    ]
+
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
@@ -383,12 +410,16 @@ enum Agent {
     the request asks for from it. Your last message says what you took from whose copy.
     """
 
-    /// When to look at changes someone suggested; what the tool fetches, and that bringing one in is the person's review,
-    /// is its own to say.
+    /// When to look at changes someone suggested, and how choosing what to bring in goes in the chat; what the tool
+    /// fetches, and that bringing one in is the person's review, is its own to say.
     private static let suggestedRules = """
 
     - When the person asks about changes someone sent or suggested for this app, or to bring them in, use \
-    `suggested_changes`; if it isn't clear which request they mean, ask.
+    `suggested_changes`; if it isn't clear which request they mean, ask. Before anything comes in, read it and show \
+    what it does as a short list, one line per thing the person would notice, then ask what they want of it, unless \
+    they already said. Once they answer, say back in a line or two what you understood, with anything that has to come \
+    along for it to work, and ask again only when the answer would change the result. All of it goes in with \
+    `bring_in`; part of it with `take`.
     """
 
     private static let connectorRules = """
