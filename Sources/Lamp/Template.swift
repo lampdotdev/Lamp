@@ -9561,32 +9561,43 @@ enum Template {
                             goOn(after: Self.settle)
                         }
                     } else {
-                        // A click on a page is answered by the page (`LampPageItems.act`), in its own time.
+                        // A click on a page is answered by the page (`LampPageItems.act`), in its own time: the batch
+                        // waits for that answer only once `run` has said the click went to a page. Any other click (one
+                        // that opens a modal alert or panel, and doesn't return until it closes) never waits, so the
+                        // steps that answer the modal still run.
+                        var waits = false
+                        var early: (said: String, clicked: Bool)?
+                        func take(_ said: String, _ clicked: Bool) {
+                            // The page's answer in place of "sent"; a click that didn't happen isn't one that should
+                            // have changed the screen.
+                            report[line] = said
+                            if !clicked, last?.line == line { last = nil }
+                        }
                         func goOn() {
                             let resume = awaiting?.resume
                             awaiting = nil
                             resume?()
                         }
-                        let mayWait = action.action.hasSuffix("click")
-                        if mayWait { awaiting = (line, nil) }
-                        report[line] = run(action) { said, clicked in
+                        let did = run(action) { said, clicked in
+                            guard waits else {
+                                if early == nil { early = (said, clicked) }
+                                return
+                            }
                             guard awaiting?.line == line else { return }
-                            // The page's answer in place of "sent"; a click that didn't happen isn't one that should
-                            // have changed the screen.
-                            report[line] = said
-                            if !clicked, last?.line == line { last = nil }
+                            take(said, clicked)
                             goOn()
                         }
-                        if mayWait, awaiting?.line == line {
-                            if report[line].hasSuffix(LampPageItems.sent) {
-                                after(Self.unanswered) {
-                                    guard awaiting?.line == line else { return }
-                                    report[line] = report[line].replacingOccurrences(of: LampPageItems.sent, with:
-                                        "the page didn't answer within \(LampScreen.number(Self.unanswered)) s, so whether it was clicked isn't known")
-                                    goOn()
-                                }
-                            } else {
-                                awaiting = nil
+                        report[line] = did
+                        if let early {
+                            take(early.said, early.clicked)
+                        } else if did.hasSuffix(LampPageItems.sent) {
+                            waits = true
+                            awaiting = (line, nil)
+                            after(Self.unanswered) {
+                                guard awaiting?.line == line else { return }
+                                report[line] = report[line].replacingOccurrences(of: LampPageItems.sent, with:
+                                    "the page didn't answer within \(LampScreen.number(Self.unanswered)) s, so whether it was clicked isn't known")
+                                goOn()
                             }
                         }
                     }
