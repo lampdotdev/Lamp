@@ -6,7 +6,7 @@
 // when lamp asks it to, with no permission asked of anyone (an app may picture its own windows).
 //
 // A saved change builds the app again and opens it again. Putting a change into the app while it runs is Lamp's
-// app's still (`LiveReload`).
+// app's still (`LiveReload`): `lamp open --in-lamp` hands the folder to it (outside.mjs).
 
 import { createServer } from "node:http";
 import { randomBytes, createHash, createHmac } from "node:crypto";
@@ -21,6 +21,23 @@ const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 /** Whether the folder is an app Lamp made in Swift for the Mac: its package, and the build script Lamp writes. */
 export const isMacApp = (folder) => existsSync(join(folder, "Package.swift")) && existsSync(join(folder, "build.sh")) && existsSync(join(folder, "Sources"));
+
+/**
+ * lamp's moves as a Mac app's driver takes them (`LampDriver`, the actions of Lamp's `use_app`), for lamp's own copy
+ * of the app and for one Lamp's app has open alike.
+ */
+export function macActions(moves) {
+  const number = (value, what) => { const n = Number(value); if (!Number.isFinite(n)) throw new Problem(what); return n; };
+  return moves.map((move) => {
+    if (move.kind === "click") return move.target ? { action: "click", target: String(move.target) } : { action: "click", x: number(move.x, "click takes a point of the picture, or a name from the screen as text"), y: number(move.y, "click takes a point of the picture, or a name from the screen as text") };
+    if (move.kind === "type") return { action: "type", text: String(move.text ?? "") };
+    if (move.kind === "key") return { action: "key", key: String(move.key), ...(Number(move.seconds) ? { amount: Math.min(Number(move.seconds), 10) } : {}) };
+    if (move.kind === "drag") return { action: "drag", x: number(move.x, "drag takes where it starts and ends"), y: number(move.y, "drag takes where it starts and ends"), to_x: number(move.toX, "drag takes where it starts and ends"), to_y: number(move.toY, "drag takes where it starts and ends") };
+    if (move.kind === "scroll") return { action: "scroll", amount: number(move.points, "scroll takes how far, down being positive"), ...(Number.isFinite(Number(move.x)) && Number.isFinite(Number(move.y)) ? { x: Number(move.x), y: Number(move.y) } : {}) };
+    if (move.kind === "wait") return { action: "wait", amount: Math.min(Math.max(Number(move.seconds) || 1, 0), 30) };
+    throw new Problem("a Mac app takes click, type, key, drag, scroll and wait: a stick and buttons are a game's");
+  });
+}
 
 // MARK: Lamp's own files
 
@@ -460,16 +477,7 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
     if (!child) throw new Problem("the app isn't running: lamp look says why");
     // In front, as Lamp's app puts it: the person sees what's done, and what only answers a real click takes it.
     activate();
-    const number = (value, what) => { const n = Number(value); if (!Number.isFinite(n)) throw new Problem(what); return n; };
-    const actions = moves.map((move) => {
-      if (move.kind === "click") return move.target ? { action: "click", target: String(move.target) } : { action: "click", x: number(move.x, "click takes a point of the picture, or a name from the screen as text"), y: number(move.y, "click takes a point of the picture, or a name from the screen as text") };
-      if (move.kind === "type") return { action: "type", text: String(move.text ?? "") };
-      if (move.kind === "key") return { action: "key", key: String(move.key), ...(Number(move.seconds) ? { amount: Math.min(Number(move.seconds), 10) } : {}) };
-      if (move.kind === "drag") return { action: "drag", x: number(move.x, "drag takes where it starts and ends"), y: number(move.y, "drag takes where it starts and ends"), to_x: number(move.toX, "drag takes where it starts and ends"), to_y: number(move.toY, "drag takes where it starts and ends") };
-      if (move.kind === "scroll") return { action: "scroll", amount: number(move.points, "scroll takes how far, down being positive"), ...(Number.isFinite(Number(move.x)) && Number.isFinite(Number(move.y)) ? { x: Number(move.x), y: Number(move.y) } : {}) };
-      if (move.kind === "wait") return { action: "wait", amount: Math.min(Math.max(Number(move.seconds) || 1, 0), 30) };
-      throw new Problem("a Mac app takes click, type, key, drag, scroll and wait: a stick and buttons are a game's");
-    });
+    const actions = macActions(moves);
     const id = randomBytes(8).toString("hex"), json = JSON.stringify(actions), answerFile = join(runtime, "use.json");
     rmSync(answerFile, { force: true });
     post(`${note}useApp.${slug}`, { actions: json, id, lampUseAppSignature: createHmac("sha256", appToken).update(`${id}\n${json}`).digest("hex") });

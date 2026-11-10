@@ -7463,8 +7463,9 @@ final class Store: ObservableObject {
         }.joined(separator: "\n\n")
     }
 
-    private func useNow(_ project: LampProject, request body: Data) async -> (Int, [String: Any]) {
-        guard let turn = turns[project.id], turn.agent != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+    /// `outside`: asked by the person's own coding agent (`OutsideWork`), which holds the app with an apply's turn, not an agent's.
+    func useNow(_ project: LampProject, request body: Data, outside: Bool = false) async -> (Int, [String: Any]) {
+        guard let turn = turns[project.id], turn.agent != nil || outside else { return (409, ["error": "Lamp isn't working on this app right now."]) }
         if turn.tookOver { return (200, ["text": Self.tookOverNote]) }
         guard let request = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               var actions = request["actions"] as? [[String: Any]], !actions.isEmpty,
