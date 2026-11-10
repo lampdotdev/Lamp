@@ -652,6 +652,9 @@ export async function takeDown(id, { env = process.env, fetcher = fetch } = {}) 
 // A page is sent packed within `FILE_LIMITS.total`; what it unpacks to may be more, since a big 3D game's data packs small.
 export const PAGE_LIMITS = { files: 3000, total: 128_000_000 };
 
+/** How many of a page's files go to the blob store at once as it's put together. */
+const PAGE_UPLOADS = 32;
+
 /**
  * A zip's files, read from its central directory: stored or deflated, never a link, a folder, an absolute path or one
  * that steps up. Null for anything else, or past the limits, counting what they unpack to.
@@ -947,9 +950,10 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
         // Each version in a folder of its own, under a random part, so an old one never mixes with a new one.
         const token = randomBytes(12).toString("base64url");
         const urls = {}, sizes = {};
-        // A few at a time: a page can be hundreds of files.
-        for (let n = 0; n < files.length; n += 8) {
-          await Promise.all(files.slice(n, n + 8).map(async (file) => {
+        // Many at a time, within what the blob store takes: a game's page can be hundreds of files, and eight at a time
+        // took a minute for a page of about 600, the function's whole time then.
+        for (let n = 0; n < files.length; n += PAGE_UPLOADS) {
+          await Promise.all(files.slice(n, n + PAGE_UPLOADS).map(async (file) => {
             urls[file.path] = await kept.putPageFile(id, token, file.path, file.bytes);
             sizes[file.path] = file.bytes.length;
             uploaded.push(urls[file.path]);
