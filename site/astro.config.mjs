@@ -29,21 +29,36 @@ function localAPI() {
       const page = createPageHandler({ store, template: async (origin) => (await fetch(`${origin}/w/`)).text(), playOrigin: (url) => url.origin });
       const play = createPlayHandler({ store, anyHost: true });
       const card = createCardHandler({ store });
+      // The relay (RELAY.md) with its Redis and Blob kept in memory: a room's game plays on r-<room>.localhost, and
+      // the helper sends its files to /__relay-blob/ here as it would to Blob. LAMP_RELAY=http://localhost:4321 points
+      // lamp play at it.
+      const { createRelayHandler, createRelayPlayHandler } = await import("./lib/relay.js");
+      const { memoryRedis, memoryBlobs } = await import("./lib/relay-store.js");
+      let here = "http://localhost:4321";
+      const relayDB = memoryRedis(), relayFiles = memoryBlobs({ origin: () => here });
+      const relayBase = { db: relayDB, blobs: relayFiles, wishes: store, site: () => here };
+      const relay = createRelayHandler({ ...relayBase, playBase: () => here });
+      const relayPlay = createRelayPlayHandler({ ...relayBase, playBase: () => here });
       server.middlewares.use(async (req, res, next) => {
         if (req.url === "/api/idea-event") { res.statusCode = 204; return res.end(); }
         const path = req.url.split("?")[0];
         const shared = /^\/w\/([^/]+)(\/card\.png)?$/.exec(path);
         const played = /^\/w\/([^/]+)\/play\/(\d+)\/(.*)$/.exec(path);
-        const handler = path === "/api/first-idea" ? idea : path === "/api/wishes" ? share : path === "/api/wish-file" ? file : path === "/api/wish-ideas" ? ideas
+        const relayed = /^\/relay-play\/([^/]+)\/(\d+)\/(.*)$/.exec(path);
+        if (!/^r-/.test(req.headers.host ?? "")) here = `http://${req.headers.host}`;
+        const handler = path === "/api/relay" ? relay : path === "/__relay-blob/" ? (request) => relayFiles.upload(request) : relayed ? relayPlay
+          : path === "/api/first-idea" ? idea : path === "/api/wishes" ? share : path === "/api/wish-file" ? file : path === "/api/wish-ideas" ? ideas
           : played ? play : shared ? (shared[2] ? card : page) : null;
         if (!handler) return next();
-        const target = played ? `/x?id=${encodeURIComponent(played[1])}&v=${played[2]}&path=${encodeURIComponent(decodeURIComponent(played[3]))}`
+        const target = relayed ? `/x?room=${encodeURIComponent(relayed[1])}&v=${relayed[2]}&path=${encodeURIComponent(decodeURIComponent(relayed[3]))}`
+          : played ? `/x?id=${encodeURIComponent(played[1])}&v=${played[2]}&path=${encodeURIComponent(decodeURIComponent(played[3]))}`
           : shared ? `/x?id=${encodeURIComponent(shared[1])}` : req.url;
         const chunks = [];
         for await (const chunk of req) chunks.push(chunk);
         const headers = Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k, Array.isArray(v) ? v.join(", ") : String(v)]));
         const response = await handler(new Request(`http://${req.headers.host}${target}`, {
           method: req.method, headers, ...(["POST", "PUT"].includes(req.method) ? { body: Buffer.concat(chunks) } : {}),
+          ...(path === "/__relay-blob/" ? { duplex: "half" } : {}),
         }));
         res.writeHead(response.status, Object.fromEntries(response.headers));
         res.end(Buffer.from(await response.arrayBuffer()));

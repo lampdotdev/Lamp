@@ -1,0 +1,148 @@
+---
+import Base from "../layouts/Base.astro";
+---
+
+<!--
+  Changing a shared game with your own agent (lamp.dev/change?w=<id>, RELAY.md): the game plays from a host of the
+  room's own, the page shows the code that pairs the helper on the player's Mac (`lamp play <code>`), and what's asked
+  for here goes to that helper, one change at a time, each new version put into the frame. The page's credential stays
+  in this tab (sessionStorage on lamp.dev), never in an address and never where the game's frame could read it.
+-->
+<Base title="Change this game · Lamp" description="Change a game with your own coding agent." bare>
+  <div class="flex h-dvh flex-col bg-paper text-tape">
+    <header class="flex h-14 items-center justify-between gap-4 border-b border-tape/15 px-4 sm:px-6">
+      <h1 class="text-[17px] font-extrabold tracking-[-0.02em]">Change this game</h1>
+      <a href="/" class="font-mono text-[13px] text-muted-ink hover:text-tape">Made with Lamp</a>
+    </header>
+    <main class="relative min-h-0 flex-1 bg-black">
+      <iframe data-game title="The game" class="block size-full border-0" sandbox="allow-scripts allow-same-origin allow-pointer-lock" hidden></iframe>
+    </main>
+    <footer class="space-y-2 border-t border-tape/15 px-4 py-3 sm:px-6">
+      <div data-pair hidden class="flex flex-wrap items-center gap-3 text-sm">
+        <span>On your Mac, run</span>
+        <code data-command class="rounded-md border border-tape/20 bg-white px-2 py-0.5 font-mono text-lg font-semibold"></code>
+        <span data-expires class="text-muted-ink"></span>
+        <button type="button" data-new-code hidden class="ink-button">New code</button>
+      </div>
+      <form data-ask hidden class="flex gap-2">
+        <input data-prompt autocomplete="off" maxlength="1000" placeholder="What should change?" class="min-w-0 flex-1 rounded-md border border-tape/30 bg-white px-3 py-2" />
+        <button type="submit" class="ink-button px-4">Send</button>
+      </form>
+      <p data-status role="status" class="text-sm text-muted-ink">Opening…</p>
+      <ol data-requests class="max-h-20 list-decimal overflow-auto pl-5 text-xs text-muted-ink"></ol>
+    </footer>
+  </div>
+</Base>
+
+<script>
+  const $ = <T extends HTMLElement>(name: string) => document.querySelector(`[data-${name}]`) as T;
+  type Request = { id: string; prompt: string; state: string; message: string | null; version: number | null };
+  type Room = { rev: string; room: string; version: number; play: string | null; paired: boolean; helper: boolean; code: string | null; codeEnds: number | null; requests: Request[]; same?: boolean };
+
+  const wish = new URLSearchParams(location.search).get("w") ?? "";
+  const kept = `lamp.relay.${wish}`;
+  let token = sessionStorage.getItem(kept);
+  let room: Room | null = null;
+  let shown = 0;
+  let quiet = 0;
+
+  const say = (text: string) => { $("status").textContent = text; };
+  const minutes = (ms: number) => { const n = Math.max(1, Math.round(ms / 60000)); return n === 1 ? "a minute" : `${n} minutes`; };
+
+  async function call(op: string, { method = "GET", body, query = "" }: { method?: string; body?: unknown; query?: string } = {}) {
+    const response = await fetch(`/api/relay?op=${op}${query}`, {
+      method, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { "Content-Type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const answer = await response.json().catch(() => ({}));
+    if (!response.ok) throw Object.assign(new Error(answer.error ?? `HTTP ${response.status}`), { status: response.status });
+    return answer;
+  }
+
+  function show(next: Room) {
+    room = next;
+    if (next.play && next.version !== shown) {
+      shown = next.version;
+      const frame = $<HTMLIFrameElement>("game");
+      frame.src = next.play;
+      frame.hidden = false;
+      document.body.dataset.version = String(next.version);
+    }
+    $("pair").hidden = next.paired;
+    $("ask").hidden = !next.paired;
+    if (!next.paired) {
+      const live = next.code && next.codeEnds && next.codeEnds > Date.now();
+      $("command").textContent = live ? `lamp play ${next.code}` : "lamp play ······";
+      $("expires").textContent = live ? `The code works once, for ${minutes(next.codeEnds! - Date.now())}.` : "This code has run out.";
+      $("new-code").hidden = !!live;
+      say("Waiting for your Mac…");
+    } else if (!next.requests.some((request) => ["queued", "running"].includes(request.state))) {
+      say(next.helper ? "Your Mac is connected. Ask for a change." : "Your Mac isn't answering. Changes wait until it's back.");
+    }
+    const list = $("requests");
+    list.replaceChildren(...[...next.requests].reverse().map((request) => {
+      const item = document.createElement("li");
+      item.dataset.request = request.id;
+      item.dataset.state = request.state;
+      const words: Record<string, string> = { queued: "waiting", running: "your agent is working", done: `done: version ${request.version}`, failed: "didn't work", unchanged: "nothing changed", uncertain: "not known" };
+      item.textContent = `${request.prompt}: ${words[request.state] ?? request.state}${request.message ? ` (${request.message})` : ""}`;
+      return item;
+    }));
+    const latest = next.requests.at(-1);
+    if (latest?.state === "running") say("Your agent is working on it…");
+    else if (latest?.state === "queued") say(next.helper ? "Waiting for your Mac to take it…" : "Waiting for your Mac to come back…");
+  }
+
+  // Every two seconds while something's happening, and up to every twenty while nothing has for a while.
+  async function poll() {
+    for (;;) {
+      try {
+        const next: Room = await call("state", { query: room ? `&rev=${encodeURIComponent(room.rev)}` : "" });
+        if (next.same) quiet++;
+        else { quiet = 0; show(next); }
+      } catch (error) {
+        if ((error as { status?: number }).status === 401) { sessionStorage.removeItem(kept); say("This room has closed. Reload to open another."); return; }
+        say("Reconnecting…");
+      }
+      const busy = room?.requests.some((request) => ["queued", "running"].includes(request.state)) || !room?.paired;
+      await new Promise((done) => setTimeout(done, busy ? 2000 : Math.min(20_000, 2000 * 2 ** Math.min(4, Math.floor(quiet / 5)))));
+      if (!room?.paired && room) show(room);
+    }
+  }
+
+  $("ask").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const box = $<HTMLInputElement>("prompt");
+    const prompt = box.value.trim();
+    if (!prompt) return;
+    // The request's id is made here, so sending it again after a lost answer can't make a second one.
+    const id = crypto.randomUUID();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try { show(await call("ask", { method: "POST", body: { id, prompt } })); box.value = ""; quiet = 0; return; }
+      catch (error) {
+        const status = (error as { status?: number }).status;
+        if (status) { say(status === 429 ? "That's as many changes as this room takes for now." : "That request wasn't taken."); return; }
+      }
+      await new Promise((done) => setTimeout(done, 1000));
+    }
+    say("lamp.dev didn't answer.");
+  });
+
+  $("new-code").addEventListener("click", async () => { try { show(await call("code", { method: "POST" })); } catch { say("No new code."); } });
+
+  (async () => {
+    if (!token) {
+      try {
+        const opened = await call("open", { method: "POST", body: { wish } });
+        token = opened.token as string;
+        sessionStorage.setItem(kept, token);
+        show(opened);
+      } catch (error) {
+        const status = (error as { status?: number }).status;
+        say(status === 404 ? "This link has no game to change." : status === 429 ? "Too many rooms opened from here. Try again later." : "lamp.dev isn't answering.");
+        return;
+      }
+    }
+    poll();
+  })();
+</script>

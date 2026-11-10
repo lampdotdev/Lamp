@@ -11,13 +11,19 @@
     "api/wish-ideas.js": { "maxDuration": 10 },
     "api/wish-page.js": { "maxDuration": 10, "includeFiles": "dist/w/index.html" },
     "api/wish-play.js": { "maxDuration": 60 },
-    "api/wish-card.js": { "maxDuration": 15, "includeFiles": "{lib/fonts/*.ttf,public/apple-touch-icon.png}" }
+    "api/wish-card.js": { "maxDuration": 15, "includeFiles": "{lib/fonts/*.ttf,public/apple-touch-icon.png}" },
+    "api/relay.js": { "maxDuration": 60 },
+    "api/relay-play.js": { "maxDuration": 60 },
+    "api/relay-cleanup.js": { "maxDuration": 300 }
   },
+  "crons": [{ "path": "/api/relay-cleanup", "schedule": "17 * * * *" }],
   "rewrites": [
     { "source": "/w/:id/card.png", "destination": "/api/wish-card?id=:id" },
     { "source": "/w/:id/play/:version/", "destination": "/api/wish-play?id=:id&v=:version" },
     { "source": "/w/:id/play/:version/:path*", "destination": "/api/wish-play?id=:id&v=:version&path=:path*" },
-    { "source": "/w/:id", "destination": "/api/wish-page?id=:id" }
+    { "source": "/w/:id", "destination": "/api/wish-page?id=:id" },
+    { "source": "/relay-play/:room/:version/", "destination": "/api/relay-play?room=:room&v=:version" },
+    { "source": "/relay-play/:room/:version/:path*", "destination": "/api/relay-play?room=:room&v=:version&path=:path*" }
   ],
   "headers": [
     {
@@ -25,7 +31,7 @@
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
     },
     {
-      "source": "/((?!w/[^/]+/play/).*)",
+      "source": "/((?!w/[^/]+/play/|relay-play/).*)",
       "headers": [
         { "key": "X-Content-Type-Options", "value": "nosniff" },
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },

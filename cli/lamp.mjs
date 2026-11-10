@@ -110,9 +110,10 @@ Mac app Lamp made in Swift, built and run on this Mac.
       Its app file goes with it (as lamp export makes it), so anyone can open it in Lamp too; --no-file leaves it out.
       --anyway shares a page that logged errors, or uses work that came with no license.
   lamp unshare [folder]   Take the link down.
-  lamp play <code> [--agent claude|codex] [--relay URL] [--yes]
-      PROTOTYPE. Pair with a game's page by the code it shows, so the page can ask your agent to change a copy of the
-      game here; each change that works goes back into the page. Static games only; the agent has no shell.
+  lamp play <code> [--yes] | lamp play --rejoin <room>
+      Pair with a shared game's page on lamp.dev by the code it shows, so the page can ask Claude Code here to change a
+      copy of the game; each change that works goes back into the page. Static games only; the agent has no shell.
+      --rejoin takes up a room this Mac paired with before.
   lamp ideas [folder] [in <n> | dismiss <n>]
       The ideas people playing the link have sent. "in" says one is in the game now (whoever asked to hear is
       written to); "dismiss" lets one go.
@@ -864,8 +865,8 @@ async function main() {
   }
 
   if (command === "play") {
-    const { options, rest } = parse(args, ["agent", "relay"]);
-    await play({ code: rest[0], agent: options.agent ?? "claude", relay: options.relay ?? RELAY, yes: !!options.yes });
+    const { options, rest } = parse(args, ["agent", "relay", "rejoin"]);
+    await play({ code: rest[0], rejoin: options.rejoin ?? null, agent: options.agent ?? "claude", relay: (options.relay ?? RELAY).replace(/\/+$/, ""), yes: !!options.yes });
     return;
   }
 

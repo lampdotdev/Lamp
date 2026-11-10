@@ -1,13 +1,14 @@
-// PROTOTYPE. `lamp play <code>`: the helper on the player's Mac for a game's page that lets the player's own agent
-// change the game (the relay, `site/relay/relay.mjs`, is the other end). It trades the page's short code for a secret
-// of its own, takes a copy of the game into a folder of lamp's, and runs each change the page asks for, one at a time,
-// with the agent confined to that copy. After a run that worked, the copy is packed as the site packs a page and sent
-// back as one new version; after one that didn't, the copy goes back to the last version sent and the game in the
-// page stays as it was.
+// `lamp play <code>`: the helper on the player's Mac for a shared game's page on lamp.dev (lamp.dev/change?w=<id>,
+// site/RELAY.md) that lets the player's own agent change the game. It trades the page's short code for a credential of
+// its own, takes a copy of the game into a folder of lamp's, and asks lamp.dev every couple of seconds for what the page
+// wants, running one change at a time with the agent confined to that copy. After a run that worked, the copy's files
+// go straight to lamp.dev's file store and lamp.dev checks them and moves the game to them in one step; after one that
+// didn't, the copy goes back to the version the page plays and nothing is sent.
 //
 // Only static games: nothing of the game's is ever run here, no build and no install, and the agent has no shell.
 
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -15,18 +16,17 @@ import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { Problem } from "./state.mjs";
-import { zipOf } from "./share.mjs";
 import { TOKEN_SHAPES } from "./lampapp.mjs";
 import { TOOLS } from "./play-guard.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GUARD = join(HERE, "play-guard.mjs");
 
-/** The prototype's relay, until there's one on the web. */
-export const RELAY = process.env.LAMP_RELAY || "http://127.0.0.1:4700";
+/** Where the page and the helper meet: lamp.dev, or with LAMP_RELAY another (a dev server: http://localhost:4321). */
+export const RELAY = (process.env.LAMP_RELAY || "https://lamp.dev").replace(/\/+$/, "");
 
-/** What a build sent back may hold: the site's page limits, lowered to what the relay keeps in memory. */
-export const BUILD_LIMITS = { files: 3000, total: 64_000_000, packed: 32_000_000 };
+/** What a version sent back may hold: what lamp.dev takes (`RELAY_LIMITS`). */
+export const BUILD_LIMITS = { files: 3000, file: 16_000_000, total: 64_000_000 };
 
 /** How long one change may take. */
 const RUN_MS = 10 * 60_000;
@@ -89,6 +89,7 @@ export function packed(folder, limits = BUILD_LIMITS) {
       if (!stat.isFile()) continue;
       total += stat.size;
       if (files.length >= limits.files || total > limits.total) throw new Problem(`the game is more than ${limits.files} files or ${limits.total / 1_000_000} MB`);
+      if (stat.size > limits.file) throw new Problem(`${prefix}${name} is more than ${limits.file / 1_000_000} MB`);
       files.push([prefix + name, readFileSync(path)]);
     }
   };
@@ -96,9 +97,7 @@ export function packed(folder, limits = BUILD_LIMITS) {
   if (!files.some(([path]) => path === "index.html")) throw new Problem("the game has no index.html at its top");
   const leak = files.find(([, bytes]) => TOKEN_SHAPES.some((shape) => shape.test(bytes.toString("utf8"))));
   if (leak) throw new Problem(`${leak[0]} holds something shaped like a key, which never goes back to the page`);
-  const zip = zipOf(files);
-  if (zip.length > limits.packed) throw new Problem(`the game is ${(zip.length / 1_000_000).toFixed(1)} MB packed, more than ${limits.packed / 1_000_000} MB`);
-  return { files, zip };
+  return { files };
 }
 
 /** Puts a version's files in the folder in place of what's there. Paths come checked from the relay; checked again. */
@@ -116,129 +115,142 @@ const sameFiles = (a, b) => a.length === b.length && a.every(([path, bytes], n) 
 
 // MARK: The helper
 
-export async function play({ code, relay = RELAY, agent = "claude", yes = false, home = process.env.LAMP_PLAY_HOME || join(homedir(), ".lamp", "play"), say = console.log }) {
-  if (!AGENTS[agent]) throw new Problem(`lamp play runs claude or codex, not ${agent}`);
-  if (!code) throw new Problem("lamp play takes the code the game's page shows: lamp play ABC234");
-  if (!yes) {
-    if (!process.stdin.isTTY) throw new Problem("lamp play asks before it lets a page use your agent: run it in a terminal, or with --yes");
-    const asking = createInterface({ input: process.stdin, output: process.stdout });
-    const answer = await asking.question(`The game's page will be able to ask ${agent === "claude" ? "Claude Code" : "Codex"} on this Mac to change a copy of the game.\n` +
-      `It works only on that copy, in ${home}, with no shell and no web. Go ahead? [y/N] `);
-    asking.close();
-    if (!/^y(es)?$/i.test(answer.trim())) throw new Problem("Not paired.");
-  }
+const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+const loopback = (origin) => ["localhost", "127.0.0.1", "[::1]"].includes(new URL(origin).hostname);
 
-  const call = async (method, path, { body, secret, raw } = {}) => {
-    const response = await fetch(new URL(path, relay), {
-      method, headers: { ...(secret ? { Authorization: `Bearer ${secret}` } : {}), ...(body && !raw ? { "Content-Type": "application/json" } : {}) },
-      body: raw ? body : body ? JSON.stringify(body) : undefined,
+/**
+ * Pairs with the page by its code (or with `rejoin`, takes up a room this Mac paired with before, with the credential it
+ * kept), then does what the page asks until the room ends.
+ */
+export async function play({ code, rejoin = null, relay = RELAY, agent = "claude", yes = false, home = process.env.LAMP_PLAY_HOME || join(homedir(), ".lamp", "play"), say = console.log }) {
+  if (!AGENTS[agent]) throw new Problem(`lamp play runs claude or codex, not ${agent}`);
+  // Codex reads anywhere on the Mac, so it's only for trying a relay on this computer, never lamp.dev's.
+  if (agent === "codex" && !loopback(relay)) throw new Problem("lamp play runs Claude Code for a game on lamp.dev: Codex can read files outside the game's copy");
+  if (!code && !rejoin) throw new Problem("lamp play takes the code the game's page shows: lamp play ABC234");
+
+  const call = async (method, op, { body, token, query = "" } = {}) => {
+    const response = await fetch(`${relay}/api/relay?op=${op}${query}`, {
+      method, signal: AbortSignal.timeout(30_000),
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { "Content-Type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
     });
+    if (op === "file") { if (!response.ok) throw new Problem(`a file of the game didn't come (${response.status})`); return Buffer.from(await response.arrayBuffer()); }
     const answer = await response.json().catch(() => ({}));
     if (!response.ok) throw Object.assign(new Problem(answer.error ?? `HTTP ${response.status}`), { status: response.status });
     return answer;
   };
 
-  let paired;
-  try { paired = await call("POST", "/api/pair", { body: { code } }); }
-  catch (error) { throw new Problem(error.status === 404 ? "That code doesn't work: it may have been used or run out. The page can show a new one." : error.status === 429 ? "Too many tries: wait a minute." : `The relay didn't pair: ${error.message}`); }
-  const { room, secret } = paired;
+  let room, token;
+  if (rejoin) {
+    try { ({ room, token } = JSON.parse(readFileSync(join(home, rejoin, "helper.json"), "utf8"))); } catch { throw new Problem(`this Mac hasn't paired with room ${rejoin}`); }
+  } else {
+    if (!yes) {
+      if (!process.stdin.isTTY) throw new Problem("lamp play asks before it lets a page use your agent: run it in a terminal, or with --yes");
+      const asking = createInterface({ input: process.stdin, output: process.stdout });
+      const answer = await asking.question(`The game's page will be able to ask ${agent === "claude" ? "Claude Code" : "Codex"} on this Mac to change a copy of the game.\n` +
+        `It works only on that copy, in ${home}, with no shell and no web. Go ahead? [y/N] `);
+      asking.close();
+      if (!/^y(es)?$/i.test(answer.trim())) throw new Problem("Not paired.");
+    }
+    try { ({ room, token } = await call("POST", "pair", { body: { code } })); }
+    catch (error) { throw new Problem(error.status === 404 ? "That code doesn't work: it may have been used or run out. The page can show a new one." : error.status === 429 ? "Too many tries: wait a minute." : `lamp.dev didn't pair: ${error.message}`); }
+  }
   const place = join(home, room), folder = join(place, "game"), logFile = join(place, "log.txt"), journalFile = join(place, "journal.json"), guardLog = join(place, "refused.txt");
   mkdirSync(place, { recursive: true, mode: 0o700 });
+  // Kept so this Mac can take the room up again (`--rejoin`), readable only by its user, never in the game's copy.
+  writeFileSync(join(place, "helper.json"), JSON.stringify({ relay, room, token }), { mode: 0o600 });
   const log = (line) => { const stamped = `${new Date().toISOString().slice(11, 23)} ${line}`; say(stamped); appendFileSync(logFile, stamped + "\n"); };
-  log(`Paired with room ${room}. Changes the page asks for run here with ${agent}, in ${folder}.`);
+  log(`${rejoin ? "Back in" : "Paired with"} room ${room}. Changes the page asks for run here with ${agent}, in ${folder}.`);
 
-  // The version last sent, which the copy goes back to when a run fails.
-  const built = await call("GET", "/api/helper/build", { secret });
-  let published = Object.entries(built.files).map(([path, data]) => [path, Buffer.from(data, "base64")]).sort(([a], [b]) => a.localeCompare(b));
-  let version = built.version;
+  // What this helper took and how each ended. A change it was running when it stopped is never run again: lamp.dev
+  // hears it didn't finish, and says so.
+  const journal = existsSync(journalFile) ? JSON.parse(readFileSync(journalFile, "utf8")) : {};
+  const remember = (id, entry) => { journal[id] = { ...journal[id], ...entry }; writeFileSync(journalFile, JSON.stringify(journal, null, 2)); };
+  for (const [id, entry] of Object.entries(journal)) if (entry.state === "running") remember(id, { state: "interrupted" });
+  const reconcile = async () => {
+    const answer = await call("POST", "reconcile", { token, body: { journal: Object.fromEntries(Object.entries(journal).map(([id, entry]) => [id, entry.state])) } });
+    for (const request of answer.requests) {
+      const mine = journal[request.id];
+      if (mine && mine.state !== request.state && ["done", "failed", "unchanged", "uncertain"].includes(request.state)) {
+        if (mine.state === "interrupted") log(`request ${request.id}: it stopped while it ran, and lamp.dev has it as ${request.state}; not run again`);
+        remember(request.id, { state: request.state, version: request.version });
+      }
+    }
+    return answer.version;
+  };
+
+  // The version the page plays, which the copy is and goes back to.
+  let version = await reconcile(), published = [];
+  const fetchVersion = async (wanted) => {
+    const list = await call("GET", "files", { token, query: `&v=${wanted}` });
+    const files = [];
+    for (const file of list.files) {
+      const bytes = await call("GET", "file", { token, query: `&v=${wanted}&path=${encodeURIComponent(file.path)}` });
+      if (file.sha256 && sha256(bytes) !== file.sha256) throw new Problem(`${file.path} didn't come as it was sent`);
+      files.push([file.path, bytes]);
+    }
+    return files.sort(([a], [b]) => a.localeCompare(b));
+  };
+  published = await fetchVersion(version);
   restore(folder, published);
   log(`Version ${version} of the game: ${published.length} files.`);
 
-  // Which requests this helper has taken and how each ended, so one sent again (a reconnect) is answered, not run again.
-  const journal = existsSync(journalFile) ? JSON.parse(readFileSync(journalFile, "utf8")) : {};
-  const remember = (id, entry) => { journal[id] = { ...journal[id], ...entry }; writeFileSync(journalFile, JSON.stringify(journal, null, 2)); };
-
-  const queue = [];
-  let working = false;
-  const take = (request) => {
-    if (queue.some((queued) => queued.id === request.id)) return;
-    queue.push(request);
-    if (!working) next();
-  };
-  const next = async () => {
-    working = true;
-    while (queue.length) {
-      const request = queue.shift();
-      try { await handle(request); } catch (error) { log(`request ${request.id}: ${error.message}`); }
-    }
-    working = false;
-  };
-
-  const handle = async ({ id, prompt }) => {
-    const known = journal[id];
-    if (known?.state === "done") { log(`request ${id}: already published as version ${known.version}; not run again`); return; }
-    if (known?.state === "failed" || known?.state === "unchanged") { await call("POST", "/api/helper/status", { secret, body: { id, state: known.state, message: known.message } }); return; }
-    if (known?.state === "started") {
-      // Started before the helper stopped: never run twice, so it's told as not done.
-      remember(id, { state: "failed", message: "the helper stopped while it ran" });
-      await call("POST", "/api/helper/status", { secret, body: { id, state: "failed", message: "the helper stopped while it ran" } });
-      return;
-    }
-    remember(id, { state: "started", prompt, at: new Date().toISOString() });
-    await call("POST", "/api/helper/status", { secret, body: { id, state: "running" } });
+  const run = async ({ id, prompt }) => {
+    try { await call("POST", "claim", { token, body: { id } }); }
+    catch (error) { if (error.status === 409) return; throw error; }
+    remember(id, { state: "running", prompt, at: new Date().toISOString() });
     log(`request ${id}: running ${agent}: ${JSON.stringify(prompt)}`);
     restore(folder, published);
     const outcome = await runAgent({ agent, folder, prompt, guardLog, log: (line) => log(`request ${id}: ${line}`) });
-    let failure = outcome.ok ? null : outcome.why;
-    let result = null;
+    let failure = outcome.ok ? null : outcome.why, result = null;
     if (!failure) { try { result = packed(folder); } catch (error) { failure = error.message; } }
-    if (failure) {
+    const finish = async (state, message) => {
       restore(folder, published);
-      remember(id, { state: "failed", message: failure });
-      log(`request ${id}: failed (${failure}); the game stays at version ${version}`);
-      await call("POST", "/api/helper/status", { secret, body: { id, state: "failed", message: failure } });
-      return;
+      remember(id, { state, message });
+      log(`request ${id}: ${state}${message ? ` (${message})` : ""}; the game stays at version ${version}`);
+      await call("POST", "finish", { token, body: { id, state, message } });
+    };
+    if (failure) return finish("failed", failure);
+    if (sameFiles(result.files, published)) return finish("unchanged", "the agent changed nothing");
+    // The files go straight to lamp.dev's file store, each with the permission it gave for that one file; lamp.dev then
+    // reads each back, checks it against the list, and only then plays the new version.
+    try {
+      const listed = result.files.map(([path, bytes]) => ({ path, size: bytes.length, sha256: sha256(bytes) }));
+      const { build, uploads } = await call("POST", "upload", { token, body: { id, files: listed } });
+      const bytesOf = new Map(result.files.map(([, bytes]) => [sha256(bytes), bytes]));
+      for (const upload of uploads) {
+        const response = await fetch(upload.url, { method: "PUT", headers: upload.headers, body: bytesOf.get(upload.sha256), signal: AbortSignal.timeout(120_000) });
+        if (!response.ok) throw new Problem(`a file wasn't taken (${response.status})`);
+      }
+      const done = await call("POST", "commit", { token, body: { id, build } });
+      published = result.files;
+      version = done.version;
+      remember(id, { state: "done", version });
+      log(`request ${id}: published version ${version} (${result.files.length} files, ${uploads.length} sent)`);
+    } catch (error) {
+      await finish("failed", `the new version wasn't taken: ${error.message}`).catch(() => {});
     }
-    if (sameFiles(result.files, published)) {
-      remember(id, { state: "unchanged", message: "the agent changed nothing" });
-      log(`request ${id}: the agent changed nothing`);
-      await call("POST", "/api/helper/status", { secret, body: { id, state: "unchanged", message: "the agent changed nothing" } });
-      return;
-    }
-    const answer = await call("PUT", `/api/helper/build?request=${encodeURIComponent(id)}&base=${version}`, { secret, body: result.zip, raw: true });
-    published = result.files;
-    version = answer.version;
-    remember(id, { state: "done", version });
-    log(`request ${id}: published version ${version} (${result.files.length} files, ${result.zip.length} bytes packed)`);
   };
 
-  // The relay's stream of requests, opened again when it drops; the relay sends again what isn't finished.
-  for (let wait = 1000; ;) {
+  // Every two seconds while there's something to do, and less often, up to every fifteen, while there isn't.
+  for (let quiet = 0, lost = false; ;) {
     try {
-      const response = await fetch(new URL("/api/helper/events", relay), { headers: { Authorization: `Bearer ${secret}` } });
-      if (response.status === 401) throw new Problem("The relay no longer knows this helper.");
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      log("Listening for the page's requests.");
-      wait = 1000;
-      const decoder = new TextDecoder();
-      let buffer = "";
-      for await (const part of response.body) {
-        buffer += decoder.decode(part, { stream: true });
-        let end;
-        while ((end = buffer.indexOf("\n\n")) >= 0) {
-          const block = buffer.slice(0, end); buffer = buffer.slice(end + 2);
-          const lines = block.split("\n").filter((line) => !line.startsWith(":"));
-          const event = lines.find((line) => line.startsWith("event:"))?.slice(6).trim();
-          const data = lines.find((line) => line.startsWith("data:"))?.slice(5).trim();
-          if (event === "request" && data) take(JSON.parse(data));
-        }
+      if (lost) { version = await reconcile(); lost = false; log("lamp.dev answers again."); }
+      const next = await call("GET", "next", { token });
+      if (next.version !== version && !next.running) {
+        published = await fetchVersion(next.version);
+        version = next.version;
+        restore(folder, published);
       }
+      if (next.next && !journal[next.next.id]) { quiet = 0; await run(next.next); continue; }
+      quiet++;
     } catch (error) {
-      if (error instanceof Problem) throw error;
+      if (error.status === 401 || error.status === 404) { log("The room has closed."); return; }
+      if (!lost) log(`lamp.dev didn't answer (${error.message}); trying again.`);
+      lost = true;
     }
-    log("The relay went away; connecting again.");
-    await new Promise((done) => setTimeout(done, wait));
-    wait = Math.min(wait * 2, 30_000);
+    await sleep(Math.min(15_000, 2000 * 2 ** Math.min(3, Math.floor(quiet / 10))));
   }
 }
 

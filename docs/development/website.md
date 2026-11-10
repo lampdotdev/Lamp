@@ -2,8 +2,9 @@
 
 One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the repository: it has the rules every change follows and the list of guides; a section named in quotes may be in another guide on that list.
 
-`site/` is lamp.dev (Astro; `site/FIRST_IDEA.md`, `site/BUG_REPORTS.md` and `site/SHARED_WISHES.md` cover its moving
-parts; the last is a wish shared as a link, `WishLink` in the app). It reads as an open source project's site, not
+`site/` is lamp.dev (Astro; `site/FIRST_IDEA.md`, `site/BUG_REPORTS.md`, `site/SHARED_WISHES.md` and `site/RELAY.md`
+cover its moving parts; the third is a wish shared as a link, `WishLink` in the app, and the last a shared game changed by
+the player's own agent through `lamp play`). It reads as an open source project's site, not
 a company's: plain and lo-fi, on cream paper (`--color-paper`) with ink (`--color-tape`) and a lighter ink for words
 said in passing (`--color-muted-ink`, 4.5:1 on the paper), a tight grotesque for words and a mono for the menu,
 labels, lists and small print, thin rules between parts, small corners and soft shadows only (nothing has a hard,
