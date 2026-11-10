@@ -20,7 +20,8 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Problem, layoutOf, projectOf, stateOf, running, ask } from "./state.mjs";
-import { serveMac } from "./mac.mjs";
+import { serveMac, writeMacStarter } from "./mac.mjs";
+import { unpack } from "./lampapp.mjs";
 import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS } from "./dev.mjs";
 import { allSkills } from "./skills.mjs";
 import { share, unshare, ideas, finishIdea, readLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
@@ -40,6 +41,9 @@ Mac app Lamp made in Swift, built and run on this Mac.
   lamp init [folder] [--update]
       Give a page that's already there Lamp's game runtime: its own files beside the page, none of the page's
       changed. --update writes Lamp's files again, for a newer Lamp.
+  lamp unpack <file.lampapp> [folder]
+      Unpack a Lamp app file (what Lamp's Share… makes, and a lamp.dev link carries) into a new folder beside it,
+      named for it, or into the folder given. A Mac app gets Lamp's own files as it's first built.
   lamp dev [folder] [--open] [--port N] [--lan]
       Run it, saying how each change went. --open opens a window for it; --lan lets other devices on the
       network open it too.
@@ -102,8 +106,9 @@ Mac app Lamp made in Swift, built and run on this Mac.
       Lamp's building blocks for a Mac app (saved data, AI, windows, the menu bar…) with what each is for, or one
       in full: read from the app's own Sources/LampSupport.swift.
 
-The folder is one Lamp made (a page in Web/, or a Mac app's Package.swift and build.sh) or any folder with an
-index.html; without one, the folder you're in.`;
+The folder is one Lamp made (a page in Web/, or a Mac app's Package.swift and build.sh), one in Lamp's format (its
+lamp-app.json says what it is: a web app, a game, a screen or a Mac app) or any folder with an index.html; without
+one, the folder you're in.`;
 
 // What tells a coding agent how to work with lamp: one file, installed as a skill by `lamp setup` and printed by
 // `lamp guide`. `{{lamp}}` in it is how lamp is run on this computer.
@@ -408,31 +413,10 @@ async function main() {
     if (options.mac) {
       // A new Mac app as Lamp's app makes one (`Template.scaffold`): Lamp's own files and the card the app shows until
       // it's written, from a copy Lamp's own code wrote under a stand-in name (scripts/cli-files.sh).
-      const starter = join(here, "lamps", "mac-starter");
-      if (!existsSync(join(starter, "lamp-starter.json"))) {
-        throw new Problem(`Lamp's starting files for a Mac app aren't made yet. In Lamp's folder, run scripts/cli-files.sh: it writes them from Lamp's own code.`);
-      }
-      const stood = JSON.parse(readFileSync(join(starter, "lamp-starter.json"), "utf8"));
       const title = String(options.name ?? basename(folder).split(/[-_\s]+/).filter(Boolean).map((word) => word[0].toUpperCase() + word.slice(1)).join(" ")).trim();
       // The name goes into the app's build script and its code as it is, so it's one that's safe in both.
       if (!/^[A-Za-z][A-Za-z0-9 ]{0,39}$/.test(title)) throw new Problem("a Mac app's name here is letters, digits and spaces, starting with a letter, 40 at most: --name \"Its Name\"");
-      const exe = title.split(/\s+/).map((word) => word[0].toUpperCase() + word.slice(1)).join(""), slug = exe.toLowerCase();
-      const named = (text) => text.replaceAll(stood.bundle, `dev.lamp.cli.app.${slug}`).replaceAll(stood.name, title).replaceAll(stood.exe, exe).replaceAll(stood.slug, slug);
-      const copy = (from, to) => {
-        mkdirSync(to, { recursive: true });
-        for (const entry of readdirSync(from, { withFileTypes: true })) {
-          // What Lamp's app knows of the stand-in (.lamp) and the names it stood for aren't the new app's.
-          if (entry.name === ".lamp" || entry.name === "lamp-starter.json") continue;
-          const source = join(from, entry.name), target = join(to, named(entry.name));
-          if (entry.isDirectory()) { copy(source, target); continue; }
-          if (!entry.isFile()) continue;
-          // Lamp's building blocks are the same for every app; the rest names this one.
-          if (entry.name === "LampSupport.swift" || !/\.(swift|sh|md|json|plist|txt)$|^\.gitignore$/.test(entry.name)) cpSync(source, target);
-          else writeFileSync(target, named(readFileSync(source, "utf8")));
-          chmodSync(target, statSync(source).mode);
-        }
-      };
-      copy(starter, folder);
+      writeMacStarter(folder, title);
       console.log(`Made ${folder}: a new Mac app, "${title}", with Lamp's building blocks (Sources/LampSupport.swift).`);
       console.log("Yours to write: the app's code in Sources/, and APP.md. It shows a card until then.");
       console.log("Lamp's, never edited: Sources/LampSupport.swift, build.sh and Package.swift.");
@@ -462,6 +446,16 @@ async function main() {
     console.log("Yours to write: index.html (keep its head), game.js and modules beside it, and APP.md. world.js and making.js are the card it shows until then: the game replaces them.");
     console.log("Lamp's, never edited: lamp.js, lamp-game.js, lamp-phaser.js, lamp-controllers.js, lamp-device.js, three/ and phaser/.");
     console.log(`Write the game, then see its real opening with: ${lampCommand()} look ${quoted(folder)} --reopen`);
+    return;
+  }
+
+  if (command === "unpack") {
+    const { rest } = parse(args, []);
+    if (!rest[0]) throw new Problem("unpack takes the Lamp app file: lamp unpack Harbor.lampapp");
+    const opened = unpack(rest[0], rest[1] ?? null);
+    console.log(`Unpacked "${opened.name}" into ${opened.folder}.`);
+    if (opened.refused) { console.log(`lamp can't run it: ${opened.refused}.`); return; }
+    console.log(`${opened.project.kind === "mac" ? "Build and open it" : "See it"} with: ${lampCommand()} ${opened.project.kind === "mac" ? "open" : "look"} ${quoted(opened.folder)}`);
     return;
   }
 
