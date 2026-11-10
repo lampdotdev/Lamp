@@ -401,7 +401,7 @@ extension MSIX {
         }
 
         /// The issuer and serial a signature names, read back out of the certificate Lamp made.
-        private static func from(certificate: Data, key: SecKey) throws -> Signer {
+        static func from(certificate: Data, key: SecKey) throws -> Signer {
             guard let (serial, issuer) = issuerAndSerial(certificate) else { throw Failure(message: "Lamp's package certificate can't be read.") }
             return Signer(key: key, certificate: certificate, issuer: issuer, serial: serial)
         }
