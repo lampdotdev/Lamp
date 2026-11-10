@@ -95,3 +95,14 @@ jobs:
           gh release create "v$VERSION" "dist/Lamp-$VERSION.dmg" dist/sparkle.json dist/assets/* \
             --title "Lamp $VERSION" --notes-file dist/notes.md || \
           gh release upload "v$VERSION" "dist/Lamp-$VERSION.dmg" dist/sparkle.json dist/assets/* --clobber
+
+      - name: Publish lamp on npm
+        # lamp's command line for a computer without Lamp's app (@lampdotdev/lamp, scripts/npm-package.sh), at the same
+        # version as this Lamp, whose app carries the same lamp. Skipped until the release environment has NPM_TOKEN (an
+        # npm automation token of the lampdotdev organization's), so a release never waits on npm.
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then echo "No NPM_TOKEN in the release environment: lamp isn't published on npm."; exit 0; fi
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > "$HOME/.npmrc"
+          scripts/npm-package.sh "$VERSION" --publish

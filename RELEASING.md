@@ -193,6 +193,21 @@ Release builds of Lamp update themselves with [Sparkle](https://sparkle-project.
   - It deploys itself: the Vercel project is connected to this repo with `updates` as its root directory, so a push to `main` that touches `updates/` goes to production and a branch gets a preview, like the website in `site/`. `cd updates && vercel deploy --prod --scope roo-code` still works for a deploy by hand.
 - **Only newer releases appear:** releases before the first one with `sparkle.json` aren't in the feed, because Sparkle couldn't verify them. Copies of Lamp from before Sparkle was added need one manual update to a release that includes it.
 
+## Updates for lamp's command line (npm)
+
+The lamp in Lamp's app updates with Lamp. For a computer without Lamp, each release also publishes the same lamp to npm as
+`@lampdotdev/lamp`, at the release's version: the release workflow's last step runs `scripts/npm-package.sh "$VERSION"
+--publish` with `NPM_TOKEN` from the `release` environment, and skips it (saying so) while that secret isn't set. A copy
+installed from npm says once a day when a newer one is out (`cli/update.mjs`); it never updates itself.
+
+- **One-time setup:** the `lampdotdev` organization on npmjs.com, which owns the package, and an automation token of
+  it (Access Tokens → Generate New Token → Granular, read and write on `@lampdotdev/lamp`, or Classic → Automation), saved
+  as `NPM_TOKEN` in the repository's `release` environment.
+- **By hand:** `npm login`, then `scripts/npm-package.sh 0.36.0 --publish` from a Mac with Xcode (the script runs
+  `scripts/cli-files.sh` first, which builds Lamp's tests).
+- **What it publishes is public:** lamp's code, the skill, and the Lamp resources lamp reads (the game kit, the libraries
+  with their licenses, the Xbox's host, the device integrations and the skills).
+
 ## Website
 
 `site/` is the page at `lamp.dev`: one static Astro page styled with Tailwind, in its own Vercel project
