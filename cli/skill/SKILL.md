@@ -33,7 +33,8 @@ empty folder.
 ## A Mac app
 
 A folder with `Package.swift`, `build.sh` and `Sources/LampSupport.swift` and no page is a Mac app Lamp made in
-Swift. The same commands work on it, with these differences:
+Swift. `{{lamp}} new path/to/folder --mac --name "Its Name"` makes a new one: Lamp's building blocks, and a card it
+shows until its code in `Sources/` is written. The same commands work on it, with these differences:
 
 - **A change is a build.** Each save builds the app again, a few seconds for a small change, and opens it again:
   what was typed or open in it is gone, so change first and try after. `look` waits for the build.
@@ -45,7 +46,7 @@ Swift. The same commands work on it, with these differences:
 - **Lamp's own files** are `Sources/LampSupport.swift`, `build.sh` and `Package.swift`: read `LampSupport.swift` for
   what Lamp gives the app, and never edit any of them.
 - **Not here:** putting a change in without opening the app again, what the app asks of Lamp as it runs (its AI, its
-  secrets), a new Mac app, and sharing one. Those are Lamp's app's: say so rather than working around it.
+  secrets), and sharing one. Those are Lamp's app's: say so rather than working around it.
 
 ## A game that's already there
 

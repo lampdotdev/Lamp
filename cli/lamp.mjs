@@ -14,7 +14,7 @@
 //   lamp skills           Lamp's guidance for each kind of work; lamp skill <name> reads one
 
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,8 +29,9 @@ const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 const USAGE = `lamp runs the web app or game in a folder and puts each saved change into the open page.
 
-  lamp new <folder> [--name "Its Name"]
+  lamp new <folder> [--name "Its Name"] [--mac]
       Make a new web game's folder from Lamp's starting files: the game runtime, three.js and a page to build on.
+      --mac makes a new Mac app in Swift instead, with Lamp's building blocks.
   lamp init [folder] [--update]
       Give a page that's already there Lamp's game runtime: its own files beside the page, none of the page's
       changed. --update writes Lamp's files again, for a newer Lamp.
@@ -194,6 +195,40 @@ async function main() {
     if (!rest[0]) throw new Problem("new takes the folder to make: lamp new harbor-racer");
     const folder = resolve(rest[0]);
     if (existsSync(folder) && readdirSync(folder).length) throw new Problem(`${folder} already has things in it`);
+    if (options.mac) {
+      // A new Mac app as Lamp's app makes one (`Template.scaffold`): Lamp's own files and the card the app shows until
+      // it's written, from a copy Lamp's own code wrote under a stand-in name (scripts/cli-files.sh).
+      const starter = join(here, "lamps", "mac-starter");
+      if (!existsSync(join(starter, "lamp-starter.json"))) {
+        throw new Problem(`Lamp's starting files for a Mac app aren't made yet. In Lamp's folder, run scripts/cli-files.sh: it writes them from Lamp's own code.`);
+      }
+      const stood = JSON.parse(readFileSync(join(starter, "lamp-starter.json"), "utf8"));
+      const title = String(options.name ?? basename(folder).split(/[-_\s]+/).filter(Boolean).map((word) => word[0].toUpperCase() + word.slice(1)).join(" ")).trim();
+      // The name goes into the app's build script and its code as it is, so it's one that's safe in both.
+      if (!/^[A-Za-z][A-Za-z0-9 ]{0,39}$/.test(title)) throw new Problem("a Mac app's name here is letters, digits and spaces, starting with a letter, 40 at most: --name \"Its Name\"");
+      const exe = title.split(/\s+/).map((word) => word[0].toUpperCase() + word.slice(1)).join(""), slug = exe.toLowerCase();
+      const named = (text) => text.replaceAll(stood.bundle, `dev.lamp.cli.app.${slug}`).replaceAll(stood.name, title).replaceAll(stood.exe, exe).replaceAll(stood.slug, slug);
+      const copy = (from, to) => {
+        mkdirSync(to, { recursive: true });
+        for (const entry of readdirSync(from, { withFileTypes: true })) {
+          // What Lamp's app knows of the stand-in (.lamp) and the names it stood for aren't the new app's.
+          if (entry.name === ".lamp" || entry.name === "lamp-starter.json") continue;
+          const source = join(from, entry.name), target = join(to, named(entry.name));
+          if (entry.isDirectory()) { copy(source, target); continue; }
+          if (!entry.isFile()) continue;
+          // Lamp's building blocks are the same for every app; the rest names this one.
+          if (entry.name === "LampSupport.swift" || !/\.(swift|sh|md|json|plist|txt)$|^\.gitignore$/.test(entry.name)) cpSync(source, target);
+          else writeFileSync(target, named(readFileSync(source, "utf8")));
+          chmodSync(target, statSync(source).mode);
+        }
+      };
+      copy(starter, folder);
+      console.log(`Made ${folder}: a new Mac app, "${title}", with Lamp's building blocks (Sources/LampSupport.swift).`);
+      console.log("Yours to write: the app's code in Sources/, and APP.md. It shows a card until then.");
+      console.log("Lamp's, never edited: Sources/LampSupport.swift, build.sh and Package.swift.");
+      console.log(`Build and open it with: ${lampCommand()} open ${quoted(folder)}`);
+      return;
+    }
     // What Lamp gives a new web game: its starting page, the game runtime and three.js, from Lamp's own folder.
     const lamps = join(here, "..", "Resources"), scaffold = join(lamps, "GameKit", "scaffold-web", "Web");
     const runtime = join(lamps, "GameKit", "web"), three = join(lamps, "WebLibraries", "three");

@@ -13,7 +13,7 @@ with an `index.html`; without one, the folder you're in.
 
 | Command | What it does |
 | --- | --- |
-| `lamp new <folder> [--name "Its Name"]` | Makes a new web game's folder from Lamp's starting files. |
+| `lamp new <folder> [--name "Its Name"] [--mac]` | Makes a new web game's folder from Lamp's starting files, or with `--mac` a new Mac app in Swift. |
 | `lamp init [--update]` | Puts Lamp's game runtime beside a page that's already there, changing none of the page's own files. |
 | `lamp dev [--open] [--lan] [--port N]` | Runs the page and says how each change went. Each save goes into every open copy of it. `--open` opens a window for it; `--lan` lets other devices on the network open it. |
 | `lamp open` | Shows the page in a window, running it in the background if it isn't running, and returns at once. |
@@ -126,9 +126,14 @@ The folder holds all it takes, so nothing of Lamp's app is run:
 - **A change** builds the app again and opens it again. The app's own build writes `build/`, `.build/` and
   `.lamp/` in the folder, as it does under Lamp's app.
 
+- **A new one** (`lamp new --mac`) is a copy of the folder Lamp's app makes for a new Mac app (`Template.scaffold`),
+  under the app's own name. Those files are Lamp's own code's doing, and its building blocks change often, so the copy
+  isn't kept in the repository: `scripts/cli-files.sh` writes it (`cli/lamps/mac-starter`, through `CLIFilesTests`)
+  from the code as it is, and `lamp new --mac` says to run it when there's none.
+
 What stays Lamp's app's for a Mac app: putting a change in while it runs (`LiveReload`), what the app asks of Lamp
 on its port (AI, secrets, sharing: here nothing answers, which the app takes as Lamp not running), signing for a
-team, the chat beside the app, and making a new one (its files are written from `Template.swift`).
+team, and the chat beside the app.
 
 ## Sharing
 
