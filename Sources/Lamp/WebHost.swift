@@ -12,14 +12,6 @@ enum WebHost {
     static let library = "Microsoft.Web.WebView2.Core.dll"
     /// Where the app's own files go in the package.
     static let folder = "Web"
-    /// The classes of `library` the host (or WebView2 itself) activates by name.
-    static let activatableClasses = [
-        "Microsoft.Web.WebView2.Core.CoreWebView2Environment",
-        "Microsoft.Web.WebView2.Core.CoreWebView2EnvironmentOptions",
-        "Microsoft.Web.WebView2.Core.CoreWebView2ControllerWindowReference",
-        "Microsoft.Web.WebView2.Core.CoreWebView2CustomSchemeRegistration",
-    ]
-
     private static var resources: URL? { Bundle.main.resourceURL?.appendingPathComponent("WebHost") }
 
     /// Whether a declared kind's apps run in this host. Lamp Dev can be sent back to the EdgeHTML host with

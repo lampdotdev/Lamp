@@ -1,6 +1,6 @@
-// A link to the page on lamp.dev: anyone who opens it plays the page there, and can send its maker an idea. This is
-// Lamp's side of the site's API (site/lib/shared-wishes.js, which the limits here are read from), as
-// Sources/Lamp/WishLink.swift is in Lamp's app: the link's words and picture, then the page, zipped and sent in parts.
+// A link to the page on lamp.dev: anyone who opens it plays the page there, and can send its maker an idea. The page
+// zipped as the site takes it, then the link's words and picture and the page sent in parts, through the site's API
+// as link.mjs speaks it (the same for Lamp's app's Share Link card).
 //
 // The link's secret, which is what lets it be changed or taken down, is kept with lamp's own state for the folder,
 // never in the folder: a folder is committed and published, and the secret is whoever shared it's alone.
@@ -12,9 +12,9 @@ import { deflateRawSync } from "node:zlib";
 import { Problem, stateOf } from "./state.mjs";
 import { ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS, LIBRARIES } from "./dev.mjs";
 import { LIMITS, FILE_LIMITS, PAGE_LIMITS } from "../site/lib/shared-wishes.js";
+import { ideasOf, publishLink, removeIdea, removeLink, sendFile, siteOrigin } from "./link.mjs";
 
-/** The site links are made on: lamp.dev, or another given for trying this against a copy of the site. */
-export const siteOrigin = () => (process.env.LAMP_SITE || "https://lamp.dev").replace(/\/+$/, "");
+export { siteOrigin };
 
 const linkFileOf = (folder) => join(stateOf(folder), "link.json");
 
@@ -117,41 +117,7 @@ export function pageFiles(layout, { device = ANY_BROWSER } = {}) {
 
 // MARK: The site
 
-const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 const megabytes = (bytes) => `${(bytes / 1_000_000).toFixed(bytes < 10_000_000 ? 1 : 0)} MB`;
-
-// What the site says when it turns something down, in plain words.
-const REFUSALS = {
-  invalid_wish: `the site didn't take the link's words or picture (a name of at most ${LIMITS.name} characters, words of at most ${LIMITS.words}, a line of at most ${LIMITS.line})`,
-  invalid_page: `the site didn't take the page: it needs index.html at its top, at most ${PAGE_LIMITS.files} files and ${megabytes(PAGE_LIMITS.total)}`,
-  invalid_part: "the site didn't take a part of the page",
-  parts_missing: "a part of the page didn't reach the site: share again",
-  file_too_large: `the page is more than the ${megabytes(FILE_LIMITS.total)} a link carries, packed`,
-  rate_limited: "the site has taken as many as it takes for now: try again in a while",
-  service_unavailable: "the site can't keep it just now: try again in a moment",
-  not_found: "the link is no longer there",
-};
-
-/** One request to the site, tried again when it can't be reached or can't answer just now. */
-async function call(method, url, { secret, json, bytes, tries = 3 } = {}) {
-  const headers = {
-    ...(secret ? { authorization: `Bearer ${secret}` } : {}),
-    ...(json ? { "content-type": "application/json" } : bytes ? { "content-type": "application/octet-stream" } : {}),
-  };
-  for (let attempt = 0; ; attempt++) {
-    let answer = null;
-    try { answer = await fetch(url, { method, headers, body: json ? JSON.stringify(json) : bytes, signal: AbortSignal.timeout(120_000) }); } catch {}
-    if (answer && answer.status < 500) {
-      const said = await answer.json().catch(() => null);
-      if (answer.ok) return said ?? {};
-      const problem = new Problem(REFUSALS[said?.error] ?? `the site answered ${answer.status}`);
-      problem.status = answer.status;
-      throw problem;
-    }
-    if (attempt === tries - 1) throw new Problem(answer ? REFUSALS.service_unavailable : `couldn't reach ${new URL(url).host}`);
-    await sleep(600 * 2 ** attempt);
-  }
-}
 
 /**
  * Shares the page, or sends it again to the link the folder has: the link's words and picture, then the page. `words`
@@ -174,39 +140,23 @@ export async function share({ layout, words, picture = null, shape = "fill", sit
     ...(words.asks?.length ? { asks: words.asks } : {}), ...(picture ? { picture: picture.toString("base64") } : {}),
   };
   // The folder's own link when it has one on this site, changed in place; a link that's gone is made again.
-  let link = readLink(layout.folder);
-  if (link && link.site !== site) link = null;
-  let made = null;
-  if (link) {
-    try { made = await call("PUT", `${site}/api/wishes?id=${link.id}`, { secret: link.secret, json: body }); }
-    catch (error) { if (error.status !== 404) throw error; link = null; }
-  }
-  if (!link) {
-    made = await call("POST", `${site}/api/wishes`, { json: body });
-    link = { site, id: made.id, secret: made.secret };
-  }
-  link = { ...link, url: made.url, ...words, shape };
+  let earlier = readLink(layout.folder);
+  if (earlier && earlier.site !== site) earlier = null;
+  let link = { site, ...(await publishLink({ site, body, earlier })), ...words, shape };
   // Kept before the page goes up: a link whose page didn't make it is still this folder's to send again or take down.
   writeLink(layout.folder, link);
 
-  const count = Math.ceil(zip.length / FILE_LIMITS.part);
-  for (let n = 0; n < count; n++) {
-    said(`Sending the page: part ${n + 1} of ${count}`);
-    await call("PUT", `${site}/api/wish-file?id=${link.id}&what=page&part=${n}&of=${count}`,
-      { secret: link.secret, bytes: zip.subarray(n * FILE_LIMITS.part, (n + 1) * FILE_LIMITS.part), tries: 4 });
-  }
-  const page = await call("POST", `${site}/api/wish-file?id=${link.id}&what=page`, { secret: link.secret });
-  link = { ...link, version: page.version, shared: new Date().toISOString() };
+  const version = await sendFile({ site, link, bytes: zip, page: true, said });
+  link = { ...link, version, shared: new Date().toISOString() };
   writeLink(layout.folder, link);
-  return { url: link.url, version: page.version, files: files.length, bytes: zip.length, picture: !!picture };
+  return { url: link.url, version, files: files.length, bytes: zip.length, picture: !!picture };
 }
 
 /** Takes the folder's link down, with its page and the ideas sent to it. */
 export async function unshare(folder) {
   const link = readLink(folder);
   if (!link) throw new Problem("this folder has no link");
-  try { await call("DELETE", `${link.site}/api/wishes?id=${link.id}`, { secret: link.secret }); }
-  catch (error) { if (error.status !== 404) throw error; }
+  await removeLink({ site: link.site, link });
   rmSync(linkFileOf(folder), { force: true });
   return link.url;
 }
@@ -215,14 +165,14 @@ export async function unshare(folder) {
 export async function ideas(folder) {
   const link = readLink(folder);
   if (!link) throw new Problem("this folder has no link: lamp share makes one");
-  return { url: link.url, ideas: (await call("GET", `${link.site}/api/wish-ideas?id=${link.id}`, { secret: link.secret })).ideas ?? [] };
+  return { url: link.url, ideas: await ideasOf({ site: link.site, link }) };
 }
 
 /** Says what became of an idea: it's in (the site writes to whoever asked to hear), or it's let go. */
 export async function finishIdea(folder, n, built) {
   const link = readLink(folder);
   if (!link) throw new Problem("this folder has no link");
-  return call("DELETE", `${link.site}/api/wish-ideas?id=${link.id}&n=${n}${built ? "&built=1" : ""}`, { secret: link.secret });
+  return removeIdea({ site: link.site, link, n, built });
 }
 
 /** The page's name where nothing gave one: its title, or its folder's name. */

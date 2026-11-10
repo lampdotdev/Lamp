@@ -34,16 +34,20 @@ the bridge (`bridge.known`, Lamp's alone: refused from the builder, kept while t
 to a shipped integration).
 
 The primitives and their guards (DevicePrimitives.swift, DeviceRemote.swift), which every place goes through:
-`DeviceHTTP` (only the address the device was found at, which must be private or link-local and never this Mac, by loopback or by its own addresses (`DeviceAddress.thisMac`), so
-nothing reaches Lamp's gateway; a path that stays a path; no redirect; the answer cut off at `limit`; a password only
-for the device's own challenge, in the scheme declared, once: `Guardian`; over HTTPS, with `https: true`, the device's
-own certificate is kept the first time per port and a different one refused, as SSH host keys are, `DeviceTLS`;
+`DeviceHTTP` (a request is lamp's command line's to make, the one place that makes one and holds its guards: `send` in
+`cli/devices.mjs`, which `DeviceHTTP.send` asks of the run of it that stays, `LampCLI.ask`, "lamp from a terminal";
+only the address the device was found at, which must be private or link-local and never this Mac, by loopback or by its own addresses, so
+nothing reaches Lamp's gateway; a path that stays a path; no redirect; the answer cut off at 16 MB; a password only
+for the device's own challenge, in the scheme declared, once; over HTTPS, with `https: true`, the device's
+own certificate is kept the first time per port and a different one refused, as SSH host keys are, in the store `DeviceTLS.Pins` names;
 for a device that makes itself a new certificate from a root of its own (Xbox's Device Portal does, whenever it
 restarts), the integration names where it serves that root (`certificateRoot`), which Lamp reads once over the
 connection the first certificate was kept on and keeps beside it, and a later certificate is taken only when that
 root signed it, and
 nothing secret goes to a device whose certificate isn't kept, so a read while finding it sends no password), `DeviceProbe` (TCP, SSDP, Bonjour;
-read only), `DeviceStream` (a TCP log read line by line), `DeviceFields` (what the person typed, kept per device the
+read only, and lamp's command line's too: `search`, `probe` and `look` in `cli/calls.mjs`; a look, `Integrations.Scan.now`, is one search
+for everything with each integration's devices found and read as its JSON says and the devices nobody knows read from
+their descriptions, all in the command line, and what's kept of each, and what it's called, Lamp's app's), `DeviceStream` (a TCP log read line by line), `DeviceFields` (what the person typed, kept per device the
 way `AppSecrets` keeps an app's), `DeviceQR`, `VendorSignIn` (the vendor's https page, answered on a loopback listener
 at a port of its own; the card names the page's domain), `DeviceSSH` (the device's address only, its host key pinned
 in a file of its own the first time, none of the person's SSH settings, no agent, no forwarding, Lamp's key or one the
@@ -61,7 +65,9 @@ chat's card (`.deviceStep`, `DeviceStepLine`; in the sidebar a line that opens t
 hands on the device (`wait`) is checked again every few seconds while it's shown. A step can also have Do It for Me, from a skill that
 says it does that step for the integration (`setup-for` its id), with no Swift for that device: "Do It for Me" in the
 TV guide. `IntegrationRunner` runs steps and
-sequences and keeps a device (`Integrations.Kept`, in Lamp's folder) only once a step has passed on it: a device found
+sequences (their requests, waits and probes, and what each check finds, are lamp's command line's: `run`, `open`,
+`putBack` and `check` in cli/calls.mjs, its `Runner`; between its parts the app does what only it does, a command on
+the device or a downloaded tool once approved, a log read into the app's, a maker's sign-in page) and keeps a device (`Integrations.Kept`, in Lamp's folder) only once a step has passed on it: a device found
 is shown for the moment, never kept. A device whose certificate isn't the one kept (reset, or its developer mode turned
 on again) is refused until the person reconnects it: the step's check or the install that met it puts a reconnect card
 where its setup card goes (`DeviceReconnectCard`, `DeviceSetupModel.certificateChanged`), and Reconnect lets the kept
@@ -161,7 +167,7 @@ shelf of devices (`DeskDevices`, the desk guide) is the one place that looks una
 invites the person to (Find My Devices, the look macOS asks about), and from then on the desk looks each time it's
 shown or Lamp comes to the front, at most once a minute, since macOS has already asked. Never as a
 wish starts, nor as Lamp opens before that first look: those show what Lamp knows without looking (`showKnownDevices`: the last look's devices, and the kept TVs
-and devices as not found). A look macOS refused (`DeviceProbe.search`: nothing
+and devices as not found). A look macOS refused (`Integrations.Scan.now`: nothing
 answered, and Network.framework says the path is local network prohibited, `localNetworkDenied`; a refused send itself
 succeeds) sets `Store.localNetworkRefused`, and where a look was asked for (Your
 Devices, Add a New Device, Try On) a line says so with the way to Privacy & Security, and that Local Network is chosen there (System Settings has no
@@ -171,25 +177,28 @@ A look for devices (`Store.refreshDevices`) is one at a time: one asked for whil
 (`lookAgain`). It makes one SSDP search for everything (`Integrations.Scan.now`, `ssdp:all`), which the TVs and every
 integration share: an integration's `find.ssdp` target and the description its identity reads are taken from those
 answers (`Scan.answers(for:)`, `describedAt`), never a search of their own, the integrations look at once, and a
-device's answers are waited for a few seconds (`Integrations.lookTimeout`), not an install's thirty. A recheck of the
+device's answers are waited for a few seconds (four, in the command line's look), not an install's thirty. A recheck of the
 phones alone (`refreshAppleDevices`) replaces only Apple's part of the list.
 **The whole network** (`HomeNetwork`, HomeNetwork.swift). Where the person is looking at what's there (More under
 the desk's devices, Add a New Device and its Look Again, `network_devices`: `refreshDevices(everything: true)`), the look also finds what
 SSDP and the integrations don't, and every other look leaves the last of it as it was. Never at launch or on a timer.
-It sends one datagram (a byte to the discard port, 9) to each address of this Mac's own subnet, sixteen at a time,
-paced, so the Mac asks who has each one and its neighbor table fills (`Sweep`); no nmap, raw socket or admin. The
-subnet is the default route's interface's (`Subnet.current`): the whole of a /24 or smaller, and on a bigger network
-only the 256 addresses around this Mac's (`Subnet.widest`), which the agent is told. Then it reads the neighbor table
-and the default route from the kernel's routing table by sysctl (`Neighbors`, what `arp -a` reads; macOS hides the
-table from a process without Local Network access, `swift test`'s helper included, so check it in Lamp or with
-`xctest` from a shell), marks a locally administered hardware address as randomized (`Vendors.isRandomised`: a phone's,
+The sweep and the Bonjour browse are lamp's command line's (`network` in cli/calls.mjs, cli/network.mjs, asked by
+`HomeNetwork.look`): it sends one datagram (a byte to the discard port, 9) to each address of this Mac's own subnet,
+sixteen at a time, paced, so the Mac asks who has each one and its neighbor table fills (`sweep`); no nmap, raw
+socket or admin. The subnet is the default route's interface's (`defaultRoute`, `subnetOn`): the whole of a /24 or
+smaller, and on a bigger network only the 256 addresses around this Mac's, which the agent is told (`Subnet.words`).
+Then Lamp reads the neighbor table from the kernel's routing table by sysctl (`Neighbours`, what `arp -a` reads),
+itself: macOS hides the table from a process it doesn't let on the local network, and the runtime Lamp carries for its
+command line is one, even run by Lamp (so is `swift test`'s helper: check it in Lamp or with `xctest` from a shell).
+It marks a locally administered hardware address as randomized (`Vendors.isRandomised`: a phone's,
 tablet's or computer's private Wi‑Fi address), and looks up each other one's maker by its prefix (`Vendors`, the
 longest of nine, seven and six hex digits) in `Resources/vendors.xz`, made from the IEEE's MA-L, MA-M and MA-S
 registries by `scripts/update-vendors.sh` (names with their legal endings taken off, xz-compressed, about 375 KB; not
-nmap's list, which is under nmap's license). Meanwhile it browses every Bonjour type (`_services._dns-sd._udp`), then
-each type's services, resolving each with `dns_sd` to its host, IPv4 address and the record's model keys only
-(`Bonjour`, `BonjourService.modelKeys`; AirPlay's `md` isn't a model, a Cast device's is), with no connection to the
-device. Each address is one `NetworkHost`: hardware address and maker, randomized or not, this Mac, the gateway, its
+nmap's list, which is under nmap's license). Meanwhile the command line browses every Bonjour type
+(`_services._dns-sd._udp`), then each type's services, each one's host and record and each host's IPv4 address, with
+one-shot mDNS questions from a port of its own (`everything` in cli/mdns.mjs), keeping the record's model keys only
+(`MODEL_KEYS` there, as `BonjourService.modelKeys`; AirPlay's `md` isn't a model, a Cast device's is), with no
+connection to the device. Each address is one `NetworkHost`: hardware address and maker, randomized or not, this Mac, the gateway, its
 Bonjour services and the names they go by, its SSDP server and the UPnP description Lamp read (`HomeNetwork.merge`).
 Hosts are kept in memory only (`Store.hosts`).
 
@@ -208,7 +217,7 @@ linked to an integration's device and given a host's facts only for the same har
 hardware address never is), whose setup note asks the agent to work out what it
 is and to say so plainly when nothing on the home network can reach it; and the hosts with randomized addresses that
 said nothing, counted and never named, since nothing tells one such phone from another. Bonjour also browses a few types
-whether the meta-query names them or not (`Bonjour.alwaysBrowse`: Cast, printers, a gadget's web page), since a
+whether the meta-query names them or not (`ALWAYS` in cli/mdns.mjs: Cast, printers, a gadget's web page), since a
 sleeping device often misses that one answer. What each host is isn't worked out by a list of rules: `network_devices`
 gives the agent every host's facts (`HomeNetwork.facts`), with a few anchors (the gateway is the router, this Mac, a
 randomized address is a phone, tablet or computer, counted), and the agent labels them when the person asks, or when
@@ -225,17 +234,19 @@ step ("Turn on developer mode on it"): that step is for the setup window Set Up�
 device set up with Lamp says its next step in its tip.
 
 **Windows packages.** A declared app kind may say `wrap: "msix"`: the package step leaves a zip of the app's files and
-Lamp makes the package itself (`MSIX`, MSIX.swift), with nothing outside Lamp: the zip read as plain files only (no
-link, nothing above its top), a manifest Lamp writes (the identity is Lamp's: `Lamp.<folder>`, publisher `CN=Lamp`, a
+Lamp makes the package itself, with nothing outside Lamp. Lamp's app reads the zip as plain files only (no link, nothing
+above its top: `MSIX.files`), lays them out in its own folder and has lamp's command line make the package of them
+(`MSIX.make`, through `LampCLI`; `cli/msix.mjs` is the one package maker, "lamp from a terminal"): a manifest it writes
+(the identity is Lamp's: `Lamp.<folder>`, publisher `CN=Lamp`, a
 version from the time so each build replaces the last), logos drawn from the app's icon, the block map and content
 types, laid out as Zip64 with every file stored and the signature the one plain deflated record (Windows opens nothing
 else), and an Authenticode signature (the APPX digest blob in an SpcIndirectDataContent) with a key and self-made
-certificate kept in Lamp's folder (`MSIX.Signer`), which the device installs beside the package (`{certificate}`). The
+certificate kept in Lamp's folder (`MSIX.signerFolder`), which the device installs beside the package (`{certificate}`). The
 bridge launches it by its names (`{packageFullName}`, `{appUserModelID}`, and `{base64:…}` of either). For Xbox's Device
 Portal a request also carries cookies the device set earlier in its sequence (`{cookie:CSRF-Token}`), polls an install
 that answers 204 until it's done (`poll`) and fails with the device's words unless the answer says what `expect` asks,
 or asks again until it does (`until`), where a JSON path's `*` is any element of a list and the value may be one of
-Lamp's (`IntegrationRunner.meets`): the Xbox's install ends by waiting until the console lists `{packageFullName}`
+Lamp's (`meets` in cli/devices.mjs): the Xbox's install ends by waiting until the console lists `{packageFullName}`
 among its packages, since its install state says it's done before the app can be opened.
 Lamp ships the Xbox's integration (`Resources/Devices/xbox-one.json`): Developer Mode, Device Portal's password, and a
 controller-driven web app (arrow focus) wrapped as MSIX and shown in Lamp's own WebView2 host (`"host": "webview2"`, below). Its identity is
@@ -853,7 +864,7 @@ processes listing `{packageFullName}`) doesn't see running within a few seconds 
 is said plainly in the chat ("still finishing installing"), never claimed open, and the activity line says "Finishing
 installing on Xbox…" while Lamp waits (`DeviceApps.install`'s `waiting`); `look` is Device Portal's screenshot and `log` reads the game's log from its LocalState. Deleting a wish
 takes its app off every device Lamp put it on (the bridge's `remove`, `DeviceApps.removeEverywhere`), web apps too. The
-package is Lamp's (`MSIX.package` with `.program("App.exe")`, an x64 identity, `MSIX.Identity.architecture`).
+package is Lamp's (`MSIX.make` with `.program("App.exe")`, an x64 identity, `MSIX.Identity.architecture`).
 
 An Xbox gives a package installed as a game far more than one installed as an app (5 GB of memory rather than 1 GB, and
 much more of the GPU and CPU, about twice the frame rate for a scene that fills an app's share). Device Portal can't change one package's type; the console decides it at each install from its "treat UWP apps as

@@ -204,49 +204,106 @@ enum Integrations {
 
     // MARK: Finding
 
-    /// What the network said, once per look, for the TVs, every integration and the unknown devices to share.
+    /// What the network said, once per look, for the TVs, every integration and the unknown devices to share. The look
+    /// is lamp's command line's (`look` in cli/calls.mjs, asked of the run that stays: `LampCLI.ask`): one search for
+    /// everything, each integration's devices found and read as its JSON says, and the devices no integration knows
+    /// read from their own descriptions. What's kept of a device, and what it's called, is Lamp's own, here.
     struct Scan {
         let answers: [DeviceProbe.SSDPAnswer]
         /// macOS refused the search: Lamp isn't allowed on the local network.
         var refused = false
+        /// What each integration read of the device at each address it found, the first integration given having an
+        /// address two found.
+        var found: [Identified] = []
+        /// The devices that answered and that no integration found, each read from a UPnP description that names it.
+        var unknown: [Device] = []
+        /// What each Samsung or LG TV that answered says of itself, as the look read it (`TVs.devices` makes them Lamp's).
+        var tvs: [TVs.Record] = []
 
-        /// One search for everything: a device answers it once for each of its devices and services, so every
-        /// integration's own search target is among the answers, and no integration needs a search of its own.
-        static func now() async -> Scan {
-            let (answers, refused) = await DeviceProbe.search("ssdp:all", seconds: 2.5)
-            return Scan(answers: answers, refused: refused)
+        /// One integration's reading of a device: its serial and model, and what else it said of itself.
+        struct Identified: Equatable {
+            let integration: String
+            let address: String
+            let serial: String
+            let model: String
+            var modelID: String?
+            var name: String?
+            var osVersion: String?
+
+            /// As lamp's command line says it; nil without what every reading has.
+            init?(said: [String: Any]) {
+                guard let integration = said["integration"] as? String, let address = said["address"] as? String,
+                      let serial = said["serial"] as? String, let model = said["model"] as? String else { return nil }
+                self.integration = integration
+                self.address = address
+                self.serial = serial
+                self.model = model
+                modelID = said["modelID"] as? String
+                name = said["name"] as? String
+                osVersion = said["osVersion"] as? String
+            }
         }
 
-        /// The answers a search for this target alone would have had.
-        func answers(for target: String) -> [DeviceProbe.SSDPAnswer] {
-            target == "ssdp:all" ? answers : answers.filter { $0.searchTarget.caseInsensitiveCompare(target) == .orderedSame }
+        /// One look for these integrations (every one Lamp has, unless it's for one), with the TVs and the devices
+        /// nobody knows when asked. One that fails finds nothing, and says why in Lamp's log.
+        static func now(for integrations: [Integration] = Integrations.all(), tvs: Bool = false, unknown: Bool = false) async -> Scan {
+            async let denied = DeviceProbe.localNetworkDenied()
+            var scan = Scan(answers: [])
+            do {
+                let given = try integrations.map { try JSONSerialization.jsonObject(with: JSONEncoder().encode($0)) }
+                let done = try await LampCLI.ask("look", ["integrations": given, "seconds": 2.5, "tvs": tvs, "unknown": unknown])
+                scan = Scan(answers: DeviceProbe.answers(from: done["answers"]),
+                            found: ((done["found"] as? [[String: Any]]) ?? []).compactMap { Identified(said: $0) },
+                            unknown: ((done["unknown"] as? [[String: Any]]) ?? []).compactMap { Integrations.unknown(said: $0) },
+                            tvs: ((done["tvs"] as? [[String: Any]]) ?? []).compactMap(TVs.record(said:)))
+            } catch {
+                NSLog("Lamp couldn't look for devices: \(error.localizedDescription)")
+            }
+            scan.refused = await denied && scan.answers.isEmpty
+            return scan
         }
     }
 
-    /// How long a look waits for each answer from a device: one that answered the scan but not on the port asked
-    /// would otherwise hold the whole look up for an install's thirty seconds.
-    static let lookTimeout: TimeInterval = 4
+    /// The devices one integration found in the scan, as Lamp keeps them: a kept device's model is the one its setup
+    /// read, and what it's called and its system's version are kept up to date.
+    static func found(_ integration: Integration, in scan: Scan) -> [Device] {
+        scan.found.filter { $0.integration == integration.id }.map { read in
+            let id = "\(integration.id):\(read.serial)"
+            var model = read.model
+            if let keptOne = kept(id) { model = Integrations.model(of: keptOne) }
+            var device = Device(id: id, kind: .other, maker: integration.maker, model: model, modelID: read.modelID ?? "",
+                                name: read.name ?? "\(integration.maker) \(model)", os: integration.identity.os,
+                                osVersion: read.osVersion ?? "", reach: .network)
+            device.integration = integration.id
+            device.what = integration.kind
+            device.address = read.address
+            device.kept = kept(id) != nil
+            if var keptOne = kept(id) {
+                keptOne.name = device.name
+                keptOne.osVersion = device.osVersion
+                keep(keptOne)
+            }
+            return device
+        }
+    }
+
+    /// A device no integration knows, as the look read it, shown for the moment with Set Up… and never kept.
+    private static func unknown(said: [String: Any]) -> Device? {
+        guard let address = said["address"] as? String, let name = said["name"] as? String else { return nil }
+        let maker = said["maker"] as? String ?? "", model = said["model"] as? String ?? ""
+        var device = Device(id: "found:\(address)", kind: .other, maker: maker, model: model.isEmpty ? maker : model,
+                            modelID: said["modelID"] as? String ?? "", name: name, os: "", osVersion: "", reach: .network)
+        device.address = address
+        device.discovery = said["discovery"] as? String
+        return device
+    }
 
     /// The devices every integration finds in the scan, and the kept ones that aren't on the network now.
-    static func devices(scan: Scan) async -> [Device] {
-        let integrations = all()
-        // The integrations look all at once. Where two find one address, the first by name has it, as when they took turns.
-        var byIntegration: [String: [Device]] = [:]
-        await withTaskGroup(of: (String, [Device]).self) { group in
-            for integration in integrations {
-                group.addTask {
-                    var found: [Device] = []
-                    for address in await addresses(for: integration, scan: scan) {
-                        if let device = await identify(integration, at: address, scan: scan) { found.append(device) }
-                    }
-                    return (integration.id, found)
-                }
-            }
-            for await (id, found) in group { byIntegration[id] = found }
-        }
+    static func devices(scan: Scan) -> [Device] {
+        // Where two integrations find one address, the first has it, as the look already settled.
         var found: [Device] = []
-        for integration in integrations {
-            for device in byIntegration[integration.id] ?? [] where !found.contains(where: { $0.address == device.address }) { found.append(device) }
+        for integration in all() {
+            for device in Self.found(integration, in: scan) where !found.contains(where: { $0.address == device.address }) { found.append(device) }
         }
         // Only what won its address is remembered: another integration's reading of the same device would come back
         // from `recent` as a second device.
@@ -270,37 +327,6 @@ enum Integrations {
         return found
     }
 
-    /// Where an integration's device answers on the network now.
-    static func addresses(for integration: Integration, scan: Scan) async -> [String] {
-        var addresses: [String] = []
-        for find in integration.find {
-            if let target = find.ssdp {
-                addresses += scan.answers(for: target)
-                    .filter { answer in find.contains.map { answer.server.localizedCaseInsensitiveContains($0) } ?? true }
-                    .map(\.address)
-            }
-            if let type = find.bonjour {
-                addresses += await DeviceProbe.bonjour(type)
-                    .filter { found in find.contains.map { found.name.localizedCaseInsensitiveContains($0) } ?? true }
-                    .map(\.address)
-            }
-            if let probe = find.http {
-                let request = Request(port: probe.port, path: probe.path)
-                await withTaskGroup(of: String?.self) { group in
-                    for address in Set(scan.answers.map(\.address)) where DeviceAddress.isPrivate(address) {
-                        group.addTask {
-                            guard let answer = try? await DeviceHTTP.send(request, to: address, values: [:], timeout: lookTimeout),
-                                  answer.ok, answer.text.contains(probe.contains) else { return nil }
-                            return address
-                        }
-                    }
-                    for await address in group { if let address { addresses.append(address) } }
-                }
-            }
-        }
-        return Array(Set(addresses.filter(DeviceAddress.isPrivate))).sorted()
-    }
-
     /// The devices integrations found in the last few minutes, by id: shown until a scan has missed them for that long.
     nonisolated(unsafe) private static var recent: [String: (device: Device, at: Date)] = [:]
 
@@ -316,56 +342,6 @@ enum Integrations {
         return recent.values.map(\.device)
     }
 
-    /// Where the device at an address says its UPnP description is now, from its answer to the integration's own SSDP
-    /// search target in the scan: only a description on the device itself, over plain HTTP.
-    static func describedAt(_ address: String, by integration: Integration, scan: Scan) -> Request? {
-        for target in integration.find.compactMap(\.ssdp) {
-            for answer in scan.answers(for: target) where answer.address == address {
-                guard let location = answer.location, let url = URL(string: location), url.scheme == "http", url.host == address else { continue }
-                return Request(port: url.port ?? 80, path: (url.path.isEmpty ? "/" : url.path) + (url.query.map { "?" + $0 } ?? ""))
-            }
-        }
-        return nil
-    }
-
-    /// The device at an address, read from its own answers as the integration says. Nil when it doesn't answer as one.
-    static func identify(_ integration: Integration, at address: String, scan: Scan) async -> Device? {
-        var answers: [Request: DeviceHTTP.Answer] = [:]
-        var description: Request??
-        func read(_ read: Integration.Read?) async -> String? {
-            guard let read else { return nil }
-            var request = read.http
-            if read.description == true {
-                if description == nil { description = describedAt(address, by: integration, scan: scan) }
-                request = description ?? nil
-            }
-            guard let request else { return nil }
-            if answers[request] == nil, let answer = try? await DeviceHTTP.send(request, to: address, values: [:], timeout: lookTimeout), answer.ok {
-                answers[request] = answer
-            }
-            let value = answers[request].flatMap { DeviceHTTP.value(json: read.json, xml: read.xml, in: $0) }?.trimmed.nilIfEmpty
-            if let needed = read.contains, !(value ?? "").localizedCaseInsensitiveContains(needed) { return nil }
-            return value
-        }
-        let identity = integration.identity
-        guard let serial = await read(identity.id), var model = await read(identity.model) else { return nil }
-        let id = "\(integration.id):\(serial)"
-        if let keptOne = kept(id) { model = Integrations.model(of: keptOne) }
-        var device = Device(id: id, kind: .other, maker: integration.maker, model: model, modelID: await read(identity.modelID) ?? "",
-                            name: await read(identity.name) ?? "\(integration.maker) \(model)", os: identity.os,
-                            osVersion: await read(identity.osVersion) ?? "", reach: .network)
-        device.integration = integration.id
-        device.what = integration.kind
-        device.address = address
-        device.kept = kept(id) != nil
-        if var keptOne = kept(id) {
-            keptOne.name = device.name
-            keptOne.osVersion = device.osVersion
-            keep(keptOne)
-        }
-        return device
-    }
-
     static func device(from kept: Kept, onNetwork: Bool) -> Device {
         let known = integration(kept.integration)
         var device = Device(id: kept.id, kind: .other, maker: known?.maker ?? "", model: model(of: kept), modelID: kept.modelID,
@@ -378,49 +354,10 @@ enum Integrations {
         return device
     }
 
-    /// A device that answered the scan, from the UPnP descriptions its answers point at. A device often answers for
-    /// several services, each with a description of its own, and the first to answer may say nothing of the device
-    /// (a TV's Netflix service answers a few bytes of "status=ok"), so each is tried until one names it. `send` is how
-    /// a description is read; tests answer with recorded ones.
-    static func described(_ address: String, answers: [DeviceProbe.SSDPAnswer],
-                          send: (Request, String) async -> DeviceHTTP.Answer? = { try? await DeviceHTTP.send($0, to: $1, values: [:], timeout: lookTimeout) }) async -> Device? {
-        var locations: [String] = []
-        for location in answers.compactMap(\.location) where !locations.contains(location) && URL(string: location)?.host == address { locations.append(location) }
-        for location in locations {
-            guard let url = URL(string: location), url.scheme == "http",
-                  let answer = await send(Request(port: url.port ?? 80, path: url.path.isEmpty ? "/" : url.path + (url.query.map { "?" + $0 } ?? "")), address),
-                  answer.ok else { continue }
-            let name = DeviceHTTP.xml("friendlyName", in: answer.body)
-            let maker = DeviceHTTP.xml("manufacturer", in: answer.body) ?? ""
-            let model = DeviceHTTP.xml("modelName", in: answer.body) ?? DeviceHTTP.xml("modelDescription", in: answer.body) ?? ""
-            let type = DeviceHTTP.xml("deviceType", in: answer.body) ?? ""
-            // Routers and other plumbing answer every scan; nobody makes apps for them.
-            if type.contains("InternetGatewayDevice") || type.contains("WANDevice") || type.contains("WFADevice") { return nil }
-            guard let name, !maker.isEmpty || !model.isEmpty else { continue }
-            var device = Device(id: "found:\(address)", kind: .other, maker: maker, model: model.isEmpty ? maker : model,
-                                modelID: DeviceHTTP.xml("modelNumber", in: answer.body) ?? "", name: name, os: "", osVersion: "", reach: .network)
-            device.address = address
-            device.discovery = answers.map { "\($0.searchTarget) (\($0.server))" }.joined(separator: "; ")
-            return device
-        }
-        return nil
-    }
-
-    /// The devices that answered the scan and that nothing Lamp has knows: each read from its own UPnP description
-    /// when it has one, shown for the moment with Set Up…, and never kept.
-    static func unknown(_ scan: Scan, except taken: Set<String>) async -> [Device] {
-        var byAddress: [String: [DeviceProbe.SSDPAnswer]] = [:]
-        for answer in scan.answers where !taken.contains(answer.address) && DeviceAddress.isPrivate(answer.address) {
-            byAddress[answer.address, default: []].append(answer)
-        }
-        // This Mac answers too, for its own services.
-        for address in TVs.macAddresses() { byAddress[address] = nil }
-        var devices: [Device] = []
-        await withTaskGroup(of: Device?.self) { group in
-            for (address, answers) in byAddress { group.addTask { await described(address, answers: answers) } }
-            for await device in group { if let device { devices.append(device) } }
-        }
-        return devices.sorted { $0.name < $1.name }
+    /// The devices that answered the scan and that nothing Lamp has knows (none of `taken`'s addresses), shown for the
+    /// moment with Set Up…, and never kept.
+    static func unknown(_ scan: Scan, except taken: Set<String>) -> [Device] {
+        scan.unknown.filter { !taken.contains($0.address ?? "") }
     }
 }
 
@@ -428,6 +365,12 @@ enum Integrations {
 
 /// Runs an integration's steps and sequences on one device, with Lamp's values filled in and each primitive held to
 /// its guard. A command on the device or a downloaded tool runs only once `approve` has said yes for its exact text.
+/// Runs an integration's steps and sequences on one device. The requests, waits and probes, and what each check finds,
+/// are lamp's command line's (`run`, `open`, `putBack` and `check` in cli/calls.mjs, the same runner `lamp devices`
+/// uses), each primitive held to its guard there. What's Lamp's own is here: the values filled in (what the person
+/// typed, kept in Lamp's store), and the actions only the app does, between the command line's parts of a sequence: a
+/// command on the device or a downloaded tool, run only once `approve` has said yes for its exact text, a log read
+/// into the app's, and a maker's sign-in page.
 struct IntegrationRunner {
     let integration: Integration
     let device: Device
@@ -435,15 +378,13 @@ struct IntegrationRunner {
     var approve: (DeviceCommandApproval) async -> Bool = { _ in false }
     /// A line for the app's log, from a stream.
     var onLog: (@Sendable (String) -> Void)?
-    /// How a step's check reaches the device; tests answer for a made-up one.
-    var send: (Request, String, [String: String], DeviceTLS.Pins?) async throws -> DeviceHTTP.Answer = {
-        try await DeviceHTTP.send($0, to: $1, values: $2, pins: $3)
+    /// How lamp's command line is asked, and what it says while it works; tests answer for it.
+    var cli: @Sendable (String, [String: Any], (@Sendable ([String: Any]) -> Void)?) async throws -> [String: Any] = {
+        try await LampCLI.ask($0, $1, onEvent: $2)
     }
     /// Told each time Lamp waits on the device to finish something it was sent (asking again, or launching again), for
     /// the activity line.
     var onWaiting: (@Sendable () -> Void)?
-    /// How long Lamp waits between asking the device again; tests don't.
-    var pause: (Double) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }
 
     struct Failure: LocalizedError {
         let message: String
@@ -525,18 +466,45 @@ struct IntegrationRunner {
         if needsSSHKey, DeviceSSH.publicKey == nil { _ = try? await DeviceSSH.ensureKey() }
     }
 
-    /// The first time the device's certificate is kept for a port, the root the integration says signs it is read from
-    /// the device over that same connection and kept with it (`DeviceTLS.Pins.keepRoot`), so a certificate the device
-    /// makes later is still known as its own.
-    func learnRoot(_ request: Request, _ answer: DeviceHTTP.Answer) async {
-        guard request.https == true, let path = integration.certificateRoot, let leaf = answer.certificate else { return }
-        let pins = DeviceTLS.Pins(deviceID: device.id)
-        guard pins.root(port: request.port) == nil, let address = try? address else { return }
-        let fetch = Request(port: request.port, path: path, https: true)
-        guard let got = try? await DeviceHTTP.send(fetch, to: address, values: [:], pins: pins), got.ok,
-              let root = DeviceTLS.certificate(from: got.body) else { return }
-        pins.keepRoot(root, signing: leaf, port: request.port)
+    // MARK: Asking lamp's command line
+
+    private static func json<T: Encodable>(_ value: T) throws -> Any { try JSONSerialization.jsonObject(with: JSONEncoder().encode(value), options: .fragmentsAllowed) }
+
+    /// A call about this device: the integration, the device, the values filled in (on the call's input, never in its
+    /// arguments), the file its certificates are kept in, and where a key it gives is kept. A failure comes back as the
+    /// kind Lamp has always acted on.
+    private func ask(_ name: String, _ more: [String: Any], values: [String: String],
+                     onEvent: (@Sendable ([String: Any]) -> Void)? = nil) async throws -> [String: Any] {
+        var given: [String: Any] = ["integration": try Self.json(integration),
+                                    "device": ["id": device.id, "name": device.name, "address": device.address ?? ""],
+                                    "values": values, "pins": DeviceTLS.Pins(deviceID: device.id).file.path,
+                                    "keyFile": DeviceFolder.deviceKey(device.id).path]
+        for (key, value) in more { given[key] = value }
+        let waiting = onWaiting
+        do {
+            return try await cli(name, given) { event in
+                if event["waiting"] != nil { waiting?() }
+                onEvent?(event)
+            }
+        } catch let failure as LampCLI.Failure {
+            throw Self.translated(failure)
+        }
     }
+
+    static func translated(_ failure: LampCLI.Failure) -> Error {
+        switch failure.kind {
+        case "rejected": return Rejected(message: failure.message)
+        case "still-working": return Failure(message: failure.message, stillWorking: true)
+        case "changed": return DeviceTLS.Refusal.changed
+        case "unsaved": return DeviceTLS.Refusal.unsaved
+        case "away":
+            let dropped = ["ECONNRESET", "EPIPE", "ECONNABORTED"].contains(failure.code ?? "")
+            return URLError(failure.timedOut ? .timedOut : dropped ? .networkConnectionLost : .cannotConnectToHost)
+        default: return Failure(message: failure.message)
+        }
+    }
+
+    // MARK: Running a sequence
 
     /// Runs a sequence in order, stopping at the first failure. Settings it changed only for itself (`restore`) are put
     /// back as it ends, however it ends; or, given `changed`, once the caller is done with them (`putBack`): an Xbox
@@ -556,31 +524,26 @@ struct IntegrationRunner {
         return try result.get()
     }
 
-    /// Settings sequences changed for themselves, until `putBack` puts them as they were.
+    /// Settings sequences changed for themselves, until `putBack` puts them as they were: as lamp's command line keeps
+    /// each (the request, what it was, and the cookies its change went with).
     final class ChangedSettings {
-        fileprivate var restores: [Restore] = []
+        fileprivate var restores: [Any] = []
         fileprivate var held = false
     }
 
-    /// Each setting as it was before a sequence changed it, last changed first, sent with the values (the CSRF cookie)
-    /// its change went with. A device that can't be reached by then keeps what the sequence set: there's nothing more
-    /// to do from here.
+    /// Each setting as it was before a sequence changed it, last changed first. A device that can't be reached by then
+    /// keeps what the sequence set: there's nothing more to do from here.
     func putBack(_ changed: ChangedSettings) async {
-        for restore in changed.restores.reversed() {
-            guard let field = restore.request.restore, let body = try? JSONSerialization.data(withJSONObject: [field: restore.was]) else { continue }
-            var back = restore.request
-            back.body = String(decoding: body, as: UTF8.self)
-            let answer = try? await DeviceHTTP.send(back, to: try address, values: restore.values, pins: DeviceTLS.Pins(deviceID: device.id))
-            if answer?.ok != true { onLog?("Lamp couldn't set \(restore.request.path) on \(device.name) back to \(restore.was).") }
+        if !changed.restores.isEmpty {
+            let done = try? await ask("putBack", ["changed": changed.restores], values: values())
+            for missed in done?["missed"] as? [String] ?? [] { onLog?(missed) }
+            changed.restores = []
         }
-        changed.restores = []
         if changed.held {
             changed.held = false
             await SettingChanges.shared.end(device.id)
         }
     }
-
-    fileprivate struct Restore { let request: Request; let was: String; let values: [String: String] }
 
     /// The devices whose settings a sequence has changed for itself and not yet put back.
     private actor SettingChanges {
@@ -595,85 +558,34 @@ struct IntegrationRunner {
         func end(_ id: String) { busy.remove(id) }
     }
 
+    /// The sequence a part at a time: its requests, waits and probes asked of lamp's command line together, with the
+    /// cookies the part before was given (a CSRF token), and what only Lamp's app does done here between them.
     private func run(_ sequence: [IntegrationAction], extra: [String: String], files: [String: URL],
                      changed: ChangedSettings) async throws -> Outcome {
         var outcome = Outcome()
-        // Cookies the device set earlier in this sequence, sent back as `{cookie:<name>}` (a CSRF token).
         var cookies: [String: String] = [:]
+        var part: [IntegrationAction] = []
+        func send() async throws {
+            guard !part.isEmpty else { return }
+            let done = try await ask("run", ["sequence": try Self.json(part), "extra": extra, "files": files.mapValues(\.path),
+                                             "changed": changed.restores, "cookies": cookies], values: values())
+            part = []
+            let said = done["outcome"] as? [String: Any] ?? [:]
+            if let picture = (said["picture"] as? String).flatMap({ Data(base64Encoded: $0) }) { outcome.picture = picture }
+            if let screen = said["screen"] as? String { outcome.screen = screen }
+            if let log = said["log"] as? String { outcome.log = log }
+            outcome.answers += said["answers"] as? [String] ?? []
+            cookies = said["cookies"] as? [String: String] ?? cookies
+            changed.restores = done["changed"] as? [Any] ?? changed.restores
+        }
         for action in sequence {
+            if action.http != nil || action.probe != nil || action.wait != nil {
+                part.append(action)
+                continue
+            }
+            try await send()
             let values = values(extra).merging(cookies.reduce(into: [:]) { $0["cookie:" + $1.key] = $1.value }) { $1 }
-            if let request = action.http {
-                // A setting changed only for this sequence: what it is now, to put back after.
-                if let field = request.restore {
-                    // Read as it's written, with the same sign-in and headers, but for a cookie the device sets only now.
-                    let headers = request.headers?.filter { $0.key.lowercased() != "content-type" && !$0.value.contains("{cookie:") }
-                    let read = Request(port: request.port, path: request.path, headers: headers, auth: request.auth, https: request.https)
-                    let now = try await DeviceHTTP.send(read, to: try address, values: values, pins: DeviceTLS.Pins(deviceID: device.id))
-                    guard now.ok, let was = DeviceHTTP.value(json: field, xml: nil, in: now),
-                          !was.unicodeScalars.contains(where: { !Placeholders.safe.contains($0) }) else {
-                        throw Failure(message: "\(device.name) didn't say what \(request.path) is set to, so Lamp left it as it was.")
-                    }
-                    // Put back only once, as it was first: a sequence tried again finds its own change there.
-                    let setting = "\(request.port)\(request.path)"
-                    if !changed.restores.contains(where: { "\($0.request.port)\($0.request.path)" == setting }),
-                       was != (try? Placeholders.fill(request.body ?? "", values, in: .body)).flatMap({ DeviceHTTP.json(field, in: Data($0.utf8)) }) {
-                        changed.restores.append(Restore(request: request, was: was, values: values))
-                    }
-                }
-                var asked = Date()
-                var answer = try await transfer(request, values: values, files: files)
-                // A device still working on what it was sent says so with 204 until it's done.
-                if let poll = request.poll {
-                    let until = Date().addingTimeInterval(TimeInterval(min(max(poll, 2), 600)))
-                    while answer.status == 204, Date() < until {
-                        try await Task.sleep(for: .seconds(2))
-                        asked = Date()
-                        answer = try await transfer(request, values: values, files: files)
-                    }
-                    // Still working when the time is up is no answer: the step didn't finish.
-                    if answer.status == 204 { throw Failure(message: "\(device.name) was still working on \(request.path) after \(poll) seconds.", stillWorking: true) }
-                }
-                cookies.merge(answer.cookies) { $1 }
-                if request.auth != nil, answer.status == 401 { throw Rejected() }
-                if answer.ok { await learnRoot(request, answer) }
-                guard answer.ok else {
-                    let said = DeviceApps.plain(answer.text)
-                    throw Failure(message: "\(device.name) answered \(answer.status) to \(request.path)" + (said.isEmpty ? "." : ": " + said))
-                }
-                if let expect = request.expect {
-                    // Asked again while the answer doesn't say it yet, for up to `until` seconds, counting the time each
-                    // request took as well as each pause.
-                    var spent = Date().timeIntervalSince(asked)
-                    while try !Self.meets(expect, answer, values) {
-                        guard let until = request.until, spent < Double(until) else {
-                            if request.until != nil {
-                                throw Failure(message: "\(device.name) still wasn't ready at \(request.path) after \(request.until ?? 0) seconds.", stillWorking: true)
-                            }
-                            throw Failure(message: "\(device.name) said: " + DeviceApps.plain(answer.text))
-                        }
-                        onWaiting?()
-                        try await pause(2)
-                        asked = Date()
-                        answer = try await transfer(request, values: values, files: files)
-                        spent += 2 + Date().timeIntervalSince(asked)
-                        // The answer that says it may set or change a cookie the next request sends back.
-                        cookies.merge(answer.cookies) { $1 }
-                        guard answer.ok else { throw Failure(message: "\(device.name) answered \(answer.status) to \(request.path).") }
-                    }
-                }
-                switch request.keep {
-                case "picture": outcome.picture = answer.body
-                case "screen": outcome.screen = String(decoding: answer.body.prefix(512 << 10), as: UTF8.self)
-                case "log": outcome.log = String(decoding: answer.body.suffix(256 << 10), as: UTF8.self)
-                case "key":
-                    let file = DeviceFolder.deviceKey(device.id)
-                    try answer.body.write(to: file, options: .atomic)
-                    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-                default: outcome.answers.append(String(answer.text.prefix(64 << 10)))
-                }
-            } else if let probe = action.probe {
-                guard try await probed(probe) else { throw Failure(message: "\(device.name) didn't answer (\(probe)).") }
-            } else if let stream = action.stream {
+            if let stream = action.stream {
                 guard let onLog, let running = DeviceStream(address: try address, port: stream.port, onLine: onLog) else {
                     throw Failure(message: "Lamp couldn't read \(device.name)'s log.")
                 }
@@ -694,74 +606,65 @@ struct IntegrationRunner {
             } else if let signIn = action.vendorSignIn {
                 let answer = try await VendorSignIn.run(page: signIn.page, values: values)
                 DeviceFields.save(answer, as: "signIn", device: device.id)
-            } else if let wait = action.wait {
-                try await Task.sleep(for: .seconds(min(max(wait, 1), 30)))
             } else if let bridge = action.bridge {
                 throw Failure(message: "The \(bridge) bridge isn't open to integrations yet.")
             }
         }
+        try await send()
         return outcome
     }
 
-    /// Whether an answer says what `expect` asks, of any element where its path has `*`.
-    static func meets(_ expect: Request.Expect, _ answer: DeviceHTTP.Answer, _ values: [String: String]) throws -> Bool {
-        let found = expect.json.map { DeviceHTTP.jsonValues($0, in: answer.body) } ?? expect.xml.map { [DeviceHTTP.xml($0, in: answer.body) ?? ""] } ?? []
-        if let equals = expect.equals {
-            let wanted = try Placeholders.fill(equals, values, in: .shown)
-            return found.contains { $0.caseInsensitiveCompare(wanted) == .orderedSame }
-        }
-        if let contains = expect.contains {
-            let wanted = try Placeholders.fill(contains, values, in: .shown)
-            return found.contains { $0.localizedCaseInsensitiveContains(wanted) }
-        }
-        return true
-    }
-
     /// Opens an app just put on the device: `launch`, and then, where the bridge says how (`running`), a check that it's
-    /// running. A device only just done installing a package can refuse to open it (an Xbox answers 0x8D160120,
-    /// 0x80073D00 or 0x80070002 for a while, longer when the copy it replaced was open) or take the launch and show its
-    /// own "not ready yet" instead; so a refused launch is asked again after a pause that grows, and one that didn't
-    /// open is launched again, until `tries` launches have gone. Throws `NotOpened` when it never opened.
+    /// running, launched again while the device refuses it or doesn't open it, until `tries` launches have gone (lamp's
+    /// command line's `open`). `stillWanted` is asked each time the device is waited on, and a Stop ends it there.
+    /// Throws `NotOpened` when it never opened.
     func open(_ launch: [IntegrationAction], running: [IntegrationAction]?, extra: [String: String], changed: ChangedSettings? = nil,
               tries: Int = 8, stillWanted: @escaping @MainActor () -> Bool = { true }) async throws {
-        var launched = false, refused: String?, wait = 2.0
-        for attempt in 1...max(tries, 1) {
-            do {
-                _ = try await run(launch, extra: extra, changed: changed)
-                launched = true
-                guard let running, !running.isEmpty else { return }
-                do { _ = try await run(running, extra: extra, changed: changed); return }
-                catch is Failure {}
-            } catch let failure as Failure {
-                refused = failure.message
+        await prepare()
+        // A launch with something only Lamp's app does in it (a command over SSH, a tool, a log) is tried from here, each
+        // try a run of its own; one of requests, waits and probes alone is lamp's command line's whole.
+        let cliOnly = { (actions: [IntegrationAction]) in actions.allSatisfy { $0.http != nil || $0.probe != nil || $0.wait != nil } }
+        guard cliOnly(launch), cliOnly(running ?? []) else {
+            var launched = false, refused: String?, wait = 2.0
+            for attempt in 1...max(tries, 1) {
+                do {
+                    _ = try await run(launch, extra: extra, changed: changed)
+                    launched = true
+                    guard let running, !running.isEmpty else { return }
+                    do { _ = try await run(running, extra: extra, changed: changed); return } catch is Failure {}
+                } catch let failure as Failure {
+                    refused = failure.message
+                }
+                guard attempt < tries else { break }
+                onWaiting?()
+                try await Task.sleep(for: .seconds(wait))
+                wait = min(wait * 2, 8)
+                guard await stillWanted() else { throw Failure(message: "Stopped.") }
             }
-            guard attempt < tries else { break }
-            onWaiting?()
-            try await pause(wait)
-            wait = min(wait * 2, 8)
-            guard await stillWanted() else { throw Failure(message: "Stopped.") }
+            throw NotOpened(launched: launched, refused: refused)
         }
-        throw NotOpened(launched: launched, refused: refused)
+        let settings = changed ?? ChangedSettings()
+        let given: [String: Any] = ["launch": try Self.json(launch), "running": try running.map(Self.json) ?? NSNull(), "extra": extra,
+                                    "changed": settings.restores, "tries": tries]
+        let values = values()
+        final class Holder: @unchecked Sendable { var task: Task<[String: Any], Error>? }
+        let holder = Holder()
+        let work = Task { () async throws -> [String: Any] in
+            try await ask("open", given, values: values) { event in
+                guard event["waiting"] != nil else { return }
+                Task { @MainActor in if !stillWanted() { holder.task?.cancel() } }
+            }
+        }
+        holder.task = work
+        let done: [String: Any]
+        do { done = try await work.value } catch is CancellationError { throw Failure(message: "Stopped.") }
+        settings.restores = done["changed"] as? [Any] ?? settings.restores
+        if changed == nil { await putBack(settings) }
+        if done["opened"] as? Bool == true { return }
+        throw NotOpened(launched: done["launched"] as? Bool ?? false, refused: done["refused"] as? String)
     }
 
-    /// One request of a sequence. Without a package it goes through `send`, as a check's do, so tests can answer for a
-    /// made-up device.
-    private func transfer(_ request: Request, values: [String: String], files: [String: URL]) async throws -> DeviceHTTP.Answer {
-        let pins = DeviceTLS.Pins(deviceID: device.id)
-        if files.isEmpty { return try await send(request, try address, values, pins) }
-        return try await DeviceHTTP.send(request, to: try address, values: values, files: files, pins: pins)
-    }
-
-    private func probed(_ probe: String) async throws -> Bool {
-        let parts = probe.split(separator: ":", maxSplits: 1).map(String.init)
-        guard parts.count == 2 else { return false }
-        switch parts[0] {
-        case "tcp": return await DeviceProbe.tcp(try address, port: Int(parts[1]) ?? 0)
-        case "ssdp": return await DeviceProbe.ssdp(parts[1]).contains { $0.address == device.address }
-        case "bonjour": return await DeviceProbe.bonjour(parts[1]).contains { $0.address == device.address }
-        default: return false
-        }
-    }
+    // MARK: Checking a step
 
     /// Whether a step's check passes now, and if not, the first condition that didn't, in words. `failed` is a reason
     /// waiting won't mend (the device's certificate changed, or it rejected the sign-in), which the card shows as a
@@ -787,42 +690,24 @@ struct IntegrationRunner {
         case rejected(String)
     }
 
+    /// The conditions checked by lamp's command line, with Lamp's values. A certificate the device changed is said in
+    /// Lamp's own words for it, which the setup card knows it by.
     func evaluate(_ conditions: [Integration.Condition]) async -> Verdict {
         await prepare()
-        let values = values()
         let waiting = "Waiting for \(device.name)…"
-        var read: String?
-        for condition in conditions {
-            if let key = condition.field {
-                guard values["field:" + key]?.isEmpty == false else { return .waiting("Waiting for what you type.") }
-            } else if condition.signedIn == true {
-                guard values["signIn"] != nil else { return .waiting("Waiting for you to sign in.") }
-            } else if let port = condition.tcp {
-                guard let address = try? address, await DeviceProbe.tcp(address, port: port) else { return .away(waiting) }
-            } else if let request = condition.http {
-                let answer: DeviceHTTP.Answer
-                do {
-                    answer = try await send(request, try address, values, DeviceTLS.Pins(deviceID: device.id))
-                    if answer.ok { await learnRoot(request, answer) }
-                } catch let refusal as DeviceTLS.Refusal {
-                    return .rejected(refusal.localizedDescription)
-                } catch {
-                    return .away(waiting)
-                }
-                // A device that turns the password away keeps doing so however long Lamp waits: the person has to
-                // type it again, so the card says so and stops checking.
-                if request.auth != nil, answer.status == 401 { return .rejected(Rejected().message) }
-                guard answer.ok else { return .waiting(waiting) }
-                if condition.json != nil || condition.xml != nil {
-                    let value = DeviceHTTP.value(json: condition.json, xml: condition.xml, in: answer)
-                    guard let value else { return .waiting("\(device.name) doesn't say yet.") }
-                    if let equals = condition.equals, value.caseInsensitiveCompare(equals) != .orderedSame { return .waiting(waiting) }
-                    if let contains = condition.contains, !value.localizedCaseInsensitiveContains(contains) { return .waiting(waiting) }
-                    read = read ?? value
-                }
+        guard let done = try? await ask("check", ["conditions": try Self.json(conditions)], values: values()) else { return .away(waiting) }
+        let why = done["why"] as? String ?? waiting
+        switch done["verdict"] as? String {
+        case "holds": return .holds(done["read"] as? String)
+        case "waiting": return .waiting(why)
+        case "rejected":
+            switch done["refused"] as? String {
+            case "changed": return .rejected(DeviceTLS.Refusal.changed.localizedDescription)
+            case "unsaved": return .rejected(DeviceTLS.Refusal.unsaved.localizedDescription)
+            default: return .rejected(why)
             }
+        default: return .away(why)
         }
-        return .holds(read)
     }
 
     /// A step passed on this device: it's kept, with the step and what the step read.

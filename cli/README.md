@@ -158,8 +158,9 @@ for a team, and the chat beside the app.
 
 ## Sharing
 
-`lamp share` is Lamp's side of the site's API, as `Sources/Lamp/WishLink.swift` is in Lamp's app
-(`cli/share.mjs`; the limits are read from `site/lib/shared-wishes.js`, so the two can't disagree): the link's words
+`lamp share` speaks the site's API through `cli/link.mjs`, the one place Lamp does, for lamp and for Lamp's app's
+Share Link card alike (`WishLink` asks it: the `link…` calls); the limits are read from `site/lib/shared-wishes.js`, so
+the two can't disagree, and `build.sh` puts that file and the one it reads beside lamp in the app. `cli/share.mjs` sends the link's words
 and a picture of the page, then the page itself, zipped and sent in parts, which the site unpacks and plays on a host
 of the link's own.
 
@@ -178,26 +179,35 @@ of the link's own.
 
 A page goes on one of the person's devices through the device's integration, the same file Lamp's app reads
 (`Resources/Devices/*.json`): how the device is found, its setup steps, and the requests that install, open, picture
-and remove an app. Nothing in one is code: `cli/devices.mjs` makes each request itself, as `IntegrationRunner` does in
-Lamp's app, so a change to an integration reaches both. An Xbox is the only device so far (`takesPages`): the one
-whose host for a page lamp packages for.
+and remove an app. Nothing in one is code: `cli/devices.mjs` runs it (`Runner`), for lamp and for Lamp's app alike
+(`IntegrationRunner` asks it), so a change to an integration reaches both. An Xbox is the only device lamp puts a page on
+itself so far (`takesPages`): the one whose host for a page lamp packages for.
 
-- **Finding** is one SSDP search of the home network, with each answer read as its integration says (`look`). A
-  device found is only shown; it's kept once a setup step has passed on it, and only a kept one is ever sent anything.
+- **Finding** is one SSDP search of the home network, with each answer read as its integration says
+  (`searchNetwork`: its search target, a Bonjour service, or a page on the device holding words; then its identity
+  read from the device's description or its own pages), and for Lamp's app the devices no integration knows, read
+  from their UPnP descriptions. Bonjour is asked as a one-shot mDNS question from a port of lamp's own, which each
+  device answers there, so nothing listens on mDNS's own port. A device found is only shown; it's kept once a setup
+  step has passed on it, and only a kept one is ever sent anything.
 - **Setting up** (`lamp devices add`) takes the device through its integration's steps in order. What a step asks the
   person to type (an Xbox's Device Portal password) is read from the terminal without being shown, so an agent can't
   give it: run without a terminal, the command says the person runs it themselves.
-- **The guards** are `DeviceHTTP`'s and `DeviceTLS`'s: a request goes only to the address the device was found at,
+- **The guards** are the ones every request to a device has, Lamp's app's too, since this is where a request is
+  made for both ("Lamp's app", below): a request goes only to the address the device was found at,
   which must be on the home network and never this computer; no redirect is followed; over HTTPS the device's own
   certificate is kept the first time, per port, and another refused from then on unless the device's own root, read
   over that first connection, signed it (an Xbox makes itself a new certificate at each restart); and the password
-  goes only to a device whose certificate is kept, in answer to the device's own request for it.
-- **The package** (`cli/msix.mjs`) is `MSIX.swift` in Node: the manifest, the block map, the content types, the
-  Zip64 layout and the Authenticode signature, under a key and certificate of lamp's own, which the console installs
-  beside the package. `CLIFilesTests` keeps one small package's manifest and signature as Lamp's code makes them
-  (`cli/tests/fixtures/msix`, written by `scripts/cli-files.sh` under a key made for that alone), and
-  `cli/tests/msix.test.mjs` makes the same package and compares: the signature signs the hashes of every record, the
-  directory, the block map and the content types, so one that matches says the whole package does.
+  goes only to a device whose certificate is kept, in answer to the device's own request for it (as it is to a
+  device that asks plainly, and to one that asks for a digest only what its challenge makes of it).
+- **A request** is HTTP/1.1 written out by hand on a connection lamp opened itself (`exchange`), so it goes down the
+  very connection whose certificate was just checked, and runs the same on Node and on Bun. Nothing in it may end a
+  line: the path whole and each header are checked before anything is sent.
+- **The package** (`cli/msix.mjs`) is the one package maker, Lamp's app's too ("Lamp's app", below): the manifest,
+  the block map, the content types, the Zip64 layout and the Authenticode signature, under a key and certificate of
+  lamp's own, which the console installs beside the package. `cli/tests/fixtures/msix` keeps one small package's
+  manifest and signature as Lamp's Swift code made them before this took its place, under a key made for that alone,
+  and `cli/tests/msix.test.mjs` makes the same package and compares: the signature signs the hashes of every record,
+  the directory, the block map and the content types, so one that matches says the whole package does.
 - **What's in it** (`cli/place.mjs`) is Lamp's web host for the console (`Resources/WebHost`, as it ships), and under
   `Web/` the page as `lamp share` gathers it, with `lamp-device.js` saying it's on an Xbox (the integration's
   `input`, as `GamePage.descriptor` writes it). A page with `lamp-game.js`, or whose folder's `capabilities.json` says
@@ -253,6 +263,41 @@ and put it somewhere.
 
 `cli/tests/android.test.mjs` holds what lamp writes and what it asks of Gradle and adb, with stand-ins for both; it
 runs where `cli/lamps/android-host` has been written.
+
+## Lamp's app
+
+What lamp does, Lamp's app has it do, rather than doing the same again in Swift. The way in is `cli/calls.mjs`, run
+once for each call (`LampCLI.call` in Lamp's app): the call's name is its argument, what it's given is one JSON object
+on standard input, and its answer is the last line it prints, `{"done": …}`, or `{"problem": "…"}` in a sentence for
+what the person can put right. Anything else ends the run with its words on standard error, which Lamp's app shows as
+its own fault.
+
+The many small things are asked of one run that stays (`calls.mjs --serve`, `LampCLI.ask`): a line in for each,
+`{"id", "call", "given"}`, and a line out as each finishes, in any order; `{"stop": id}` lets go of one whoever asked
+no longer wants (a task cancelled in Lamp's app), and the run ends when its input does, which is when Lamp's app
+does. A problem says its kind where Lamp's app acts on which it was: a device that's away, a certificate that changed.
+
+- **What a call is given** is paths in Lamp's own folders, laid out by Lamp's app, never an app's folder: what an
+  agent wrote is read by Lamp's app on that folder's terms first. A call refuses a link in what it's handed.
+- **The runtime** in Lamp's app is the one it already carries: its bundled agent is built on Bun, and run with
+  `BUN_BE_BUN=1` that program is Bun itself (`LampCLI.launch`, the one place that decides). So `calls.mjs` and what it
+  imports must run on Bun as well as Node; `build.sh` copies `cli/*.mjs` into the app. The tests run on both. Run
+  from a copy of Lamp's app, the command line is that app to macOS: it's on the local network only once the app is
+  allowed there (a search before that hears nothing, and a request to a device gets no answer).
+- **The calls so far:** `msix`, an Xbox's package from a folder of files; `send`, one request to a device, with the
+  file its certificates are kept in named by Lamp's app (`pinsAt`), so each device has one store whichever asks
+  (what the person typed for a device comes with the request, on the run's input, and is kept nowhere here); `look`,
+  one look at the home network for the integrations Lamp's app gives it, with the TVs that answered read as a
+  Samsung's API and an LG's descriptions say (`tvsIn`, cli/network.mjs); `tv`, a Samsung TV read again; `search`, a
+  search for one target; `probe`, whether a device is there now, as a setup step's check asks; `run`, `open`, `putBack` and `check`, an
+  integration's sequences and a setup's checks on one device, with the values Lamp's app fills in (what the person
+  typed, from its own store, on the call's input) and, while a call waits on the device, an event that says so; `network`, the sweep
+  of this computer's subnet and every Bonjour service (cli/mdns.mjs); and `neighbours`, the gateway and subnet now.
+  Two things stay in Lamp's app, since only it can see them: whether macOS lets Lamp look at all, which is
+  Network.framework's to say (`DeviceProbe.localNetworkDenied`), and the neighbor table, which macOS shows only to a
+  process it lets on the local network, and the runtime Lamp carries isn't one (`Neighbours`). Moving a
+  piece of work here means a call for it, the Swift that did it deleted, and a test on each side
+  (`cli/tests/calls.test.mjs`, `LampCLITests`).
 
 ## Where things are kept
 

@@ -428,12 +428,10 @@ extension Adb {
 
     enum Pairing { case paired, wrongCode, unanswered }
 
-    /// Pairs this Mac's adb with a device by the code it shows, given on adb's input rather than in its arguments.
+    /// Pairs this Mac's adb with a device by the code it shows, given on adb's input rather than in its arguments (lamp's
+    /// command line's, on its own input).
     static func pair(host: String, port: Int, code: String) async -> Pairing {
-        let result = await Subprocess.run(AndroidTools.adb, ["pair", "\(host):\(port)"], env: AndroidTools.environment, timeout: 30, input: Data((code + "\n").utf8))
-        let said = (result.output + result.errors).lowercased()
-        if said.contains("successfully paired") { return .paired }
-        if said.contains("wrong password") { return .wrongCode }
-        return .unanswered
+        let said = (try? await LampCLI.ask("androidPair", ["lamp": AndroidTools.lamp, "host": host, "port": port, "code": code]))?["pairing"] as? String
+        return said == "paired" ? .paired : said == "wrongCode" ? .wrongCode : .unanswered
     }
 }

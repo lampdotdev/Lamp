@@ -11,14 +11,16 @@
 
 import { createHash, randomUUID, X509Certificate } from "node:crypto";
 import dgram from "node:dgram";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import http from "node:http";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { homedir, networkInterfaces } from "node:os";
 import { basename, dirname, join } from "node:path";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
+import { bonjour } from "./mdns.mjs";
 import { Problem } from "./state.mjs";
+
+export { bonjour, servicesIn } from "./mdns.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -42,7 +44,7 @@ export const takesPages = (integration) => integration?.app?.declared?.wrap === 
 // MARK: Addresses
 
 /** This computer's own addresses, read each time: they change as it moves between networks. */
-const ownAddresses = () => new Set(Object.values(networkInterfaces()).flat().map((entry) => entry.address.split("%")[0].toLowerCase()));
+export const ownAddresses = () => new Set(Object.values(networkInterfaces()).flat().map((entry) => entry.address.split("%")[0].toLowerCase()));
 
 /** A private or link-local address: where a device in the person's home is. */
 export function onNetwork(address) {
@@ -69,6 +71,16 @@ function nearest(address) {
 
 // MARK: Looking
 
+/** One SSDP answer's headers, as the device at `address` sent them. */
+export function answerOf(text, address) {
+  const headers = {};
+  for (const line of text.split(/\r?\n/)) {
+    const colon = line.indexOf(":");
+    if (colon > 0) headers[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim();
+  }
+  return { address, server: headers.server ?? "", location: headers.location, target: headers.st ?? "", usn: headers.usn ?? "" };
+}
+
 /** One SSDP search of the home network, for a few seconds: who answered, and what each said of itself. */
 export function ssdp(target = "ssdp:all", seconds = 3) {
   return new Promise((done) => {
@@ -77,12 +89,7 @@ export function ssdp(target = "ssdp:all", seconds = 3) {
     const ask = () => socket.send(message, 1900, "239.255.255.250", () => {});
     socket.on("error", () => { try { socket.close(); } catch {} done([...answers.values()]); });
     socket.on("message", (data, from) => {
-      const headers = {};
-      for (const line of data.toString("utf8").split(/\r?\n/)) {
-        const colon = line.indexOf(":");
-        if (colon > 0) headers[line.slice(0, colon).toLowerCase()] = line.slice(colon + 1).trim();
-      }
-      const answer = { address: from.address, server: headers.server ?? "", location: headers.location, target: headers.st ?? "", usn: headers.usn ?? "" };
+      const answer = answerOf(data.toString("utf8"), from.address);
       answers.set(`${answer.address} ${answer.target} ${answer.usn}`, answer);
     });
     socket.bind(0, () => {
@@ -99,37 +106,33 @@ const sameWords = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 const holds = (text, part) => String(text ?? "").toLowerCase().includes(String(part).toLowerCase());
 
 /**
- * The devices the integrations find on the network now, each read from its own answers as its integration says, with
- * the ones lamp keeps that didn't answer after them (`found: false`, at the address they were last at).
+ * The addresses an integration's device answers at, by what its `find` says: the search's answers for its search
+ * target (with the server's words holding `contains`), a Bonjour service, or a page on the device holding words.
  */
-export async function look({ seconds = 3, reach = isPrivate } = {}) {
-  const answers = await ssdp("ssdp:all", seconds), devices = [];
-  for (const integration of integrations()) {
-    const addresses = new Set();
-    for (const find of integration.find ?? []) {
-      if (!find.ssdp) continue;
+export async function addressesOf(integration, answers, { reach = isPrivate, timeout = 4000 } = {}) {
+  const addresses = new Set();
+  for (const find of integration.find ?? []) {
+    if (find.ssdp) {
       for (const answer of answers) {
-        if (sameWords(answer.target, find.ssdp) && (!find.contains || holds(answer.server, find.contains)) && reach(answer.address)) addresses.add(answer.address);
+        if ((find.ssdp === "ssdp:all" || sameWords(answer.target, find.ssdp)) && (!find.contains || holds(answer.server, find.contains))) addresses.add(answer.address);
       }
     }
-    for (const address of [...addresses].sort()) {
-      if (devices.some((device) => device.address === address)) continue;
-      const device = await identify(integration, address, answers, reach);
-      if (device) devices.push(device);
+    if (find.bonjour) for (const found of await bonjour(find.bonjour)) if (!find.contains || holds(found.name, find.contains)) addresses.add(found.address);
+    if (find.http) {
+      const asked = [...new Set(answers.map((answer) => answer.address))].filter(reach);
+      const answered = await Promise.all(asked.map((address) => send({ port: find.http.port, path: find.http.path }, address, {}, { timeout, reach })
+        .then((answer) => answer.ok && answer.text.includes(find.http.contains), () => false)));
+      asked.forEach((address, index) => { if (answered[index]) addresses.add(address); });
     }
   }
-  for (const device of devices) {
-    const mine = kept(device.id);
-    device.kept = !!mine;
-    if (mine) keep({ ...mine, name: device.name, address: device.address });
-    if (mine?.model) device.model = mine.model;
-  }
-  for (const mine of allKept()) if (!devices.some((device) => device.id === mine.id)) devices.push({ ...mine, kept: true, found: false });
-  return devices;
+  return [...addresses].filter(reach).sort();
 }
 
-/** The device at an address, read from its own answers as the integration says; null when it doesn't answer as one. */
-async function identify(integration, address, answers, reach) {
+/**
+ * What the device at an address says of itself, read as its integration's `identity` says: its serial and model, and
+ * its model's number, name and system's version where it says them. Null when it doesn't answer as one.
+ */
+export async function identify(integration, address, answers, { reach = isPrivate, timeout = 4000 } = {}) {
   const got = new Map();
   const read = async (how) => {
     if (!how) return null;
@@ -137,9 +140,10 @@ async function identify(integration, address, answers, reach) {
     if (how.description) {
       // Where the device says its UPnP description is, in its answer to the integration's own search: only a
       // description on the device itself, over plain HTTP.
+      request = null;
       for (const find of integration.find ?? []) {
         for (const answer of answers) {
-          if (request || answer.address !== address || !find.ssdp || !sameWords(answer.target, find.ssdp) || !answer.location) continue;
+          if (request || answer.address !== address || !find.ssdp || !(find.ssdp === "ssdp:all" || sameWords(answer.target, find.ssdp)) || !answer.location) continue;
           let url;
           try { url = new URL(answer.location); } catch { continue; }
           if (url.protocol === "http:" && url.hostname === address) request = { port: Number(url.port) || 80, path: (url.pathname || "/") + url.search };
@@ -149,7 +153,7 @@ async function identify(integration, address, answers, reach) {
     if (!request) return null;
     const key = JSON.stringify(request);
     if (!got.has(key)) {
-      const answer = await send(request, address, {}, { timeout: 4000, reach }).catch(() => null);
+      const answer = await send(request, address, {}, { timeout, reach }).catch(() => null);
       if (answer?.ok) got.set(key, answer);
     }
     const answer = got.get(key), value = answer && (how.json ? jsonAt(answer.body, how.json) : how.xml ? xmlAt(answer.body, how.xml) : null)?.trim();
@@ -157,12 +161,87 @@ async function identify(integration, address, answers, reach) {
     return value || null;
   };
   const identity = integration.identity ?? {};
-  const serial = await read(identity.id), model = await read(identity.model);
+  const serial = await read(identity.id), model = serial && (await read(identity.model));
   if (!serial || !model) return null;
-  return {
-    id: `${integration.id}:${serial}`, integration: integration.id, what: integration.kind, maker: integration.maker, model,
-    name: (await read(identity.name)) ?? `${integration.maker} ${model}`, address, found: true,
-  };
+  return { integration: integration.id, address, serial, model, modelID: await read(identity.modelID), name: await read(identity.name), osVersion: await read(identity.osVersion) };
+}
+
+// The kinds of device that answer every search and that nobody makes apps for: a router and its parts.
+const PLUMBING = ["InternetGatewayDevice", "WANDevice", "WFADevice"];
+
+/**
+ * A device that answered the search, read from the UPnP descriptions its answers point at, for one that no
+ * integration knows. A device often answers for several services, each with a description of its own, and the first
+ * to answer may say nothing of the device (a TV's streaming service answers a few bytes of "status=ok"), so each is
+ * tried until one names it. Null when none does, and for a router. `get` is how a description is read; tests answer
+ * with recorded ones.
+ */
+export async function describe(address, answers, { reach = isPrivate, timeout = 4000, get = (request) => send(request, address, {}, { timeout, reach }) } = {}) {
+  const locations = [];
+  for (const answer of answers) {
+    let url;
+    try { url = new URL(answer.location); } catch { continue; }
+    if (url.hostname === address && !locations.includes(answer.location)) locations.push(answer.location);
+  }
+  for (const location of locations) {
+    const url = new URL(location);
+    if (url.protocol !== "http:") continue;
+    const answer = await get({ port: Number(url.port) || 80, path: (url.pathname || "/") + url.search }).catch(() => null);
+    if (!answer?.ok) continue;
+    const said = (path) => xmlAt(answer.body, path) || null;
+    const name = said("friendlyName"), maker = said("manufacturer") ?? "", model = said("modelName") ?? said("modelDescription") ?? "";
+    if (PLUMBING.some((kind) => (said("deviceType") ?? "").includes(kind))) return null;
+    if (!name || (!maker && !model)) continue;
+    return { address, name, maker, model: model || maker, modelID: said("modelNumber") ?? "", discovery: answers.map((each) => `${each.target} (${each.server})`).join("; ") };
+  }
+  return null;
+}
+
+/**
+ * One look at the home network for the integrations given: a search for everything (or the `answers` of one just
+ * made), then each integration's devices found and read, all at once (where two find one address, the first given
+ * has it), and with `unknown` the devices no integration knows, each read from its own description.
+ */
+export async function searchNetwork({ integrations: list = integrations(), seconds = 2.5, unknown = false, reach = isPrivate, answers } = {}) {
+  answers ??= await ssdp("ssdp:all", seconds);
+  const each = await Promise.all(list.map(async (integration) => {
+    const read = [];
+    for (const address of await addressesOf(integration, answers, { reach })) {
+      const device = await identify(integration, address, answers, { reach });
+      if (device) read.push(device);
+    }
+    return read;
+  }));
+  const found = [];
+  for (const read of each) for (const device of read) if (!found.some((other) => other.address === device.address)) found.push(device);
+  const others = new Map();
+  if (unknown) {
+    const taken = new Set(found.map((device) => device.address));
+    for (const answer of answers) if (!taken.has(answer.address) && reach(answer.address)) others.set(answer.address, [...(others.get(answer.address) ?? []), answer]);
+  }
+  const described = (await Promise.all([...others].map(([address, said]) => describe(address, said, { reach })))).filter(Boolean);
+  return { answers, found, unknown: described.sort((a, b) => a.name.localeCompare(b.name)) };
+}
+
+/**
+ * The devices the integrations find on the network now, each read from its own answers as its integration says, with
+ * the ones lamp keeps that didn't answer after them (`found: false`, at the address they were last at).
+ */
+export async function look({ seconds = 3, reach = isPrivate } = {}) {
+  const shipped = integrations(), { found } = await searchNetwork({ integrations: shipped, seconds, reach });
+  const devices = found.map((read) => {
+    const integration = shipped.find((each) => each.id === read.integration);
+    return { id: `${integration.id}:${read.serial}`, integration: integration.id, what: integration.kind, maker: integration.maker, model: read.model,
+      name: read.name ?? `${integration.maker} ${read.model}`, address: read.address, found: true };
+  });
+  for (const device of devices) {
+    const mine = kept(device.id);
+    device.kept = !!mine;
+    if (mine) keep({ ...mine, name: device.name, address: device.address });
+    if (mine?.model) device.model = mine.model;
+  }
+  for (const mine of allKept()) if (!devices.some((device) => device.id === mine.id)) devices.push({ ...mine, kept: true, found: false });
+  return devices;
 }
 
 // MARK: What's kept of a device
@@ -226,9 +305,23 @@ function certificateFrom(bytes) {
  * from a root of its own (an Xbox's Device Portal does, whenever it restarts), that root, under "root:<port>". A
  * certificate other than the kept one is taken only when the kept root signed it, and is kept in its place.
  */
-export function pinsOf(id) {
-  const file = join(folderOf(id), "certificates.json");
-  const read = () => (existsSync(file) ? readJSON(file) : {});
+export const pinsOf = (id) => pinsAt(join(folderOf(id), "certificates.json"));
+
+/** The same, kept in a file the caller names: Lamp's app keeps each device's in its own folder for the device. */
+export function pinsAt(file) {
+  // A store that's there but isn't one (not JSON, not names with words for values) is never read as empty.
+  const read = () => {
+    if (!existsSync(file)) return {};
+    const pins = readJSON(file);
+    return pins && typeof pins === "object" && !Array.isArray(pins) && Object.values(pins).every((value) => typeof value === "string") ? pins : null;
+  };
+  // Written whole or not at all, for the person alone to read.
+  const write = (pins) => {
+    mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+    const beside = `${file}.writing`;
+    writeFileSync(beside, JSON.stringify(pins, null, 2), { mode: 0o600 });
+    renameSync(beside, file);
+  };
   return {
     /** Why a certificate isn't taken, or null when it is: it's the one kept, or the first, kept now. It fails closed. */
     admit(fingerprint, port, certificate) {
@@ -239,7 +332,7 @@ export function pinsOf(id) {
         const root = pins[`root:${port}`];
         if (!certificate || !root || !signs(Buffer.from(root, "base64"), certificate)) return CHANGED;
       }
-      try { writeKept(id, "certificates.json", { ...pins, [port]: fingerprint }); } catch { return UNSAVED; }
+      try { write({ ...pins, [port]: fingerprint }); } catch { return UNSAVED; }
       return null;
     },
     root: (port) => { const root = read()?.[`root:${port}`]; return root ? Buffer.from(root, "base64") : null; },
@@ -247,7 +340,7 @@ export function pinsOf(id) {
     keepRoot(root, leaf, port) {
       const pins = read();
       if (!pins || pins[port] !== fingerprintOf(leaf) || pins[`root:${port}`] || !signs(root, leaf)) return false;
-      writeKept(id, "certificates.json", { ...pins, [`root:${port}`]: root.toString("base64") });
+      write({ ...pins, [`root:${port}`]: root.toString("base64") });
       return true;
     },
   };
@@ -260,29 +353,38 @@ export function pinsOf(id) {
 const PLACEHOLDER = /\{([A-Za-z][A-Za-z0-9]*(?::[A-Za-z0-9-]+)?)\}/g;
 const SAFE = /^[A-Za-z0-9._\-:/@+=,]*$/;
 
+/** What's secret among the values: what the person typed for the device, and what a maker's sign-in gave for it. */
+const isSecret = (name) => name.startsWith("field:") || name === "signIn";
+
 /**
- * The template with each placeholder filled. A value outside the safe alphabet is refused, except what the person
- * typed, which only reaches places that are encoded (a sign-in, a form, a header, a body); in a path a value is
- * percent-encoded so it can't change the path.
+ * The template with each placeholder filled, as `Placeholders` holds an integration to in Lamp's app. A value outside
+ * the safe alphabet is refused, except a secret, which only reaches places that are encoded or apart from the address
+ * (a sign-in, a form, a header, a body) and is never put in base64; Lamp's own public key, which has spaces; and text
+ * being typed on the device, which may be anything and so goes only in a form, a body, or a path, there encoded down
+ * to letters and digits. In a path every value is percent-encoded so it can't change the path.
  */
 export function fill(template, values, place) {
   return template.replace(PLACEHOLDER, (whole, name) => {
-    const value = name.startsWith("base64:") ? (values[name.slice(7)] === undefined ? undefined : Buffer.from(values[name.slice(7)]).toString("base64")) : values[name];
+    const inner = name.startsWith("base64:") ? name.slice(7) : null;
+    if (inner !== null && isSecret(inner)) throw new Problem(`{${name}} must be base64 of a value that isn't secret`);
+    const value = inner !== null ? (values[inner] === undefined ? undefined : Buffer.from(values[inner]).toString("base64")) : values[name];
     if (value === undefined) throw new Problem(`lamp has nothing to put in {${name}}`);
-    const typed = name.startsWith("field:");
-    if (typed && !["auth", "form", "header", "body"].includes(place)) throw new Problem(`{${name}} can't go in a ${place}: what the person types goes only in a sign-in, a form, a header or a body`);
+    const secret = isSecret(name), text = name === "text";
+    if (secret && !["auth", "form", "header", "body"].includes(place)) throw new Problem(`{${name}} can't go in a ${place}: ${name === "signIn" ? "a sign-in" : "what the person types"} goes only in a sign-in, a form, a header or a body`);
     if (name.startsWith("cookie:") && place !== "header") throw new Problem(`{${name}} goes only in a header`);
-    if (!typed && (!SAFE.test(value) || value.length > 512)) throw new Problem(`the value for {${name}} has characters lamp doesn't send to a device`);
+    if (text && !["path", "form", "body"].includes(place)) throw new Problem("{text} goes only in a path, a form or a body");
+    if (!secret && !text && name !== "sshKey" && (!SAFE.test(value) || value.length > 512)) throw new Problem(`the value for {${name}} has characters lamp doesn't send to a device`);
+    if (text && place === "path") return [...Buffer.from(value)].map((byte) => (/[A-Za-z0-9]/.test(String.fromCharCode(byte)) ? String.fromCharCode(byte) : `%${byte.toString(16).toUpperCase().padStart(2, "0")}`)).join("");
     return place === "path" ? encodeURIComponent(value).replace(/%2F/g, "/").replace(/%3A/g, ":").replace(/%40/g, "@").replace(/%2C/g, ",") : value;
   });
 }
 
 const namesIn = (template) => [...String(template ?? "").matchAll(PLACEHOLDER)].map((match) => match[1]);
 
-/** Whether a request carries what the person typed, which goes only where lamp knows the device. */
+/** Whether a request carries a secret or a sign-in, which goes only where lamp knows the device. */
 function carriesSecret(request) {
   if (request.auth) return true;
-  return [request.path, request.body, ...Object.values(request.headers ?? {}), ...Object.values(request.form ?? {})].flatMap(namesIn).some((name) => name.startsWith("field:"));
+  return [request.path, request.body, ...Object.values(request.headers ?? {}), ...Object.values(request.form ?? {})].flatMap(namesIn).some(isSecret);
 }
 
 function pathProblem(path) {
@@ -303,15 +405,23 @@ const ANSWER_LIMIT = 16 << 20;
  * sequence of requests, that the device has asked for the sign-in, so the requests after it carry it and a package
  * isn't sent twice.
  */
-export async function send(request, address, values, { files = {}, pins, timeout = 30_000, session = {}, reach = isPrivate } = {}) {
+export async function send(request, address, values, { files = {}, pins, timeout = 30_000, session = {}, reach = isPrivate, stopped } = {}) {
   const https = request.https === true;
   if (https && !pins && carriesSecret(request)) throw new Problem("lamp sends a password over HTTPS only to a device whose certificate it keeps");
-  if (!reach(address)) throw new Problem(`lamp only talks to devices on your own network, and ${address} isn't one`);
+  if (!reach(address)) throw new OffNetwork(`lamp only talks to devices on your own network, and ${address} isn't one`);
   if (!Number.isInteger(request.port) || request.port < 1 || request.port > 65535) throw new Problem(`${request.port} isn't a port`);
   const path = fill(request.path, values, "path"), problem = pathProblem(path.split("?")[0]);
   if (problem) throw new Problem(`the path ${problem}`);
+  // lamp writes the request itself, so nothing in it may end a line or start another: the path whole, each header.
+  if (!/^[\x21-\x7e]+$/.test(path)) throw new Problem("the path can't hold spaces");
   const method = (request.method ?? "GET").toUpperCase(), headers = {};
-  for (const [name, value] of Object.entries(request.headers ?? {})) if (name.toLowerCase() !== "host") headers[name] = fill(value, values, "header");
+  if (!/^[A-Z]{1,16}$/.test(method)) throw new Problem(`${method} isn't a way to ask a device`);
+  for (const [name, value] of Object.entries(request.headers ?? {})) {
+    if (name.toLowerCase() === "host") continue;
+    const filled = fill(value, values, "header");
+    if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(name) || /[\r\n\0]/.test(filled)) throw new Problem(`the header ${name} can't be sent as it is`);
+    headers[name] = filled;
+  }
   let body = null;
   if (request.body != null) body = Buffer.from(fill(request.body, values, "body"));
   if (request.form) {
@@ -337,60 +447,186 @@ export async function send(request, address, values, { files = {}, pins, timeout
   if (body) headers["Content-Length"] = String(body.length);
 
   const once = async (authorization) => {
-    let socket = null, certificate = null;
-    if (https) ({ socket, certificate } = await connect(address, request.port, pins, timeout));
-    return await new Promise((done, failed) => {
-      const options = { host: address, port: request.port, method, path, headers: authorization ? { ...headers, Authorization: authorization } : headers };
-      if (socket) options.createConnection = () => socket; else options.agent = false;
-      const asked = http.request(options, (answer) => {
-        const chunks = [];
-        let size = 0;
-        answer.on("data", (chunk) => {
-          size += chunk.length;
-          if (size > ANSWER_LIMIT) asked.destroy(new Problem("the device's answer was bigger than lamp takes"));
-          else chunks.push(chunk);
-        });
-        answer.on("end", () => {
-          const cookies = {};
-          for (const cookie of answer.headers["set-cookie"] ?? []) {
-            const pair = cookie.split(";")[0], equals = pair.indexOf("=");
-            if (equals > 0) cookies[pair.slice(0, equals).trim()] = pair.slice(equals + 1).trim();
-          }
-          const bytes = Buffer.concat(chunks);
-          done({ status: answer.statusCode, ok: answer.statusCode >= 200 && answer.statusCode < 300, body: bytes, text: bytes.toString("utf8"), cookies, certificate, asks: answer.headers["www-authenticate"] ?? "" });
-        });
-        answer.on("error", (error) => failed(error instanceof Problem ? error : new Away(address, error)));
-      });
-      asked.setTimeout(timeout, () => asked.destroy(timedOut()));
-      asked.on("error", (error) => failed(error instanceof Problem ? error : new Away(address, error)));
-      asked.end(body ?? undefined);
-    });
+    if (stopped?.aborted) throw new Problem("stopped");
+    const { socket, certificate } = https ? await connect(address, request.port, pins, timeout) : await plain(address, request.port, timeout);
+    // Stopped by whoever asked (`stopped`, an AbortSignal): the connection is let go, whatever was under way on it.
+    const stop = () => socket.destroy(new Problem("stopped"));
+    stopped?.addEventListener("abort", stop, { once: true });
+    const host = `${address.includes(":") ? `[${address}]` : address}:${request.port}`;
+    let answer;
+    try { answer = await exchange(socket, { method, path, host, headers: authorization ? { ...headers, Authorization: authorization } : headers, body, timeout, address }); }
+    finally { stopped?.removeEventListener("abort", stop); }
+    const cookies = {};
+    for (const cookie of answer.headers["set-cookie"] ?? []) {
+      const pair = cookie.split(";")[0], equals = pair.indexOf("=");
+      if (equals > 0) cookies[pair.slice(0, equals).trim()] = pair.slice(equals + 1).trim();
+    }
+    return { status: answer.status, ok: answer.status >= 200 && answer.status < 300, body: answer.body, text: answer.body.toString("utf8"), cookies, certificate,
+      asks: (answer.headers["www-authenticate"] ?? []).join(", ") };
   };
 
-  // The sign-in goes only in answer to the device's own request for it, with the scheme the integration declared.
-  let authorization = null;
-  if (request.auth) {
-    if (request.auth.digest) throw new Problem("lamp's command line doesn't sign in to a device that asks for a digest yet");
-    authorization = "Basic " + Buffer.from(`${request.auth.user}:${fill(request.auth.password, values, "auth")}`).toString("base64");
+  // The sign-in goes only in answer to the device's own request for it, once, with the scheme the integration
+  // declared: a password to a device that asks for it plainly, and to one that asks for a digest never the password
+  // itself, only what the device's own challenge makes of it.
+  if (!request.auth) return once(null);
+  const user = request.auth.user, password = fill(request.auth.password, values, "auth"), door = `${address}:${request.port}`;
+  // A session that came back from Lamp's app as JSON holds its doors as a list.
+  if (!(session.asked instanceof Set)) session.asked = new Set(Array.isArray(session.asked) ? session.asked : []);
+  if (request.auth.digest) {
+    const first = await once(null), challenge = digestChallenge(first.asks);
+    return first.status === 401 && challenge ? once(digestAnswer(challenge, { user, password, method, path })) : first;
   }
-  session.asked ??= new Set();
-  const door = `${address}:${request.port}`;
-  let answer = await once(authorization && session.asked.has(door) ? authorization : null);
-  if (answer.status === 401 && authorization && !session.asked.has(door) && /^\s*basic\b/i.test(answer.asks)) {
-    session.asked.add(door);
-    answer = await once(authorization);
+  const basic = "Basic " + Buffer.from(`${user}:${password}`).toString("base64");
+  if (session.asked.has(door)) return once(basic);
+  const first = await once(null);
+  if (first.status !== 401 || !/(^|,)\s*basic\b/i.test(first.asks)) return first;
+  session.asked.add(door);
+  return once(basic);
+}
+
+// MARK: The request itself
+
+/** A connection to the device with nothing over it. */
+function plain(address, port, timeout) {
+  return new Promise((done, failed) => {
+    const socket = net.connect({ host: address, port, timeout });
+    socket.once("connect", () => done({ socket, certificate: null }));
+    socket.once("timeout", () => socket.destroy(timedOut()));
+    socket.once("error", (error) => failed(error instanceof Problem ? error : new Away(address, error)));
+  });
+}
+
+/** An answer's head: its status and its headers, each name in small letters with every value it was given. */
+function headOf(text) {
+  const [first, ...lines] = text.split("\r\n"), status = Number(/^HTTP\/1\.[01] (\d{3})/.exec(first)?.[1]);
+  if (!status) return null;
+  const headers = {};
+  for (const line of lines) {
+    const colon = line.indexOf(":");
+    if (colon > 0) (headers[line.slice(0, colon).trim().toLowerCase()] ??= []).push(line.slice(colon + 1).trim());
   }
-  return answer;
+  return { status, headers };
+}
+
+/** A body sent in chunks, put back together; null while its last chunk hasn't come. */
+function unchunked(bytes) {
+  const parts = [];
+  for (let at = 0; ;) {
+    const line = bytes.indexOf("\r\n", at);
+    if (line < 0) return null;
+    const size = parseInt(bytes.toString("latin1", at, line).split(";")[0].trim(), 16);
+    if (!Number.isInteger(size) || size < 0) throw new Problem("the device's answer couldn't be read");
+    if (size === 0) return Buffer.concat(parts);
+    if (bytes.length < line + 2 + size + 2) return null;
+    parts.push(bytes.subarray(line + 2, line + 2 + size));
+    at = line + 2 + size + 2;
+  }
+}
+
+/**
+ * One request on a connection lamp opened, and its answer read to its end: HTTP/1.1 written out by hand, so the
+ * request goes down the very connection whose certificate was just checked, the same way on Node and on Bun (whose
+ * own client can't be handed a connection). No redirect is followed: an answer that names another place is the answer.
+ */
+function exchange(socket, { method, path, host, headers, body, timeout, address }) {
+  return new Promise((done, failed) => {
+    let settled = false, head = null, kept = [], size = 0, pending = Buffer.alloc(0);
+    const finish = (error, answer) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      if (error) failed(error instanceof Problem ? error : new Away(address, error)); else done(answer);
+    };
+    const tooBig = () => finish(new Problem("the device's answer was bigger than lamp takes"));
+    /** The answer, once all of it is here; `ended` says the device has closed its side. */
+    const read = (ended) => {
+      while (!head) {
+        const end = pending.indexOf("\r\n\r\n");
+        if (end < 0) { if (pending.length > 65536) tooBig(); else if (ended) finish(Object.assign(new Error("cut short"), { code: "ECONNRESET" })); return; }
+        const parsed = headOf(pending.toString("latin1", 0, end));
+        if (!parsed) return finish(new Problem("the device's answer couldn't be read"));
+        pending = pending.subarray(end + 4);
+        // A word to go on (100 Continue) isn't the answer: the answer follows it.
+        if (parsed.status >= 100 && parsed.status < 200 && parsed.status !== 101) continue;
+        head = parsed;
+        kept = [pending];
+        size = pending.length;
+      }
+      const none = method === "HEAD" || head.status === 204 || head.status === 304;
+      const chunked = (head.headers["transfer-encoding"] ?? []).join(",").toLowerCase().includes("chunked");
+      const length = Number(head.headers["content-length"]?.[0]);
+      if (size > ANSWER_LIMIT + 65536) return tooBig();
+      let bytes = null;
+      if (none) bytes = Buffer.alloc(0);
+      else if (chunked) { try { bytes = unchunked(Buffer.concat(kept)); } catch (error) { return finish(error); } }
+      else if (Number.isInteger(length) && length >= 0) { if (size >= length) bytes = Buffer.concat(kept).subarray(0, length); }
+      else if (ended) bytes = Buffer.concat(kept);
+      if (bytes && bytes.length > ANSWER_LIMIT) return tooBig();
+      if (bytes) return finish(null, { status: head.status, headers: head.headers, body: bytes });
+      if (ended) finish(Object.assign(new Error("cut short"), { code: "ECONNRESET" }));
+    };
+    socket.setTimeout(timeout, () => finish(timedOut()));
+    socket.on("data", (chunk) => {
+      if (head) { kept.push(chunk); size += chunk.length; } else pending = Buffer.concat([pending, chunk]);
+      read(false);
+    });
+    socket.on("end", () => read(true));
+    socket.on("close", () => read(true));
+    socket.on("error", (error) => finish(error));
+    const lines = [`${method} ${path} HTTP/1.1`, `Host: ${host}`, ...Object.entries(headers).map(([name, value]) => `${name}: ${value}`), "Connection: close", "", ""];
+    socket.write(Buffer.from(lines.join("\r\n"), "latin1"));
+    if (body?.length) socket.write(body);
+  });
+}
+
+// MARK: A digest sign-in
+
+const quoted = (value) => String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+
+/** What a device asks of a digest sign-in, from its challenge; null when the challenge isn't one lamp answers. */
+function digestChallenge(asks) {
+  const at = /(^|,)\s*digest\s/i.exec(asks);
+  if (!at) return null;
+  const challenge = {};
+  for (const [, name, inQuotes, bare] of asks.slice(at.index + at[0].length).matchAll(/([A-Za-z]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^\s,]+))/g)) {
+    challenge[name.toLowerCase()] ??= inQuotes !== undefined ? inQuotes.replace(/\\(.)/g, "$1") : bare;
+  }
+  const algorithm = (challenge.algorithm ?? "MD5").toUpperCase();
+  if (!challenge.realm || !challenge.nonce || !["MD5", "SHA-256"].includes(algorithm)) return null;
+  const ways = (challenge.qop ?? "").split(",").map((way) => way.trim().toLowerCase()).filter(Boolean);
+  if (ways.length && !ways.includes("auth")) return null;
+  return { ...challenge, algorithm, qop: ways.length ? "auth" : null };
+}
+
+/** The Authorization header that answers a digest challenge (RFC 7616): the password itself is never in it. */
+function digestAnswer(challenge, { user, password, method, path }) {
+  const hash = (text) => createHash(challenge.algorithm === "MD5" ? "md5" : "sha256").update(text).digest("hex");
+  const cnonce = randomUUID().replaceAll("-", ""), count = "00000001";
+  const one = hash(`${user}:${challenge.realm}:${password}`), two = hash(`${method}:${path}`);
+  const response = challenge.qop ? hash(`${one}:${challenge.nonce}:${count}:${cnonce}:auth:${two}`) : hash(`${one}:${challenge.nonce}:${two}`);
+  const parts = [`username="${quoted(user)}"`, `realm="${quoted(challenge.realm)}"`, `nonce="${quoted(challenge.nonce)}"`, `uri="${path}"`, `response="${response}"`, `algorithm=${challenge.algorithm}`];
+  if (challenge.qop) parts.push("qop=auth", `nc=${count}`, `cnonce="${cnonce}"`);
+  if (challenge.opaque !== undefined) parts.push(`opaque="${quoted(challenge.opaque)}"`);
+  return "Digest " + parts.join(", ");
 }
 
 /** The device's certificate isn't one lamp takes: waiting won't mend it. */
-export class Refused extends Problem {}
+export class Refused extends Problem {
+  constructor(why) {
+    super(why);
+    this.kind = why === CHANGED ? "changed" : "unsaved";
+  }
+}
+
+/** The address isn't a device on the person's own network: nothing is sent there. */
+export class OffNetwork extends Problem {}
 
 /** The device didn't answer, or let the connection go: it's off, asleep, somewhere else on the network, or busy. */
 export class Away extends Problem {
   constructor(address, cause) {
     super(`the device at ${address} ${cause?.timedOut ? "didn't answer in time" : "isn't answering"}: make sure it's on, then try again`);
     this.code = cause?.code;
+    this.timedOut = !!cause?.timedOut;
   }
 }
 const timedOut = () => Object.assign(new Error("timed out"), { timedOut: true });
@@ -474,7 +710,7 @@ export function plainAnswer(answer) {
 
 /** The device turned the sign-in away: waiting won't mend it, the person has to type it again. */
 export class Rejected extends Problem {
-  constructor() { super("the device rejected the sign-in: check the password, then try again"); }
+  constructor() { super("the device rejected the sign-in. Check the user name and password, then try again"); }
 }
 
 /** The device was still at what it was sent when lamp stopped waiting: a moment later it may be done. */
@@ -485,17 +721,25 @@ export class StillWorking extends Problem {}
  * are how it waits and what it takes for an address on the home network, which a test gives its own.
  */
 export class Runner {
-  constructor({ integration, device, onWaiting = () => {}, pause = sleep, reach = isPrivate }) {
-    Object.assign(this, { integration, device, onWaiting, pause, reach });
+  /**
+   * `values` and `pins`, when given, are another keeper's (Lamp's app keeps what the person typed for a device in its
+   * own store, and names the file its certificates are kept in); `keyFile` is where a key the device gives is kept,
+   * and `stopped` ends the run between requests once whoever asked no longer wants it.
+   */
+  constructor({ integration, device, onWaiting = () => {}, pause = sleep, reach = isPrivate, values, pins, keyFile, stopped }) {
+    Object.assign(this, { integration, device, onWaiting, pause, reach, given: values, pins: pins ?? pinsOf(device.id), keyFile, stopped });
   }
+
+  #stillWanted() { if (this.stopped?.aborted) throw new Problem("stopped"); }
 
   get address() {
     if (!this.device.address || !this.reach(this.device.address)) throw new Problem(`lamp doesn't know where ${this.device.name} is on your network: make sure it's on, then run lamp devices`);
     return this.device.address;
   }
 
-  /** lamp's values for this device, and the caller's (an app's names, whether it's a game). */
+  /** lamp's values for this device, and the caller's (an app's names, whether it's a game), or those given whole. */
   values(extra = {}) {
+    if (this.given) return { ...this.given, ...extra };
     const values = { ...extra, address: this.device.address, deviceID: this.device.id.split(":").slice(1).join(":") };
     const mine = nearest(this.device.address);
     if (mine) values.mac = mine;
@@ -505,7 +749,7 @@ export class Runner {
   }
 
   #send(request, values, more = {}) {
-    return send(request, this.address, values, { pins: pinsOf(this.device.id), reach: this.reach, ...more });
+    return send(request, this.address, values, { pins: this.pins, reach: this.reach, stopped: this.stopped, ...more });
   }
 
   /**
@@ -514,7 +758,7 @@ export class Runner {
    * its own.
    */
   async #learnRoot(request, answer) {
-    const path = this.integration.certificateRoot, pins = pinsOf(this.device.id);
+    const path = this.integration.certificateRoot, pins = this.pins;
     if (!request.https || !path || !answer.certificate || pins.root(String(request.port))) return;
     const got = await this.#send({ port: request.port, path, https: true }, {}).catch(() => null);
     const root = got?.ok && certificateFrom(got.body);
@@ -526,27 +770,40 @@ export class Runner {
    * back as it ends; or, given `changed`, once the caller is done (`putBack`): an Xbox settles an installed package's
    * type only as it's opened, after the install's own sequence.
    */
-  async run(sequence, { extra = {}, files = {}, changed } = {}) {
+  async run(sequence, { extra = {}, files = {}, changed, cookies = {} } = {}) {
     const settings = changed ?? [];
-    try { return await this.#run(sequence, extra, files, settings); } finally { if (!changed) await this.putBack(settings); }
+    try { return await this.#run(sequence, extra, files, settings, cookies); } finally { if (!changed) await this.putBack(settings); }
   }
 
-  /** Each setting as it was before a sequence changed it, last changed first. */
+  /**
+   * Each setting as it was before a sequence changed it, last changed first, sent with the cookies its change went
+   * with (a CSRF token). A device that can't be reached by then keeps what the sequence set: there's nothing more to
+   * do from here. Answers the settings it couldn't put back.
+   */
   async putBack(changed) {
+    const missed = [];
     for (const restore of changed.splice(0).reverse()) {
       const back = { ...restore.request, body: JSON.stringify({ [restore.request.restore]: restore.was }) };
-      const answer = await this.#send(back, restore.values, { session: restore.session }).catch(() => null);
-      if (!answer?.ok) process.stderr.write(`lamp couldn't set ${restore.request.path} on ${this.device.name} back to ${restore.was}\n`);
+      const values = { ...this.values(), ...Object.fromEntries(Object.entries(restore.cookies ?? {}).map(([name, value]) => [`cookie:${name}`, value])) };
+      // Put back even once the run was stopped: a setting left changed is the device's for good. Each is given a while, not forever.
+      const answer = await this.#send(back, values, { session: { ...(restore.session ?? {}) }, stopped: undefined, timeout: 15_000 }).catch(() => null);
+      if (!answer?.ok) missed.push(`lamp couldn't set ${restore.request.path} on ${this.device.name} back to ${restore.was}`);
     }
+    return missed;
   }
 
-  async #run(sequence, extra, files, changed) {
-    const outcome = { answers: [] }, cookies = {}, session = {};
+  async #run(sequence, extra, files, changed, given) {
+    const outcome = { answers: [] }, cookies = { ...given }, session = {};
     for (const action of sequence) {
+      this.#stillWanted();
       const values = { ...this.values(extra), ...Object.fromEntries(Object.entries(cookies).map(([name, value]) => [`cookie:${name}`, value])) };
       const request = action.http;
       if (action.wait) { await this.pause(Math.min(Math.max(action.wait, 1), 30) * 1000); continue; }
-      if (!request) throw new Problem(`${this.device.name}'s integration asks for something lamp's command line doesn't do yet (${Object.keys(action).join(", ")})`);
+      if (action.probe) {
+        if (!(await present(this.address, action.probe, { reach: this.reach }))) throw new Problem(`${this.device.name} didn't answer (${action.probe})`);
+        continue;
+      }
+      if (!request) throw new Problem(`${this.device.name}'s integration asks for something lamp's command line doesn't do (${Object.keys(action).join(", ")})`);
       // A setting changed only for this sequence: what it is now, to put back after. Read as it's written, with the
       // same sign-in and headers, but for a cookie the device sets only now.
       if (request.restore) {
@@ -558,7 +815,7 @@ export class Runner {
         const setting = `${request.port}${request.path}`;
         let wanted;
         try { wanted = jsonAt(Buffer.from(fill(request.body ?? "", values, "body")), request.restore); } catch {}
-        if (!changed.some((restore) => `${restore.request.port}${restore.request.path}` === setting) && was !== wanted) changed.push({ request, was, values, session });
+        if (!changed.some((restore) => `${restore.request.port}${restore.request.path}` === setting) && was !== wanted) changed.push({ request, was, cookies: { ...cookies }, session: { asked: [...(session.asked ?? [])] } });
       }
       const transfer = () => this.#send(request, values, { files, session });
       let asked = Date.now(), answer = await transfer();
@@ -566,6 +823,7 @@ export class Runner {
       if (request.poll) {
         const until = Date.now() + Math.min(Math.max(request.poll, 2), 600) * 1000;
         while (answer.status === 204 && Date.now() < until) {
+          this.#stillWanted();
           this.onWaiting();
           await this.pause(2000);
           asked = Date.now();
@@ -587,6 +845,7 @@ export class Runner {
         while (!meets(request.expect, answer, values)) {
           if (!request.until) throw new Problem(`${this.device.name} said: ${plainAnswer(answer.text)}`);
           if (spent >= request.until) throw new StillWorking(`${this.device.name} still wasn't ready at ${request.path} after ${request.until} seconds`);
+          this.#stillWanted();
           this.onWaiting();
           await this.pause(2000);
           asked = Date.now();
@@ -599,8 +858,15 @@ export class Runner {
       if (request.keep === "picture") outcome.picture = answer.body;
       else if (request.keep === "screen") outcome.screen = answer.body.subarray(0, 512 << 10).toString("utf8");
       else if (request.keep === "log") outcome.log = answer.body.subarray(Math.max(0, answer.body.length - (256 << 10))).toString("utf8");
-      else outcome.answers.push(answer.text.slice(0, 64 << 10));
+      else if (request.keep === "key") {
+        // A key the device gives this computer to sign in to it with, kept where the caller says, for its person alone.
+        if (!this.keyFile) throw new Problem(`${this.device.name} gave a key, and lamp has nowhere to keep it`);
+        mkdirSync(dirname(this.keyFile), { recursive: true, mode: 0o700 });
+        writeFileSync(this.keyFile, answer.body, { mode: 0o600 });
+        chmodSync(this.keyFile, 0o600);
+      } else outcome.answers.push(answer.text.slice(0, 64 << 10));
     }
+    outcome.cookies = cookies;
     return outcome;
   }
 
@@ -623,6 +889,7 @@ export class Runner {
         refused = error.message;
       }
       if (attempt === tries) break;
+      this.#stillWanted();
       this.onWaiting();
       await this.pause(wait);
       wait = Math.min(wait * 2, 8000);
@@ -631,38 +898,53 @@ export class Runner {
   }
 
   /**
-   * Whether a setup step's check passes now: `passed`, what it read from the device, and when it didn't pass, why,
-   * with `failed` for a reason waiting won't mend (the certificate changed, or the device rejected the sign-in).
+   * What a check of these conditions finds, told apart the way a setup needs it told: `holds` (with the first value
+   * read), `waiting` (the device answered otherwise, or the person hasn't typed what's needed yet), `away` (the device
+   * didn't answer), or `rejected` (it answered, but its certificate isn't the one kept, or it turned the sign-in away).
+   * `needs` names the field a condition waits for.
    */
-  async check(step) {
-    const values = this.values(), waiting = `waiting for ${this.device.name}`;
+  async evaluate(conditions) {
+    const values = this.values(), waiting = `Waiting for ${this.device.name}…`;
     let read;
-    for (const condition of step.check ?? []) {
+    for (const condition of conditions ?? []) {
       if (condition.field) {
-        if (!values[`field:${condition.field}`]) return { passed: false, needs: condition.field, why: "waiting for what you type" };
+        if (!values[`field:${condition.field}`]) return { verdict: "waiting", why: "Waiting for what you type.", needs: condition.field };
+      } else if (condition.signedIn) {
+        if (!values.signIn) return { verdict: "waiting", why: "Waiting for you to sign in." };
       } else if (condition.tcp) {
-        if (!(await answersOn(this.device.address, condition.tcp, { reach: this.reach }))) return { passed: false, why: waiting };
+        if (!this.device.address || !(await answersOn(this.device.address, condition.tcp, { reach: this.reach }))) return { verdict: "away", why: waiting };
       } else if (condition.http) {
         let answer;
         try {
           answer = await this.#send(condition.http, values);
           if (answer.ok) await this.#learnRoot(condition.http, answer);
         } catch (error) {
-          if (error instanceof Refused) return { passed: false, why: error.message, failed: true };
-          return { passed: false, why: waiting };
+          if (error instanceof Refused) return { verdict: "rejected", why: sentence(error.message), refused: error.kind };
+          return { verdict: "away", why: waiting };
         }
-        if (condition.http.auth && answer.status === 401) return { passed: false, why: new Rejected().message, failed: true, rejected: true };
-        if (!answer.ok) return { passed: false, why: waiting };
+        // A device that turns the password away keeps doing so however long one waits: the person has to type it again.
+        if (condition.http.auth && answer.status === 401) return { verdict: "rejected", why: sentence(new Rejected().message), rejected: true };
+        if (!answer.ok) return { verdict: "waiting", why: waiting };
         if (condition.json || condition.xml) {
           const value = condition.json ? jsonAt(answer.body, condition.json) : xmlAt(answer.body, condition.xml);
-          if (value === undefined) return { passed: false, why: `${this.device.name} doesn't say yet` };
-          if (condition.equals && !sameWords(value, condition.equals)) return { passed: false, why: waiting };
-          if (condition.contains && !holds(value, condition.contains)) return { passed: false, why: waiting };
+          if (value === undefined) return { verdict: "waiting", why: `${this.device.name} doesn't say yet.` };
+          if (condition.equals && !sameWords(value, condition.equals)) return { verdict: "waiting", why: waiting };
+          if (condition.contains && !holds(value, condition.contains)) return { verdict: "waiting", why: waiting };
           read ??= value;
         }
       }
     }
-    return { passed: true, read };
+    return { verdict: "holds", read: read ?? null };
+  }
+
+  /**
+   * Whether a setup step's check passes now: `passed`, what it read from the device, and when it didn't pass, why,
+   * with `failed` for a reason waiting won't mend (the certificate changed, or the device rejected the sign-in).
+   */
+  async check(step) {
+    const found = await this.evaluate(step.check);
+    if (found.verdict === "holds") return { passed: true, read: found.read ?? undefined };
+    return { passed: false, why: found.why, needs: found.needs, failed: found.verdict === "rejected", rejected: !!found.rejected };
   }
 
   /** A step passed on this device: it's kept, with the step and what the step read. */
@@ -675,6 +957,19 @@ export class Runner {
     keep(mine);
     Object.assign(this.device, { model: mine.model, kept: true });
   }
+}
+
+/** A problem's words as a sentence. */
+export const sentence = (words) => `${words[0].toUpperCase()}${words.slice(1)}${/[.!?…]$/.test(words) ? "" : "."}`;
+
+/** Whether the device at `address` is there now, as a probe says: a port it takes ("tcp:8060"), a search it answers ("ssdp:roku:ecp") or a Bonjour service it offers. */
+export async function present(address, probe, { reach = isPrivate } = {}) {
+  const [kind, ...rest] = String(probe).split(":"), value = rest.join(":");
+  if (!value || !reach(address)) return false;
+  if (kind === "tcp") return answersOn(address, Number(value), { reach });
+  if (kind === "ssdp") return (await ssdp(value, 2)).some((answer) => answer.address === address);
+  if (kind === "bonjour") return (await bonjour(value, 3)).some((found) => found.address === address);
+  return false;
 }
 
 /** Whether an answer says what `expect` asks, of any element where its path has `*`. */

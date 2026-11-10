@@ -232,11 +232,7 @@ export async function lookOn(layout, device, { runner } = {}) {
   await reached(runner);
   const mine = installed(layout, device), values = valuesOf(layout, mine);
   const seen = { device: device.name, installed: !!mine, running: null, picture: null, log: null };
-  if (mine && bridge.running) {
-    // Asked once: whether it's open now, not whether it opens in a while.
-    const once = bridge.running.map((action) => (action.http ? { http: { ...action.http, until: undefined } } : action));
-    seen.running = await runner.run(once, { extra: values }).then(() => true, (error) => { if (error instanceof Problem) return false; throw error; });
-  }
+  if (mine && bridge.running) seen.running = await openNow(runner, values);
   if (bridge.look) {
     const picture = (await runner.run(bridge.look, { extra: values })).picture;
     if (picture?.length) {
@@ -251,13 +247,29 @@ export async function lookOn(layout, device, { runner } = {}) {
   return seen;
 }
 
+/** Whether the app is open on the device now, asked once: not whether it opens in a while. */
+function openNow(runner, values) {
+  const once = runner.integration.bridge.running.map((action) => (action.http ? { http: { ...action.http, until: undefined } } : action));
+  return runner.run(once, { extra: values }).then(() => true, (error) => { if (error instanceof Problem && !(error instanceof Away)) return false; throw error; });
+}
+
 /** Ends the app on the device; false when lamp never put it there. */
 export async function stopOn(layout, device, { runner } = {}) {
   runner ??= new Runner({ integration: integrationOf(device.integration), device });
-  const stop = runner.integration.bridge?.stop, mine = installed(layout, device);
-  if (!mine || !stop) return false;
+  const bridge = runner.integration.bridge ?? {}, mine = installed(layout, device);
+  if (!mine || !bridge.stop) return false;
   await reached(runner);
-  await runner.run(stop, { extra: valuesOf(layout, mine) });
+  const values = valuesOf(layout, mine);
+  try {
+    await runner.run(bridge.stop, { extra: values });
+  } catch (error) {
+    // A device refuses to end an app that isn't open (an Xbox answers that it failed to): that's stopped already.
+    if (!(error instanceof Problem) || error instanceof Away || !bridge.running || (await openNow(runner, values))) throw error;
+    return true;
+  }
+  // A device goes on listing an app for a while after it's told to end it (an Xbox, about fifteen seconds): waited
+  // for, so a look right after says what's so.
+  for (let tries = 0; bridge.running && tries < 25 && (await openNow(runner, values)); tries++) await runner.pause(1000);
   return true;
 }
 

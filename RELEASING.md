@@ -16,7 +16,9 @@ a secure timestamp. Nested code is signed first:
   (`LlamaInstall.swift`). A build from source does the same with its own zip (`build/assets`, by file), kept in
   `.build/llama` while the llama.cpp build and the signing identity are the same.
 - pi's native module and the pi executable, with `Resources/pi.entitlements`: pi is Bun-compiled, and Bun's
-  JIT needs `allow-jit` and friends under hardened runtime
+  JIT needs `allow-jit` and friends under hardened runtime. The same executable is the runtime lamp's command line
+  runs on inside the app (`LampCLI.swift`; its code is `Resources/cli`, plain files under the app's own seal), so a
+  pi built on anything else needs another runtime found for it
 - Lamp's player (`Resources/LampPlayer.bundle`), the Mac app every game and screen is a copy of: `build.sh` compiles
   it afresh for a release, before the starters, and each copy is signed again as its own app when Lamp makes it
 - the starters' prebuilt apps: `build.sh` has the new Lamp build each starter as a person's Mac would

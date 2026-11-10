@@ -96,3 +96,31 @@ test("ideas sent to the link come back to whoever shared it, and sharing again k
   assert.equal(readLink(layout.folder), null);
   assert.equal(existsSync(join(process.env.LAMP_DEV_HOME)), true);
 });
+
+test("Lamp's app shares a wish's link, sends its file, reads it back, and takes it down through lamp's calls", async () => {
+  const { CALLS } = await import("../calls.mjs");
+  const body = { name: "Tide Clock", line: "When the tide turns.", words: "A clock for the harbor's tides.", releases: [], picture: null, icon: null };
+  const link = await CALLS.linkPublish({ site: origin, body });
+  assert.ok(link.url.startsWith(origin) && link.secret && link.id);
+  // Changed in place, under the same secret; one the site no longer has is made again.
+  assert.equal((await CALLS.linkPublish({ site: origin, body: { ...body, name: "Tide Clock 2" }, earlier: link })).id, link.id);
+  // A wish's file as Share… makes one: a zip with lamp-app.json in it, bigger than a part.
+  const { zipOf } = await import("../share.mjs");
+  const { randomBytes } = await import("node:crypto");
+  const file = join(home, "wish.lampapp");
+  writeFileSync(file, zipOf([["lamp-app.json", Buffer.from("{}")], ["Sources/big.bin", randomBytes(3_100_000)]]));
+  const parts = [];
+  await CALLS.linkUpload({ site: origin, id: link.id, secret: link.secret, file }, { event: (said) => parts.push(said.said) });
+  assert.equal(parts.length, 2, "a file bigger than a part goes in parts");
+  const latest = (await CALLS.linkLatest({ site: origin, id: link.id })).latest;
+  assert.equal(latest.name, "Tide Clock 2");
+  assert.ok(latest.version >= 1 && latest.file);
+  assert.deepEqual((await CALLS.linkIdeas({ site: origin, id: link.id, secret: link.secret })).ideas, []);
+  // Only its secret takes it down: another changes nothing.
+  await CALLS.linkRemove({ site: origin, id: link.id, secret: "not-its-secret" }).catch(() => {});
+  assert.notEqual((await CALLS.linkLatest({ site: origin, id: link.id })).latest, null);
+  await CALLS.linkRemove({ site: origin, id: link.id, secret: link.secret });
+  assert.equal((await CALLS.linkLatest({ site: origin, id: link.id })).latest, null);
+  const again = await CALLS.linkPublish({ site: origin, body, earlier: link });
+  assert.notEqual(again.id, link.id, "a link that was taken down is made again");
+});

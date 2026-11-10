@@ -1,63 +1,34 @@
 import XCTest
 @testable import Lamp
 
-/// An LG TV answers an SSDP search for five services, each pointing at a description of its own, and the first to
-/// answer is usually Netflix's, whose description is nine bytes of "status=ok". The answers and descriptions in
-/// Tests/Fixtures/lg-webos-tv are a webOS TV's own, recorded on 2026-10-22 in the order they came, with its
-/// address, ids and hardware addresses replaced.
+/// An LG TV answers an SSDP search for several services, each with an id of its own, and lamp's command line reads it
+/// under its own service's id when that answered (cli/tests/network.test.mjs, on a webOS TV's recorded answers). Which
+/// TV a reading is to Lamp is Lamp's: one kept or seen under another of its ids keeps that id.
 final class LGDiscoveryTests: XCTestCase {
-    private let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        .appendingPathComponent("Fixtures/lg-webos-tv")
     private let address = "192.168.1.20"
 
-    private func answers() throws -> [DeviceProbe.SSDPAnswer] {
-        try String(contentsOf: folder.appendingPathComponent("ssdp.txt"), encoding: .utf8)
-            .components(separatedBy: "\n\n").map { DeviceProbe.answer($0, from: address) }
+    private func reading(_ id: String, udns: [String]) -> TVs.Record {
+        TVs.Record(id: "lg:\(id)", maker: "LG", name: "[LG] webOS TV NANO80ASA", model: "65NANO80ASA.BWCDLKR", modelID: "65NANO80ASA",
+                   address: address, os: "webOS", osVersion: "", resolution: "", udns: udns)
     }
 
-    private func description(port: Int?) -> Data? {
-        try? Data(contentsOf: folder.appendingPathComponent("\(port ?? 80).xml"))
-    }
-
-    func testTheTVIsFoundThroughItsOwnServiceWhenNetflixAnswersFirst() async throws {
-        let answers = try answers()
-        XCTAssertEqual(answers.first?.location, "http://192.168.1.20:9080")
-        let record = await TVs.lg(at: address, answers: answers) { self.description(port: $0.port) }
-        XCTAssertEqual(record?.id, "lg:11111111-2222-4333-8444-000000001904")
-        XCTAssertEqual(record?.name, "[LG] webOS TV NANO80ASA")
-        XCTAssertEqual(record?.model, "65NANO80ASA.BWCDLKR")
-    }
-
-    func testTheTVKeepsItsIDWhenItsOwnServiceMissesAScan() async throws {
-        let all = try answers()
-        let found = await TVs.lg(at: address, answers: all) { self.description(port: $0.port) }
-        let first = try XCTUnwrap(found)
-        let others = all.filter { $0.searchTarget != TVs.lgTV && !($0.location ?? "").contains(":1904") }
-        let again = await TVs.lg(at: address, answers: others, earlier: [first]) { self.description(port: $0.port) }
-        XCTAssertEqual(again?.id, first.id)
-    }
-
-    func testATVKeptUnderAnotherServicesIDKeepsThatID() async throws {
+    func testATVSeenUnderAnyOfItsIDsKeepsTheIDItHad() {
+        let own = "11111111-2222-4333-8444-000000001904", renderer = "11111111-2222-4333-8444-000000001601", other = "11111111-2222-4333-8444-000000002043"
+        // Its own service missed this search: it's read under another of its services' ids, and is still the TV seen before.
+        let first = TVs.adopt(reading(own, udns: [own, renderer, other]), earlier: [])
+        XCTAssertEqual(first.id, "lg:\(own)")
+        XCTAssertEqual(TVs.adopt(reading(renderer, udns: [renderer, other]), earlier: [first]).id, first.id)
         // An earlier Lamp kept whichever description answered first: here the media renderer's.
-        let kept = TVs.Record(id: "lg:11111111-2222-4333-8444-000000001601", maker: "LG", name: "[LG] webOS TV NANO80ASA",
-                              model: "LG TV", modelID: "1.0", address: address, os: "webOS", osVersion: "", resolution: "")
-        let record = await TVs.lg(at: address, answers: try answers(), earlier: [kept]) { self.description(port: $0.port) }
-        XCTAssertEqual(record?.id, kept.id)
-    }
-
-    func testAnUnknownDeviceIsReadFromTheDescriptionThatNamesIt() async throws {
-        let device = await Integrations.described(address, answers: try answers()) { request, _ in
-            self.description(port: request.port).map { DeviceHTTP.Answer(status: 200, body: $0) }
-        }
-        XCTAssertEqual(device?.name, "[LG] webOS TV NANO80ASA")
-        XCTAssertEqual(device?.id, "found:192.168.1.20")
+        let kept = TVs.Record(id: "lg:\(renderer)", maker: "LG", name: "[LG] webOS TV NANO80ASA", model: "LG TV", modelID: "1.0", address: address,
+                              os: "webOS", osVersion: "", resolution: "")
+        XCTAssertEqual(TVs.adopt(reading(own, udns: [own, renderer]), earlier: [kept]).id, kept.id)
+        XCTAssertEqual(TVs.adopt(reading(own, udns: [own]), earlier: [kept]).id, "lg:\(own)", "a TV that shares none of its ids is another")
     }
 
     /// The agent's line for a TV app is what Lamp has seen of this TV, and what it hasn't seen (its screen, whether
     /// the app runs there now) is said to be unknown.
-    func testTheAgentIsToldWhatLampKnowsOfTheTVAndNoMore() async throws {
-        let found = await TVs.lg(at: address, answers: try answers()) { self.description(port: $0.port) }
-        let record = try XCTUnwrap(found)
+    func testTheAgentIsToldWhatLampKnowsOfTheTVAndNoMore() throws {
+        let record = reading("11111111-2222-4333-8444-000000001904", udns: [])
         let tv = Device.from(tv: record, onNetwork: true, kept: false)
         let put = Date(timeIntervalSince1970: 1_800_000_000)
         let line = DeviceNote.tv(previewOpen: true, chosen: tv.udid, tvs: [tv],
