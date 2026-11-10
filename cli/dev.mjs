@@ -456,12 +456,12 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     const moves = Array.isArray(asked?.moves) ? asked.moves : [asked];
     const target = await watched();
     if (!target) throw new Problem("lamp found no browser it can use the page in (Chrome, Edge, Brave or Chromium)");
-    // A page lamp has only just opened is still loading: what's pressed before it's in would be lost.
-    if (target.fresh) {
-      let tab = null;
-      for (let tries = 0; !tab && tries < 40; tries++) { tab = await target.page.evaluate("window.__lampTab || null", { timeout: 1000 }); if (!tab) await sleep(100); }
-      await waitUntilSettled(20_000, tab);
-    }
+    // A page still opening, or opening again after a save, would lose what's pressed before it's in: each use waits
+    // for its tab, and makes no move in a page that hasn't settled by then.
+    let tab = null;
+    for (let tries = 0; !tab && tries < 40; tries++) { tab = await target.page.evaluate("window.__lampTab || null", { timeout: 1000 }); if (!tab) await sleep(100); }
+    const unsettled = await waitUntilSettled(30_000, tab);
+    if (unsettled) throw new Problem(`Nothing was done: ${unsettled}. Try again in a moment.`);
     await target.page.focus();
     const did = [];
     for (const move of moves) {
