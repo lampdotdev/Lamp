@@ -104,6 +104,8 @@ here: keep its license file, its copyright headers and its author's credit on sc
    after every change, and read the errors and the picture before saying it works. `{{lamp}} look --reopen` opens the
    page again from its beginning first, a game with its saves kept: what someone opening it sees. `--size 900x600`
    looks at it as a window of that size shows it, for a layout that has to hold at any shape (with no window open).
+   When the answer says lamp found no Chrome, Edge, Brave or Chromium, there's no picture and `use` can't play the
+   page: tell the person, since only they can install one.
 
 Nothing has to be running first. With no window open, `look` runs the app itself in a copy of the page nobody sees,
 opened from the files as they are, so the first look has no changes to report. The copy goes on running between

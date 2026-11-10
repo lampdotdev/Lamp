@@ -112,3 +112,37 @@ test("a saved change reaches the open page, and one saved while a page was openi
   assert.deepEqual([missed.gen, missed.changed, missed.removed], [2, [], ["main.js"]]);
   late.close();
 });
+
+const cli = async (what, asked = {}) =>
+  (await fetch(`${server.url}__lamp/cli/${what}`, { method: "POST", headers: { "x-lamp-token": server.token }, body: JSON.stringify(asked) })).json();
+
+test("saving APP.md is no change to the page, whether the watcher or a look finds it", async () => {
+  await cli("look", { wait: 0 });
+  // A look straight after the save, before the watcher could have said anything, checks every file itself.
+  writeFileSync(join(folder, "Web", "APP.md"), "# T\n\nWhat the app is.\n");
+  assert.deepEqual((await cli("look", { wait: 0 })).changes, []);
+  const open = await line(99);
+  await open.next("hello");
+  writeFileSync(join(folder, "Web", "APP.md"), "# T\n\nWhat the app is, and more.\n");
+  await new Promise((done) => setTimeout(done, 400));
+  writeFileSync(join(folder, "Web", "notes.md"), "Markdown the page may load.\n");
+  // Changes go out in order: the first one this page hears of is the Markdown it may load, never APP.md.
+  assert.deepEqual(JSON.parse(await open.next("change")).changed, ["notes.md"]);
+  open.close();
+});
+
+test("with no browser lamp can drive, a look waits for a page to open and says what's missing", async () => {
+  // The last test's page is gone first: its line closing takes the server a moment to hear.
+  while ((await cli("reload")).pages) await new Promise((done) => setTimeout(done, 50));
+  const started = Date.now();
+  const none = await cli("look", { wait: 0 });
+  assert.ok(Date.now() - started < 2000);
+  assert.match(none.problem, /No page has opened/);
+  assert.match(none.problem, /Chrome, Edge, Brave or Chromium/);
+  // A page that opens while the look waits is the one looked at, without a picture.
+  setTimeout(async () => { const open = await line(99); setTimeout(() => open.close(), 5000); }, 300);
+  const late = await cli("look", { wait: 3 });
+  assert.equal(late.where, "page");
+  assert.match(late.problem, /no picture/i);
+  assert.match(late.problem, /lamp use/);
+});

@@ -25,6 +25,7 @@ import { exportApp, unpack } from "./lampapp.mjs";
 import { updateNotice } from "./update.mjs";
 import { editionName, giveTo, givenTo, keepPictures, lampOwning, reachLamp, takeBack } from "./outside.mjs";
 import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS } from "./dev.mjs";
+import { findBrowser, noBrowser } from "./browser.mjs";
 import { allSkills } from "./skills.mjs";
 import { share, unshare, ideas, finishIdea, readLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
 import { Runner, allKept, fields, forget, integrationOf, isReady, look as lookForDevices, takesPages } from "./devices.mjs";
@@ -397,7 +398,7 @@ const WHERE = {
   mac: "the app as it runs on this Mac",
   window: "the window the person has open",
   copy: "lamp's own copy of the page, which nobody sees (no window is open)",
-  page: "a page open in a browser lamp can't look into",
+  page: "a page open in a browser lamp can't take pictures of or play",
 };
 
 function report(seen) {
@@ -807,7 +808,7 @@ async function main() {
       console.log(opened.running ? `${opened.url} is open.` : opened.building ? `${opened.url} is being built, and opens when it is: lamp look waits for it.` : `${opened.url} didn't build: lamp look says why.`);
       return;
     }
-    console.log(opened.opened === "window" ? `Opened in a window: ${opened.url}` : `Opened in the browser: ${opened.url}\nlamp found no browser it can look into (Chrome, Edge, Brave or Chromium), so looks have no picture.`);
+    console.log(opened.opened === "window" ? `Opened in a window: ${opened.url}` : `Opened in the browser: ${opened.url}\n${noBrowser()}`);
     return;
   }
 
@@ -836,6 +837,9 @@ async function main() {
       }
     }
     if (!any) console.log(options.remove ? "There was no skill of lamp's to take away." : "Neither Claude Code nor Codex is set up on this computer. `lamp guide` prints what to give another agent.");
+    // Web apps and games are looked at and played in a browser lamp drives: said now, before a first look comes back
+    // without a picture. Only said, never a failure: a Mac app needs no browser, and one can be installed later.
+    if (!options.remove && !findBrowser()) console.log(`For web apps and games: ${noBrowser()}`);
     return;
   }
 

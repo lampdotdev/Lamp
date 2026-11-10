@@ -38,6 +38,16 @@ export function findBrowser() {
   return null;
 }
 
+/**
+ * What's missing when findBrowser finds nothing, and what to do about it: said wherever a look has no picture or a
+ * use can't be done for want of one, and by setup.
+ */
+export function noBrowser() {
+  const named = process.env.LAMP_BROWSER;
+  if (named) return `LAMP_BROWSER names a browser that isn't there (${named}): fix it, or unset it to use Chrome, Edge, Brave or Chromium.`;
+  return "lamp needs Chrome, Edge, Brave or Chromium to take pictures of a page and to play it (lamp use), and found none on this computer. In another browser, Safari too, a look still gets the page's words and log. Install one of them for both.";
+}
+
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 // The keys a person names, as the browser is told them: the key, its place on the keyboard, its number, and what it

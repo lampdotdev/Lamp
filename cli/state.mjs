@@ -22,6 +22,9 @@ export class Problem extends Error {}
 
 /** The runtime whose presence makes a page a game's (`GamePage.runtimeFile`). */
 export const RUNTIME_FILE = "lamp-game.js";
+// The app's notes, at the top of its page: what it is and how it's made, for whoever works on it. Never part of the
+// page: saving it changes nothing a page runs, and a shared page goes without it.
+export const NOTES_FILE = "APP.md";
 
 /**
  * How the folder is laid out: an app Lamp made keeps its page in Web/, and any other folder with an index.html is a
