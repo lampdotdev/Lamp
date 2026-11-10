@@ -1,11 +1,13 @@
 // {{NAME}}: not made yet. The same card a new app shows (a hammer, its name, "Lamp is making this game.") on the
 // game's background, so the window is plainly Lamp waiting rather than a game that looks broken. The game replaces
-// all of it, keeping its shape: this file only puts the parts together, world.js builds the world (and builds it
-// again in place when it changes), and each part that changes as the game is played is a class in a module of its own
-// that takes its changes while the game runs (making.js; lamp-game.js, "Changes while it's played"). Everything that
-// has to last through a change is registered here by name: the renderer, the camera, the gameplay state and the
-// world's parts, so a change that can't be swapped in runs this file again with all of them where they were
-// (lamp-game.js, "What the game registers").
+// all of it: what this file holds, and world.js and making.js, which are the card's (the web-game skill says which
+// files a game has). The card is put together as a game that keeps the player's place through a change is: this file
+// only puts the parts together, world.js builds the world (and builds it again in place when it changes), and each
+// part that changes as the game is played is a class in a module of its own that takes its changes while the game
+// runs (making.js; lamp-game.js, "Changes while it's played"). Everything that has to last through a change is
+// registered here by name: the renderer, the camera, the gameplay state and the world's parts, so a change that
+// can't be swapped in runs this file again with all of them where they were (lamp-game.js, "What the game
+// registers").
 import * as THREE from 'three';
 import { game, hot } from './lamp-game.js';
 import { World } from './world.js';
