@@ -27,20 +27,12 @@ enum DeviceFolder {
 /// A device that speaks HTTPS with a certificate of its own (Xbox's Device Portal) can't be checked against any
 /// authority, so Lamp does what SSH does: it keeps the certificate's fingerprint the first time it reaches the device,
 /// per port, in the device's folder, and from then on refuses one that differs. While a device is only being found and
-/// read, nothing is kept and nothing secret is sent (`DeviceHTTP.send`).
+/// read, nothing is kept and nothing secret is sent (`DeviceHTTP.send`). A certificate is taken or refused where the
+/// request is made, by lamp's command line (`pinsAt` in cli/devices.mjs, on the file `Pins` names); what's here is the
+/// store's other uses: the device's root, the person's Reconnect, and the words for a refusal.
 enum DeviceTLS {
-    enum Judgement: Equatable { case trust, keep, refuse }
-
     static func fingerprint(_ certificate: Data) -> String {
         SHA256.hash(data: certificate).map { String(format: "%02x", $0) }.joined()
-    }
-
-    /// What to do with a certificate: trust it (it's the one kept, or nothing is being kept), keep it (the first for
-    /// this device), or refuse it (another than the one kept).
-    static func judge(_ fingerprint: String, kept: String?, keeping: Bool) -> Judgement {
-        guard keeping else { return .trust }
-        guard let kept else { return .keep }
-        return kept == fingerprint ? .trust : .refuse
     }
 
     /// Why a certificate wasn't taken, in words for the setup card.
@@ -81,10 +73,11 @@ enum DeviceTLS {
 
     /// One device's kept certificates: the one it showed first, by port, and for a device whose integration says where
     /// its root is (`Integration.certificateRoot`), that root, under "root:<port>". A certificate other than the kept one
-    /// is taken only when the kept root signed it, and is kept in its place.
+    /// is taken only when the kept root signed it, and is kept in its place (by lamp's command line, as it makes a request).
     struct Pins: Sendable {
         private static let lock = NSLock()
-        private let file: URL
+        /// Where they're kept. lamp's command line reads and writes it too, as it takes a request's certificate.
+        let file: URL
 
         init(deviceID: String) {
             self.init(file: DeviceFolder.of(deviceID).appendingPathComponent("certificates.json"))
@@ -92,35 +85,6 @@ enum DeviceTLS {
 
         /// A store of its own lets tests exercise failures without touching Lamp's kept devices.
         init(file: URL) { self.file = file }
-
-        /// Whether a certificate is taken, decided and kept under one lock, so two first requests at once can't each
-        /// keep their own: the second is judged against what the first kept. It fails closed: a store that's there
-        /// but can't be read, or a first certificate that can't be saved, takes nothing.
-        func admit(_ fingerprint: String, port: Int, certificate: Data? = nil) -> Refusal? {
-            Self.lock.lock(); defer { Self.lock.unlock() }
-            var pins: [String: String] = [:]
-            if FileManager.default.fileExists(atPath: file.path) {
-                guard let data = try? Data(contentsOf: file), let read = try? JSONDecoder().decode([String: String].self, from: data) else {
-                    return .unsaved
-                }
-                pins = read
-            }
-            switch judge(fingerprint, kept: pins[String(port)], keeping: true) {
-            case .trust: return nil
-            case .refuse:
-                // The device's own root vouches for a certificate it made since: it's the same device.
-                guard let certificate, let root = pins["root:\(port)"].flatMap({ Data(base64Encoded: $0) }), DeviceTLS.signs(root, certificate) else {
-                    return .changed
-                }
-                pins[String(port)] = fingerprint
-                do { try JSONEncoder().encode(pins).write(to: file, options: .atomic) } catch { return .unsaved }
-                return nil
-            case .keep:
-                pins[String(port)] = fingerprint
-                do { try JSONEncoder().encode(pins).write(to: file, options: .atomic) } catch { return .unsaved }
-                return nil
-            }
-        }
 
         /// The device's root kept for a port, when one is.
         func root(port: Int) -> Data? {

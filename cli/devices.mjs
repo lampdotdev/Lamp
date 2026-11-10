@@ -11,7 +11,7 @@
 
 import { createHash, randomUUID, X509Certificate } from "node:crypto";
 import dgram from "node:dgram";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { homedir, networkInterfaces } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -225,9 +225,23 @@ function certificateFrom(bytes) {
  * from a root of its own (an Xbox's Device Portal does, whenever it restarts), that root, under "root:<port>". A
  * certificate other than the kept one is taken only when the kept root signed it, and is kept in its place.
  */
-export function pinsOf(id) {
-  const file = join(folderOf(id), "certificates.json");
-  const read = () => (existsSync(file) ? readJSON(file) : {});
+export const pinsOf = (id) => pinsAt(join(folderOf(id), "certificates.json"));
+
+/** The same, kept in a file the caller names: Lamp's app keeps each device's in its own folder for the device. */
+export function pinsAt(file) {
+  // A store that's there but isn't one (not JSON, not names with words for values) is never read as empty.
+  const read = () => {
+    if (!existsSync(file)) return {};
+    const pins = readJSON(file);
+    return pins && typeof pins === "object" && !Array.isArray(pins) && Object.values(pins).every((value) => typeof value === "string") ? pins : null;
+  };
+  // Written whole or not at all, for the person alone to read.
+  const write = (pins) => {
+    mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+    const beside = `${file}.writing`;
+    writeFileSync(beside, JSON.stringify(pins, null, 2), { mode: 0o600 });
+    renameSync(beside, file);
+  };
   return {
     /** Why a certificate isn't taken, or null when it is: it's the one kept, or the first, kept now. It fails closed. */
     admit(fingerprint, port, certificate) {
@@ -238,7 +252,7 @@ export function pinsOf(id) {
         const root = pins[`root:${port}`];
         if (!certificate || !root || !signs(Buffer.from(root, "base64"), certificate)) return CHANGED;
       }
-      try { writeKept(id, "certificates.json", { ...pins, [port]: fingerprint }); } catch { return UNSAVED; }
+      try { write({ ...pins, [port]: fingerprint }); } catch { return UNSAVED; }
       return null;
     },
     root: (port) => { const root = read()?.[`root:${port}`]; return root ? Buffer.from(root, "base64") : null; },
@@ -246,7 +260,7 @@ export function pinsOf(id) {
     keepRoot(root, leaf, port) {
       const pins = read();
       if (!pins || pins[port] !== fingerprintOf(leaf) || pins[`root:${port}`] || !signs(root, leaf)) return false;
-      writeKept(id, "certificates.json", { ...pins, [`root:${port}`]: root.toString("base64") });
+      write({ ...pins, [`root:${port}`]: root.toString("base64") });
       return true;
     },
   };
@@ -259,29 +273,38 @@ export function pinsOf(id) {
 const PLACEHOLDER = /\{([A-Za-z][A-Za-z0-9]*(?::[A-Za-z0-9-]+)?)\}/g;
 const SAFE = /^[A-Za-z0-9._\-:/@+=,]*$/;
 
+/** What's secret among the values: what the person typed for the device, and what a maker's sign-in gave for it. */
+const isSecret = (name) => name.startsWith("field:") || name === "signIn";
+
 /**
- * The template with each placeholder filled. A value outside the safe alphabet is refused, except what the person
- * typed, which only reaches places that are encoded (a sign-in, a form, a header, a body); in a path a value is
- * percent-encoded so it can't change the path.
+ * The template with each placeholder filled, as `Placeholders` holds an integration to in Lamp's app. A value outside
+ * the safe alphabet is refused, except a secret, which only reaches places that are encoded or apart from the address
+ * (a sign-in, a form, a header, a body) and is never put in base64; Lamp's own public key, which has spaces; and text
+ * being typed on the device, which may be anything and so goes only in a form, a body, or a path, there encoded down
+ * to letters and digits. In a path every value is percent-encoded so it can't change the path.
  */
 export function fill(template, values, place) {
   return template.replace(PLACEHOLDER, (whole, name) => {
-    const value = name.startsWith("base64:") ? (values[name.slice(7)] === undefined ? undefined : Buffer.from(values[name.slice(7)]).toString("base64")) : values[name];
+    const inner = name.startsWith("base64:") ? name.slice(7) : null;
+    if (inner !== null && isSecret(inner)) throw new Problem(`{${name}} must be base64 of a value that isn't secret`);
+    const value = inner !== null ? (values[inner] === undefined ? undefined : Buffer.from(values[inner]).toString("base64")) : values[name];
     if (value === undefined) throw new Problem(`lamp has nothing to put in {${name}}`);
-    const typed = name.startsWith("field:");
-    if (typed && !["auth", "form", "header", "body"].includes(place)) throw new Problem(`{${name}} can't go in a ${place}: what the person types goes only in a sign-in, a form, a header or a body`);
+    const secret = isSecret(name), text = name === "text";
+    if (secret && !["auth", "form", "header", "body"].includes(place)) throw new Problem(`{${name}} can't go in a ${place}: ${name === "signIn" ? "a sign-in" : "what the person types"} goes only in a sign-in, a form, a header or a body`);
     if (name.startsWith("cookie:") && place !== "header") throw new Problem(`{${name}} goes only in a header`);
-    if (!typed && (!SAFE.test(value) || value.length > 512)) throw new Problem(`the value for {${name}} has characters lamp doesn't send to a device`);
+    if (text && !["path", "form", "body"].includes(place)) throw new Problem("{text} goes only in a path, a form or a body");
+    if (!secret && !text && name !== "sshKey" && (!SAFE.test(value) || value.length > 512)) throw new Problem(`the value for {${name}} has characters lamp doesn't send to a device`);
+    if (text && place === "path") return [...Buffer.from(value)].map((byte) => (/[A-Za-z0-9]/.test(String.fromCharCode(byte)) ? String.fromCharCode(byte) : `%${byte.toString(16).toUpperCase().padStart(2, "0")}`)).join("");
     return place === "path" ? encodeURIComponent(value).replace(/%2F/g, "/").replace(/%3A/g, ":").replace(/%40/g, "@").replace(/%2C/g, ",") : value;
   });
 }
 
 const namesIn = (template) => [...String(template ?? "").matchAll(PLACEHOLDER)].map((match) => match[1]);
 
-/** Whether a request carries what the person typed, which goes only where lamp knows the device. */
+/** Whether a request carries a secret or a sign-in, which goes only where lamp knows the device. */
 function carriesSecret(request) {
   if (request.auth) return true;
-  return [request.path, request.body, ...Object.values(request.headers ?? {}), ...Object.values(request.form ?? {})].flatMap(namesIn).some((name) => name.startsWith("field:"));
+  return [request.path, request.body, ...Object.values(request.headers ?? {}), ...Object.values(request.form ?? {})].flatMap(namesIn).some(isSecret);
 }
 
 function pathProblem(path) {
@@ -302,10 +325,10 @@ const ANSWER_LIMIT = 16 << 20;
  * sequence of requests, that the device has asked for the sign-in, so the requests after it carry it and a package
  * isn't sent twice.
  */
-export async function send(request, address, values, { files = {}, pins, timeout = 30_000, session = {}, reach = isPrivate } = {}) {
+export async function send(request, address, values, { files = {}, pins, timeout = 30_000, session = {}, reach = isPrivate, stopped } = {}) {
   const https = request.https === true;
   if (https && !pins && carriesSecret(request)) throw new Problem("lamp sends a password over HTTPS only to a device whose certificate it keeps");
-  if (!reach(address)) throw new Problem(`lamp only talks to devices on your own network, and ${address} isn't one`);
+  if (!reach(address)) throw new OffNetwork(`lamp only talks to devices on your own network, and ${address} isn't one`);
   if (!Number.isInteger(request.port) || request.port < 1 || request.port > 65535) throw new Problem(`${request.port} isn't a port`);
   const path = fill(request.path, values, "path"), problem = pathProblem(path.split("?")[0]);
   if (problem) throw new Problem(`the path ${problem}`);
@@ -344,9 +367,15 @@ export async function send(request, address, values, { files = {}, pins, timeout
   if (body) headers["Content-Length"] = String(body.length);
 
   const once = async (authorization) => {
+    if (stopped?.aborted) throw new Problem("stopped");
     const { socket, certificate } = https ? await connect(address, request.port, pins, timeout) : await plain(address, request.port, timeout);
+    // Stopped by whoever asked (`stopped`, an AbortSignal): the connection is let go, whatever was under way on it.
+    const stop = () => socket.destroy(new Problem("stopped"));
+    stopped?.addEventListener("abort", stop, { once: true });
     const host = `${address.includes(":") ? `[${address}]` : address}:${request.port}`;
-    const answer = await exchange(socket, { method, path, host, headers: authorization ? { ...headers, Authorization: authorization } : headers, body, timeout, address });
+    let answer;
+    try { answer = await exchange(socket, { method, path, host, headers: authorization ? { ...headers, Authorization: authorization } : headers, body, timeout, address }); }
+    finally { stopped?.removeEventListener("abort", stop); }
     const cookies = {};
     for (const cookie of answer.headers["set-cookie"] ?? []) {
       const pair = cookie.split(";")[0], equals = pair.indexOf("=");
@@ -501,13 +530,22 @@ function digestAnswer(challenge, { user, password, method, path }) {
 }
 
 /** The device's certificate isn't one lamp takes: waiting won't mend it. */
-export class Refused extends Problem {}
+export class Refused extends Problem {
+  constructor(why) {
+    super(why);
+    this.kind = why === CHANGED ? "changed" : "unsaved";
+  }
+}
+
+/** The address isn't a device on the person's own network: nothing is sent there. */
+export class OffNetwork extends Problem {}
 
 /** The device didn't answer, or let the connection go: it's off, asleep, somewhere else on the network, or busy. */
 export class Away extends Problem {
   constructor(address, cause) {
     super(`the device at ${address} ${cause?.timedOut ? "didn't answer in time" : "isn't answering"}: make sure it's on, then try again`);
     this.code = cause?.code;
+    this.timedOut = !!cause?.timedOut;
   }
 }
 const timedOut = () => Object.assign(new Error("timed out"), { timedOut: true });

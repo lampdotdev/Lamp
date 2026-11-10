@@ -133,50 +133,32 @@ final class IntegrationTests: XCTestCase {
         let own = DeviceAddress.thisMac().filter { $0.count == 4 }.map { $0.map(String.init).joined(separator: ".") }
         for address in ["127.0.0.1", "::1", "8.8.8.8", "172.32.0.1", "roku.local", "example.com", "0.0.0.0", "::ffff:127.0.0.1"] + own {
             XCTAssertFalse(DeviceAddress.isPrivate(address), address)
-            XCTAssertThrowsError(try DeviceHTTP.url(address: address, port: 80, path: "/"), address)
-        }
-        XCTAssertEqual(try DeviceHTTP.url(address: "192.168.1.20", port: 8060, path: "/query/device-info").absoluteString,
-                       "http://192.168.1.20:8060/query/device-info")
-        for path in ["//evil.example/", "/a/../b", "/x@evil.example", "x", "/a b"] {
-            XCTAssertThrowsError(try DeviceHTTP.url(address: "192.168.1.20", port: 80, path: path), path)
         }
     }
 
-    /// A device with its own certificate is held to the one it showed first, and nothing secret goes to one whose
-    /// certificate Lamp doesn't keep.
-    func testHTTPSKeepsTheFirstCertificateAndSendsNoSecretWithoutIt() async {
-        XCTAssertEqual(try DeviceHTTP.url(address: "10.0.0.138", port: 11443, path: "/api/os/info", https: true).absoluteString,
-                       "https://10.0.0.138:11443/api/os/info")
-        XCTAssertEqual(DeviceTLS.judge("aa", kept: nil, keeping: true), .keep)
-        XCTAssertEqual(DeviceTLS.judge("aa", kept: "aa", keeping: true), .trust)
-        XCTAssertEqual(DeviceTLS.judge("bb", kept: "aa", keeping: true), .refuse)
-        XCTAssertEqual(DeviceTLS.judge("bb", kept: nil, keeping: false), .trust, "a read while finding keeps nothing")
+    /// A request to a device is lamp's command line's to make, with every guard it has (cli/devices.mjs, held by
+    /// cli/tests/devices.test.mjs): Lamp's app asks the run of it that stays, many at once, and hears each refusal as
+    /// the kind it was. Nothing secret goes over HTTPS to a device whose certificate Lamp doesn't keep, and nothing at
+    /// all to this Mac.
+    func testARequestIsAskedOfLampsCommandLineWithItsGuards() async throws {
+        guard LampCLI.launch != nil else { throw XCTSkip("No Node here to run lamp's command line on") }
         let signIn = Request(port: 11443, path: "/api/os/info", auth: .init(digest: false, user: "lamp", password: "{field:password}"), https: true)
         do {
             _ = try await DeviceHTTP.send(signIn, to: "10.0.0.138", values: ["field:password": "secret"])
             XCTFail("a password went to a device whose certificate isn't kept")
         } catch {
-            XCTAssertTrue(error.localizedDescription.contains("certificate"), error.localizedDescription)
+            XCTAssertTrue(error is DeviceHTTP.Failure && error.localizedDescription.contains("certificate"), error.localizedDescription)
         }
-    }
-
-    func testNoRedirectAndThePasswordOnlyForTheDevicesOwnChallenge() {
-        let guardian = DeviceHTTP.Guardian(address: "192.168.1.20", credential: ("rokudev", "secret", true))
-        let followed = expectation(description: "redirect answered")
-        let response = HTTPURLResponse(url: URL(string: "http://192.168.1.20/")!, statusCode: 302, httpVersion: nil, headerFields: nil)!
-        guardian.urlSession(URLSession.shared, task: URLSession.shared.dataTask(with: URL(string: "http://192.168.1.20/")!),
-                            willPerformHTTPRedirection: response, newRequest: URLRequest(url: URL(string: "https://example.com/")!)) {
-            XCTAssertNil($0)
-            followed.fulfill()
+        let refused = await withTaskGroup(of: Bool.self) { group in
+            for _ in 0..<24 {
+                group.addTask {
+                    do { _ = try await DeviceHTTP.send(Request(port: 80, path: "/"), to: "127.0.0.1", values: [:]); return false } catch { return error is DeviceAddress.NotOnNetwork }
+                }
+            }
+            return await group.reduce(0) { $0 + ($1 ? 1 : 0) }
         }
-        wait(for: [followed], timeout: 1)
-        let digest = NSURLAuthenticationMethodHTTPDigest, basic = NSURLAuthenticationMethodHTTPBasic
-        XCTAssertTrue(DeviceHTTP.Guardian.answers(space: ("192.168.1.20", digest), address: "192.168.1.20", digest: true, tried: false))
-        XCTAssertFalse(DeviceHTTP.Guardian.answers(space: ("10.0.0.9", digest), address: "192.168.1.20", digest: true, tried: false))
-        XCTAssertFalse(DeviceHTTP.Guardian.answers(space: ("192.168.1.20", basic), address: "192.168.1.20", digest: true, tried: false),
-                       "a device asking for basic when digest was declared doesn't get the password in the clear")
-        XCTAssertFalse(DeviceHTTP.Guardian.answers(space: ("192.168.1.20", digest), address: "192.168.1.20", digest: true, tried: true))
-        XCTAssertFalse(DeviceHTTP.Guardian.answers(space: ("192.168.1.20", digest), address: "192.168.1.20", digest: nil, tried: false))
+        XCTAssertEqual(refused, 24, "each of many asked at once hears its own answer")
+        do { _ = try await LampCLI.ask("no-such-call", [:]); XCTFail("an unknown call") } catch { XCTAssertTrue(error is LampCLI.Failure) }
     }
 
     /// A look makes one ssdp:all search: an integration's own target, and where its description is, come from the

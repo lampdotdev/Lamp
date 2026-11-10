@@ -34,10 +34,12 @@ the bridge (`bridge.known`, Lamp's alone: refused from the builder, kept while t
 to a shipped integration).
 
 The primitives and their guards (DevicePrimitives.swift, DeviceRemote.swift), which every place goes through:
-`DeviceHTTP` (only the address the device was found at, which must be private or link-local and never this Mac, by loopback or by its own addresses (`DeviceAddress.thisMac`), so
-nothing reaches Lamp's gateway; a path that stays a path; no redirect; the answer cut off at `limit`; a password only
-for the device's own challenge, in the scheme declared, once: `Guardian`; over HTTPS, with `https: true`, the device's
-own certificate is kept the first time per port and a different one refused, as SSH host keys are, `DeviceTLS`;
+`DeviceHTTP` (a request is lamp's command line's to make, the one place that makes one and holds its guards: `send` in
+`cli/devices.mjs`, which `DeviceHTTP.send` asks of the run of it that stays, `LampCLI.ask`, "lamp from a terminal";
+only the address the device was found at, which must be private or link-local and never this Mac, by loopback or by its own addresses, so
+nothing reaches Lamp's gateway; a path that stays a path; no redirect; the answer cut off at 16 MB; a password only
+for the device's own challenge, in the scheme declared, once; over HTTPS, with `https: true`, the device's
+own certificate is kept the first time per port and a different one refused, as SSH host keys are, in the store `DeviceTLS.Pins` names;
 for a device that makes itself a new certificate from a root of its own (Xbox's Device Portal does, whenever it
 restarts), the integration names where it serves that root (`certificateRoot`), which Lamp reads once over the
 connection the first certificate was kept on and keeps beside it, and a later certificate is taken only when that

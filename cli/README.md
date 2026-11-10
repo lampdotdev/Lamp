@@ -187,7 +187,8 @@ whose host for a page lamp packages for.
 - **Setting up** (`lamp devices add`) takes the device through its integration's steps in order. What a step asks the
   person to type (an Xbox's Device Portal password) is read from the terminal without being shown, so an agent can't
   give it: run without a terminal, the command says the person runs it themselves.
-- **The guards** are `DeviceHTTP`'s and `DeviceTLS`'s: a request goes only to the address the device was found at,
+- **The guards** are the ones every request to a device has, Lamp's app's too, since this is where a request is
+  made for both ("Lamp's app", below): a request goes only to the address the device was found at,
   which must be on the home network and never this computer; no redirect is followed; over HTTPS the device's own
   certificate is kept the first time, per port, and another refused from then on unless the device's own root, read
   over that first connection, signed it (an Xbox makes itself a new certificate at each restart); and the password
@@ -266,14 +267,22 @@ on standard input, and its answer is the last line it prints, `{"done": …}`, o
 what the person can put right. Anything else ends the run with its words on standard error, which Lamp's app shows as
 its own fault.
 
+The many small things are asked of one run that stays (`calls.mjs --serve`, `LampCLI.ask`): a line in for each,
+`{"id", "call", "given"}`, and a line out as each finishes, in any order; `{"stop": id}` lets go of one whoever asked
+no longer wants (a task cancelled in Lamp's app), and the run ends when its input does, which is when Lamp's app
+does. A problem says its kind where Lamp's app acts on which it was: a device that's away, a certificate that changed.
+
 - **What a call is given** is paths in Lamp's own folders, laid out by Lamp's app, never an app's folder: what an
   agent wrote is read by Lamp's app on that folder's terms first. A call refuses a link in what it's handed.
 - **The runtime** in Lamp's app is the one it already carries: its bundled agent is built on Bun, and run with
   `BUN_BE_BUN=1` that program is Bun itself (`LampCLI.launch`, the one place that decides). So `calls.mjs` and what it
   imports must run on Bun as well as Node; `build.sh` copies `cli/*.mjs` into the app. The tests run on both. One
   thing doesn't work on Bun yet: the search of the network for devices (`ssdp`, over UDP) hears nothing there.
-- **The calls so far:** `msix`, an Xbox's package from a folder of files. Moving a piece of work here means a call
-  for it, the Swift that did it deleted, and a test on each side (`cli/tests/calls.test.mjs`, `LampCLITests`).
+- **The calls so far:** `msix`, an Xbox's package from a folder of files; and `send`, one request to a device, with
+  the file its certificates are kept in named by Lamp's app (`pinsAt`), so each device has one store whichever asks.
+  What the person typed for a device comes with the request, on the run's input, and is kept nowhere here. Moving a
+  piece of work here means a call for it, the Swift that did it deleted, and a test on each side
+  (`cli/tests/calls.test.mjs`, `LampCLITests`).
 
 ## Where things are kept
 

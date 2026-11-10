@@ -71,10 +71,6 @@ enum DeviceAddress {
 
 /// A request to a device, as an integration may make it.
 enum DeviceHTTP {
-    /// Answers are cut off here: a device's answers are small, and a picture is a few megabytes. What Lamp sends a
-    /// device, an app's package, has its own limit (`DeviceApps.packageLimit`).
-    static let limit = 16 << 20
-
     struct Failure: LocalizedError {
         let message: String
         var errorDescription: String? { message }
@@ -91,161 +87,40 @@ enum DeviceHTTP {
         var text: String { String(decoding: body, as: UTF8.self) }
     }
 
-    /// The URL for a path on the device. Only the device's own address, which must be private; the path is the
-    /// integration's with Lamp's values filled in, and must stay a path.
-    static func url(address: String, port: Int, path: String, https: Bool = false) throws -> URL {
-        guard DeviceAddress.isPrivate(address) else { throw DeviceAddress.NotOnNetwork(address: address) }
-        guard IntegrationCheck.isPort(port) else { throw Failure(message: "\(port) isn't a port.") }
-        if let reason = IntegrationCheck.pathProblem(path.components(separatedBy: "?").first ?? path) { throw Failure(message: "The path \(reason).") }
-        let host = address.contains(":") ? "[\(address)]" : address
-        guard let url = URL(string: "\(https ? "https" : "http")://\(host):\(port)\(path)"), url.host(percentEncoded: false)?.trimmingCharacters(in: CharacterSet(charactersIn: "[]")) == address,
-              url.port == port, url.user == nil else {
-            throw Failure(message: "That path doesn't stay on the device.")
-        }
-        return url
-    }
-
-    /// Makes the request with Lamp's values filled in. No redirect is followed, a sign-in goes only to the device's own
-    /// challenge, and the answer is cut off at `limit`. Over HTTPS, `pins` holds the device to the certificate it showed
+    /// Makes the request with Lamp's values filled in, through lamp's command line, whose request to a device this is
+    /// (`cli/devices.mjs`'s `send`, asked of the run that stays: `LampCLI.ask`). It goes only to the device's own
+    /// address, which must be on the person's network and never this Mac, by a path that stays a path; no redirect is
+    /// followed, a sign-in goes only in answer to the device's own request for it, with the scheme the integration
+    /// declared, and the answer is cut off at 16 MB (a device's answers are small, and a picture is a few megabytes).
+    /// Over HTTPS, `pins` holds the device to the certificate it showed
     /// the first time; without them (while a device is only being found and read) nothing secret is sent. A look for
     /// devices waits `timeout` for each answer, much less than an install does: a device that answered the scan but
     /// not its port would otherwise hold up the whole look.
     static func send(_ request: Request, to address: String, values: [String: String], files: [String: URL] = [:],
                      pins: DeviceTLS.Pins? = nil, timeout: TimeInterval = 30) async throws -> Answer {
-        let https = request.https == true
-        if https, pins == nil, carriesSecret(request) {
-            throw Failure(message: "Lamp sends a password over HTTPS only to a device whose certificate it keeps.")
-        }
-        let path = try Placeholders.fill(request.path, values, in: .path)
-        var urlRequest = URLRequest(url: try url(address: address, port: request.port, path: path, https: https), timeoutInterval: timeout)
-        urlRequest.httpMethod = (request.method ?? "GET").uppercased()
-        urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
-        urlRequest.httpShouldHandleCookies = false
-        for (name, value) in request.headers ?? [:] where name.lowercased() != "host" {
-            urlRequest.setValue(try Placeholders.fill(value, values, in: .header), forHTTPHeaderField: name)
-        }
-        if let body = request.body { urlRequest.httpBody = Data(try Placeholders.fill(body, values, in: .body).utf8) }
-        // Some devices refuse a POST that says nothing of its length (Device Portal answers 411), so an empty one says 0.
-        if request.body == nil, request.form == nil, ["POST", "PUT"].contains(urlRequest.httpMethod ?? "") { urlRequest.httpBody = Data() }
-        if let form = request.form {
-            let boundary = "lamp-" + UUID().uuidString
-            var data = Data()
-            for (name, value) in form.sorted(by: { $0.key < $1.key }) {
-                data.append(Data("--\(boundary)\r\n".utf8))
-                if value == "@{package}" || value == "@{certificate}" {
-                    let key = String(value.dropFirst(2).dropLast())
-                    guard let file = files[key], let contents = try? Data(contentsOf: file) else { throw Failure(message: "There's no \(key) to send yet.") }
-                    // A field named like a file ("app.msix") is sent under that name: some devices go by the file's name.
-                    let filename = name.contains(".") ? name : file.lastPathComponent
-                    data.append(Data("Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(filename)\"\r\nContent-Type: application/octet-stream\r\n\r\n".utf8))
-                    data.append(contents)
-                } else {
-                    data.append(Data("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".utf8))
-                    data.append(Data(try Placeholders.fill(value, values, in: .form).utf8))
-                }
-                data.append(Data("\r\n".utf8))
-            }
-            data.append(Data("--\(boundary)--\r\n".utf8))
-            urlRequest.httpBody = data
-            urlRequest.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        }
-        var credential: (user: String, password: String, digest: Bool)?
-        if let auth = request.auth {
-            credential = (auth.user, try Placeholders.fill(auth.password, values, in: .auth), auth.digest ?? false)
-        }
-        let guardian = Guardian(address: address, credential: credential, https: https, port: request.port, pins: pins)
-        let session = URLSession(configuration: .ephemeral, delegate: guardian, delegateQueue: nil)
-        defer { session.finishTasksAndInvalidate() }
-        let bytes: URLSession.AsyncBytes, response: URLResponse
+        var given: [String: Any] = ["request": try JSONSerialization.jsonObject(with: JSONEncoder().encode(request)), "address": address,
+                                    "values": values, "files": files.mapValues(\.path), "timeout": timeout]
+        if let pins { given["pins"] = pins.file.path }
+        let done: [String: Any]
         do {
-            (bytes, response) = try await session.bytes(for: urlRequest)
-        } catch {
-            if let refusal = guardian.refusal { throw refusal }
-            throw error
-        }
-        var body = Data()
-        for try await byte in bytes {
-            body.append(byte)
-            if body.count > limit { throw Failure(message: "The device's answer was bigger than Lamp takes.") }
-        }
-        var cookies: [String: String] = [:]
-        if let http = response as? HTTPURLResponse, let url = http.url {
-            let fields = http.allHeaderFields.reduce(into: [String: String]()) { if let k = $1.key as? String, let v = $1.value as? String { $0[k] = v } }
-            for cookie in HTTPCookie.cookies(withResponseHeaderFields: fields, for: url) { cookies[cookie.name] = cookie.value }
-        }
-        return Answer(status: (response as? HTTPURLResponse)?.statusCode ?? 0, body: body, cookies: cookies, certificate: guardian.certificate)
-    }
-
-    /// Whether a request carries what the person typed or a sign-in, which goes only where Lamp knows the device.
-    static func carriesSecret(_ request: Request) -> Bool {
-        if request.auth != nil { return true }
-        let texts = [request.path, request.body ?? ""] + Array((request.headers ?? [:]).values) + Array((request.form ?? [:]).values)
-        return texts.flatMap(Placeholders.names(in:)).contains { $0.hasPrefix("field:") || $0 == "signIn" }
-    }
-
-    /// Follows no redirect, and answers a sign-in challenge only from the device's own address, once, with the
-    /// scheme the integration declared. Over HTTPS it judges the device's certificate (`DeviceTLS`).
-    final class Guardian: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-        let address: String
-        let credential: (user: String, password: String, digest: Bool)?
-        let https: Bool
-        let port: Int
-        let pins: DeviceTLS.Pins?
-        private var tried = false
-        /// Why the device's certificate wasn't taken, when it wasn't.
-        private(set) var refusal: DeviceTLS.Refusal?
-        /// The certificate the device showed, once taken.
-        private(set) var certificate: Data?
-        init(address: String, credential: (user: String, password: String, digest: Bool)?, https: Bool = false, port: Int = 0,
-             pins: DeviceTLS.Pins? = nil) {
-            self.address = address
-            self.credential = credential
-            self.https = https
-            self.port = port
-            self.pins = pins
-        }
-
-        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-            completionHandler(nil)
-        }
-
-        func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
-                        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-            let space = challenge.protectionSpace
-            if space.authenticationMethod == NSURLAuthenticationMethodServerTrust {
-                // Only for a request the integration made over HTTPS, and only from the device's own address.
-                guard https, space.host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")) == address, let trust = space.serverTrust,
-                      let leaf = (SecTrustCopyCertificateChain(trust) as? [SecCertificate])?.first else {
-                    completionHandler(.cancelAuthenticationChallenge, nil)
-                    return
-                }
-                let der = SecCertificateCopyData(leaf) as Data
-                let fingerprint = DeviceTLS.fingerprint(der)
-                // Kept and compared in one step; without pins (a read while finding) nothing secret is in the request.
-                if let refused = pins?.admit(fingerprint, port: port, certificate: der) {
-                    refusal = refused
-                    completionHandler(.cancelAuthenticationChallenge, nil)
-                    return
-                }
-                certificate = der
-                completionHandler(.useCredential, URLCredential(trust: trust))
-                return
+            done = try await LampCLI.ask("send", given)
+        } catch let failure as LampCLI.Failure {
+            // Said as Lamp's app has always said each, for those who act on which it was.
+            switch failure.kind {
+            case "changed": throw DeviceTLS.Refusal.changed
+            case "unsaved": throw DeviceTLS.Refusal.unsaved
+            case "off-network": throw DeviceAddress.NotOnNetwork(address: address)
+            case "away":
+                let dropped = ["ECONNRESET", "EPIPE", "ECONNABORTED"].contains(failure.code ?? "")
+                throw URLError(failure.timedOut ? .timedOut : dropped ? .networkConnectionLost : .cannotConnectToHost)
+            default: throw Failure(message: failure.message)
             }
-            guard Guardian.answers(space: (host: space.host, method: space.authenticationMethod), address: address,
-                                   digest: credential?.digest, tried: tried), let credential else {
-                completionHandler(.performDefaultHandling, nil)
-                return
-            }
-            tried = true
-            completionHandler(.useCredential, URLCredential(user: credential.user, password: credential.password, persistence: .none))
         }
-
-        /// Whether a challenge gets the person's password: from the device's own address, with the scheme declared, once.
-        static func answers(space: (host: String, method: String), address: String, digest: Bool?, tried: Bool) -> Bool {
-            guard let digest, !tried, space.host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")) == address else { return false }
-            return space.method == (digest ? NSURLAuthenticationMethodHTTPDigest : NSURLAuthenticationMethodHTTPBasic)
+        guard let status = done["status"] as? Int, let body = (done["body"] as? String).flatMap({ Data(base64Encoded: $0) }) else {
+            throw Failure(message: "Lamp couldn't read the device's answer.")
         }
+        return Answer(status: status, body: body, cookies: done["cookies"] as? [String: String] ?? [:],
+                      certificate: (done["certificate"] as? String).flatMap { Data(base64Encoded: $0) })
     }
 
     // MARK: Reading a value out of an answer

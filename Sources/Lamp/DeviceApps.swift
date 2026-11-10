@@ -13,7 +13,7 @@ enum DeviceApps {
     static let marker = ".lamp-device"
 
     /// The most Lamp packages and sends to a device as one app: a game with its models, textures and sounds. It's its
-    /// own limit, not the cap on a device's answers (`DeviceHTTP.limit`), and is held in memory as it's wrapped and sent.
+    /// own limit, not the cap on a device's answers (16 MB, `DeviceHTTP.send`), and is held in memory as it's wrapped and sent.
     static let packageLimit = 1 << 30
 
     /// The integration a folder's code was written for, read off its marker.

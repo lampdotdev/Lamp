@@ -9,12 +9,19 @@
 // A call works on what Lamp's app hands it from Lamp's own folders, by path. It's never pointed at an app's folder:
 // what's there is the agent's to write, and Lamp's app reads it its own way before anything comes here.
 //
+// Run with --serve in the place of a call's name, it stays: each line on standard input is {"id", "call", "given"},
+// and each is answered, in whatever order they finish, by a line {"id", "done"} or {"id", "problem"}, or {"id",
+// "failed"} with lamp's own words for anything else. A line {"stop": id} lets go of a call that hasn't answered, when
+// whoever asked no longer wants it. It ends when its input does, which is when Lamp's app does. The many small things
+// go this way (a request to a device), so each doesn't wait for a program to start.
+//
 // Lamp's app runs this on the JavaScript runtime it carries (the Bun its bundled agent is built on), and a test run on
 // Node: what's imported here, and by what it imports, has to run on both.
 
 import { lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Away, OffNetwork, Refused, pinsAt, send } from "./devices.mjs";
 import { PUBLISHER, identityName, keptSigner, namesOf, packageOf, versionAfter } from "./msix.mjs";
 import { tile } from "./png.mjs";
 import { Problem } from "./state.mjs";
@@ -67,25 +74,86 @@ export const CALLS = {
     write(text(given, "certificate"), signer.certificate);
     return { identity, ...namesOf(identity), bytes: made.length, files: payload.length };
   },
+
+  /**
+   * One request of an integration's to a device (devices.mjs's `send`, with every guard it has): `request` as the
+   * integration writes one, to the device at `address`, with `values` filled in (what the person typed for the device
+   * among them, which is why this comes on standard input), `files` it may send by path, and `pins`, the file the
+   * device's certificates are kept in, without which nothing secret goes over HTTPS. The answer's body is in base64.
+   */
+  async send(given, { stopped } = {}) {
+    const answer = await send(given.request ?? {}, text(given, "address"), given.values ?? {}, {
+      files: given.files ?? {}, pins: typeof given.pins === "string" ? pinsAt(given.pins) : undefined,
+      timeout: Math.round((Number(given.timeout) > 0 ? Number(given.timeout) : 30) * 1000), stopped,
+    });
+    return { status: answer.status, body: answer.body.toString("base64"), cookies: answer.cookies, certificate: answer.certificate?.toString("base64") ?? null };
+  },
 };
 
-/** A problem as Lamp's app shows one: a sentence. */
-const sentence = (words) => `${words[0].toUpperCase()}${words.slice(1)}${/[.!?]$/.test(words) ? "" : "."}`;
+/** A problem as Lamp's app shows one: a sentence, in which lamp is Lamp. */
+const sentence = (words) => `${words[0].toUpperCase()}${words.slice(1)}${/[.!?]$/.test(words) ? "" : "."}`.replace(/\blamp\b/g, "Lamp");
 
-async function main() {
-  const call = CALLS[process.argv[2]];
-  if (!call) throw new Error(`lamp has no call named "${process.argv[2] ?? ""}"`);
+/**
+ * What went wrong, as the answer says it: a problem the person can put right, with its kind where Lamp's app does
+ * something about that kind (a certificate that changed, a device that's away); null for anything else, lamp's own fault.
+ */
+function problemOf(error) {
+  if (!(error instanceof Problem)) return null;
+  const said = { problem: sentence(error.message) };
+  if (error instanceof Refused) said.kind = error.kind;
+  else if (error instanceof OffNetwork) said.kind = "off-network";
+  else if (error instanceof Away) Object.assign(said, { kind: "away", code: error.code ?? null, timedOut: error.timedOut });
+  return said;
+}
+
+/** One call, run to its end, as a single run of this file. */
+async function once(name) {
+  const call = CALLS[name];
+  if (!call) throw new Error(`lamp has no call named "${name ?? ""}"`);
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
   const given = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
   try {
     console.log(JSON.stringify({ done: await call(given) }));
   } catch (error) {
-    if (!(error instanceof Problem)) throw error;
-    console.log(JSON.stringify({ problem: sentence(error.message) }));
+    const said = problemOf(error);
+    if (!said) throw error;
+    console.log(JSON.stringify(said));
     process.exitCode = 1;
   }
 }
 
+/** Calls answered as they come, for as long as there's someone to ask. */
+async function serve() {
+  const say = (line) => process.stdout.write(JSON.stringify(line) + "\n");
+  const under = new Map();
+  const answer = async (line) => {
+    let asked;
+    try { asked = JSON.parse(line); } catch { return; }
+    if (asked?.stop !== undefined) return void under.get(asked.stop)?.abort();
+    const id = asked?.id, call = CALLS[asked?.call], stopping = new AbortController();
+    under.set(id, stopping);
+    try {
+      if (!call) throw new Error(`lamp has no call named "${asked?.call ?? ""}"`);
+      say({ id, done: await call(asked.given ?? {}, { stopped: stopping.signal }) });
+    } catch (error) {
+      say({ id, ...(problemOf(error) ?? { failed: String(error?.stack ?? error) }) });
+    } finally { under.delete(id); }
+  };
+  let waiting = [];
+  for await (const chunk of process.stdin) {
+    let from = 0;
+    for (let end = chunk.indexOf(10, from); end >= 0; end = chunk.indexOf(10, from)) {
+      const line = Buffer.concat([...waiting, chunk.subarray(from, end)]).toString("utf8");
+      waiting = [];
+      from = end + 1;
+      if (line.trim()) answer(line);
+    }
+    if (from < chunk.length) waiting.push(chunk.subarray(from));
+  }
+  // Nobody is left to hear an answer.
+  process.exit(0);
+}
+
 const here = () => { try { return realpathSync(process.argv[1] ?? "") === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; } };
-if (here()) await main();
+if (here()) await (process.argv[2] === "--serve" ? serve() : once(process.argv[2]));

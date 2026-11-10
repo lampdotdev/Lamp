@@ -166,4 +166,87 @@ test("a device that asks for a digest is answered with what its challenge makes 
     assert.ok(!seen.join(" ").includes("made-up-password") && !seen.join(" ").includes(Buffer.from("rokudev:made-up-password").toString("base64")));
     assert.equal((await send(request, "127.0.0.1", { "field:password": "a-wrong-one" }, { reach: () => true })).status, 401);
   } finally { server.close(); server.closeAllConnections?.(); }
+
+  // A device that asks plainly when a digest was declared doesn't get the password in the clear, one that asks for a
+  // digest when a plain sign-in was declared gets nothing, and an answer that points elsewhere is the answer.
+  const asked = [];
+  const other = http.createServer((request, answer) => {
+    asked.push(`${request.url} ${request.headers.authorization ?? ""}`);
+    if (request.url === "/moved") { answer.writeHead(302, { Location: "http://example.com/" }); return answer.end(); }
+    answer.writeHead(401, { "WWW-Authenticate": request.url === "/plain" ? 'Basic realm="x"' : 'Digest realm="x", nonce="n", qop="auth"' });
+    answer.end();
+  });
+  await new Promise((done) => other.listen(0, "127.0.0.1", done));
+  try {
+    const port = other.address().port, values = { "field:password": "made-up-password" }, options = { reach: () => true };
+    assert.equal((await send({ port, path: "/plain", auth: { user: "u", password: "{field:password}", digest: true } }, "127.0.0.1", values, options)).status, 401);
+    assert.equal((await send({ port, path: "/digest", auth: { user: "u", password: "{field:password}" } }, "127.0.0.1", values, options)).status, 401);
+    assert.equal((await send({ port, path: "/moved" }, "127.0.0.1", {}, options)).status, 302);
+    assert.deepEqual(asked, ["/plain ", "/digest ", "/moved "], "each asked once, with nothing of the sign-in");
+  } finally { other.close(); other.closeAllConnections?.(); }
+});
+
+test("a device's certificate is kept the first time, and another is taken only when the device's own root signed it", async () => {
+  const { createHash } = await import("node:crypto");
+  const { pinsAt } = await import("../devices.mjs");
+  const home = mkdtempSync(join(tmpdir(), "lamp-pins-test-")), file = join(home, "certificates.json");
+  const fingerprint = (certificate) => createHash("sha256").update(certificate).digest("hex");
+  try {
+    // Each port keeps its own, another request finds it kept, and one that differs is refused with the store as it was.
+    assert.equal(pinsAt(file).admit("first", "443"), null);
+    assert.equal(pinsAt(file).admit("other", "11443"), null);
+    assert.equal(pinsAt(file).admit("first", "443"), null);
+    const saved = readFileSync(file);
+    assert.match(pinsAt(file).admit("replacement", "443"), /certificate has changed/);
+    assert.deepEqual(readFileSync(file), saved);
+
+    // A store that's there but can't be read as one takes nothing, and is left as it is.
+    for (const text of ["not json", '{"443":42}', "[]"]) {
+      writeFileSync(file, text);
+      assert.match(pinsAt(file).admit("first", "443"), /couldn't keep/);
+      assert.equal(readFileSync(file, "utf8"), text);
+    }
+    rmSync(file);
+
+    // Made with openssl for this test: two roots, leaves a and b from the first, c from the second.
+    const [root, otherRoot, a, b, c] = ["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"].map((text) => Buffer.from(text, "base64"));
+    const pins = pinsAt(file);
+    assert.equal(pins.admit(fingerprint(a), "11443", a), null);
+    assert.match(pins.admit(fingerprint(b), "11443", b), /changed/, "no root kept yet");
+    assert.equal(pins.keepRoot(otherRoot, a, "11443"), false, "a root that didn't sign the kept certificate");
+    assert.equal(pins.keepRoot(root, b, "11443"), false, "only for the certificate that's kept");
+    assert.equal(pins.keepRoot(root, a, "11443"), true);
+    assert.equal(pins.admit(fingerprint(b), "11443", b), null, "the same device, with a certificate its root made since");
+    assert.match(pins.admit(fingerprint(c), "11443", c), /changed/);
+    assert.match(pins.admit(fingerprint(c), "11443"), /changed/, "nothing to check it against");
+    assert.equal(JSON.parse(readFileSync(file, "utf8"))["11443"], fingerprint(b));
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test("a request goes only to a device on the person's network, by a path that stays on it", async () => {
+  const { send, isPrivate, OffNetwork } = await import("../devices.mjs");
+  for (const address of ["192.168.1.20", "10.0.0.5", "172.20.1.1", "169.254.3.4", "fd12::1", "fe80::1:2:3:4"]) assert.equal(isPrivate(address), true, address);
+  // Never this computer, the internet, or a name that could lead anywhere.
+  for (const address of ["127.0.0.1", "::1", "8.8.8.8", "172.32.0.1", "roku.local", "example.com", "0.0.0.0", "::ffff:127.0.0.1"]) {
+    assert.equal(isPrivate(address), false, address);
+    await assert.rejects(send({ port: 80, path: "/" }, address, {}), OffNetwork, address);
+  }
+  for (const path of ["//evil.example/", "/a/../b", "/x@evil.example", "x", "/a b", "/a?b=1 HTTP/1.1\r\nX: y"]) {
+    await assert.rejects(send({ port: 80, path }, "192.168.1.20", {}, { reach: () => true, timeout: 200 }), /the path/, path);
+  }
+  await assert.rejects(send({ port: 80, path: "/", headers: { "X-A": "b\r\nX-C: d" } }, "192.168.1.20", {}, { reach: () => true, timeout: 200 }), /header X-A/);
+  // What the person typed goes over HTTPS only to a device whose certificate is kept, and so does a maker's sign-in.
+  const signIn = { https: true, port: 11443, path: "/api/os/info", auth: { user: "lamp", password: "{field:password}" } };
+  await assert.rejects(send(signIn, "192.168.1.20", { "field:password": "made-up-password" }, { reach: () => true, timeout: 200 }), /whose certificate it keeps/);
+  await assert.rejects(send({ https: true, port: 443, path: "/", headers: { Authorization: "Bearer {signIn}" } }, "192.168.1.20", { signIn: "made-up token" }, { reach: () => true, timeout: 200 }), /whose certificate it keeps/);
+
+  // Each value goes only where it can do no more than be a value.
+  const { fill } = await import("../devices.mjs");
+  assert.equal(fill("/keypress/Lit_{text}", { text: "a b/é?" }, "path"), "/keypress/Lit_a%20b%2F%C3%A9%3F", "text being typed can't change the path");
+  assert.equal(fill("/app?package={base64:packageFullName}", { packageFullName: "Lamp.x_1.0_x64__abc" }, "path"), "/app?package=TGFtcC54XzEuMF94NjRfX2FiYw%3D%3D");
+  assert.equal(fill("Bearer {signIn}", { signIn: "made-up token" }, "header"), "Bearer made-up token");
+  assert.throws(() => fill("/x?token={signIn}", { signIn: "t" }, "path"), /goes only in a sign-in/);
+  assert.throws(() => fill("/x?token={base64:signIn}", { signIn: "t" }, "path"), /isn't secret/);
+  assert.throws(() => fill("X: {text}", { text: "a" }, "header"), /goes only in a path, a form or a body/);
+  assert.throws(() => fill("/x/{appID}", { appID: "a b" }, "path"), /characters lamp doesn't send/);
 });
