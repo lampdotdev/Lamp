@@ -37,7 +37,7 @@ import Base from "../layouts/Base.astro";
 <script>
   const $ = <T extends HTMLElement>(name: string) => document.querySelector(`[data-${name}]`) as T;
   type Request = { id: string; prompt: string; state: string; message: string | null; version: number | null };
-  type Room = { rev: string; room: string; version: number; play: string | null; paired: boolean; helper: boolean; code: string | null; codeEnds: number | null; requests: Request[]; same?: boolean };
+  type Room = { rev: string; room: string; version: number; play: string | null; seeding: { copied: number; total: number; failed: string | null } | null; paired: boolean; helper: boolean; code: string | null; codeEnds: number | null; requests: Request[]; same?: boolean };
 
   const wish = new URLSearchParams(location.search).get("w") ?? "";
   const kept = `lamp.relay.${wish}`;
@@ -68,6 +68,12 @@ import Base from "../layouts/Base.astro";
       frame.hidden = false;
       document.body.dataset.version = String(next.version);
     }
+    if (next.seeding) {
+      $("pair").hidden = true;
+      $("ask").hidden = true;
+      say(next.seeding.failed ?? `Getting the game ready… ${next.seeding.copied} of ${next.seeding.total} files`);
+      return;
+    }
     $("pair").hidden = next.paired;
     $("ask").hidden = !next.paired;
     if (!next.paired) {
@@ -91,6 +97,15 @@ import Base from "../layouts/Base.astro";
     const latest = next.requests.at(-1);
     if (latest?.state === "running") say("Your agent is working on it…");
     else if (latest?.state === "queued") say(next.helper ? "Waiting for your Mac to take it…" : "Waiting for your Mac to come back…");
+  }
+
+  // The room copies the game for itself before it plays it: a few files a call, until it has them all.
+  async function ready() {
+    while (room?.seeding && !room.seeding.failed) {
+      try { show(await call("seed", { method: "POST" })); }
+      catch { say("Reconnecting…"); await new Promise((done) => setTimeout(done, 2000)); }
+    }
+    return !room?.seeding;
   }
 
   // Every two seconds while something's happening, and up to every twenty while nothing has for a while.
@@ -139,10 +154,15 @@ import Base from "../layouts/Base.astro";
         show(opened);
       } catch (error) {
         const status = (error as { status?: number }).status;
-        say(status === 404 ? "This link has no game to change." : status === 429 ? "Too many rooms opened from here. Try again later." : "lamp.dev isn't answering.");
+        say(status === 404 ? "This link has no game to change." : status === 422 ? "This game is too big to change here." : status === 429 ? "Too many rooms opened from here. Try again later." : "lamp.dev isn't answering.");
         return;
       }
     }
-    poll();
+    else {
+      const current = await call("state").catch(() => null);
+      if (!current) { sessionStorage.removeItem(kept); say("This room has closed. Reload to open another."); return; }
+      show(current);
+    }
+    if (room && (await ready())) poll();
   })();
 </script>

@@ -16,7 +16,8 @@ async function started() {
   const now = () => clock.now;
   const db = memoryRedis({ now }), blobs = memoryBlobs({ origin: "https://blob.test", now }), wishes = memoryStore();
   const at = await wishes.putPageFile(WISH, "t", "index.html", Buffer.from("<p>red</p>"));
-  wishes.records.set(WISH, { id: WISH, page: { version: 1, files: { "index.html": at } } });
+  const script = await wishes.putPageFile(WISH, "t", "game.js", Buffer.from("const color = 'red';"));
+  wishes.records.set(WISH, { id: WISH, page: { version: 1, files: { "index.html": at, "game.js": script } } });
   const options = { db, blobs, wishes, now, site: SITE, playBase: PLAY, env: {} };
   const relay = createRelayHandler(options), play = createRelayPlayHandler(options);
   const call = async (op, { method = "POST", origin, token, body, query = "", ip = "1.1.1.1" } = {}) => {
@@ -31,7 +32,7 @@ async function started() {
     const response = await play(new Request(`https://${host}/x?room=${room}&v=${version}&path=`));
     return { status: response.status, csp: response.headers.get("content-security-policy"), text: response.status === 200 ? await response.text() : null };
   };
-  return { clock, db, blobs, call, page, played };
+  return { clock, db, blobs, wishes, call, page, played };
 }
 
 test("a code pairs once, runs out after five minutes, and is traded for a credential of the helper's own", async () => {
@@ -112,6 +113,26 @@ test("a version's files are checked before it plays; one that doesn't match leav
   assert.equal((await relay.played(room.room, 2, "r-0000000000000000.play.lamp.dev")).status, 404);
 });
 
+test("a room keeps its own copy of the link's page: it plays when the link's files are gone, and a change sends only what changed", async () => {
+  const relay = await started();
+  const room = await relay.page();
+  assert.equal(room.version, 1);
+  // The sharer sends the link again twice: the files the room was opened from are gone.
+  relay.wishes.records.delete(WISH);
+  relay.wishes.readFile = relay.wishes.openFile = async () => { throw new Error("gone"); };
+  assert.equal((await relay.played(room.room, 1)).text, "<p>red</p>");
+
+  const helper = (await relay.call("pair", { body: { code: room.code } })).body.token;
+  const listed = (await relay.call("files", { method: "GET", token: helper, query: "&v=1" })).body.files;
+  assert.deepEqual(listed.map((file) => file.sha256), [sha("<p>red</p>"), sha("const color = 'red';")]);
+  const id = "request-0006";
+  await relay.call("ask", { origin: SITE, token: room.token, body: { id, prompt: "green" } });
+  await relay.call("claim", { token: helper, body: { id } });
+  const files = [{ path: "index.html", size: 10, sha256: sha("<p>red</p>") }, { path: "game.js", size: 22, sha256: sha("const color = 'green';") }];
+  const asked = await relay.call("upload", { token: helper, body: { id, files } });
+  assert.deepEqual(asked.body.uploads.map((upload) => upload.sha256), [sha("const color = 'green';")]);
+});
+
 test("the cleanup removes the files of a room that's gone and those no version points at", async () => {
   const relay = await started();
   const room = await relay.page();
@@ -120,5 +141,6 @@ test("the cleanup removes the files of a room that's gone and those no version p
   assert.equal((await cleanupRelay({ db: relay.db, blobs: relay.blobs, now: () => relay.clock.now })).removed, 1);
   relay.clock.now += RELAY_LIMITS.uploadMs * 2 + 1;
   assert.equal((await cleanupRelay({ db: relay.db, blobs: relay.blobs, now: () => relay.clock.now })).removed, 1);
-  assert.equal(relay.blobs.files.size, 0);
+  // What's left is the room's own copy of version 1, which it plays.
+  assert.deepEqual([...relay.blobs.files.keys()].map((path) => path.split("/")[3]), ["seed", "seed"]);
 });

@@ -8,8 +8,13 @@ runs between their calls.
 
 ## How it goes
 
-1. The page opens a room (`op=open`). Version 1 is the link's page as it is then: its files are read where the link
-   keeps them. The page gets its own credential (`<room>.<secret>`), kept in that tab's sessionStorage, and a code.
+1. The page opens a room (`op=open`). The room makes its own copy of the link's page as version 1, in the relay's
+   store: the link's files go once the sharer sends it twice more, and the room's game must not go with them. Each file
+   is read whole, held to the room's limits (a page past them is refused), and kept under its SHA-256, so the first
+   change sends only the files it changed. A big page takes more than one call, so the copy is made a few files at a
+   time, by `op=open` and then by the page's `op=seed` calls; one call copies at a time, under a lease in Redis. Only
+   once the copy is whole does the room play and give a code. The page gets its own credential (`<room>.<secret>`),
+   kept in that tab's sessionStorage.
 2. The player runs `lamp play <code>` on their Mac. The code is six characters. It works once (it's taken out of
    Redis as it's read), for five minutes, with five tries a minute and thirty an hour from one address. It's traded for
    the helper's own credential, which the helper keeps beside its copy of the game (readable only by its user) so
@@ -59,9 +64,9 @@ this computer, since Codex reads outside the copy.
   under `lamp:relay:{production|preview}`. A room runs out two hours after it was last used, and after a day whatever
   happens.
 - **Blob**: a private store of the relay's own (`RELAY_BLOB_READ_WRITE_TOKEN`). Files go under
-  `relay/<scope>/<room>/<upload>/<sha256>`. They're never changed, and Redis holds only their paths.
+  `relay/<scope>/<room>/<upload>/<sha256>`, and a room's copy of the link's page under `relay/<scope>/<room>/seed/<sha256>`. They're never changed, and Redis holds only their paths.
 - **Cleanup**: Redis lets a room run out, but Blob keeps its files. So `api/relay-cleanup.js`, run hourly by Vercel's
-  cron with the project's `CRON_SECRET`, removes every file of a room that's gone. It also removes files no version of
+  cron with the project's `CRON_SECRET`, removes every file of a room that's gone. It leaves a room still copying the link's page alone, and otherwise removes files no version of
   a live room points at once they're older than twenty minutes.
 - **Quotas** (`RELAY_QUOTAS`):
   - rooms: 10 an hour per address, 500 a day overall;

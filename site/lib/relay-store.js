@@ -132,6 +132,11 @@ export function relayBlobs(env) {
         },
       };
     },
+    /** Keeps a file the relay itself copied (a room's version 1). */
+    async put(pathname, bytes) {
+      const { put } = await blob();
+      await put(pathname, bytes, { access: "private", token, contentType: "application/octet-stream", addRandomSuffix: false, allowOverwrite: true });
+    },
     /** The file as a stream with its size, or null when it isn't there. */
     async open(pathname) {
       const { get } = await blob();
@@ -172,6 +177,7 @@ export function memoryBlobs({ origin, secret = "memory-blob-secret", now = () =>
       const payload = Buffer.from(JSON.stringify({ pathname, size, contentType, validUntil: now() + ms })).toString("base64url");
       return { url: `${typeof origin === "function" ? origin() : origin}/__relay-blob/?${new URLSearchParams({ pathname })}`, headers: { authorization: `Bearer ${sign(payload)}.${payload}`, "x-content-type": contentType, "x-content-length": String(size) } };
     },
+    async put(pathname, bytes) { files.set(pathname, { bytes: Buffer.from(bytes), contentType: "application/octet-stream", uploadedAt: now() }); },
     async open(pathname) { const file = files.get(pathname); return file ? { body: file.bytes, size: file.bytes.length } : null; },
     async list(prefix) { return [...files].filter(([path]) => path.startsWith(prefix)).map(([pathname, file]) => ({ pathname, url: pathname, size: file.bytes.length, uploadedAt: file.uploadedAt })); },
     async remove(urls) { for (const url of urls) files.delete(url); },
