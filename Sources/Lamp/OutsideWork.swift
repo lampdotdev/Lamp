@@ -92,6 +92,9 @@ enum OutsideWork {
              "description": "Opens Lamp's Share Link card for the app, where the person shares it on lamp.dev, or releases what's new on a link it has, and waits for them. Only once the app is built from the folder as it is (apply first); nothing is applied until the card is done. Answers the link, or that the person closed the card, or what failed: a link can exist while its app file didn't finish going up, and the answer says so. Changing or taking a link down stays on the card.",
              "inputSchema": ["type": "object", "properties": ["path": path], "required": ["path"]]],
             useApp,
+            ["name": "close_app",
+             "description": "Quits the open app, as Lamp's own Stop does: asked, so an app asking about unsaved work stays open until the person answers. apply_change opens it again.",
+             "inputSchema": ["type": "object", "properties": ["path": path], "required": ["path"]]],
         ] + Store.mcpTools.filter { $0["name"] as? String == "read_skill" }
     }
 
@@ -102,11 +105,12 @@ enum OutsideWork {
         var schema = (Store.mcpTools.first { $0["name"] as? String == "use_app" }?["inputSchema"] as? [String: Any]) ?? ["type": "object"]
         var properties = schema["properties"] as? [String: Any] ?? [:]
         properties = properties.filter { $0.key == "actions" }
+        properties["device"] = ["type": "string", "description": "For an app that controls the person's devices: the device to use it on, by its name as Lamp's card shows it. Only one the person allowed Always in Lamp."]
         properties["path"] = ["type": "string", "description": "The folder's absolute path."]
         schema["properties"] = properties
         schema["required"] = ["path", "actions"]
         return ["name": "use_app",
-                "description": "Only when the person asks you to try, play or test the app. Uses the open app the way a person would: clicks, types, presses keys, scrolls and picks from menus in its front window, then shows what each action did, a fresh picture with the screen as text, and what the app printed meanwhile. The screen as text lists every control and piece of text in the front window with an id (b2, f1, s3…), its name, what it holds and where it is: say what to act on with `target`, an id or the exact name from that list, and use x and y (pixels in the latest picture of the front window) only for what it doesn't have, such as a drawing or a canvas. `type` with a target puts the text into that field; `key` with `amount` holds a key down that many seconds. Menus are read out, never opened: click a pop-up, or right_click, and you get its items; repeat with `item` to pick one. `menu` does the same for the menu bar. The person sees each action and can take the app back at any moment: then the rest are dropped and it says how far it got. It uses the app as last applied: after editing, call apply_change first.",
+                "description": "Only when the person asks you to try, play or test the app. Uses the open app the way a person would: clicks, types, presses keys, scrolls and picks from menus in its front window, then shows what each action did, a fresh picture with the screen as text, and what the app printed meanwhile. The screen as text lists every control and piece of text in the front window with an id (b2, f1, s3…), its name, what it holds and where it is: say what to act on with `target`, an id or the exact name from that list, and use x and y (pixels in the latest picture of the front window) only for what it doesn't have, such as a drawing or a canvas. `type` with a target puts the text into that field; `key` with `amount` holds a key down that many seconds. Menus are read out, never opened: click a pop-up, or right_click, and you get its items; repeat with `item` to pick one. `menu` does the same for the menu bar. An app that controls the person's own devices (a TV, a speaker) is used only on one they allowed Always on Lamp's card, named in `device`. The person sees each action and can take the app back at any moment: then the rest are dropped and it says how far it got. It uses the app as last applied: after editing, call apply_change first.",
                 "inputSchema": schema]
     }
 
@@ -679,7 +683,8 @@ extension Store {
                 if let id, !["refused", "cancelled"].contains(answer.outcome) { OutsideState.shared.answers[id] = answer }
                 return answer
             case "look_at_app": return await outsideLook(path)
-            case "use_app": return await outsideUse(path, actions: payload.values["actions"])
+            case "use_app": return await outsideUse(path, actions: payload.values["actions"], device: payload.string("device"))
+            case "close_app": return await outsideClose(path)
             case "export_app": return await outsideExport(path)
             case "publish_link": return await outsidePublish(path)
             default: return .refused("Lamp has no tool \(name).")
@@ -1003,6 +1008,19 @@ extension Store {
 
     // MARK: use_app
 
+    /// close_app: the app quits as at Lamp's own Stop, asked and waited for, so one asking about unsaved work stays open
+    /// until the person answers it.
+    private func outsideClose(_ path: String) async -> OutsideWork.Answer {
+        guard let (_, project) = outsideFolder(path) else { return outsideRefusal(path) }
+        guard isRunning(project) else { return OutsideWork.Answer(outcome: "not_open", text: "The app isn't open.") }
+        guard begin(project) != nil else { return .refused("Lamp is busy with this app. Try again in a moment.") }
+        defer { finish(current(project) ?? project) }
+        await quitApp(project)
+        return isRunning(project)
+            ? OutsideWork.Answer(outcome: "still_open", text: "The app is still open: it may be asking the person about unsaved work.")
+            : OutsideWork.Answer(outcome: "closed", text: "The app quit. apply_change opens it again.")
+    }
+
     /// What an outside agent hears once the person has taken the app back: Lamp sees none of their messages, so it's off
     /// until the agent's next apply.
     static let outsideTookOverNote = "The person took the app over while it was being tried, so use_app is off for it until your next apply_change. "
@@ -1010,15 +1028,19 @@ extension Store {
 
     /// The folder's open app used as Lamp's own agent uses it (`useNow`), held as an apply holds it, so nothing else of
     /// Lamp's changes it meanwhile.
-    private func outsideUse(_ path: String, actions: Any?) async -> OutsideWork.Answer {
+    private func outsideUse(_ path: String, actions: Any?, device: String?) async -> OutsideWork.Answer {
         guard let (entry, project) = outsideFolder(path) else { return outsideRefusal(path) }
         OutsideState.shared.fromBefore.remove(entry.repo)
         guard let list = actions as? [[String: Any]], !list.isEmpty,
               let body = try? JSONSerialization.data(withJSONObject: ["actions": list]) else { return .refused("use_app needs a list of actions.") }
-        // An app that presses on the person's own devices is used only from Lamp's chat, where they choose the device
-        // on its card (`DevicePermissions`); there's no such card for an outside agent.
+        // An app that presses on the person's own devices does so only on one they allowed on Lamp's card
+        // (`DevicePermissions`). Allowed Always: "Allow once" lasts until their next message in Lamp's chat, which an
+        // outside agent's work isn't part of.
         if DevicePermissions.useNeedsDevice(project) {
-            return .refused("This app controls the person's devices, so use_app doesn't reach it from outside Lamp: ask the person to try it.")
+            let named = device?.trimmed ?? ""
+            guard !named.isEmpty, DevicePermissions.kept(wish(of: project)).always.contains(named) else {
+                return .refused("This app controls the person's devices: use_app uses it only on a device they've allowed Always on Lamp's card, named in `device`. Ask the person to try it, or to allow the device in Lamp.")
+            }
         }
         if OutsideState.shared.tookOver.contains(entry.repo) { return .refused(Self.outsideTookOverNote) }
         guard isRunning(project) else { return OutsideWork.Answer(outcome: "not_open", text: "The app isn't open. apply_change opens it.") }

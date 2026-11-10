@@ -57,7 +57,7 @@ Mac app Lamp made in Swift, built and run on this Mac.
       --in-lamp gives a Mac app to Lamp's app, which must be running: it shows the person its review the first time,
       then builds the app and puts each change into it while it's open (live, or held for a Reload), as with its own
       chat. From then on look, dev and reload go through Lamp's app and say how each change went in, and use tries the
-      app it has open, in plain sight; stop is the person's there. --here has lamp build and run its own copy again.
+      app it has open, in plain sight, and stop quits it there. --here has lamp build and run its own copy again.
       LAMP_APP names another Lamp by its bundle id.
       --on puts a page on one of the person's devices instead and opens it there (--on xbox): packaged, installed
       and opened, the copy that was there replaced. --on android builds Lamp's Android app around the page and
@@ -896,8 +896,13 @@ async function main() {
     }
     const layout = projectOf(rest[0] ?? ".");
     if (layout.kind === "mac" && givenTo(layout.folder)) {
-      if (command === "stop") { console.log(`It stays open in ${editionName(givenTo(layout.folder))}: quit it there. ${lampCommand()} open --here has lamp run its own copy again.`); return; }
-      if (await applyInLamp(layout, await inLamp(layout), { reopen: true })) return;
+      if (command === "stop") {
+        // Quit by Lamp's app as at its own Stop, which waits for an app asking about unsaved work.
+        const lamp = await inLamp(layout);
+        let answer;
+        try { answer = await lamp.call("close_app", { path: layout.folder }); } finally { lamp.close(); }
+        if (!letGo(layout, lamp, answer)) { console.log(lampReport(layout.folder, lamp, answer)); return; }
+      } else if (await applyInLamp(layout, await inLamp(layout), { reopen: true })) return;
     }
     const live = await running(layout.folder);
     if (!live) { console.log("lamp dev isn't running for this folder."); return; }
