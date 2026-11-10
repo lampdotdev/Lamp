@@ -136,8 +136,9 @@ final class IconPictureTests: XCTestCase {
         XCTAssertTrue(extensionCode.contains("pi.registerTool(useIconPicture)"))
         let engines = try String(contentsOf: repo.appendingPathComponent("Sources/Lamp/Engines.swift"), encoding: .utf8)
         XCTAssertTrue(engines.contains("mcp__lamp__use_icon_picture"))
-        XCTAssertTrue(engines.contains("LAMP_ICON_URL"))
         let agent = try String(contentsOf: repo.appendingPathComponent("Sources/Lamp/Agent.swift"), encoding: .utf8)
+        // The icon's address reaches every engine's environment from where it's set up for all of them.
+        XCTAssertTrue(engines.contains("LAMP_ICON_URL") || agent.contains("LAMP_ICON_URL"))
         XCTAssertTrue(agent.contains(",use_icon_picture,"))
         XCTAssertTrue(Agent.Rules.icon.contains("`use_icon_picture`"))
         XCTAssertEqual(ToolCall("use_icon_picture").action, .icon)

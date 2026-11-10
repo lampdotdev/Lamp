@@ -10,7 +10,10 @@ import LampOutsideKit
 /// run at once. A nightly is a release in everything but its name, feed and folders: optimized, signed, notarized,
 /// updating itself from its own feed.
 enum Edition {
-    static let bundleID = Bundle.main.bundleIdentifier ?? "dev.lamp.host"
+    /// The test runner's bundle id names no Lamp, and read as one it would be the release, whose folders are the
+    /// person's own (and whose first start moves Forge's data over, `Migration.fromForge`): a test run is a development
+    /// instance of its own instead, "Lamp Dev tests", with folders, ports and Keychain entries no Lamp of theirs uses.
+    static let bundleID = NSClassFromString("XCTestCase") != nil ? "dev.lamp.host.dev.tests" : Bundle.main.bundleIdentifier ?? "dev.lamp.host"
     static let isDev = bundleID == "dev.lamp.host.dev" || bundleID.hasPrefix("dev.lamp.host.dev.")
     static let isNightly = bundleID == "dev.lamp.host.nightly"
     /// A development build from one worktree among others (scripts/instance.sh, build.sh): named after its
