@@ -203,7 +203,7 @@ enum GitHubProjects {
         var shape = Shape(manifest: nil, missing: [], route: AppUpdates.route(for: Credits.load(wish), own: nil))
         let (root, parts) = Sharing.layout(of: wish)
         guard root.hasScaffold || !parts.isEmpty else {
-            shape.missing.append("Its structure: give the project its app with make_app_for (a game or an app, web or native), then bring the repository's code and assets into it.")
+            shape.missing.append("Its structure: give the project its app with make_app_for (a game or an app, web or native; a web page with no build step is an app made web), then bring the repository's code and assets into it.")
             return shape
         }
         let folder = root.dir.standardizedFileURL == wish.dir.standardizedFileURL ? "" : root.dir.lastPathComponent + "/"
@@ -306,7 +306,7 @@ extension GitHubProjects {
             lines.append("Nothing missing: opened again as Lamp's importer opens a repository, it's a whole Lamp app. Nothing was put on GitHub.")
         } else {
             lines.append("Still missing:\n" + shape.missing.map { "- " + $0 }.joined(separator: "\n"))
-            lines.append("Bring the project's code and assets into the app's own structure without copying its build scripts or project files over Lamp's (Package.swift, build.sh, Sources/LampSupport.swift, the lamp*.js files), then call lampify again.")
+            lines.append("Bring the project's code and assets into the app's own structure without copying its build scripts or project files over Lamp's (Package.swift, build.sh, Sources/LampSupport.swift, the lamp*.js files), then call lampify again. A web page with no build step goes into Web/ as it is: change nothing else of its own code for Lamp (the web-app skill, \"A web app brought in\").")
         }
         return lines.joined(separator: "\n")
     }

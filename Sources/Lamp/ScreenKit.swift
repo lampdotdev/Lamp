@@ -308,6 +308,11 @@ extension Agent.Rules {
     lamp.js: add `<script src="lamp.js"></script>` before its own scripts only when a change needs Lamp's building \
     blocks (below), and keep the page working without them when it's opened on the web. Its README.md is the \
     repository's front page: keep it true to what the site does.
+    - It was brought in as it is, and Lamp's features need nothing more from its code: change only what the person \
+    asks for, with no refactoring or redesign, no Swift of its own (Sources/Native.swift stays as Lamp wrote it) and \
+    no change of kind, unless the person asks for that in so many words. Being on a Mac isn't such a request, and a \
+    browser feature Lamp's app around the page doesn't support yet is Lamp's limitation: say so, never rewrite the app \
+    around it. The web-app skill's "A web app brought in" is the rule.
     """
 
     static let webAppFrameworks = """
@@ -331,8 +336,8 @@ extension Agent.Rules {
 
     static var screenEdit: String { """
     - Make the change the user asks for by editing the page's files in Web/ (index.html, style.css, app.js and any \
-    others), and what it shows beside them, and Sources/Native.swift for what the page asks of the device. Web/lamp.js, \
-    the rest of Sources/, build.sh and Package.swift are Lamp's (the page's building blocks and the app around it): read lamp.js, never edit or delete any of them. Lamp builds by itself and, \
+    others), and what it shows beside them, and Sources/Native.swift only for the person's own things the page asks \
+    the device for (below). Web/lamp.js, the rest of Sources/, build.sh and Package.swift are Lamp's (the page's building blocks and the app around it): read lamp.js, never edit or delete any of them. Lamp builds by itself and, \
     at the end of your turn, opens the screen where Try On points (its window on this Mac, a simulator, an Android \
     emulator or device, a TV or the Xbox), so don't run a build, a server or a browser yourself, and leave .lamp/ alone. \
     The page fills the screen it's on, whatever its shape (the design rule below). Where else it's shown is the \

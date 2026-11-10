@@ -430,6 +430,19 @@ done. lampify's work is all Lamp's, so it asks no approval, and it never runs wh
 That the agent lampifies a project before copying from it is the skill's instruction and the tool's answer; nothing
 checks what was copied, so a project read in a clone and copied without lampify goes uncredited.
 
+### A web app brought in stays as it is
+
+A plain site (above) and a page with no build step made into a Lamp app from a project on GitHub are web apps brought
+in, and Lamp's features (opening, sharing, updates, live changes) need nothing from their code. The agent changes only
+what the person asks for: no refactoring or redesign, no Swift of its own (`Sources/Native.swift` stays Lamp's
+default, so the app stays the ready-made one) and no change of kind (native, or Lamp's game runtime) unless the person
+asks for that in so many words. Being on a Mac isn't such a request, and a browser feature Lamp's app around the page
+doesn't support yet is Lamp's to add, not the app's to work around. The rule is written once, in the web-app skill's
+"A web app brought in"; everything else that guides an import points to it: the github-projects and web-or-native
+skills, `make_app_for`'s and `lampify`'s descriptions and lampify's answer (`GitHubProjects`), a site's rule
+(`Rules.siteLayout`) and APP.md (`StaticSite.unpack`), `Rules.pageNative`, and what an outside agent is told about a site
+(`OutsideWork.guidance`). Projects built before they're served (a package.json, a bundler) aren't covered by it.
+
 An adapted wish's Review Update… says what preparing it costs, then (`Store.prepareUpdate`) saves the wish as a version
 and makes a separate copy of it, unsaved changes included (`Sharing.export`, then a wish of its own with Lamp's files
 written afresh, "<Name> Update"): its own app, bundle id, data and agent session, so nothing the agent does or runs

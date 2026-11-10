@@ -1,6 +1,6 @@
 ---
 name: web-app
-description: Apps made as a web page Lamp shows on each device - lamp.js's building blocks (AI, saved data, the app's files, the project's other apps), the remote's focus and keys, what the person's own things need from the app around the page, and what each device's browser runs. Read before writing or changing an app's page.
+description: Apps made as a web page Lamp shows on each device - lamp.js's building blocks (AI, saved data, the app's files, the project's other apps), the remote's focus and keys, what the person's own things need from the app around the page, what each device's browser runs, and a web app brought in from elsewhere, which stays as it is. Read before writing or changing an app's page.
 ---
 
 # Web apps
@@ -29,6 +29,32 @@ opening comment for the whole list. What it gives:
   the wish-links skill says how they share data.
 - **Lamp.controllers** and `Lamp.phonePage`: phones on the same Wi‑Fi as controllers or a second screen; the
   phone-controllers skill first.
+
+## A web app brought in
+
+This section is the rule for a web app someone made elsewhere and brought to Lamp: a site opened from GitHub or from
+a folder (index.html at its top, no build step), or a page with no build step made into a Lamp app from a project on
+GitHub (the github-projects skill). A project that's built before it's served (a package.json, a bundler) isn't
+covered here.
+
+It comes in as it is. Lamp's features need nothing from its code: it opens in Lamp's app around the page, is shared
+and put on GitHub with its files as they are, gets its updates from where it came from, and takes a change by opening
+again. So:
+
+- Do only what Lamp needs and what the person asks for: no refactoring, no new layout or file names, no redesign, no
+  framework, no tidying of code that works.
+- Its kind stays what it is: a web app (`make_app_for` with `kind` "app" and `made` "web"), whether it's a tool or a
+  game. Moving it onto Lamp's game runtime or into native code is a conversion, done only when the person asks for
+  that in so many words.
+- No Swift of its own: Sources/Native.swift stays as Lamp wrote it, and the app stays Lamp's ready-made one, unless
+  the person asks for something only the app around the page can reach (their own things, below) or for native code.
+- "I'm on a Mac" or "make it a Mac app" asks for nothing more: Lamp's app around the page already is one.
+- A feature its page uses that Lamp's app around it doesn't support yet (a download, a file picker) is Lamp's
+  limitation, not the app's: say so, and leave its code as it is. Never rewrite the feature, or the app, around it.
+- lamp.js only when a change the person asks for needs Lamp's building blocks, added before its own scripts, with the
+  page still working without it.
+
+APP.md says that it was brought in as it is, so every later turn keeps to this.
 
 ## On the web, without Lamp
 
@@ -93,10 +119,11 @@ turns it into text for `act`. Their comments in lamp.js have the details. The re
 
 A page can't read the person's mail, calendar, contacts, photos or where they are. Where Lamp's app is around the page
 (a Mac, an iPhone or iPad), that app can: register a call in Sources/Native.swift and ask for it from the page with
-`LampNative.call(name, args)`. Elsewhere `LampNative.available` is false and the calls reject, so the page shows
-example content then, never an error. When a web app that's to go on a TV, Android or the Xbox lives on the person's own
-things, say what a page can't reach there; when it needs what only native code does, offer it native (the web-or-native
-skill).
+`LampNative.call(name, args)`, only when the app needs those things (in a web app brought in, only when the person
+asks for them: "A web app brought in", above). Elsewhere `LampNative.available` is false and the calls reject, so the
+page shows example content then, never an error. When a web app that's to go on a TV, Android or the Xbox lives on the
+person's own things, say what a page can't reach there; when it needs what only native code does, offer it native (the
+web-or-native skill), except for a web app brought in, which is made native only when the person asks for that.
 
 ## A remote: focus and keys
 
