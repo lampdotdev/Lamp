@@ -49,6 +49,12 @@ function importsRealityKit(folder) {
       && /^\s*(@\w+\s+)?import\s+RealityKit\b/m.test(readFileSync(join(folder, entry.name), "utf8")));
 }
 
+/**
+ * The newest Lamp app format this lamp reads (`Sharing.formatVersion`, which CLIFilesTests holds it to): a folder in a
+ * newer one was made by a newer Lamp, laid out in a way this lamp may misread.
+ */
+export const FORMAT = 12;
+
 // The kinds Lamp makes that lamp doesn't build or run, in the words a person knows them by (`Platform`'s kinds).
 const ELSEWHERE = {
   iphone: "an iPhone app", universal: "an app for both the Mac and the iPhone", android: "an Android app",
@@ -70,6 +76,7 @@ export function projectOf(given) {
   const owned = ["Package.swift", "build.sh", join("Sources", "LampSupport.swift")];
   const manifest = manifestOf(real);
   if (manifest) {
+    if (Number.isInteger(manifest.format) && manifest.format > FORMAT) throw new Problem(`${real} was made by a newer Lamp than this lamp knows (its format is ${manifest.format}): update lamp, or open it in Lamp's app`);
     const parts = Array.isArray(manifest.parts) ? manifest.parts.length : 0;
     if (parts) throw new Problem(`${real} is a wish of ${parts + 1} apps, and lamp works on one app in a folder: open it in Lamp's app`);
     const kind = typeof manifest.platform === "string" ? manifest.platform : "mac";

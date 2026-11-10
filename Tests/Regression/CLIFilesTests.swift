@@ -118,6 +118,13 @@ final class CLIFilesTests: XCTestCase {
         XCTAssertEqual(identity.appUserModelID, names["appUserModelID"])
     }
 
+    /// The command line refuses a folder in a newer format than it reads, and makes files in it: the same number as Lamp's.
+    func testTheCommandLineReadsLampsFormat() throws {
+        let state = try String(contentsOf: Self.cli.deletingLastPathComponent().appendingPathComponent("state.mjs"), encoding: .utf8)
+        let format = state.range(of: #"export const FORMAT = (\d+);"#, options: .regularExpression).map { state[$0].filter(\.isNumber) }
+        XCTAssertEqual(format, String(Sharing.formatVersion), "cli/state.mjs's FORMAT isn't Sharing.formatVersion: change it, and what lamp reads and makes, with it")
+    }
+
     func testTheCommandLinesControllersAreLamps() throws {
         let copy = Self.cli.appendingPathComponent("lamp-controllers.js")
         if ProcessInfo.processInfo.environment["LAMP_WRITE_CLI_FILES"] == "1" {

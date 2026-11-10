@@ -66,6 +66,7 @@ test("a shared game plays from its link whole, and its secret stays out of its f
   assert.match(sent.url, /\/w\/[A-Za-z0-9]{10}-harbor-racer$/);
   const record = store.records.get(link.id);
   assert.deepEqual([record.name, record.by, record.asks, record.shape], [words.name, words.by, words.asks, 1.7778]);
+  assert.ok(sent.file && record.file?.version >= 1, "the app's own file goes with the link, for anyone to open in Lamp");
   // What the page and the runtime ask for is all there; the app's notes aren't part of the page.
   for (const path of ["index.html", "game.js", "lamp-game.js", "lamp-controllers.js", "lamp-device.js", "lamp-build.js", "lamp.js", "three/three.module.js"]) {
     assert.equal((await played(link.id, 1, path)).status, 200, path);

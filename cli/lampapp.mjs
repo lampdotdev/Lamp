@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSy
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { Problem, manifestOf, projectOf, stateOf } from "./state.mjs";
-import { nameOf, zipOf } from "./share.mjs";
+import { LIMITS, nameOf, zipOf } from "./share.mjs";
 
 // What another Lamp accepts in a file (`Sharing.maxFiles`, `maxUnpackedBytes`, `maxArchiveBytes`).
 export const MAX_FILES = 2000, MAX_UNPACKED = 256 * 1024 * 1024, MAX_ARCHIVE = 64 * 1024 * 1024;
@@ -106,6 +106,77 @@ export function isLicenceFile(path) {
     && ext.length <= 10 && /^[a-z0-9]*$/.test(ext) && !["sh", "command", "app", "js", "py", "rb", "pl", "swift", "html", "htm"].includes(ext);
 }
 
+/**
+ * Whether a license expression gives no license (`ShareCheck.licence` is `.none`): nothing said, or an expression that
+ * isn't one (SPDX ids joined by AND, OR and WITH, in brackets as needed). Any id, known or not, is a license its
+ * author chose.
+ */
+export function noLicense(expression) {
+  const text = String(expression ?? "").trim();
+  if (!text) return true;
+  const tokens = text.match(/[()]|[^\s()]+/g) ?? [];
+  let at = 0;
+  const word = (token) => token?.toUpperCase();
+  const term = () => {
+    const token = tokens[at++];
+    if (token === undefined) return false;
+    if (token === "(") { if (!or() || tokens[at] !== ")") return false; at++; }
+    else if (["AND", "OR", "WITH", ")"].includes(word(token))) return false;
+    // An exception only loosens a license: the license itself is what's read.
+    while (word(tokens[at]) === "WITH") { at++; const exception = tokens[at++]; if (exception === undefined || exception === "(" || exception === ")") return false; }
+    return true;
+  };
+  const and = () => { if (!term()) return false; while (word(tokens[at]) === "AND") { at++; if (!term()) return false; } return true; };
+  const or = () => { if (!and()) return false; while (word(tokens[at]) === "OR") { at++; if (!and()) return false; } return true; };
+  return !(or() && at === tokens.length);
+}
+
+/**
+ * What an app declares, as Lamp reads it (`Template.Capabilities.checked`): only what passes each field's check, and
+ * null where nothing does, so a file carries nothing Lamp wouldn't write into an app's Info.plist.
+ */
+export function checkedCapabilities(said) {
+  if (!said || typeof said !== "object" || Array.isArray(said)) return null;
+  const list = (value) => (Array.isArray(value) ? value.filter((item) => typeof item === "string") : []);
+  const modes = ["audio", "location", "fetch", "processing", "remote-notification", "bluetooth-central", "bluetooth-peripheral", "external-accessory", "nearby-interaction", "voip"];
+  const kinds = [];
+  for (const entry of list(said.opens)) {
+    let name = entry.trim().toLowerCase();
+    if (name.startsWith(".") && name.length > 1) name = name.slice(1);
+    const plain = /^[a-z0-9]{1,16}$/.test(name), identifier = name.includes(".") && /^[a-z0-9][a-z0-9.-]{2,80}$/.test(name);
+    if ((plain || identifier) && !kinds.includes(name) && kinds.length < 40) kinds.push(name);
+  }
+  const reason = typeof said.localNetwork === "string" ? said.localNetwork.trim() : "";
+  const checked = {
+    ...Object.fromEntries(["healthkit", "nfc", "siri", "background", "icloud", "weather", "homekit", "timeSensitive", "game"].filter((key) => said[key] === true).map((key) => [key, true])),
+    backgroundModes: list(said.backgroundModes).filter((mode) => modes.includes(mode)),
+    bonjourServices: list(said.bonjourServices).filter((service) => /^_[A-Za-z0-9-]{1,15}\._(tcp|udp)$/.test(service)),
+    backgroundTasks: list(said.backgroundTasks).filter((task) => /^[A-Za-z0-9._-]+$/.test(task)),
+    opens: kinds,
+    ...(reason && [...reason].length <= 150 && /^[\p{L}\p{N} .,;:!?'’()–-]+$/u.test(reason) ? { localNetwork: reason } : {}),
+  };
+  for (const key of ["backgroundModes", "bonjourServices", "backgroundTasks", "opens"]) if (!checked[key].length) delete checked[key];
+  return Object.keys(checked).length ? checked : null;
+}
+
+/**
+ * What's new in each release, for the app's What's New in the copies made from it (`WishReleases.forApp`): those Lamp's
+ * app recorded for a folder it made, those a file brought it, and those a file lamp unpacked brought (its releases.json),
+ * newest first, each once, checked as the site checks them.
+ */
+function releasesOf(app) {
+  const read = (path) => { try { const list = JSON.parse(readFileSync(path, "utf8")); return Array.isArray(list) ? list : []; } catch { return []; } };
+  const tidy = (line) => String(line).split(/\s+/).join(" ").replace(/^[•\-*· ]+|[•\-*· ]+$/g, "").slice(0, LIMITS.releaseLine);
+  const seen = new Set(), soon = Date.now() + 86_400_000;
+  return [...read(join(app, ".lamp", "releases.json")), ...read(join(app, ".lamp", "releases-received.json")), ...read(join(app, "releases.json"))]
+    .map((entry) => ({ date: new Date(entry?.date), lines: (Array.isArray(entry?.lines) ? entry.lines : []).flatMap((line) => String(line).split(/\r?\n/)).map(tidy).filter(Boolean).slice(0, LIMITS.releaseLines) }))
+    .filter((entry) => entry.lines.length && !Number.isNaN(entry.date.getTime()) && entry.date.getTime() <= soon)
+    .sort((a, b) => b.date - a.date)
+    .filter((entry) => { const key = `${entry.date.getTime()} ${entry.lines.join("\n")}`; return !seen.has(key) && seen.add(key); })
+    .slice(0, LIMITS.releases)
+    .map((entry) => ({ date: entry.date.toISOString().replace(/\.\d+Z$/, "Z"), lines: entry.lines }));
+}
+
 /** Every regular file under `dir`, by its path from `dir` (`prefix` before it), none hidden unless `hidden` lets it, no link followed. */
 function filesUnder(dir, prefix = "", { hidden = () => false, skip = () => false } = {}) {
   const found = [];
@@ -158,7 +229,7 @@ export function exportApp(given, { anyway = false } = {}) {
     const gone = terms(source).find((path) => !existsSync(join(app, path)));
     if (gone) throw new Problem(`${name} can't be shared: the license of ${source.name} is missing from it. Put ${gone} back.`);
   }
-  const unlicensed = upstream.filter((source) => !source.license);
+  const unlicensed = upstream.filter((source) => noLicense(source.license));
   if (unlicensed.length && !anyway) {
     throw new Problem(`${name} uses work that came with no license (${unlicensed.map((source) => source.author ? `${source.name} by ${source.author}` : source.name).join(", ")}). Ask the person whether they're comfortable sharing it; --anyway shares it all the same.`);
   }
@@ -205,13 +276,18 @@ export function exportApp(given, { anyway = false } = {}) {
   if (existsSync(join(app, "APP.md"))) files.set("APP.md", from("APP.md"));
   // What the app declares; the Lamp that opens the file checks each of it again as it reads it.
   let declares = false;
-  try { const said = JSON.parse(readFileSync(join(app, "capabilities.json"), "utf8")); if (said && typeof said === "object" && !Array.isArray(said) && Object.keys(said).length) { files.set("capabilities.json", Buffer.from(JSON.stringify(said, null, 2))); declares = true; } } catch {}
+  try {
+    const checked = checkedCapabilities(JSON.parse(readFileSync(join(app, "capabilities.json"), "utf8")));
+    if (checked) { files.set("capabilities.json", Buffer.from(JSON.stringify(sortedKeys(checked), null, 2))); declares = true; }
+  } catch {}
   // Its icon's design, and the artwork drawn for it where the folder keeps it at its top (a file Lamp made does).
   // icon.png at the top of a page lamp made is the page's, which went with it.
   for (const icon of ["icon.json", "icon-glass.json", "icon-art.png", "icon.png"]) {
     if (icon === "icon.png" && project.kind === "page" && !project.lamps && !wishFolder) continue;
     if (existsSync(join(app, icon))) files.set(icon, from(icon));
   }
+  const releases = releasesOf(app);
+  if (releases.length) files.set("releases.json", Buffer.from(JSON.stringify(releases, null, 2)));
 
   // Whoever opens the file is remixing this app: it's added to the chain its credits carry, as one link if it's
   // already the last (`Credits.remixed`).

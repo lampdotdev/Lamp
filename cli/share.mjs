@@ -12,7 +12,8 @@ import { deflateRawSync } from "node:zlib";
 import { Problem, stateOf } from "./state.mjs";
 import { ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS, LIBRARIES } from "./dev.mjs";
 import { LIMITS, FILE_LIMITS, PAGE_LIMITS } from "../site/lib/shared-wishes.js";
-import { ideasOf, publishLink, removeIdea, removeLink, sendFile, siteOrigin } from "./link.mjs";
+import { ideasOf, publishLink, removeFile, removeIdea, removeLink, sendFile, siteOrigin } from "./link.mjs";
+import { exportApp } from "./lampapp.mjs";
 
 export { siteOrigin };
 
@@ -124,7 +125,10 @@ const megabytes = (bytes) => `${(bytes / 1_000_000).toFixed(bytes < 10_000_000 ?
  * are what the link says (`name`, `words`, and `line`, `by` and `asks` when given), `picture` a PNG or JPEG of the
  * page or null, `shape` "fill" or the page's width over its height. Answers the link and what went up.
  */
-export async function share({ layout, words, picture = null, shape = "fill", site = siteOrigin(), said = () => {} }) {
+export async function share({ layout, words, picture = null, shape = "fill", site = siteOrigin(), said = () => {}, file = true, anyway = false }) {
+  // The app's own file goes with the link, as Lamp's Share Link sends it, so whoever follows the link can open it in
+  // Lamp too: made first, with Share…'s checks, so a page that can't be shared (a key in it) puts nothing up.
+  const app = file ? exportApp(layout.folder, { anyway }) : null;
   const files = pageFiles(layout);
   const unpacked = files.reduce((total, [, bytes]) => total + bytes.length, 0);
   if (!files.some(([path]) => path === "index.html")) throw new Problem("the page has no index.html at its top");
@@ -146,10 +150,19 @@ export async function share({ layout, words, picture = null, shape = "fill", sit
   // Kept before the page goes up: a link whose page didn't make it is still this folder's to send again or take down.
   writeLink(layout.folder, link);
 
+  // The file, or none: a link that carried one and shouldn't now has it taken away (and its page with it, sent next).
+  if (app) {
+    link.file = true;
+    writeLink(layout.folder, link);
+    await sendFile({ site, link, bytes: app.bytes, said });
+  } else if (earlier?.file) {
+    await removeFile({ site, link });
+    link.file = false;
+  }
   const version = await sendFile({ site, link, bytes: zip, page: true, said });
   link = { ...link, version, shared: new Date().toISOString() };
   writeLink(layout.folder, link);
-  return { url: link.url, version, files: files.length, bytes: zip.length, picture: !!picture };
+  return { url: link.url, version, files: files.length, bytes: zip.length, picture: !!picture, file: !!app };
 }
 
 /** Takes the folder's link down, with its page and the ideas sent to it. */

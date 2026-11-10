@@ -696,17 +696,23 @@ extension Store {
         return (entry, project)
     }
 
+    /// Why a folder isn't one Lamp has, with `taken_on: false` among the facts, so a client can tell it from any other
+    /// refusal (lamp's command line then runs the app itself again).
     private func outsideRefusal(_ path: String) -> OutsideWork.Answer {
-        guard let now = OutsideWork.identity(of: path) else {
-            return .refused("There's no folder at \(path) now. If it moved, call open_project with where it is.")
+        var answer: OutsideWork.Answer
+        if let now = OutsideWork.identity(of: path) {
+            if let entry = OutsideState.shared.adopted.first(where: { $0.repo == now.real }) {
+                answer = entry.device != now.device || entry.inode != now.inode
+                    ? .refused("The folder at \(now.real) isn't the one Lamp took on: another was put in its place. Call open_project to take this one on.")
+                    : .refused("Lamp's copy of this app is gone. Call open_project again.")
+            } else {
+                answer = .refused("Lamp hasn't taken on \(now.real). Call open_project first.")
+            }
+        } else {
+            answer = .refused("There's no folder at \(path) now. If it moved, call open_project with where it is.")
         }
-        guard let entry = OutsideState.shared.adopted.first(where: { $0.repo == now.real }) else {
-            return .refused("Lamp hasn't taken on \(now.real). Call open_project first.")
-        }
-        if entry.device != now.device || entry.inode != now.inode {
-            return .refused("The folder at \(now.real) isn't the one Lamp took on: another was put in its place. Call open_project to take this one on.")
-        }
-        return .refused("Lamp's copy of this app is gone. Call open_project again.")
+        answer.facts["taken_on"] = false
+        return answer
     }
 
     // MARK: open_project
