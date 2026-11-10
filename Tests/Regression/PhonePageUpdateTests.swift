@@ -262,6 +262,9 @@ final class PhonePagePublishingTests: XCTestCase {
         defer { asking.cancel() }
         let turn = Store.Turn()
         turn.agent = Process()
+        // Made before the clock starts: the store's first start does work of its own that takes longer the more wishes
+        // this Mac has, and none of it is the wait measured here.
+        _ = await MainActor.run { Store.shared }
         func timed() async -> TimeInterval {
             let began = Date()
             await Store.shared.awaitStep(of: game, in: turn)
