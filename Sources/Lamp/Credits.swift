@@ -337,9 +337,11 @@ struct Credits: Codable, Equatable {
             && !["sh", "command", "app", "js", "py", "rb", "pl", "swift", "html", "htm"].contains(ext)
     }
 
+    /// Lamp's own folder in an app (its versions, its chat, what an update's copy reads, someone else's files among it)
+    /// is never what a credit names, so nothing in it goes with a shared app as a license.
     static func validPath(_ value: String?) -> String? {
         guard let value = text(value), !value.hasPrefix("/"), !value.hasPrefix("~"),
-              !value.split(separator: "/").contains(where: { $0 == ".." || $0 == "." }) else { return nil }
+              !value.split(separator: "/").contains(where: { $0 == ".." || $0 == "." || $0 == ".lamp" }) else { return nil }
         return value
     }
 }

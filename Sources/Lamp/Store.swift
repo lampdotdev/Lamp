@@ -4511,14 +4511,21 @@ final class Store: ObservableObject {
                 return
             }
             if await Versions.hasUnsavedChanges(project) {
-                guard await Versions.save(project, message: pending.prepared != nil ? "Updated" : "Updated from a shared file") else {
+                // Part of someone's suggested change is one version named for it, which Undo takes back whole.
+                let message = pending.prepared?.suggestion.map { "Brought in part of @\($0.login)'s changes" }
+                    ?? (pending.prepared != nil ? "Updated" : "Updated from a shared file")
+                guard await Versions.save(project, message: message) else {
                     let iconBack = await putBack()
                     await followRestored(project)
                     setApps(project, appsBefore)
                     log(project, .error, Self.updateFailed + (iconBack ? "" : Self.updateChangedIcon))
                     return
                 }
-                Versions.rememberUpdate(project)
+                if let suggestion = pending.prepared?.suggestion {
+                    Versions.rememberPartBroughtIn(project, from: suggestion.login)
+                } else {
+                    Versions.rememberUpdate(project)
+                }
                 versionsRevision += 1
             } else if !newArtwork {
                 log(project, .status, "You already have this version.")
@@ -4526,7 +4533,7 @@ final class Store: ObservableObject {
             }
             // In place: the copy it was prepared in has done its work.
             if let job = pending.prepared {
-                updateChecks[AppUpdates.key(job.url)]?.tip = job.target
+                if job.suggestion == nil { updateChecks[AppUpdates.key(job.url)]?.tip = job.target }
                 if let copy = pending.copy { await discardPreparedCopy(copy, movingQueuedTo: project) }
             }
             updateApplied(project)
@@ -14256,13 +14263,18 @@ final class Store: ObservableObject {
     /// The type a page's file is served as: the list a game's own phone page is served by too (`PhonePageServer`).
     nonisolated static func pageType(_ ext: String) -> String { PhonePageServer.type(for: ext) }
 
+    /// Every route the gateway answers: pi's tools (`Agent.piRoutes`), and the AI, MCP and apps' own. Anything else is
+    /// Not found.
+    nonisolated static let gatewayPaths: Set<String> = Set(Agent.piRoutes.values).union([
+        "/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/setup", "/ai/computer", "/agent/computer", "/agent/approve",
+        "/agent/versions/name", "/agent/versions/restore", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/reload", "/app/credits", "/app/releases", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state", "/app/page/saved"
+    ])
+
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
-        let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/setup", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/icon", "/agent/connectors", "/agent/lampify", "/agent/shared", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/reload", "/app/credits", "/app/releases", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state", "/app/page/saved"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
-        guard request.method == "POST", paths.contains(route) else {
+        guard request.method == "POST", Self.gatewayPaths.contains(route) else {
             return (404, ["error": "Not found"])
         }
         // Only requests addressed to this Mac: a web page that resolved its own name to 127.0.0.1 (DNS

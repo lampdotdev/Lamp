@@ -411,7 +411,8 @@ struct SuggestionDetail: View {
 
     @ViewBuilder private var mainButton: some View {
         if case .open = standing, !record.isHidden(request) {
-            Button("Bring Into My App") { store.bringInSuggestion(project, number: request.number) }
+            // The wish's chat, which says what the change does first; the person then says what they want of it.
+            Button("Bring Into My App") { store.talkAboutSuggestion(project, number: request.number) }
                 .buttonStyle(PaperButtonStyle(.ink, height: 34)).fixedSize()
                 .disabled(busy)
         }
