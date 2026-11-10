@@ -180,6 +180,10 @@ Only when the person asks: a link is public, and anyone who has it can play the 
   `--by "Their Name"` who it's by: only a name the person gave you to show. A page that's logging errors isn't shared
   until they're put right.
 - Again, after changes, it sends the page as it is now to the same link, with the same words unless you give new ones.
+- An app of Lamp's own (its folder is in Lamp's, or a link to it) is shared by Lamp, which must be open, as its Share
+  Link card does: the same link it has, filled as the card fills itself (its words, the questions and what's new Lamp
+  writes, its file, its GitHub release). `{{lamp}} share --preview` shows what would go; give `--line`, `--by`,
+  `--asks "a|b"` or `--notes "What's new|And more"` only to change what it says, and show the person the preview first.
 - `{{lamp}} ideas` lists what people playing it have sent. Once one is in the game and the game shared again,
   `{{lamp}} ideas in <number>` says so, and whoever asked to hear is written to; `{{lamp}} ideas dismiss <number>` lets
   one go.

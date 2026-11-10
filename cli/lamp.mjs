@@ -23,7 +23,7 @@ import { Problem, RESOURCES, layoutOf, manifestOf, projectOf, stateOf, running, 
 import { macActions, serveMac, writeMacStarter } from "./mac.mjs";
 import { exportApp, unpack } from "./lampapp.mjs";
 import { updateNotice } from "./update.mjs";
-import { editionName, giveTo, givenTo, keepPictures, reachLamp, takeBack } from "./outside.mjs";
+import { editionName, giveTo, givenTo, keepPictures, lampOwning, reachLamp, takeBack } from "./outside.mjs";
 import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS } from "./dev.mjs";
 import { allSkills } from "./skills.mjs";
 import { share, unshare, ideas, finishIdea, readLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
@@ -108,6 +108,11 @@ Mac app Lamp made in Swift, built and run on this Mac.
       person asks. Again, it sends the page as it is now to the same link, with the same words unless new ones are given.
       Its app file goes with it (as lamp export makes it), so anyone can open it in Lamp too; --no-file leaves it out.
       --anyway shares a page that logged errors, or uses work that came with no license.
+      An app of Lamp's (its folder is in Lamp's own, or a link to it) is shared by Lamp's app, which must be running,
+      as its Share Link card shares it: the card's own words, the questions and what's new Lamp writes, the app's
+      file and its GitHub release, with --line, --by, --asks "a|b", --notes "What's new|And more", --no-file,
+      --no-github and --put-on-github in their place. --preview says what would go and sends nothing. Its link
+      stays Lamp's; --new-link has lamp make one of its own instead.
   lamp unshare [folder]   Take the link down.
   lamp ideas [folder] [in <n> | dismiss <n>]
       The ideas people playing the link have sent. "in" says one is in the game now (whoever asked to hear is
@@ -823,7 +828,37 @@ async function main() {
   }
 
   if (command === "share") {
-    const { options, rest } = parse(args, ["name", "words", "line", "by", "asks", "shape"]);
+    const { options, rest } = parse(args, ["name", "words", "line", "by", "asks", "shape", "notes"]);
+    // An app of Lamp's, with no link of lamp's own: shared by Lamp's app, as its Share Link card shares it, filled as the
+    // card fills itself (its last words, the questions and what's new Lamp writes, its file, its GitHub), with what's
+    // given here in their place. Its link's secret stays in Lamp.
+    // By its folder alone: Lamp's app shares kinds lamp doesn't run itself (an iPhone app, a wish of several).
+    const project = { folder: (() => { const given = resolve(rest[0] ?? "."); try { return realpathSync(given); } catch { return given; } })() };
+    if (!readLink(project.folder) && !options["new-link"]) {
+      const owner = lampOwning(project.folder);
+      const lamp = await reachLamp(owner ? [owner] : undefined);
+      if (lamp) {
+        const list = (text) => String(text).split("|").map((item) => item.trim()).filter(Boolean);
+        const given = {
+          path: project.folder, ...(options.preview ? { preview: true } : {}),
+          ...(options.by !== undefined ? { by: String(options.by) } : {}),
+          ...(options.line ?? options.words) !== undefined ? { line: String(options.line ?? options.words) } : {},
+          ...(options.asks !== undefined ? { asks: list(options.asks) } : {}), ...(options.notes !== undefined ? { notes: list(options.notes) } : {}),
+          ...(options["no-file"] ? { file: false } : {}), ...(options["no-github"] ? { github: false } : {}),
+          ...(options["put-on-github"] ? { put_on_github: true } : {}),
+        };
+        if (!options.preview) console.log(`Sharing through ${lamp.name}, as its Share Link does…`);
+        let answer;
+        try { answer = await lamp.call("share_link", given); } finally { lamp.close(); }
+        if (answer.facts?.taken_on !== false) {
+          console.log(answer.words);
+          if (answer.failed) process.exitCode = 1;
+          return;
+        }
+      } else if (owner) {
+        throw new Problem(`This is an app of ${editionName(owner)}'s, which shares it with its own link: open ${editionName(owner)}, then run this again (or --new-link to make lamp a link of its own).`);
+      }
+    }
     const layout = layoutOf(rest[0] ?? ".");
     const before = readLink(layout.folder)?.site === siteOrigin() ? readLink(layout.folder) : null;
     // The link's words: what's given now, else what it went out with before. Its name, where nothing says, is the page's.

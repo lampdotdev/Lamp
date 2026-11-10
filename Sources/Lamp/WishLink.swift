@@ -417,7 +417,13 @@ enum WishLink {
 
     /// Opens the card in its own window, or brings that window forward.
     func open(_ project: LampProject) {
-        defer { WishLinkWindows.shared.show(project) }
+        prepare(project)
+        WishLinkWindows.shared.show(project)
+    }
+
+    /// Fills the card as it opens, with no window: what the link said last, Lamp's questions and what's new, and where
+    /// the release goes on GitHub. The window shows this card; lamp's command line shares from it (`share_link`).
+    func prepare(_ project: LampProject) {
         guard cards[project.id] == nil else { return }
         let shared = WishLink.kept(for: project)
         let picture = WishLink.picture(of: project)
@@ -599,6 +605,13 @@ enum WishLink {
         if values.putOnGitHub, !before.putOnGitHub, cards[project.id]?.firstPush?.staged == nil { checkFirstPush(project) }
         cards[project.id]?.copied = false
         if case .failed = cards[project.id]?.stage { cards[project.id]?.stage = .editing }
+    }
+
+    /// Whether what the card writes and finds as it opens is in (`prepare`): the questions, what's new, and GitHub.
+    func settled(_ project: LampProject) -> Bool {
+        guard let card = cards[project.id] else { return true }
+        return !card.writingNotes && !card.writingAsks && card.gitHubFinding == nil
+            && (!card.values.putOnGitHub || card.firstPush?.stage != .preparing)
     }
 
     func close(_ project: LampProject) {

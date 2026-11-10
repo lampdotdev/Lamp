@@ -434,7 +434,10 @@ Lamp starts no process for it and sees none of its commands, so its shell is und
   Lamp's chat. Once the person takes the app back, use_app is off for the folder until the agent's next apply (Lamp sees
   none of their messages), and an app that presses on the person's devices (`DevicePermissions.useNeedsDevice`) is
   used only on a device named in `device` that the person allowed Always on Lamp's card ("Allow once" lasts until
-  their next chat message, which an outside agent's work isn't part of). `close_app` quits the app as Lamp's Stop does.
+  their next chat message, which an outside agent's work isn't part of). `close_app` quits the app as Lamp's Stop does. `share_link` shares any of Lamp's apps by its folder (a desk app's
+  own, not only one taken on) as the Share Link card does without its window: `WishLinkCards.prepare` fills the card
+  as opening it does, what the call gives goes in place of the card's own, and `share` sends it; `preview` answers
+  what it would send.
   A refusal for a folder Lamp doesn't have carries `taken_on: false`. An apply refused because Lamp started again carries `restarted` in its facts, so a client can look and
   apply again.
 - **Sharing.** Both tools share only a known snapshot: the folder must read as it did at the last apply that went
