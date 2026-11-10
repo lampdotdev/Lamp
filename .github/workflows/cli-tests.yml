@@ -6,6 +6,8 @@ on:
       - "cli/**"
       - "site/lib/**"
       - "Resources/GameKit/**"
+      - "Resources/Devices/**"
+      - "Resources/WebHost/**"
       - ".github/workflows/cli-tests.yml"
   push:
     branches: [main]
@@ -13,6 +15,8 @@ on:
       - "cli/**"
       - "site/lib/**"
       - "Resources/GameKit/**"
+      - "Resources/Devices/**"
+      - "Resources/WebHost/**"
       - ".github/workflows/cli-tests.yml"
   workflow_dispatch:
 

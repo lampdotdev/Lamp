@@ -41,8 +41,12 @@ const PAGE_SCRIPT = readFileSync(join(HERE, "page.js"), "utf8");
 // writes at each build from its own code. A page whose folder has none is given it as that code writes it, when it has
 // been written out for the command line (scripts/cli-files.sh, cli/lamps/lamp.js), and else a stand-in, so the page loads.
 const LAMP_JS_STAND_IN = "// lamp's stand-in for lamp.js: Lamp's building blocks for a page aren't written out for the command line yet (scripts/cli-files.sh).\n";
-export function lampJS() {
-  try { return readFileSync(join(HERE, "lamps", "lamp.js"), "utf8"); } catch { return LAMP_JS_STAND_IN; }
+export function lampJS(game = false) {
+  // A game's is its own (`GameKit.lampJS`): without a TV's remote, which would take the keys a game reads itself.
+  for (const name of game ? ["lamp-for-games.js", "lamp.js"] : ["lamp.js"]) {
+    try { return readFileSync(join(HERE, "lamps", name), "utf8"); } catch {}
+  }
+  return LAMP_JS_STAND_IN;
 }
 // The controllers a game names buttons for, which Lamp's app writes beside the page at every build and the game
 // runtime can't load without: Lamp's list as a file (a test keeps it Lamp's, `CLIFilesTests`).
@@ -667,7 +671,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       if (!layout.game) return missing();
       if (name === DEVICE_FILE) return send(200, TYPES[".js"], ANY_BROWSER);
       if (name === BUILD_FILE) return send(200, TYPES[".js"], `export default "${buildName()}";\n`);
-      if (name === "lamp.js") return send(200, TYPES[".js"], lampJS());
+      if (name === "lamp.js") return send(200, TYPES[".js"], lampJS(layout.game));
       const own = lampsCopy(name);
       try { info = own ? await stat(own) : null; } catch { info = null; }
       if (!info) return missing();

@@ -171,6 +171,24 @@ Only when the person asks: a link is public, and anyone who has it can play the 
 
 Tell the person the link, and that it's public.
 
+## On the person's Xbox
+
+A page goes on an Xbox in Developer Mode, in Lamp's own host for the console's browser: the same files, played with
+the console's controller. Only when the person asks for it there, and only on a device they set up.
+
+- `{{lamp}} devices` lists the devices set up with lamp and those found on the network. One only found may not be
+  theirs: never put anything on it.
+- Setting one up asks for the console's Device Portal password, which only the person types. Ask them to run
+  `{{lamp}} devices add` in a terminal themselves; never ask for the password, and never type one.
+- `{{lamp}} open --on xbox` packages the page as it is now, installs it and opens it on the console, in place of the
+  copy that was there. A change isn't live there: put the page on again once it works on this computer.
+- `{{lamp}} look --on xbox` is the console's screen as a picture, whether the app is open there, and what it logged
+  there. A game on Lamp's runtime logs how many frames a second it gets: that, never this computer's, says how it
+  runs on the console.
+- You can't press the controller there. Try the game in its window here (`stick`, `button`), where it's the same
+  code, and tell the person what's left for them to try with the controller in their hands.
+- `{{lamp}} stop --on xbox` ends it, and `{{lamp}} remove --on xbox` takes it off the console.
+
 ## Lamp's skills
 
 An app Lamp made (its page loads `lamp.js`) is built from Lamp's own building blocks, and Lamp has guidance for each
@@ -196,5 +214,5 @@ A plain site, on neither `lamp.js` nor Lamp's runtime, uses none of them: skip t
 - Lamp's own files in the folder are rewritten by Lamp, so read them and never edit them: `lamp.js`, `lamp-game.js`,
   `lamp-phaser.js`, `lamp-controllers.js`, and the `three/` and `phaser/` folders.
 - The page's whole log is the file `look` names.
-- lamp runs the page in a browser on this computer. Phones, TVs and consoles, and whatever needs Lamp's Mac app
-  around the page, aren't here: say so rather than working around it.
+- lamp runs the page in a browser on this computer, and puts it on an Xbox ("On the person's Xbox"). Phones and TVs,
+  and whatever needs Lamp's Mac app around the page, aren't here: say so rather than working around it.

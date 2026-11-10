@@ -24,6 +24,8 @@ with an `index.html`; without one, the folder you're in.
 | `lamp share --words "…"` | Puts the page on lamp.dev: anyone with the link plays it there and can send an idea. Again, it sends the page as it is now to the same link. |
 | `lamp ideas [in <n> \| dismiss <n>]` | The ideas people playing the link have sent, and saying what became of one. |
 | `lamp unshare` | Takes the link down. |
+| `lamp devices [add \| forget <name>]` | The person's devices lamp puts a page on (an Xbox in Developer Mode): those set up and those found on the network. `add` sets one up, a step at a time. |
+| `lamp open --on xbox` | Packages the page, installs it on the device and opens it there. `lamp look --on xbox` is the device's screen and the app's log there, `lamp stop --on xbox` ends it, and `lamp remove --on xbox` takes it off. |
 | `lamp setup [--remove]` | Teaches Claude Code and Codex on this computer to work this way: a skill for each. |
 | `lamp guide` | What that skill says, for any other agent. |
 | `lamp blocks [Name]` | Lamp's building blocks for a Mac app, each with what it's for, or one in full: read from the app's own `Sources/LampSupport.swift`, whose comments say how each is used. |
@@ -64,7 +66,7 @@ What a game's folder lacks all the same, the server gives it:
 | `lamp-device.js`, `lamp-build.js` | Made by the server: the device is a browser on any device, as a page published to the web is given, and the build is named for the files as they are. |
 | `lamp-controllers.js` | `cli/lamps/lamp-controllers.js`, the list of controllers as Lamp writes it (`Controllers.pageJS`). `CLIFilesTests` fails when the two differ, and writes the copy again when run with `LAMP_WRITE_CLI_FILES=1`. The game runtime can't load without it. |
 | `three/`, `phaser/`, `rapier/` | Lamp's copies (`Resources/WebLibraries`), for a library the page asks for and the folder has none of. |
-| `lamp.js` | Lamp's building blocks for a page (saved data, the app's files, AI through Lamp's app), as Lamp's own code writes them: `scripts/cli-files.sh` writes the file out (`cli/lamps/lamp.js`, not committed, since it changes often), and without it a stand-in that holds nothing. What a block asks of Lamp's app as the page runs (its AI) isn't answered here. |
+| `lamp.js` | Lamp's building blocks for a page (saved data, the app's files, AI through Lamp's app), as Lamp's own code writes them: `scripts/cli-files.sh` writes the file out (`cli/lamps/lamp.js`, and `lamp-for-games.js` as a game is given it, without a TV's remote; not committed, since they change often), and without it a stand-in that holds nothing. What a block asks of Lamp's app as the page runs (its AI) isn't answered here. |
 
 A file the page asks for that neither the folder nor Lamp has is logged as an error, since a module that imports one
 never runs and the page can't say so itself.
@@ -171,6 +173,43 @@ of the link's own.
 - **`LAMP_SITE`** names another site to share to, for trying this against a copy of the site (`npm run dev` in
   `site/` keeps links in memory). The tests run against the site's handlers the same way, and never reach lamp.dev.
 
+## Devices
+
+A page goes on one of the person's devices through the device's integration, the same file Lamp's app reads
+(`Resources/Devices/*.json`): how the device is found, its setup steps, and the requests that install, open, picture
+and remove an app. Nothing in one is code: `cli/devices.mjs` makes each request itself, as `IntegrationRunner` does in
+Lamp's app, so a change to an integration reaches both. An Xbox is the only device so far (`takesPages`): the one
+whose host for a page lamp packages for.
+
+- **Finding** is one SSDP search of the home network, with each answer read as its integration says (`look`). A
+  device found is only shown; it's kept once a setup step has passed on it, and only a kept one is ever sent anything.
+- **Setting up** (`lamp devices add`) takes the device through its integration's steps in order. What a step asks the
+  person to type (an Xbox's Device Portal password) is read from the terminal without being shown, so an agent can't
+  give it: run without a terminal, the command says the person runs it themselves.
+- **The guards** are `DeviceHTTP`'s and `DeviceTLS`'s: a request goes only to the address the device was found at,
+  which must be on the home network and never this computer; no redirect is followed; over HTTPS the device's own
+  certificate is kept the first time, per port, and another refused from then on unless the device's own root, read
+  over that first connection, signed it (an Xbox makes itself a new certificate at each restart); and the password
+  goes only to a device whose certificate is kept, in answer to the device's own request for it.
+- **The package** (`cli/msix.mjs`) is `MSIX.swift` in Node: the manifest, the block map, the content types, the
+  Zip64 layout and the Authenticode signature, under a key and certificate of lamp's own, which the console installs
+  beside the package. `CLIFilesTests` keeps one small package's manifest and signature as Lamp's code makes them
+  (`cli/tests/fixtures/msix`, written by `scripts/cli-files.sh` under a key made for that alone), and
+  `cli/tests/msix.test.mjs` makes the same package and compares: the signature signs the hashes of every record, the
+  directory, the block map and the content types, so one that matches says the whole package does.
+- **What's in it** (`cli/place.mjs`) is Lamp's web host for the console (`Resources/WebHost`, as it ships), and under
+  `Web/` the page as `lamp share` gathers it, with `lamp-device.js` saying it's on an Xbox (the integration's
+  `input`, as `GamePage.descriptor` writes it). A page with `lamp-game.js`, or whose folder's `capabilities.json` says
+  `"game": true`, is installed as a game, which the console gives more memory and its whole GPU.
+- **Installing** follows `DeviceApps.install`: the copy there is ended, the new one sent and waited for, then
+  launched until the console lists it running, since a console only just done installing refuses for a while. Each
+  package is a newer version than the last, so it replaces it.
+- **Looking** (`lamp look --on xbox`) is the bridge's `look` and `log`: the console's screen, whatever is on it, and
+  the log Lamp's host keeps of the page's console there.
+- **Not here yet:** where Lamp is isn't written into the page's `lamp.js` (`DeviceSupport.fill`), so its AI isn't
+  answered on the console; a game's phone controllers; a wish's other apps; and the test run a device's setup
+  offers in Lamp's app.
+
 ## Where things are kept
 
 - **Nothing in a page's folder.** lamp reads the folder and never writes in it (`lamp new` and `lamp init` aside,
@@ -178,7 +217,11 @@ of the link's own.
   lamp's is committed or published with it, and a folder Lamp's app is running too keeps its own log.
 - **Everything lamp keeps** (the page's log, which `lamp look` names; the browser's files, so a game's saves last
   from one run to the next; the last few pictures; which server is running) is in
-  `~/.lamp/dev/<folder's name>-<hash>/`. `LAMP_DEV_HOME` moves it.
+  `~/.lamp/dev/<folder's name>-<hash>/`. `LAMP_DEV_HOME` moves it. What lamp made of the app for a device (its
+  package, and which version the device has) is in `device/` there.
+- **The person's devices** are in `~/.lamp/devices/` (`LAMP_DEVICES_HOME` moves it), readable only by them: each
+  device's record, its kept certificates and what was typed for it, and lamp's key for signing packages. They aren't
+  Lamp's app's: a device set up in one is set up again in the other.
 - **The port** is the folder's own, from its path (4400 to 4899), or the next free one, so two apps run side by side.
   A folder keeps its port from run to run, since a game's saves belong to the address.
 
@@ -191,8 +234,8 @@ can read.
 
 ## What it doesn't do yet
 
-Phones, TVs and consoles as places to run; an app's AI, `lamp.js`'s building blocks for a page and a game's phone
-controllers; and putting a change into a Mac app without opening it again.
+Phones and TVs as places to run; an app's AI and a game's phone controllers; and putting a change into a Mac app
+without opening it again.
 
 ## Tests
 

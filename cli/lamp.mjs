@@ -10,6 +10,7 @@
 //   lamp use [folder] …   try it: a key, a click, some typing
 //   lamp stop [folder]    stop running it
 //   lamp share [folder]   a link on lamp.dev to play it, and lamp ideas for what people send back
+//   lamp devices          the person's devices; lamp open --on xbox puts a page on one
 //   lamp setup            teach the coding agents on this computer to work this way
 //   lamp skills           Lamp's guidance for each kind of work; lamp skill <name> reads one
 
@@ -23,6 +24,8 @@ import { serveMac } from "./mac.mjs";
 import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS } from "./dev.mjs";
 import { allSkills } from "./skills.mjs";
 import { share, unshare, ideas, finishIdea, readLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
+import { Runner, allKept, fields, forget, integrationOf, isReady, look as lookForDevices, takesPages } from "./devices.mjs";
+import { deviceNamed, lookOn, putOn, removeFrom, stopOn } from "./place.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -39,13 +42,17 @@ Mac app Lamp made in Swift, built and run on this Mac.
   lamp dev [folder] [--open] [--port N] [--lan]
       Run it, saying how each change went. --open opens a window for it; --lan lets other devices on the
       network open it too.
-  lamp open [folder]
+  lamp open [folder] [--on <device>]
       Show it in a window, running it in the background if it isn't running. Returns at once.
+      --on puts a page on one of the person's devices instead and opens it there (--on xbox): packaged, installed
+      and opened, the copy that was there replaced.
   lamp look [folder] [--reopen] [--size 800x600] [--wait seconds] [--json]
       How the changes since the last look went, a picture of the page (or of a Mac app's windows), its screen as
       text, and its log. --reopen opens it again from its beginning first (what it saved kept): what someone
       opening it sees.
       --size looks at it as a window of that size shows it, when no window of the person's is open.
+      --on <device> looks at the device instead: its screen as a picture, whether the app is open there, and what
+      the app last logged there, which for a game says how many frames a second it gets.
   lamp use [folder] <one of these>
       Try it as a person would, then look:
         click <x> <y>                         a point of the picture
@@ -65,7 +72,14 @@ Mac app Lamp made in Swift, built and run on this Mac.
   lamp reload [folder] [--fresh]
       Open the page again from its files, a game from where the player is, or with --fresh from its beginning.
       A Mac app is quit and opened again.
-  lamp stop [folder]      Stop running it. A Mac app is quit.
+  lamp stop [folder] [--on <device>]
+      Stop running it. A Mac app is quit. --on ends it on a device instead.
+  lamp remove [folder] --on <device>
+      Take it off a device lamp put it on.
+  lamp devices [add [name] | forget <name>]
+      The person's devices that lamp puts a page on (an Xbox in Developer Mode, so far): those set up, and those
+      found on the network. "add" sets one up, a step at a time; it asks for what only the person should type (an
+      Xbox's Device Portal password), so they run it in a terminal themselves. "forget" lets one go.
   lamp share [folder] --words "What it is" [--name N] [--line "A line under its name"] [--by "Who made it"]
              [--asks "Found a bug?|What's missing?"] [--shape fill|16:9] [--no-picture] [--anyway]
       Put the page on lamp.dev, where anyone with the link plays it and can send an idea. Public, so only when the
@@ -159,6 +173,115 @@ async function serverFor(folder) {
     if (started) return started;
   }
   throw new Problem(`lamp dev didn't start for this folder; see ${join(state, "server.log")}`);
+}
+
+/** A look at a device, as words: whether the app is open there, where the picture of its screen is, and what the app logged. */
+function deviceReport(seen) {
+  const lines = [seen.installed ? (seen.running === false ? `On ${seen.device}: not open now (lamp open --on puts it there again).` : `On ${seen.device}: open.`)
+    : `On ${seen.device}: lamp hasn't put this there yet (lamp open --on does).`];
+  if (seen.picture) lines.push(`Picture: ${seen.picture}${seen.size ? ` (${seen.size.width}x${seen.size.height})` : ""}, the device's screen now, whatever is on it.`);
+  if (seen.log) {
+    const said = seen.log.split(/\r?\n/).filter((line) => line.trim());
+    lines.push(said.length ? `Its log there, the last ${Math.min(said.length, 40)} lines of ${said.length}:\n${said.slice(-40).map((line) => "  " + line).join("\n")}` : "Its log there is empty.");
+  } else if (seen.installed) lines.push("It has logged nothing there yet.");
+  return lines.join("\n");
+}
+
+/** What the person types for a device's setup, read from the terminal without showing it. */
+function typed(label) {
+  if (!process.stdin.isTTY) throw new Problem(`this needs ${label.toLowerCase()}, which only the person types: they run "${lampCommand()} devices add" in a terminal themselves`);
+  return new Promise((done, failed) => {
+    const input = process.stdin;
+    let text = "";
+    const end = () => { input.setRawMode(false); input.pause(); input.off("data", heard); process.stdout.write("\n"); };
+    const heard = (chunk) => {
+      for (const letter of String(chunk)) {
+        if (letter === "\r" || letter === "\n") { end(); return done(text); }
+        if (letter === "\u0003") { end(); return failed(new Problem("stopped")); }
+        if (letter === "\u007f" || letter === "\b") text = text.slice(0, -1);
+        else if (letter >= " ") text += letter;
+      }
+    };
+    process.stdout.write(`${label} (not shown as you type): `);
+    input.setRawMode(true);
+    input.resume();
+    input.on("data", heard);
+  });
+}
+
+/** What a device is, by its maker and model, the maker said once. */
+const called = (device) => (String(device.model).startsWith(device.maker) ? device.model : `${device.maker} ${device.model}`);
+
+/** `lamp devices`: the person's devices that take a page, and setting one up. */
+async function devices(args) {
+  const { rest } = parse(args, []);
+  const [verb, ...words] = rest, name = words.join(" ").toLowerCase();
+  const fits = (device) => !name || device.name.toLowerCase().includes(name) || device.integration.startsWith(name) || device.id.toLowerCase() === name;
+
+  if (verb === "forget") {
+    if (!name) throw new Problem("forget takes the device's name: lamp devices lists them");
+    const mine = allKept().filter(fits);
+    if (mine.length !== 1) throw new Problem(mine.length ? `"${words.join(" ")}" could be ${mine.map((device) => `"${device.name}"`).join(" or ")}` : `lamp has no device called "${words.join(" ")}" set up`);
+    forget(mine[0].id);
+    console.log(`Forgot ${mine[0].name}: its record, its certificate and what was typed for it. What lamp put on it is still there.`);
+    return;
+  }
+
+  if (verb !== undefined && verb !== "add") throw new Problem("devices takes add or forget: lamp devices lists them");
+  const all = await lookForDevices();
+  const pages = all.filter((device) => takesPages(integrationOf(device.integration)));
+
+  if (verb === undefined) {
+    const mine = pages.filter((device) => device.kept), others = pages.filter((device) => !device.kept);
+    if (mine.length) {
+      console.log("Set up with lamp:");
+      for (const device of mine) {
+        const ready = isReady(device, integrationOf(device.integration));
+        console.log(`  ${device.name}: ${device.model}, ${device.found === false ? `not answering now (last at ${device.address})` : `at ${device.address}`}${ready ? "" : ", setup not finished (lamp devices add)"}`);
+      }
+    }
+    if (others.length) {
+      console.log(`${mine.length ? "\n" : ""}Found on the network, not set up (they may not be yours):`);
+      for (const device of others) console.log(`  ${device.name}: ${called(device)} at ${device.address}`);
+      console.log(`\n"${lampCommand()} devices add" sets one up. It asks for what only you should type, so run it in a terminal yourself.`);
+    }
+    const elsewhere = all.filter((device) => !pages.includes(device) && device.found !== false);
+    if (elsewhere.length) console.log(`${mine.length || others.length ? "\n" : ""}Also there, which lamp's command line doesn't put a page on: ${elsewhere.map((device) => `${device.name} (${called(device)})`).join(", ")}.`);
+    if (!mine.length && !others.length) {
+      console.log("lamp found no device it puts a page on. It puts one on an Xbox in Developer Mode, on this network and switched on:");
+      for (const line of integrationOf("xbox-one")?.steps?.[0]?.lines ?? []) console.log(`  - ${line}`);
+    }
+    return;
+  }
+
+  // add: the one named, or the only one there, taken through its integration's steps in order.
+  const candidates = pages.filter((device) => device.found !== false && fits(device));
+  if (!candidates.length) {
+    throw new Problem(`lamp found no ${name ? `device called "${words.join(" ")}"` : "device it puts a page on"} on the network. An Xbox answers once it's on and in Developer Mode:\n`
+      + (integrationOf("xbox-one")?.steps?.[0]?.lines ?? []).map((line) => `  - ${line}`).join("\n"));
+  }
+  if (candidates.length > 1) throw new Problem(`lamp found ${candidates.map((device) => `"${device.name}"`).join(" and ")}: say which, lamp devices add <name>`);
+  const device = candidates[0], integration = integrationOf(device.integration), runner = new Runner({ integration, device });
+  console.log(`${device.name}: ${called(device)} at ${device.address}`);
+  for (const step of integration.steps ?? []) {
+    let result = await runner.check(step);
+    for (let tries = 0; !result.passed && step.field && (result.needs || result.rejected) && tries < 3; tries++) {
+      if (result.rejected) { fields.remove(device.id, step.field.key); console.log(`${device.name} didn't take that.`); }
+      else { console.log(`\n${step.title}`); for (const line of step.lines ?? []) console.log(`  - ${line}`); }
+      fields.save(device.id, step.field.key, await typed(step.field.label));
+      result = await runner.check(step);
+    }
+    if (result.passed) { runner.passed(step, result.read); console.log(`Done: ${step.title}.`); continue; }
+    if (result.rejected) fields.remove(device.id, step.field?.key);
+    if (result.failed) throw new Problem(result.why);
+    console.log(`\nNext: ${step.title}`);
+    for (const line of step.lines ?? []) console.log(`  - ${line}`);
+    if (step.link) console.log(`  ${step.link}`);
+    console.log(`\nThen run "${lampCommand()} devices add" again.`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`\n${device.name} is set up${device.model ? ` (${device.model})` : ""}. Put a page on it with: ${lampCommand()} open --on ${integration.id.split("-")[0]}`);
 }
 
 const WHERE = {
@@ -278,7 +401,7 @@ async function main() {
     // and runs wherever it's served from. lamp.js is the stand-in until Lamp's app takes the folder on.
     cpSync(CONTROLLERS, join(folder, CONTROLLERS_FILE));
     writeFileSync(join(folder, DEVICE_FILE), ANY_BROWSER);
-    writeFileSync(join(folder, "lamp.js"), lampJS());
+    writeFileSync(join(folder, "lamp.js"), lampJS(true));
     // The app's notes, which an app made by Lamp keeps and Lamp's skills write in.
     writeFileSync(join(folder, "APP.md"), `# ${name.replace(/[\r\n]+/g, " ")}\n\nA web game on Lamp's game runtime, not written yet.\n`);
     console.log(`Made ${folder}: a new game, "${name}", on Lamp's game runtime, with three.js and Phaser beside it.`);
@@ -307,7 +430,7 @@ async function main() {
       wrote.push(name);
     }
     // lamp.js is Lamp's building blocks, which only its app writes: a stand-in where there's none, never over one.
-    if (!existsSync(join(layout.root, "lamp.js"))) { writeFileSync(join(layout.root, "lamp.js"), lampJS()); wrote.push("lamp.js"); }
+    if (!existsSync(join(layout.root, "lamp.js"))) { writeFileSync(join(layout.root, "lamp.js"), lampJS(true)); wrote.push("lamp.js"); }
     // And Lamp's libraries the page's import map names from beside it, where the folder has none.
     wrote.push(...addLibraries(layout.root));
     console.log(wrote.length ? `Lamp's own files are beside the page in ${layout.root}: ${wrote.join(", ")}.` : `Lamp's own files were beside the page already in ${layout.root}.`);
@@ -342,7 +465,12 @@ async function main() {
   }
 
   if (command === "look") {
-    const { options, rest } = parse(args, ["wait", "size"]);
+    const { options, rest } = parse(args, ["wait", "size", "on"]);
+    if (options.on !== undefined) {
+      const seen = await lookOn(layoutOf(rest[0] ?? "."), deviceNamed(options.on, { command: lampCommand() }));
+      console.log(options.json ? JSON.stringify(seen, null, 2) : deviceReport(seen));
+      return;
+    }
     const layout = projectOf(rest[0] ?? ".");
     // A Mac app's change is a build, which takes longer than a page's.
     const wait = options.wait === undefined ? (layout.kind === "mac" ? 180 : 20) : Math.min(Math.max(Number(options.wait) || 0, 0), 600);
@@ -354,7 +482,8 @@ async function main() {
   }
 
   if (command === "use") {
-    const { options, rest } = parse(args, []);
+    const { options, rest } = parse(args, ["on"]);
+    if (options.on !== undefined) throw new Problem("lamp can't press a controller on a device: try it in its window on this computer (lamp use), and see how it runs on the device with lamp look --on");
     const kinds = ["key", "click", "type", "wait", "drag", "scroll", "stick", "button"];
     const folder = rest.length && !kinds.includes(rest[0]) ? rest.shift() : ".";
     // Several moves, with "then" between them, are made one after another with nothing in between, and looked at once.
@@ -382,7 +511,14 @@ async function main() {
   }
 
   if (command === "open") {
-    const { rest } = parse(args, []);
+    const { options, rest } = parse(args, ["on"]);
+    if (options.on !== undefined) {
+      const layout = layoutOf(rest[0] ?? "."), device = deviceNamed(options.on, { command: lampCommand() });
+      const put = await putOn(layout, device, { said: (line) => console.log(line) });
+      console.log(`${put.name} is open on ${device.name}${put.game ? ", installed as a game" : ""}: ${put.files} files, version ${put.identity.version}.`);
+      console.log(`${lampCommand()} look --on ${options.on} shows its screen and what it logged there; ${lampCommand()} stop --on ${options.on} ends it.`);
+      return;
+    }
     const layout = projectOf(rest[0] ?? ".");
     const opened = await ask(await serverFor(layout.folder), "open", {}, { timeout: 30_000 });
     if (opened.opened === "app") {
@@ -485,8 +621,24 @@ async function main() {
     return;
   }
 
+  if (command === "remove") {
+    const { options, rest } = parse(args, ["on"]);
+    if (options.on === undefined) throw new Problem("remove takes the device to take it off: lamp remove --on xbox");
+    const device = deviceNamed(options.on, { command: lampCommand() });
+    console.log((await removeFrom(layoutOf(rest[0] ?? "."), device)) ? `Taken off ${device.name}.` : `lamp hasn't put this on ${device.name}.`);
+    return;
+  }
+
+  if (command === "devices") return await devices(args);
+
   if (command === "reload" || command === "stop") {
-    const { options, rest } = parse(args, []);
+    const { options, rest } = parse(args, ["on"]);
+    if (options.on !== undefined) {
+      if (command !== "stop") throw new Problem("a change goes on a device by putting the page there again: lamp open --on " + options.on);
+      const device = deviceNamed(options.on, { command: lampCommand() });
+      console.log((await stopOn(layoutOf(rest[0] ?? "."), device)) ? `Stopped on ${device.name}.` : `lamp hasn't put this on ${device.name}.`);
+      return;
+    }
     const layout = projectOf(rest[0] ?? ".");
     const live = await running(layout.folder);
     if (!live) { console.log("lamp dev isn't running for this folder."); return; }

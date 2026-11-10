@@ -75,8 +75,9 @@ export function zipOf(files) {
  * Every file of the page as it's played from the link: what's in its folder (nothing hidden, no link followed, the
  * app's notes left out), and for a game Lamp's own files beside it, as Lamp's app puts them in a copy it publishes
  * (`GamePage.stage`): the device a browser on any device is, the build's name, and what the folder has none of.
+ * A copy for one device (place.mjs) is given that device in its place.
  */
-export function pageFiles(layout) {
+export function pageFiles(layout, { device = ANY_BROWSER } = {}) {
   const files = new Map();
   const walk = (dir, prefix) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -88,9 +89,9 @@ export function pageFiles(layout) {
   };
   walk(layout.root, "");
   if (layout.game) {
-    files.set(DEVICE_FILE, Buffer.from(ANY_BROWSER));
+    files.set(DEVICE_FILE, Buffer.from(device));
     if (!files.has(CONTROLLERS_FILE)) files.set(CONTROLLERS_FILE, readFileSync(CONTROLLERS));
-    if (!files.has("lamp.js")) files.set("lamp.js", Buffer.from(lampJS()));
+    if (!files.has("lamp.js")) files.set("lamp.js", Buffer.from(lampJS(true)));
     // A library the page's import map names from beside it and the folder has none of: Lamp's copy.
     const map = /<script[^>]*type=["']importmap["'][^>]*>([\s\S]*?)<\/script>/i.exec(String(files.get("index.html") ?? ""))?.[1] ?? "";
     for (const name of ["three", "phaser", "rapier"]) {

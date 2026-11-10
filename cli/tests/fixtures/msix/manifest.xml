@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10" IgnorableNamespaces="uap">
+  <Identity Name="Lamp.harbor-racer-1a2b3c4d" Publisher="CN=Lamp" Version="1.7.4660.2" ProcessorArchitecture="x64"/>
+  <Properties><DisplayName>Harbor &lt;Racer&gt; &amp; &quot;Friends&quot;</DisplayName><PublisherDisplayName>Lamp</PublisherDisplayName><Logo>LampLogos\StoreLogo.png</Logo></Properties>
+  <Dependencies><TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.19041.0" MaxVersionTested="10.0.22621.0"/></Dependencies>
+  <Resources><Resource Language="en-us"/></Resources>
+  <Applications>
+    <Application Id="App" Executable="App.exe" EntryPoint="App.App">
+      <uap:VisualElements DisplayName="Harbor &lt;Racer&gt; &amp; &quot;Friends&quot;" Description="Harbor &lt;Racer&gt; &amp; &quot;Friends&quot;" BackgroundColor="#1b1b3a" Square150x150Logo="LampLogos\Square150x150Logo.png" Square44x44Logo="LampLogos\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="LampLogos\Wide310x150Logo.png"/>
+        <uap:SplashScreen Image="LampLogos\SplashScreen.png"/>
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+  <Capabilities><Capability Name="internetClient"/><Capability Name="privateNetworkClientServer"/></Capabilities><Extensions><Extension Category="windows.activatableClass.inProcessServer"><InProcessServer><Path>Microsoft.Web.WebView2.Core.dll</Path><ActivatableClass ActivatableClassId="Microsoft.Web.WebView2.Core.CoreWebView2Environment" ThreadingModel="both"/><ActivatableClass ActivatableClassId="Microsoft.Web.WebView2.Core.CoreWebView2EnvironmentOptions" ThreadingModel="both"/><ActivatableClass ActivatableClassId="Microsoft.Web.WebView2.Core.CoreWebView2ControllerWindowReference" ThreadingModel="both"/><ActivatableClass ActivatableClassId="Microsoft.Web.WebView2.Core.CoreWebView2CustomSchemeRegistration" ThreadingModel="both"/></InProcessServer></Extension></Extensions>
+</Package>
