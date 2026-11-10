@@ -19,9 +19,9 @@ import { chmodSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFi
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Problem, layoutOf, projectOf, stateOf, running, ask } from "./state.mjs";
+import { Problem, layoutOf, manifestOf, projectOf, stateOf, running, ask } from "./state.mjs";
 import { serveMac, writeMacStarter } from "./mac.mjs";
-import { unpack } from "./lampapp.mjs";
+import { exportApp, unpack } from "./lampapp.mjs";
 import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS } from "./dev.mjs";
 import { allSkills } from "./skills.mjs";
 import { share, unshare, ideas, finishIdea, readLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
@@ -44,6 +44,10 @@ Mac app Lamp made in Swift, built and run on this Mac.
   lamp unpack <file.lampapp> [folder]
       Unpack a Lamp app file (what Lamp's Share… makes, and a lamp.dev link carries) into a new folder beside it,
       named for it, or into the folder given. A Mac app gets Lamp's own files as it's first built.
+  lamp export [folder] [--to file.lampapp] [--anyway]
+      Make the app's Lamp app file, as Lamp's Share… does: its own files, credits, licenses and what it is, for
+      anyone to open in Lamp. Written beside the folder, named for the app, or where --to says. Refused when it
+      holds a key or a license is missing; --anyway shares work its credits give no license for.
   lamp dev [folder] [--open] [--port N] [--lan]
       Run it, saying how each change went. --open opens a window for it; --lan lets other devices on the
       network open it too.
@@ -136,6 +140,36 @@ const quoted = (path) => (/\s/.test(path) ? JSON.stringify(path) : path);
  * Copies in Lamp's libraries that the page's import map names and its folder has none of (three.js, Phaser, Rapier:
  * `Resources/WebLibraries`), as Lamp's app gives a game the ones its page uses. The names copied.
  */
+/**
+ * Lamp's own files beside a page, which its app writes at every build and a shared file never carries: for a game the
+ * runtime, the controllers' list and the device it's on; for any page lamp.js, Lamp's building blocks (a stand-in where
+ * Lamp's own isn't beside lamp, never over one); and Lamp's libraries its import map names from beside it. Only those:
+ * the page and its code are the project's. `update` writes the game's again over what's there.
+ */
+function lampsFilesBeside(root, { game, update = false }) {
+  const runtime = join(here, "..", "Resources", "GameKit", "web");
+  const wrote = [], kept = [];
+  if (game) {
+    if (![runtime, CONTROLLERS].every(existsSync)) throw new Problem("Lamp's own files aren't beside this copy of lamp");
+    const files = [
+      ...readdirSync(runtime).map((name) => [name, () => readFileSync(join(runtime, name))]),
+      [CONTROLLERS_FILE, () => readFileSync(CONTROLLERS)], [DEVICE_FILE, () => ANY_BROWSER],
+    ];
+    for (const [name, contents] of files) {
+      const file = join(root, name);
+      if (existsSync(file) && !update) { kept.push(name); continue; }
+      writeFileSync(file, contents());
+      wrote.push(name);
+    }
+  }
+  if (!existsSync(join(root, "lamp.js"))) {
+    writeFileSync(join(root, "lamp.js"), lampJS(game));
+    wrote.push("lamp.js");
+  }
+  wrote.push(...addLibraries(root));
+  return { wrote, kept };
+}
+
 function addLibraries(root) {
   const lamps = join(here, "..", "Resources", "WebLibraries");
   let map = "";
@@ -449,12 +483,25 @@ async function main() {
     return;
   }
 
+  if (command === "export") {
+    const { options, rest } = parse(args, ["to"]);
+    const made = exportApp(rest[0] ?? ".", { anyway: !!options.anyway });
+    const folder = projectOf(rest[0] ?? ".").folder;
+    const to = resolve(options.to ?? join(dirname(folder), `${made.name}.lampapp`));
+    if (existsSync(to) && !options.to) throw new Problem(`${to} is there already: --to says where else to write it`);
+    writeFileSync(to, made.bytes);
+    console.log(`Made ${to}: "${made.name}", ${made.files} files, ${(made.bytes.length / 1_000_000).toFixed(1)} MB. Anyone with Lamp opens it.`);
+    return;
+  }
+
   if (command === "unpack") {
     const { rest } = parse(args, []);
     if (!rest[0]) throw new Problem("unpack takes the Lamp app file: lamp unpack Harbor.lampapp");
     const opened = unpack(rest[0], rest[1] ?? null);
     console.log(`Unpacked "${opened.name}" into ${opened.folder}.`);
     if (opened.refused) { console.log(`lamp can't run it: ${opened.refused}.`); return; }
+    // A page's file carries none of Lamp's own files around it: lamp puts them in, as Lamp's app does on the way in.
+    if (opened.project.kind === "page") lampsFilesBeside(opened.project.root, { game: opened.project.game || manifestOf(opened.folder)?.platform === "game" });
     console.log(`${opened.project.kind === "mac" ? "Build and open it" : "See it"} with: ${lampCommand()} ${opened.project.kind === "mac" ? "open" : "look"} ${quoted(opened.folder)}`);
     return;
   }
@@ -462,25 +509,7 @@ async function main() {
   if (command === "init") {
     const { options, rest } = parse(args, []);
     const layout = layoutOf(rest[0] ?? ".");
-    const runtime = join(here, "..", "Resources", "GameKit", "web");
-    if (![runtime, CONTROLLERS].every(existsSync)) throw new Problem("Lamp's own files aren't beside this copy of lamp");
-    // Lamp's own files beside a game's page: the runtime, and what its app writes at every build. Only those: the
-    // page and its code are the project's, and taking up the runtime in them is the work that follows.
-    const files = [
-      ...readdirSync(runtime).map((name) => [name, () => readFileSync(join(runtime, name))]),
-      [CONTROLLERS_FILE, () => readFileSync(CONTROLLERS)], [DEVICE_FILE, () => ANY_BROWSER],
-    ];
-    const wrote = [], kept = [];
-    for (const [name, contents] of files) {
-      const file = join(layout.root, name);
-      if (existsSync(file) && !options.update) { kept.push(name); continue; }
-      writeFileSync(file, contents());
-      wrote.push(name);
-    }
-    // lamp.js is Lamp's building blocks, which only its app writes: a stand-in where there's none, never over one.
-    if (!existsSync(join(layout.root, "lamp.js"))) { writeFileSync(join(layout.root, "lamp.js"), lampJS(true)); wrote.push("lamp.js"); }
-    // And Lamp's libraries the page's import map names from beside it, where the folder has none.
-    wrote.push(...addLibraries(layout.root));
+    const { wrote, kept } = lampsFilesBeside(layout.root, { game: true, update: !!options.update });
     console.log(wrote.length ? `Lamp's own files are beside the page in ${layout.root}: ${wrote.join(", ")}.` : `Lamp's own files were beside the page already in ${layout.root}.`);
     if (kept.length) console.log(`Left as they were: ${kept.join(", ")} (lamp init --update writes them again).`);
     console.log(`The game takes the runtime up in its own code. Lamp's game-live skill says how (${lampCommand()} skill game-live), and lamp-game.js's own comments are the whole interface.`);

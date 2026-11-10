@@ -8,13 +8,17 @@ and run on the Mac. It needs no Lamp app open and has no dependencies (Node 20 o
 node cli/lamp.mjs dev path/to/app --open
 ```
 
-`npm link` in `cli/` makes it `lamp` everywhere. The folder is one Lamp made (its page is in `Web/`) or any folder
-with an `index.html`; without one, the folder you're in.
+`npm link` in `cli/` makes it `lamp` everywhere. The folder is one Lamp made (its page is in `Web/`), one in Lamp's
+format (its `lamp-app.json`, at its top or in a site's `.lamp-wish/`, says what it is: a web app, a game, a screen or a
+Mac app, `projectOf`), or any folder with an `index.html`; without one, the folder you're in. A kind lamp doesn't run
+(an iPhone app, an app for both, Android, a TV app) or a wish of several apps is said so, to open in Lamp's app.
 
 | Command | What it does |
 | --- | --- |
 | `lamp new <folder> [--name "Its Name"] [--web \| --mac]` | Makes a new web game's folder from Lamp's starting files, or with `--web` a new web app's, or with `--mac` a new Mac app in Swift. |
 | `lamp init [--update]` | Puts Lamp's game runtime beside a page that's already there, changing none of the page's own files. |
+| `lamp unpack <file.lampapp> [folder]` | Unpacks a Lamp app file into a new folder beside it, named for it. A file carries none of Lamp's own files: a page gets them beside it as it's unpacked (the runtime for a game, lamp.js, the libraries its import map names), and a Mac app gets Package.swift, build.sh and LampSupport.swift from Lamp's starting files as it's first built (`writeMacStarter`), where it has none. One with a widget, a share extension or a 3D scene is left to Lamp's app, which writes the files they're built with. |
+| `lamp export [--to file] [--anyway]` | Makes the app's Lamp app file as Lamp's Share… does (`Sharing.export`, followed by `cli/lampapp.mjs`): its own files as its kind travels, Assets/, APP.md, what it declares, its credits with the app added to the chain, the licenses they name, its icon's design and lamp-app.json, never Lamp's own files. Refused when a license its credits name is gone or something in it is shaped like a key; `--anyway` sends work its credits give no license for. |
 | `lamp dev [--open] [--lan] [--port N]` | Runs the page and says how each change went. Each save goes into every open copy of it. `--open` opens a window for it; `--lan` lets other devices on the network open it. |
 | `lamp open` | Shows the page in a window, running it in the background if it isn't running, and returns at once. |
 | `lamp look [--reopen] [--wait s] [--json]` | How the changes since the last look went, a picture of the page, its screen as text, new errors and the log. `--reopen` opens the page again from its beginning first. |
