@@ -57,8 +57,8 @@ Mac app Lamp made in Swift, built and run on this Mac.
       --in-lamp gives a Mac app to Lamp's app, which must be running: it shows the person its review the first time,
       then builds the app and puts each change into it while it's open (live, or held for a Reload), as with its own
       chat. From then on look, dev and reload go through Lamp's app and say how each change went in, and use tries the
-      app it has open, in plain sight; stop is the person's there. --here has lamp build and run its own copy again. LAMP_APP names another Lamp by its
-      bundle id.
+      app it has open, in plain sight; stop is the person's there. --here has lamp build and run its own copy again.
+      LAMP_APP names another Lamp by its bundle id.
       --on puts a page on one of the person's devices instead and opens it there (--on xbox): packaged, installed
       and opened, the copy that was there replaced. --on android builds Lamp's Android app around the page and
       opens it in lamp's Android emulator (--on android-tv, its TV emulator), or on a phone, tablet or TV of the
