@@ -12,7 +12,8 @@ import { deflateRawSync } from "node:zlib";
 import { Problem, stateOf } from "./state.mjs";
 import { ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS, LIBRARIES } from "./dev.mjs";
 import { LIMITS, FILE_LIMITS, PAGE_LIMITS } from "../site/lib/shared-wishes.js";
-import { ideasOf, publishLink, removeIdea, removeLink, sendFile, siteOrigin } from "./link.mjs";
+import { ideasOf, publishLink, removeFile, removeIdea, removeLink, sendFile, siteOrigin } from "./link.mjs";
+import { exportApp } from "./lampapp.mjs";
 
 export { siteOrigin };
 
@@ -124,7 +125,10 @@ const megabytes = (bytes) => `${(bytes / 1_000_000).toFixed(bytes < 10_000_000 ?
  * are what the link says (`name`, `words`, and `line`, `by` and `asks` when given), `picture` a PNG or JPEG of the
  * page or null, `shape` "fill" or the page's width over its height. Answers the link and what went up.
  */
-export async function share({ layout, words, picture = null, shape = "fill", site = siteOrigin(), said = () => {} }) {
+export async function share({ layout, words, picture = null, shape = "fill", site = siteOrigin(), said = () => {}, file = true, anyway = false }) {
+  // The app's own file goes with the link, as Lamp's Share Link sends it, so whoever follows the link can open it in
+  // Lamp too: made first, with Share…'s checks, so a page that can't be shared (a key in it) puts nothing up.
+  const app = file ? exportApp(layout.folder, { anyway }) : null;
   const files = pageFiles(layout);
   const unpacked = files.reduce((total, [, bytes]) => total + bytes.length, 0);
   if (!files.some(([path]) => path === "index.html")) throw new Problem("the page has no index.html at its top");
@@ -142,14 +146,25 @@ export async function share({ layout, words, picture = null, shape = "fill", sit
   // The folder's own link when it has one on this site, changed in place; a link that's gone is made again.
   let earlier = readLink(layout.folder);
   if (earlier && earlier.site !== site) earlier = null;
-  let link = { site, ...(await publishLink({ site, body, earlier })), ...words, shape };
+  // A file an earlier share sent stays on the record until it's taken away, so a retry after a failed removal tries again.
+  let link = { site, ...(await publishLink({ site, body, earlier })), ...words, shape, ...(earlier?.file ? { file: true } : {}) };
   // Kept before the page goes up: a link whose page didn't make it is still this folder's to send again or take down.
   writeLink(layout.folder, link);
 
+  // The file, or none: a link that carried one and shouldn't now has it taken away (and its page with it, sent next).
+  if (app) {
+    link.file = true;
+    writeLink(layout.folder, link);
+    await sendFile({ site, link, bytes: app.bytes, said });
+  } else if (link.file) {
+    await removeFile({ site, link });
+    link.file = false;
+    writeLink(layout.folder, link);
+  }
   const version = await sendFile({ site, link, bytes: zip, page: true, said });
   link = { ...link, version, shared: new Date().toISOString() };
   writeLink(layout.folder, link);
-  return { url: link.url, version, files: files.length, bytes: zip.length, picture: !!picture };
+  return { url: link.url, version, files: files.length, bytes: zip.length, picture: !!picture, file: !!app };
 }
 
 /** Takes the folder's link down, with its page and the ideas sent to it. */

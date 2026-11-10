@@ -57,7 +57,7 @@ Mac app Lamp made in Swift, built and run on this Mac.
       --in-lamp gives a Mac app to Lamp's app, which must be running: it shows the person its review the first time,
       then builds the app and puts each change into it while it's open (live, or held for a Reload), as with its own
       chat. From then on look, dev and reload go through Lamp's app and say how each change went in, and use tries the
-      app it has open, in plain sight; stop is the person's there. --here has lamp build and run its own copy again.
+      app it has open, in plain sight, and stop quits it there. --here has lamp build and run its own copy again.
       LAMP_APP names another Lamp by its bundle id.
       --on puts a page on one of the person's devices instead and opens it there (--on xbox): packaged, installed
       and opened, the copy that was there replaced. --on android builds Lamp's Android app around the page and
@@ -102,9 +102,11 @@ Mac app Lamp made in Swift, built and run on this Mac.
       password; accept Google's terms for Android's tools, with "add android"), so they run it in a terminal
       themselves. "forget" lets one go ("forget android": lamp's emulators and its key to the person's devices).
   lamp share [folder] --words "What it is" [--name N] [--line "A line under its name"] [--by "Who made it"]
-             [--asks "Found a bug?|What's missing?"] [--shape fill|16:9] [--no-picture] [--anyway]
+             [--asks "Found a bug?|What's missing?"] [--shape fill|16:9] [--no-picture] [--no-file] [--anyway]
       Put the page on lamp.dev, where anyone with the link plays it and can send an idea. Public, so only when the
       person asks. Again, it sends the page as it is now to the same link, with the same words unless new ones are given.
+      Its app file goes with it (as lamp export makes it), so anyone can open it in Lamp too; --no-file leaves it out.
+      --anyway shares a page that logged errors, or uses work that came with no license.
   lamp unshare [folder]   Take the link down.
   lamp ideas [folder] [in <n> | dismiss <n>]
       The ideas people playing the link have sent. "in" says one is in the game now (whoever asked to hear is
@@ -441,10 +443,25 @@ function lampReport(folder, lamp, answer) {
   return lines.join("\n");
 }
 
-/** Asks Lamp's app to put what the folder holds into the app (`reopen`: opened again for it), and says how it went. */
+/**
+ * A folder Lamp's app no longer has (the person took the app off its desk, or put another folder in its place) is
+ * lamp's own again: said once, and the command goes on as for any folder. Whether that's what Lamp answered.
+ */
+function letGo(layout, lamp, answer) {
+  if (answer.facts?.taken_on !== false) return false;
+  takeBack(layout.folder);
+  console.log(`${lamp.name} doesn't have this app any more, so lamp runs its own copy again. ${lampCommand()} open --in-lamp gives it back.`);
+  return true;
+}
+
+/**
+ * Asks Lamp's app to put what the folder holds into the app (`reopen`: opened again for it), and says how it went.
+ * False when Lamp no longer has the folder: the caller runs its own copy instead.
+ */
 async function applyInLamp(layout, lamp, { reopen = false } = {}) {
   try {
     let answer = await lamp.call("apply_change", { path: layout.folder, ...(reopen ? { reopen: true } : {}) });
+    if (letGo(layout, lamp, answer)) return false;
     // Lamp started again since the last apply: it asks for a look at the app as it is first, and then takes the change.
     if (answer.facts?.restarted) {
       await lamp.call("look_at_app", { path: layout.folder });
@@ -457,6 +474,7 @@ async function applyInLamp(layout, lamp, { reopen = false } = {}) {
     }
     console.log(lampReport(layout.folder, lamp, answer));
     if (answer.failed) process.exitCode = 1;
+    return true;
   } finally { lamp.close(); }
 }
 
@@ -492,6 +510,7 @@ async function devInLamp(layout, lamp) {
       if (!lamp) { print(`${editionName(givenTo(layout.folder))} isn't running: the change goes in once it is and the next save is made.`); return; }
       let answer = await lamp.call("apply_change", { path: layout.folder });
       if (answer.facts?.restarted) { await lamp.call("look_at_app", { path: layout.folder }); answer = await lamp.call("apply_change", { path: layout.folder }); }
+      if (letGo(layout, lamp, answer)) { stopWatching(false); return; }
       // A folder that changed while Lamp built it is applied again by the next save, or now when it's said so.
       // A folder that changed while Lamp built it goes in again now, saved or not.
       if (answer.facts?.stale || answer.outcome === "stale") { applied = null; again = true; } else applied = now;
@@ -514,9 +533,20 @@ async function devInLamp(layout, lamp) {
     clearTimeout(timer);
     timer = setTimeout(apply, 300);
   });
-  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => { watcher.close(); try { lamp?.close(); } catch {} process.exit(0); });
+  const quit = () => { watcher.close(); try { lamp?.close(); } catch {} process.exit(0); };
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, quit);
+  // Until it's stopped, or Lamp no longer has the app: then lamp dev goes on as for any folder (false), its own
+  // runner answering Ctrl-C from then on.
+  let stopWatching;
+  const watching = new Promise((done) => {
+    stopWatching = (handled) => {
+      watcher.close(); clearTimeout(timer); try { lamp?.close(); } catch {}
+      for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.off(signal, quit);
+      done(handled);
+    };
+  });
   await apply();
-  await new Promise(() => {});
+  return await watching;
 }
 
 async function main() {
@@ -644,7 +674,7 @@ async function main() {
       return;
     }
     // Given to Lamp's app: each save goes to it, and what it says of the change is said here.
-    if (layout.kind === "mac" && givenTo(layout.folder)) return await devInLamp(layout, await inLamp(layout));
+    if (layout.kind === "mac" && givenTo(layout.folder) && (await devInLamp(layout, await inLamp(layout)))) return;
     // A page is served and shown in a browser; a Mac app is built and run. Each is the folder's server from here on.
     const server = layout.kind === "mac"
       ? await serveMac({ folder: layout.folder, port, quiet: !!options.quiet, idle: Number(options.idle) || 0 })
@@ -664,7 +694,7 @@ async function main() {
     const layout = projectOf(rest[0] ?? ".");
     // Given to Lamp's app: what the folder holds goes in (nothing, when it's in already), and Lamp's app says how.
     const lamp = await inLamp(layout);
-    if (lamp) return await applyInLamp(layout, lamp, { reopen: !!options.reopen });
+    if (lamp && (await applyInLamp(layout, lamp, { reopen: !!options.reopen }))) return;
     // A Mac app's change is a build, which takes longer than a page's.
     const wait = options.wait === undefined ? (layout.kind === "mac" ? 180 : 20) : Math.min(Math.max(Number(options.wait) || 0, 0), 600);
     const size = options.size === undefined ? null : /^(\d{3,4})x(\d{3,4})$/i.exec(options.size)?.slice(1).map(Number);
@@ -707,12 +737,13 @@ async function main() {
     // Given to Lamp's app: it uses the app it has open, in plain sight, as its own agent does.
     const lamp = await inLamp(layout);
     if (lamp) {
-      try {
-        const answer = await lamp.call("use_app", { path: layout.folder, actions: macActions(moves) });
+      let answer;
+      try { answer = await lamp.call("use_app", { path: layout.folder, actions: macActions(moves) }); } finally { lamp.close(); }
+      if (!letGo(layout, lamp, answer)) {
         console.log(lampReport(layout.folder, lamp, answer));
         if (answer.failed) process.exitCode = 1;
-      } finally { lamp.close(); }
-      return;
+        return;
+      }
     }
     const seen = await ask(await serverFor(layout.folder), "use", moves.length === 1 ? moves[0] : { moves }, { timeout: 60_000 + moves.length * 35_000 });
     console.log(options.json ? JSON.stringify(seen, null, 2) : report(seen));
@@ -750,7 +781,7 @@ async function main() {
     }
     if (options.here) takeBack(layout.folder);
     const lamp = await inLamp(layout);
-    if (lamp) return await applyInLamp(layout, lamp);
+    if (lamp && (await applyInLamp(layout, lamp))) return;
     const opened = await ask(await serverFor(layout.folder), "open", {}, { timeout: 30_000 });
     if (opened.opened === "app") {
       console.log(opened.running ? `${opened.url} is open.` : opened.building ? `${opened.url} is being built, and opens when it is: lamp look waits for it.` : `${opened.url} didn't build: lamp look says why.`);
@@ -817,9 +848,10 @@ async function main() {
       if (options.shape !== "fill" && !ratio) throw new Problem("--shape is fill, for a page that takes any window, or a shape like 16:9");
       shape = ratio ? Math.round((Number(ratio[1]) / Number(ratio[2])) * 10000) / 10000 : "fill";
     }
-    const sent = await share({ layout, words, shape, picture: card.picture ? Buffer.from(card.picture, "base64") : null, said: (line) => console.log(line) });
+    const sent = await share({ layout, words, shape, picture: card.picture ? Buffer.from(card.picture, "base64") : null, said: (line) => console.log(line),
+      file: !options["no-file"], anyway: !!options.anyway });
     console.log(`${before ? "Sent again to its link" : "Shared"}: ${sent.url}`);
-    console.log(`"${words.name}"${words.by ? ` by ${words.by}` : ""}: ${sent.files} files, ${(sent.bytes / 1_000_000).toFixed(1)} MB packed, ${shape === "fill" ? "filling the window" : "on its own stage"}${sent.picture ? ", with a picture of it" : ", with no picture"}.`);
+    console.log(`"${words.name}"${words.by ? ` by ${words.by}` : ""}: ${sent.files} files, ${(sent.bytes / 1_000_000).toFixed(1)} MB packed, ${shape === "fill" ? "filling the window" : "on its own stage"}${sent.picture ? ", with a picture of it" : ", with no picture"}${sent.file ? ", and its app file, for anyone to open in Lamp" : ""}.`);
     console.log("Anyone with the link can play it and send an idea: lamp ideas shows them. lamp unshare takes it down.");
     return;
   }
@@ -872,8 +904,13 @@ async function main() {
     }
     const layout = projectOf(rest[0] ?? ".");
     if (layout.kind === "mac" && givenTo(layout.folder)) {
-      if (command === "stop") { console.log(`It stays open in ${editionName(givenTo(layout.folder))}: quit it there. ${lampCommand()} open --here has lamp run its own copy again.`); return; }
-      return await applyInLamp(layout, await inLamp(layout), { reopen: true });
+      if (command === "stop") {
+        // Quit by Lamp's app as at its own Stop, which waits for an app asking about unsaved work.
+        const lamp = await inLamp(layout);
+        let answer;
+        try { answer = await lamp.call("close_app", { path: layout.folder }); } finally { lamp.close(); }
+        if (!letGo(layout, lamp, answer)) { console.log(lampReport(layout.folder, lamp, answer)); return; }
+      } else if (await applyInLamp(layout, await inLamp(layout), { reopen: true })) return;
     }
     const live = await running(layout.folder);
     if (!live) { console.log("lamp dev isn't running for this folder."); return; }
