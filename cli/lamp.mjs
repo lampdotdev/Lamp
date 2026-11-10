@@ -442,6 +442,18 @@ async function inLamp(layout) {
   return lamp;
 }
 
+/**
+ * A folder whose link is Lamp's app's, not lamp's: one of Lamp's apps that lamp has no link of its own for. Its ideas
+ * and taking it down are on Lamp's Share Link card, said so rather than "no link".
+ */
+function lampsLink(folder) {
+  let real = resolve(folder);
+  try { real = realpathSync(real); } catch {}
+  if (readLink(real)) return null;
+  const owner = lampOwning(real);
+  return owner ? editionName(owner) : null;
+}
+
 /** What Lamp's app answered, as lamp says things: how the change went in, its words, and where its pictures are. */
 function lampReport(folder, lamp, answer) {
   const lines = [`${lamp.name}: ${answer.outcome ?? "answered"}.`];
@@ -847,7 +859,8 @@ async function main() {
           ...(options["no-file"] ? { file: false } : {}), ...(options["no-github"] ? { github: false } : {}),
           ...(options["put-on-github"] ? { put_on_github: true } : {}),
         };
-        if (!options.preview) console.log(`Sharing through ${lamp.name}, as its Share Link does…`);
+        console.log(options.preview ? `This is an app of ${lamp.name}'s: it shares it, to the link it has, as its Share Link card would.`
+          : `Sharing through ${lamp.name}, as its Share Link does…`);
         let answer;
         try { answer = await lamp.call("share_link", given); } finally { lamp.close(); }
         if (answer.facts?.taken_on !== false) {
@@ -868,6 +881,11 @@ async function main() {
       asks: options.asks !== undefined ? String(options.asks).split("|").map((ask) => ask.trim()).filter(Boolean) : before?.asks ?? [],
     };
     const count = (text) => [...new Intl.Segmenter("en", { granularity: "grapheme" }).segment(text)].length;
+    if (options.preview) {
+      console.log(`Nothing was shared. This is what would go:\n${before ? `The link ${before.url}` : "A new link"} for "${words.name}"${words.by ? ` by ${words.by}` : ""}: ${words.line || words.words || "(no words yet: give --words)"}`);
+      console.log(`Questions its page asks: ${words.asks.length ? words.asks.join(" · ") : "the page's own"}\nThe app's file: ${options["no-file"] ? "doesn't go" : "goes with it"}`);
+      return;
+    }
     if (!words.words) throw new Problem('a link says what the page is: share it with --words "What it is, in a sentence or a few"');
     if (!words.name || count(words.name) > LIMITS.name) throw new Problem(`a link's name is at most ${LIMITS.name} characters: --name "Its Name"`);
     if (count(words.words) > LIMITS.words) throw new Problem(`a link's words are at most ${LIMITS.words} characters`);
@@ -896,6 +914,8 @@ async function main() {
 
   if (command === "unshare") {
     const { rest } = parse(args, []);
+    const lamps = lampsLink(rest[0] ?? ".");
+    if (lamps) throw new Problem(`${lamps} keeps this app's link: take it down from its Share Link card (Stop Sharing).`);
     console.log(`Taken down: ${await unshare(layoutOf(rest[0] ?? ".").folder)}`);
     return;
   }
@@ -904,6 +924,8 @@ async function main() {
     const { rest } = parse(args, []);
     const outcomes = ["in", "dismiss"];
     const folder = rest.length && !outcomes.includes(rest[0]) ? rest.shift() : ".";
+    const lamps = lampsLink(folder);
+    if (lamps) throw new Problem(`${lamps} keeps this app's link, and the ideas people send to it: they're on its Share Link card in ${lamps}.`);
     const layout = layoutOf(folder);
     if (rest.length) {
       const n = Number(rest[1]);
