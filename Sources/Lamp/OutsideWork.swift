@@ -1114,6 +1114,9 @@ extension Store {
     /// through a link to it too), as well as a folder taken on.
     private func outsideShareLink(_ path: String, _ payload: OutsideWork.Payload) async -> OutsideWork.Answer {
         let real = OutsideWork.identity(of: path)?.real
+        // A folder taken on is shared only as last applied, as publish_link and export_app share it: never a workspace
+        // a step behind the folder, or one an apply that didn't go in left files in.
+        if outsideFolder(path) != nil, await outsideSnapshot(path) == nil { return notSnapshot(path) }
         guard let project = outsideFolder(path)?.1
                 ?? projects.first(where: { real != nil && $0.dir.resolvingSymlinksInPath().path == real }) else {
             var answer = OutsideWork.Answer.refused("\(path) isn't an app of \(Edition.name)'s: no app on its desk keeps its files there, and it hasn't taken the folder on.")
@@ -1165,15 +1168,24 @@ extension Store {
         lines.append("GitHub: " + gitHub)
         let summary = lines.joined(separator: "\n")
         if payload.bool("preview") { return OutsideWork.Answer(outcome: "preview", text: "Nothing was shared. This is what would go:\n" + summary, facts: facts) }
-        guard card.canShare else { return .refused("It can't be shared as it is: it needs a name and a line.\n" + summary) }
+        guard card.canShare, !card.writingNotes, !card.writingAsks else {
+            return .refused("It can't be shared as it is: it needs a name and a line, and what Lamp writes for it in.\n" + summary)
+        }
+        // Stopped before it went: nothing is public.
+        if Task.isCancelled { return OutsideWork.Answer(outcome: "cancelled", text: "Cancelled before anything was shared.") }
         cards.share(project)
-        // The link, then GitHub, as the card goes through them.
-        while cards.card(for: project)?.stage == .sending, Date().timeIntervalSince(began) < 20 * 60, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(500)) }
-        while case .working? = cards.card(for: project)?.gitHubStage, Date().timeIntervalSince(began) < 25 * 60, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(500)) }
+        // The link, then GitHub, as the card goes through them: once it's going, the app is held until it's done, the
+        // caller still waiting or not.
+        while cards.card(for: project)?.stage == .sending, Date().timeIntervalSince(began) < 20 * 60 { try? await Task.sleep(for: .milliseconds(500)) }
+        while case .working? = cards.card(for: project)?.gitHubStage, Date().timeIntervalSince(began) < 25 * 60 { try? await Task.sleep(for: .milliseconds(500)) }
         guard let after = cards.card(for: project) else { return .refused("The card closed before it was done.") }
         if let link = after.shared?.url.absoluteString { facts["link"] = link }
         facts["plays"] = after.shared?.plays == true
-        var text = after.shared.map { "Shared: \($0.url.absoluteString)" } ?? "Not shared."
+        // `released` is set only once the link and its file are up: a link there from before, or one made on the way to a
+        // file that didn't go, isn't this release.
+        let released = after.released
+        var text = released ? after.shared.map { "Shared: \($0.url.absoluteString)" } ?? "Shared."
+            : after.shared.map { "This release didn't go up: \($0.url.absoluteString) shows what it showed before, or only part of it." } ?? "Not shared."
         if case .failed(let why) = after.stage { text += "\n" + why }
         switch after.gitHubStage {
         case .done(let tag)?: text += "\nGitHub: released as \(tag)."
@@ -1182,9 +1194,10 @@ extension Store {
         case .working(let step)?: text += "\nGitHub: still going (\(step))."
         case nil: break
         }
-        let failed: Bool = if case .failed = after.stage, after.shared == nil { true } else { false }
-        var answer = OutsideWork.Answer(outcome: failed ? "failed" : "shared", text: text + "\n" + summary, isError: failed, facts: facts)
-        if failed { answer.facts["shared"] = false }
+        // A page that couldn't go up beside a release that did is said, not failed: the link works, with its earlier page.
+        let outcome = released ? "shared" : after.shared == nil ? "failed" : "partial"
+        var answer = OutsideWork.Answer(outcome: outcome, text: text + "\n" + summary, isError: !released, facts: facts)
+        answer.facts["released"] = released
         return answer
     }
 
