@@ -428,6 +428,16 @@ async function pidOf(pkg, serial) {
 }
 
 /**
+ * Whether the app is the one in front, which is where a tap or a key goes: Android keeps an app's process after Home is
+ * pressed or another app opens, so its process alone says nothing of it.
+ */
+export async function inFront(pkg, serial) {
+  const said = (await adb(["shell", "dumpsys", "activity", "activities"], { serial, timeout: 20_000 })).out;
+  const front = said.split("\n").filter((line) => /ResumedActivity\b/.test(line));
+  return front.some((line) => line.includes(` ${pkg}/`));
+}
+
+/**
  * Builds the page's Android app and puts it on the place in the stead of the copy there, then opens it. A copy signed
  * with another key can't be updated: it's taken off first, and what it saved with it, since Android allows no other way.
  */
@@ -575,6 +585,8 @@ export async function useOnAndroid(layout, place, moves, { command = "lamp" } = 
   const inputs = moves.map(inputFor);
   for (const [index, input] of inputs.entries()) {
     if (!input) { await sleep(Math.min(Math.max(Number(moves[index].seconds) || 1, 0), 30) * 1000); continue; }
+    // A move goes to whatever is in front, and one before it may have left the app.
+    if (!(await inFront(mine.package, serial))) throw new Problem(`It isn't in front on ${place.name}${index ? `, after ${index} ${index === 1 ? "move" : "moves"}` : ""}: ${command} open --on ${place.word} brings it back.`);
     const sent = await adb(["shell", "input", ...input], { serial, timeout: 60_000 });
     if (!sent.ok) throw away(place, sent) ?? new Problem(`${place.name} didn't take that: ${tail(sent.out + sent.err, 4)}`);
   }

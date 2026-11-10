@@ -103,6 +103,16 @@ const buildFolder = (layout, device) => join(stateOf(layout.folder), "device", c
 /** The app's name to lamp, which its package is named for: its folder's own, so two apps never share a package. */
 const appID = (layout) => stateOf(layout.folder).split(/[\\/]/).pop();
 
+/**
+ * The package's name on the Xbox: the folder's name, cut so its hash always fits after it (`identityName` keeps 40
+ * characters), so two folders with the same long name are two apps there.
+ */
+const xboxName = (layout) => {
+  const id = appID(layout), hash = id.slice(id.lastIndexOf("-") + 1);
+  const name = [...id.slice(0, id.lastIndexOf("-"))].filter((c) => /[A-Za-z0-9-]/.test(c)).join("");
+  return identityName(`${name.slice(0, 40 - hash.length - 1)}-${hash}`);
+};
+
 /** What a game's page is told about the device it's on (`GamePage.descriptor`): its controller and what its keys are called. */
 export function deviceFile(integration) {
   const input = integration.input ?? {}, facts = {};
@@ -138,7 +148,7 @@ export function packageFor(layout, device, integration = integrationOf(device.in
   const payload = [[WEB_HOST.program, host], [WEB_HOST.library, library], ...files.map(([path, bytes]) => [`${WEB_HOST.folder}/${path}`, bytes])];
   const folder = buildFolder(layout, device);
   mkdirSync(folder, { recursive: true });
-  const identity = { name: identityName(appID(layout)), publisher: PUBLISHER, version: versionAfter(readJSON(join(folder, "identity.json"))?.version), architecture: "x64" };
+  const identity = { name: xboxName(layout), publisher: PUBLISHER, version: versionAfter(readJSON(join(folder, "identity.json"))?.version), architecture: "x64" };
   const signer = keptSigner(join(devicesHome(), "msix")), icon = iconOf(layout);
   const made = packageOf({ payload, displayName: nameOf(layout), identity, entry: "webHost", logo: (width, height) => tile(icon, width, height), signer });
   writeFileSync(join(folder, "package.msix"), made);

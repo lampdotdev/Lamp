@@ -44,7 +44,7 @@ function developerFolders() {
   return folders;
 }
 
-function buildProfile(app) {
+function buildProfile(app, bin) {
   const home = real(homedir());
   const lines = [
     "(version 1)",
@@ -64,6 +64,11 @@ function buildProfile(app) {
   }
   // The app's own folder opens, by its own name.
   lines.push(`(allow file-read* file-write* (subpath ${quotedPath(app)}))`);
+  // lamp's \`swift\`, first on the build's path, is read and run from where lamp keeps it; nothing else of lamp's state opens.
+  if (bin) {
+    lines.push(`(allow file-read* (subpath ${quotedPath(real(bin))}))`);
+    for (let path = dirname(real(bin)); path !== "/"; path = dirname(path)) lines.push(`(allow file-read-metadata (literal ${quotedPath(path)}))`);
+  }
   // Where programs are found and run from stays as it is: nothing the build leaves there is run by anyone later.
   lines.push(`(deny file-write* (subpath ${quotedPath(real("/opt/homebrew"))}) (subpath ${quotedPath(real("/usr/local"))}))`);
   lines.push(`(deny file-write* ${[real("/Applications"), ...developer].map((path) => `(subpath ${quotedPath(path)})`).join(" ")})`);
@@ -122,7 +127,7 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
   mkdirSync(join(fence, "bin"), { recursive: true });
   writeFileSync(join(fence, "bin", "swift"), SWIFT_SHIM);
   chmodSync(join(fence, "bin", "swift"), 0o755);
-  writeFileSync(join(fence, "build.sb"), buildProfile(folder), { mode: 0o600 });
+  writeFileSync(join(fence, "build.sb"), buildProfile(folder, join(fence, "bin")), { mode: 0o600 });
 
   // MARK: The files and their changes
 

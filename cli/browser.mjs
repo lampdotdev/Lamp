@@ -50,6 +50,9 @@ const NAMED = {
   alt: ["Alt", "AltLeft", 18], option: ["Alt", "AltLeft", 18], command: ["Meta", "MetaLeft", 91], meta: ["Meta", "MetaLeft", 91],
 };
 
+// The browser's bit for each modifier key while it's held.
+const MODIFIERS = { Alt: 1, Control: 2, Meta: 4, Shift: 8 };
+
 export function keyNamed(name) {
   const lower = String(name).toLowerCase();
   const named = NAMED[lower] ?? NAMED[lower.replace(/^arrow/, "")];
@@ -83,14 +86,28 @@ class Page {
   /** The page answers as the page in front, with the keyboard its own, however it's shown. */
   async focus() { await this.send("Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => {}); }
 
-  /** Holds a key, or several at once (`w+a`), for some seconds. */
+  /**
+   * Holds a key, or several at once (`w+a`, `control+a`), for some seconds. Each key goes down with the modifiers held
+   * before it, as a keyboard sends them: with Control, Alt or Command held it's a shortcut and types nothing, and with
+   * Shift a letter is a capital.
+   */
   async key(names, seconds = 0) {
-    const keys = String(names).split("+").filter(Boolean).map(keyNamed).map(({ key, code, number, text }) => ({ text, common: { key, code, windowsVirtualKeyCode: number, nativeVirtualKeyCode: number } }));
-    for (const { text, common } of keys) {
-      await this.send("Input.dispatchKeyEvent", { type: text ? "keyDown" : "rawKeyDown", ...common, ...(text ? { text, unmodifiedText: text } : {}) });
+    const keys = String(names).split("+").filter(Boolean).map(keyNamed);
+    let held = 0;
+    const sent = [];
+    for (const { key, code, number, text } of keys) {
+      const shifted = held & 8 && /^[a-z]$/.test(key) ? key.toUpperCase() : key;
+      const typed = held & 7 ? null : text && held & 8 && /^[a-z]$/.test(text) ? text.toUpperCase() : text;
+      const common = { key: shifted, code, windowsVirtualKeyCode: number, nativeVirtualKeyCode: number };
+      await this.send("Input.dispatchKeyEvent", { type: typed ? "keyDown" : "rawKeyDown", modifiers: held, ...common, ...(typed ? { text: typed, unmodifiedText: text } : {}) });
+      held |= MODIFIERS[key] ?? 0;
+      sent.push(common);
     }
     await sleep(Math.max(40, seconds * 1000));
-    for (const { common } of keys.reverse()) await this.send("Input.dispatchKeyEvent", { type: "keyUp", ...common });
+    for (const common of sent.reverse()) {
+      held &= ~(MODIFIERS[common.key] ?? 0);
+      await this.send("Input.dispatchKeyEvent", { type: "keyUp", modifiers: held, ...common });
+    }
   }
 
   async click(x, y) {
