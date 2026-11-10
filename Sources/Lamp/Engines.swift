@@ -307,27 +307,7 @@ extension Agent {
 
         switch Builder.engine {
         case .pi:
-            env["LAMP_LOOK_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/look"
-            env["LAMP_USE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/use"
-            env["LAMP_VERSIONS_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/versions"
-            env["LAMP_MEMORY_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/memory"
-            env["LAMP_SETUP_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/setup"
-            env["LAMP_KIND_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/kind"
-            env["LAMP_REMOVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/remove"
-            env["LAMP_RENAME_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/rename"
-            env["LAMP_ICON_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/icon"
-            env["LAMP_CONNECTORS_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/connectors"
-            env["LAMP_LAMPIFY_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/lampify"
-            env["LAMP_SHARED_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/shared"
-            env["LAMP_SUGGESTED_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/suggested"
-            env["LAMP_NETWORK_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/network"
-            env["LAMP_INTEGRATION_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/integration"
-            env["LAMP_TALK_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/talk"
-            env["LAMP_ART_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/art"
-            env["LAMP_ASSETS_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/assets"
-            env["LAMP_SKILL_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/skill"
-            env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve"
-            env["LAMP_STEER_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/steer"
+            for (name, route) in Agent.piRoutes { env[name] = "http://127.0.0.1:\(Gateway.port)" + route }
             env["LAMP_TOKEN"] = token
             let defers = defersTools(project, session: session)
             return AgentRun(command: command(fileCount: files.count, defers: defers),
