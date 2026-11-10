@@ -19,6 +19,11 @@ trap 'rm -rf "${stage:h}"' EXIT
 mkdir -p "$stage/cli" "$stage/site/lib" "$stage/Resources"
 cp cli/*.mjs cli/page.js "$stage/cli/"
 cp -R cli/skill cli/lamps "$stage/cli/"
+# lamps/ keeps its generated files out of git; in the package they're the point, so npm is told to take everything.
+rm -f "$stage/cli/lamps/.gitignore" && : > "$stage/cli/lamps/.npmignore"
+# npm leaves every file called .gitignore out of a package, the Mac starter's own among them: it goes as gitignore,
+# which lamp writes as .gitignore into a new app (writeMacStarter).
+mv "$stage/cli/lamps/mac-starter/.gitignore" "$stage/cli/lamps/mac-starter/gitignore"
 cp site/lib/shared-wishes.js site/lib/quota.js "$stage/site/lib/"
 for folder in GameKit WebLibraries WebHost Devices skills; do cp -R "Resources/$folder" "$stage/Resources/$folder"; done
 cp Resources/THIRD_PARTY_NOTICES.md "$stage/"

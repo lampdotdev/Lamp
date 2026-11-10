@@ -63,7 +63,9 @@ export function writeMacStarter(folder, title, { only = null } = {}) {
     for (const entry of readdirSync(from, { withFileTypes: true })) {
       // What Lamp's app knows of the stand-in (.lamp) and the names it stood for aren't the new app's.
       if (entry.name === ".lamp" || entry.name === "lamp-starter.json") continue;
-      const source = join(from, entry.name), path = at + named(entry.name), target = join(to, named(entry.name));
+      // A starter from npm carries its .gitignore as gitignore, since npm leaves the other name out of a package.
+      const as = at === "" && entry.name === "gitignore" ? ".gitignore" : named(entry.name);
+      const source = join(from, entry.name), path = at + as, target = join(to, as);
       if (entry.isDirectory()) { copy(source, target, path + "/"); continue; }
       if (!entry.isFile() || (only && (!only.includes(path) || existsSync(target)))) continue;
       // Lamp's building blocks are the same for every app; the rest names this one.
