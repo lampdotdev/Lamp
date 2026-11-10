@@ -13,7 +13,7 @@ with an `index.html`; without one, the folder you're in.
 
 | Command | What it does |
 | --- | --- |
-| `lamp new <folder> [--name "Its Name"] [--mac]` | Makes a new web game's folder from Lamp's starting files, or with `--mac` a new Mac app in Swift. |
+| `lamp new <folder> [--name "Its Name"] [--web \| --mac]` | Makes a new web game's folder from Lamp's starting files, or with `--web` a new web app's, or with `--mac` a new Mac app in Swift. |
 | `lamp init [--update]` | Puts Lamp's game runtime beside a page that's already there, changing none of the page's own files. |
 | `lamp dev [--open] [--lan] [--port N]` | Runs the page and says how each change went. Each save goes into every open copy of it. `--open` opens a window for it; `--lan` lets other devices on the network open it. |
 | `lamp open` | Shows the page in a window, running it in the background if it isn't running, and returns at once. |
@@ -64,7 +64,7 @@ What a game's folder lacks all the same, the server gives it:
 | `lamp-device.js`, `lamp-build.js` | Made by the server: the device is a browser on any device, as a page published to the web is given, and the build is named for the files as they are. |
 | `lamp-controllers.js` | `cli/lamps/lamp-controllers.js`, the list of controllers as Lamp writes it (`Controllers.pageJS`). `CLIFilesTests` fails when the two differ, and writes the copy again when run with `LAMP_WRITE_CLI_FILES=1`. The game runtime can't load without it. |
 | `three/`, `phaser/`, `rapier/` | Lamp's copies (`Resources/WebLibraries`), for a library the page asks for and the folder has none of. |
-| `lamp.js` | A stand-in that holds nothing. Lamp's building blocks for a page (AI, saved data, the app's files) are code in Lamp's app and reach the page through it, so a page that uses one says so in its errors. |
+| `lamp.js` | Lamp's building blocks for a page (saved data, the app's files, AI through Lamp's app), as Lamp's own code writes them: `scripts/cli-files.sh` writes the file out (`cli/lamps/lamp.js`, not committed, since it changes often), and without it a stand-in that holds nothing. What a block asks of Lamp's app as the page runs (its AI) isn't answered here. |
 
 A file the page asks for that neither the folder nor Lamp has is logged as an error, since a module that imports one
 never runs and the page can't say so itself.
@@ -128,7 +128,7 @@ The folder holds all it takes, so nothing of Lamp's app is run:
   it again. The app's own build writes `build/`, `.build/` and `.lamp/` in the folder, as it does under Lamp's app.
 
 - **A new one** (`lamp new --mac`) is a copy of the folder Lamp's app makes for a new Mac app (`Template.scaffold`),
-  under the app's own name. Those files are Lamp's own code's doing, and its building blocks change often, so the copy
+  under the app's own name; `lamp new --web` is the same for a web app's page (`ScreenKit.fill`, `cli/lamps/web-starter`). Those files are Lamp's own code's doing, and its building blocks change often, so the copy
   isn't kept in the repository: `scripts/cli-files.sh` writes it (`cli/lamps/mac-starter`, through `CLIFilesTests`)
   from the code as it is, and `lamp new --mac` says to run it when there's none.
 

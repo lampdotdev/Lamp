@@ -10,7 +10,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, wr
 import { basename, join } from "node:path";
 import { deflateRawSync } from "node:zlib";
 import { Problem, stateOf } from "./state.mjs";
-import { ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, LAMP_JS, LIBRARIES } from "./dev.mjs";
+import { ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS, LIBRARIES } from "./dev.mjs";
 import { LIMITS, FILE_LIMITS, PAGE_LIMITS } from "../site/lib/shared-wishes.js";
 
 /** The site links are made on: lamp.dev, or another given for trying this against a copy of the site. */
@@ -90,7 +90,7 @@ export function pageFiles(layout) {
   if (layout.game) {
     files.set(DEVICE_FILE, Buffer.from(ANY_BROWSER));
     if (!files.has(CONTROLLERS_FILE)) files.set(CONTROLLERS_FILE, readFileSync(CONTROLLERS));
-    if (!files.has("lamp.js")) files.set("lamp.js", Buffer.from(LAMP_JS));
+    if (!files.has("lamp.js")) files.set("lamp.js", Buffer.from(lampJS()));
     // A library the page's import map names from beside it and the folder has none of: Lamp's copy.
     const map = /<script[^>]*type=["']importmap["'][^>]*>([\s\S]*?)<\/script>/i.exec(String(files.get("index.html") ?? ""))?.[1] ?? "";
     for (const name of ["three", "phaser", "rapier"]) {

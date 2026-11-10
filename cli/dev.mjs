@@ -37,9 +37,13 @@ export default {"keys":{"AltLeft":"Alt / Option","AltRight":"Alt / Option","Back
 `;
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PAGE_SCRIPT = readFileSync(join(HERE, "page.js"), "utf8");
-// Lamp's building blocks for a page (AI, saved data, the app's files) come with Lamp's app around it, which writes
-// lamp.js at each build. A game whose folder has none is given this in its place, so the page loads.
-export const LAMP_JS = "// lamp's stand-in for lamp.js: Lamp's building blocks come with Lamp's app around the page, and aren't here.\n";
+// Lamp's building blocks for a page (saved data, the app's files, AI through Lamp's app): lamp.js, which Lamp's app
+// writes at each build from its own code. A page whose folder has none is given it as that code writes it, when it has
+// been written out for the command line (scripts/cli-files.sh, cli/lamps/lamp.js), and else a stand-in, so the page loads.
+const LAMP_JS_STAND_IN = "// lamp's stand-in for lamp.js: Lamp's building blocks for a page aren't written out for the command line yet (scripts/cli-files.sh).\n";
+export function lampJS() {
+  try { return readFileSync(join(HERE, "lamps", "lamp.js"), "utf8"); } catch { return LAMP_JS_STAND_IN; }
+}
 // The controllers a game names buttons for, which Lamp's app writes beside the page at every build and the game
 // runtime can't load without: Lamp's list as a file (a test keeps it Lamp's, `CLIFilesTests`).
 export const CONTROLLERS_FILE = "lamp-controllers.js", CONTROLLERS = join(HERE, "lamps", CONTROLLERS_FILE);
@@ -663,7 +667,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       if (!layout.game) return missing();
       if (name === DEVICE_FILE) return send(200, TYPES[".js"], ANY_BROWSER);
       if (name === BUILD_FILE) return send(200, TYPES[".js"], `export default "${buildName()}";\n`);
-      if (name === "lamp.js") return send(200, TYPES[".js"], LAMP_JS);
+      if (name === "lamp.js") return send(200, TYPES[".js"], lampJS());
       const own = lampsCopy(name);
       try { info = own ? await stat(own) : null; } catch { info = null; }
       if (!info) return missing();

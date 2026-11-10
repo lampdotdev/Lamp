@@ -27,8 +27,16 @@ you're asked to play it; "Lamp's skills" below says what in them is Lamp's app's
 The card is a small game of its own, and the runtime keeps what it registered (a state called `play`, a camera)
 through a change, as it would the player's place. So write the whole game before the first look, and make that look
 with `--reopen` (`{{lamp}} look --reopen`): the game then opens from its beginning, not from the card's. If you
-looked earlier, `--reopen` puts it right. A plain web page needs no starting files: write its `index.html` in an
-empty folder.
+looked earlier, `--reopen` puts it right.
+
+## A new web app
+
+`{{lamp}} new path/to/folder --web --name "Its Name"` makes a new web app's page from Lamp's starting files:
+`index.html`, `style.css` and `app.js`, which are yours to write, `APP.md`, and `lamp.js`, Lamp's building blocks for
+a page (saved data with `LampStore`, the app's files and more). Read Lamp's `web-app` skill before writing it, and
+the comments in `lamp.js` for how each block is used; never edit `lamp.js`. What a block asks of Lamp's app as the
+page runs (its AI) isn't answered here. A page that wants none of Lamp's needs no starting files: write its
+`index.html` in an empty folder.
 
 ## A Mac app
 

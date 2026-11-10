@@ -20,7 +20,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Problem, layoutOf, projectOf, stateOf, running, ask } from "./state.mjs";
 import { serveMac } from "./mac.mjs";
-import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, LAMP_JS } from "./dev.mjs";
+import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS } from "./dev.mjs";
 import { allSkills } from "./skills.mjs";
 import { share, unshare, ideas, finishIdea, readLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
 
@@ -30,9 +30,9 @@ const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 const USAGE = `lamp runs the app in a folder and puts each saved change into it: a web app or game, shown in a browser, or a
 Mac app Lamp made in Swift, built and run on this Mac.
 
-  lamp new <folder> [--name "Its Name"] [--mac]
+  lamp new <folder> [--name "Its Name"] [--web | --mac]
       Make a new web game's folder from Lamp's starting files: the game runtime, three.js and a page to build on.
-      --mac makes a new Mac app in Swift instead, with Lamp's building blocks.
+      --web makes a new web app instead, and --mac a new Mac app in Swift, each with Lamp's building blocks.
   lamp init [folder] [--update]
       Give a page that's already there Lamp's game runtime: its own files beside the page, none of the page's
       changed. --update writes Lamp's files again, for a newer Lamp.
@@ -204,6 +204,30 @@ async function main() {
     if (!rest[0]) throw new Problem("new takes the folder to make: lamp new harbor-racer");
     const folder = resolve(rest[0]);
     if (existsSync(folder) && readdirSync(folder).length) throw new Problem(`${folder} already has things in it`);
+    if (options.web) {
+      // A new web app's page as Lamp's app makes one (`ScreenKit.fill`): the page, its style and script, lamp.js and
+      // its notes, from a copy Lamp's own code wrote under a stand-in name (scripts/cli-files.sh).
+      const starter = join(here, "lamps", "web-starter");
+      if (!existsSync(join(starter, "lamp-starter.json"))) {
+        throw new Problem(`Lamp's starting files for a web app aren't made yet. In Lamp's folder, run scripts/cli-files.sh: it writes them from Lamp's own code.`);
+      }
+      const stood = JSON.parse(readFileSync(join(starter, "lamp-starter.json"), "utf8"));
+      const title = String(options.name ?? basename(folder).split(/[-_\s]+/).filter(Boolean).map((word) => word[0].toUpperCase() + word.slice(1)).join(" ")).replace(/[\r\n]+/g, " ").trim();
+      if (!title || title.length > 60) throw new Problem("a web app's name is 60 characters at most: --name \"Its Name\"");
+      const inHTML = title.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+      mkdirSync(folder, { recursive: true });
+      for (const file of readdirSync(starter)) {
+        if (file === "lamp-starter.json") continue;
+        // Lamp's building blocks are the same for every page; the rest names this one.
+        if (file === "lamp.js") cpSync(join(starter, file), join(folder, file));
+        else writeFileSync(join(folder, file), readFileSync(join(starter, file), "utf8").replaceAll(stood.name, file.endsWith(".html") ? inHTML : title));
+      }
+      console.log(`Made ${folder}: a new web app, "${title}", with Lamp's building blocks for a page (lamp.js).`);
+      console.log("Yours to write: index.html, style.css, app.js and APP.md. It shows a card until then.");
+      console.log("Lamp's, never edited: lamp.js.");
+      console.log(`Write the app, then see it with: ${lampCommand()} look ${quoted(folder)}`);
+      return;
+    }
     if (options.mac) {
       // A new Mac app as Lamp's app makes one (`Template.scaffold`): Lamp's own files and the card the app shows until
       // it's written, from a copy Lamp's own code wrote under a stand-in name (scripts/cli-files.sh).
@@ -254,7 +278,7 @@ async function main() {
     // and runs wherever it's served from. lamp.js is the stand-in until Lamp's app takes the folder on.
     cpSync(CONTROLLERS, join(folder, CONTROLLERS_FILE));
     writeFileSync(join(folder, DEVICE_FILE), ANY_BROWSER);
-    writeFileSync(join(folder, "lamp.js"), LAMP_JS);
+    writeFileSync(join(folder, "lamp.js"), lampJS());
     // The app's notes, which an app made by Lamp keeps and Lamp's skills write in.
     writeFileSync(join(folder, "APP.md"), `# ${name.replace(/[\r\n]+/g, " ")}\n\nA web game on Lamp's game runtime, not written yet.\n`);
     console.log(`Made ${folder}: a new game, "${name}", on Lamp's game runtime, with three.js and Phaser beside it.`);
@@ -283,7 +307,7 @@ async function main() {
       wrote.push(name);
     }
     // lamp.js is Lamp's building blocks, which only its app writes: a stand-in where there's none, never over one.
-    if (!existsSync(join(layout.root, "lamp.js"))) { writeFileSync(join(layout.root, "lamp.js"), LAMP_JS); wrote.push("lamp.js"); }
+    if (!existsSync(join(layout.root, "lamp.js"))) { writeFileSync(join(layout.root, "lamp.js"), lampJS()); wrote.push("lamp.js"); }
     // And Lamp's libraries the page's import map names from beside it, where the folder has none.
     wrote.push(...addLibraries(layout.root));
     console.log(wrote.length ? `Lamp's own files are beside the page in ${layout.root}: ${wrote.join(", ")}.` : `Lamp's own files were beside the page already in ${layout.root}.`);
