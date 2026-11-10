@@ -37,8 +37,21 @@ const EMULATORS = {
 const DEVICE = `// Written by Lamp for the device this copy of the game is on (android); don't edit.\nexport default ${JSON.stringify({ keys: {} })};\n`;
 
 let read;
+/**
+ * Lamp's app's own, for the calls it makes (`useLamps`): the tools list Lamp's code holds, the folder the tools are in,
+ * its own folders for adb's home and its emulators, and the environment its tools run with. Null for lamp's own.
+ */
+let lamps = null;
+
+/** Has what follows use Lamp's app's tools list, folders and environment, as it hands them over. */
+export function useLamps({ spec: given, tools, userHome, avdHome, env }) {
+  if (!given || typeof tools !== "string" || typeof userHome !== "string" || typeof avdHome !== "string") throw new Error("the call needs Lamp's tools list and folders");
+  lamps = { spec: given, tools, userHome, avdHome, env: env ?? {} };
+}
+
 /** What Lamp builds an Android app with, and where its host's files go. */
 function spec() {
+  if (lamps) return lamps.spec;
   if (process.platform !== "darwin") throw new Problem("lamp builds for Android on a Mac, so far");
   read ??= readJSON(join(HOST, "tools.json"));
   if (!read) throw new Problem("Lamp's Android app for a page isn't beside this copy of lamp: scripts/cli-files.sh writes it");
@@ -56,14 +69,14 @@ export const toolsFolder = () => process.env.LAMP_ANDROID_TOOLS || join(homedir(
 const gradleCache = () => process.env.LAMP_GRADLE_HOME || join(homedir(), "Library", "Caches", "Lamp", "gradle");
 
 function paths() {
-  const tools = toolsFolder(), sdk = join(tools, "sdk"), jdk = join(tools, "jdk"), gradleFolder = join(tools, `gradle-${spec().gradle}`);
+  const tools = lamps?.tools ?? toolsFolder(), sdk = join(tools, "sdk"), jdk = join(tools, "jdk"), gradleFolder = join(tools, `gradle-${spec().gradle}`);
   const javaHome = join(jdk, "Contents", "Home");
   return {
     tools, sdk, jdk, javaHome, gradleFolder,
     java: join(javaHome, "bin", "java"), gradle: join(gradleFolder, "bin", "gradle"),
     adb: join(sdk, "platform-tools", "adb"), emulator: join(sdk, "emulator", "emulator"),
     sdkmanager: join(sdk, "cmdline-tools", "latest", "bin", "sdkmanager"), avdmanager: join(sdk, "cmdline-tools", "latest", "bin", "avdmanager"),
-    userHome: join(androidHome(), "home"), avdHome: join(androidHome(), "avd"),
+    userHome: lamps?.userHome ?? join(androidHome(), "home"), avdHome: lamps?.avdHome ?? join(androidHome(), "avd"),
   };
 }
 
@@ -83,6 +96,7 @@ const NO_TOOLS = (command) => `Android's tools aren't on this computer yet. "${c
 
 /** What every command of Google's or Gradle's is run with (`AndroidTools.environment`), lamp's own server and folders in it. */
 function environment() {
+  if (lamps) return { ...process.env, ...lamps.env };
   const p = paths(), env = { ...process.env };
   // A serial the person set for their own adb would send every command of lamp's to it.
   delete env.ANDROID_SERIAL;
@@ -117,6 +131,26 @@ function run(file, args, { cwd, input, timeout = 60_000, env, binary = false } =
 }
 
 const tail = (text, lines) => text.split(/\r?\n/).filter((line) => line.trim()).slice(-lines).join("\n");
+
+/** Runs a tool to its end as `run` does, telling `heard` each line it prints as it prints it. */
+function streamed(file, args, { cwd, env, timeout = 60_000 } = {}, heard = () => {}) {
+  return new Promise((done) => {
+    const out = [];
+    let waiting = "", timedOut = false;
+    const child = spawn(file, args, { cwd, env: env ?? environment(), stdio: ["ignore", "pipe", "pipe"] });
+    const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, timeout);
+    const hear = (chunk) => {
+      out.push(chunk);
+      const lines = (waiting + chunk.toString("utf8")).split(/[\r\n]/);
+      waiting = lines.pop();
+      for (const line of lines) if (line.trim()) heard(line);
+    };
+    child.stdout.on("data", hear);
+    child.stderr.on("data", hear);
+    child.on("error", () => { clearTimeout(timer); done({ ok: false, out: Buffer.concat(out).toString("utf8") }); });
+    child.on("close", (code) => { clearTimeout(timer); done({ ok: code === 0 && !timedOut, out: Buffer.concat(out).toString("utf8") }); });
+  });
+}
 
 // MARK: adb
 
@@ -228,7 +262,7 @@ async function emulatorRunning(kind) {
 }
 
 /** Makes one of lamp's emulators from its system image: a recent Pixel, or a 1080p TV (`Emulator.create`). */
-async function makeEmulator(kind) {
+export async function makeEmulator(kind) {
   const p = paths(), s = spec()[kind];
   mkdirSync(p.avdHome, { recursive: true });
   mkdirSync(p.userHome, { recursive: true });
@@ -601,22 +635,35 @@ function flatten(folder) {
   rmSync(inner, { recursive: true, force: true });
 }
 
-/** Downloads one release beside its place, checks it against what its maker published, unpacks it and moves it in whole. */
-async function fetchInto(release, destination, archive, name, said) {
+/**
+ * Downloads one release beside its place, checks it against what its maker published, unpacks it and moves it in
+ * whole. `part` hears how far along it is, from 0 to 1.
+ */
+async function fetchInto(release, destination, archive, name, said, part = () => {}) {
   const staging = join(dirname(destination), `.staging-${randomUUID()}`), download = join(staging, "download"), unpacked = join(staging, "unpacked");
   mkdirSync(unpacked, { recursive: true });
   try {
     said(`Downloading ${name} (${Math.round(release.size / 1_000_000)} MB)…`);
+    part(0);
     const answer = await fetch(release.url, { redirect: "follow" });
     if (!answer.ok || !answer.body) throw new Problem(`${name} didn't download (${answer.status}).`);
     await new Promise((done, failed) => {
       const file = createWriteStream(download);
       file.on("error", failed).on("finish", done);
       (async () => {
-        try { for await (const chunk of answer.body) if (!file.write(chunk)) await new Promise((drained) => file.once("drain", drained)); file.end(); }
-        catch (error) { file.destroy(); failed(new Problem(`${name} stopped downloading: ${error.message}`)); }
+        let got = 0, told = 0;
+        try {
+          for await (const chunk of answer.body) {
+            got += chunk.length;
+            if (got - told > release.size / 100) { told = got; part(Math.min(got / release.size, 1) * 0.9); }
+            if (!file.write(chunk)) await new Promise((drained) => file.once("drain", drained));
+          }
+          file.end();
+        } catch (error) { file.destroy(); failed(new Problem(`${name} stopped downloading: ${error.message}`)); }
       })();
     });
+    said(`Unpacking ${name}…`);
+    part(0.9);
     if ((await sha256(download)) !== release.sha256) throw new Problem(`The download of ${name} didn't match what its maker published, so lamp didn't use it.`);
     const opened = archive === "tar" ? await run("/usr/bin/tar", ["-xzf", download, "-C", unpacked], { timeout: 600_000, env: process.env })
       : await run("/usr/bin/unzip", ["-q", download, "-d", unpacked], { timeout: 600_000, env: process.env });
@@ -632,14 +679,16 @@ async function fetchInto(release, destination, archive, name, said) {
  * own package manager the platform, and the emulator with its system image (`tv`: the TV's image too). Google's terms
  * for its packages are accepted as they install, which is why only the person starts this.
  */
-export async function installTools({ emulator = true, tv = false, said = () => {} } = {}) {
+export async function installTools({ emulator = true, tv = false, said = () => {}, progress = () => {} } = {}) {
   const s = spec(), p = paths();
   if (s.arch !== (process.arch === "x64" ? "x86_64" : process.arch)) throw new Problem("this copy of lamp has Android's tools for another kind of Mac: scripts/cli-files.sh writes them for this one");
   mkdirSync(p.tools, { recursive: true });
   mkdirSync(p.userHome, { recursive: true });
+  // How far along the whole is, weighed by size: the runtime and Gradle are small next to the platform's packages.
+  const between = (from, to) => (part) => progress(from + (to - from) * part);
   let there = toolsThere();
   if (!there.jdk) {
-    await fetchInto(s.jdk, p.jdk, "tar", "Java", said);
+    await fetchInto(s.jdk, p.jdk, "tar", "Java", said, between(0, 0.1));
     // Temurin's archive holds one folder, jdk-17…/Contents/Home: that folder's contents are what's kept.
     flatten(p.jdk);
     if (!(await run(p.java, ["-version"])).ok) { rmSync(p.jdk, { recursive: true, force: true }); throw new Problem("Java didn't start on this Mac."); }
@@ -648,12 +697,12 @@ export async function installTools({ emulator = true, tv = false, said = () => {
     // Google's package manager wants itself at cmdline-tools/latest inside the SDK.
     const latest = join(p.sdk, "cmdline-tools", "latest");
     mkdirSync(dirname(latest), { recursive: true });
-    await fetchInto(s.commandLineTools, latest, "zip", "Google's tools", said);
+    await fetchInto(s.commandLineTools, latest, "zip", "Google's tools", said, between(0.1, 0.18));
     flatten(latest);
     for (const tool of [p.sdkmanager, p.avdmanager]) chmodSync(tool, 0o755);
   }
   if (!there.gradle) {
-    await fetchInto(s.gradleRelease, p.gradleFolder, "zip", "Gradle", said);
+    await fetchInto(s.gradleRelease, p.gradleFolder, "zip", "Gradle", said, between(0.18, 0.26));
     flatten(p.gradleFolder);
     chmodSync(p.gradle, 0o755);
   }
@@ -663,10 +712,16 @@ export async function installTools({ emulator = true, tv = false, said = () => {
     said(`Downloading ${emulator || tv ? "the Android platform and emulator" : "the Android platform"}, which takes a while…`);
     // Google's terms have to be accepted for each package; sdkmanager asks on its input.
     const script = '/usr/bin/yes | "$LAMP_SDKMANAGER" --licenses > /dev/null 2>&1; /usr/bin/yes | "$LAMP_SDKMANAGER" --install "$@" 2>&1';
-    const ran = await run("/bin/sh", ["-c", script, "sh", ...packages], { cwd: p.tools, env: { ...environment(), LAMP_SDKMANAGER: p.sdkmanager }, timeout: 2 * 3600_000 });
+    const ran = await streamed("/bin/sh", ["-c", script, "sh", ...packages], { cwd: p.tools, env: { ...environment(), LAMP_SDKMANAGER: p.sdkmanager }, timeout: 2 * 3600_000 },
+      (line) => {
+        // sdkmanager draws its own bar; the number before its "%" says how far it is.
+        const percent = Number(/(\d{1,3})%/.exec(line)?.[1]);
+        if (percent >= 0 && percent <= 100) between(0.26, 0.96)(percent / 100);
+      });
     there = toolsThere();
     if (!there.buildPackages || (emulator && !there.emulatorPackages) || (tv && !there.tvImage)) throw new Problem(`Google's tools couldn't download the Android platform.\n${tail(ran.out, 6)}`);
   }
+  progress(0.96);
   return toolsThere();
 }
 

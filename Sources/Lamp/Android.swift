@@ -97,11 +97,6 @@ enum AndroidTools {
     }
 
     /// One download: where it comes from and what it must hash to, as its maker publishes it.
-    struct Release {
-        let url: URL
-        let sha256: String
-        let size: Int64
-    }
 
     /// Google's command-line tools (sdkmanager, avdmanager), as developer.android.com lists them with their checksums.
     static let commandLineTools = isArm
@@ -209,115 +204,59 @@ enum AndroidTools {
 
     // MARK: Installing
 
+    /// The tools list, as lamp's command line is handed it (`androidInstall` in cli/calls.mjs): what's downloaded and
+    /// from where, with each archive's checksum, the packages, and the emulators' images and names. Written out for the
+    /// command line's own copy too (`CLIFilesTests`, cli/lamps/android-host/tools.json).
+    static var spec: [String: Any] {
+        func release(_ release: Release) -> [String: Any] { ["url": release.url.absoluteString, "sha256": release.sha256, "size": release.size] }
+        return ["arch": isArm ? "arm64" : "x86_64", "gradle": gradleVersion, "buildTools": buildTools, "platform": platformLevel,
+                "jdk": release(jdk), "commandLineTools": release(commandLineTools), "gradleRelease": release(gradleRelease),
+                "buildPackages": buildPackages, "emulatorPackages": emulatorPackages,
+                "phone": ["avd": Emulator.Kind.phone.avd, "image": Emulator.Kind.phone.image, "profile": Emulator.Kind.phone.profile],
+                "tv": ["avd": Emulator.Kind.tv.avd, "image": Emulator.Kind.tv.image, "profile": Emulator.Kind.tv.profile],
+                "apk": "app/build/outputs/apk/debug/app-debug.apk", "banner": GameAndroid.banner, "folder": GameAndroid.folder]
+    }
+
+    /// What lamp's command line is told of this Lamp's Android: the tools list, the folder they go in, its own folders
+    /// for adb's home and the emulators, and what its tools run with.
+    static var lamp: [String: Any] {
+        ["spec": spec, "tools": folder.path, "userHome": userHome.path, "avdHome": avdHome.path, "env": environment]
+    }
+
     /// Downloads and puts in place whatever `check` found missing, in order, saying how far it is (0…1) and what
-    /// it's doing. A download that doesn't match its published checksum isn't used. Nothing is left half done: each
-    /// piece is unpacked beside its place and moved in whole. `emulator` false: for a device of the person's, which
-    /// needs no emulator, so its download and its making are left for when one is chosen.
+    /// it's doing: lamp's command line's (`androidInstall`), each archive checked against the checksum its maker
+    /// publishes and unpacked beside its place before it's moved in whole, then Google's packages through its own
+    /// package manager. `emulator` false: for a device of the person's, which needs no emulator, so its download and its
+    /// making are left for when one is chosen.
     static func install(emulator: Bool = true, progress: @escaping @Sendable (Double, String) -> Void) async throws {
-        let fm = FileManager.default
-        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-        try fm.createDirectory(at: userHome, withIntermediateDirectories: true)
-        try fm.createDirectory(at: avdHome, withIntermediateDirectories: true)
-        // Weights for the progress, by size: the tools and Gradle are small next to the packages.
-        let steps: [(done: Bool, from: Double, to: Double, name: String)] = [
-            (hasJDK, 0, 0.1, "Java"), (hasCommandLineTools, 0.1, 0.18, "Google's tools"), (hasGradle, 0.18, 0.26, "Gradle"),
-            (hasBuildPackages && (!emulator || hasEmulatorPackages), 0.26, 0.96, emulator ? "the Android platform and emulator" : "the Android platform"),
-            (!emulator || hasEmulator, 0.96, 1, "the emulator")]
-        let packages = (hasBuildPackages ? [] : buildPackages) + (emulator && !hasEmulatorPackages ? emulatorPackages : [])
-        if !hasJDK {
-            try await fetch(jdk, into: jdkFolder, archive: .tar, from: steps[0].from, to: steps[0].to, name: steps[0].name, progress: progress)
-            // Temurin's archive holds one folder, jdk-17…/Contents/Home: that folder's contents are what's kept.
-            try flatten(jdkFolder)
-            guard await Subprocess.run(java, ["-version"], timeout: 60).ok else {
-                try? fm.removeItem(at: jdkFolder)
-                throw Failure(message: "Java didn't start on this Mac.")
+        try FileManager.default.createDirectory(at: avdHome, withIntermediateDirectories: true)
+        // What it's doing and how far it is come apart from the command line: each is shown with the latest of the other.
+        final class Doing: @unchecked Sendable { var words = "Downloading Android's tools…"; var part = 0.0 }
+        let doing = Doing()
+        do {
+            _ = try await LampCLI.ask("androidInstall", ["lamp": lamp, "emulator": emulator]) { event in
+                if let said = event["said"] as? String { doing.words = said }
+                if let part = (event["part"] as? NSNumber)?.doubleValue { doing.part = part }
+                progress(doing.part, doing.words)
             }
-        }
-        if !hasCommandLineTools {
-            // Google's package manager wants itself at cmdline-tools/latest inside the SDK.
-            let latest = sdkFolder.appendingPathComponent("cmdline-tools/latest")
-            try fm.createDirectory(at: latest.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try await fetch(commandLineTools, into: latest, archive: .zip, from: steps[1].from, to: steps[1].to, name: steps[1].name, progress: progress)
-            try flatten(latest)
-            for tool in ["sdkmanager", "avdmanager"] {
-                try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: latest.appendingPathComponent("bin/\(tool)").path)
+            if emulator, !hasEmulator {
+                progress(0.96, "Making the emulator…")
+                try await Emulator.create()
             }
-        }
-        if !hasGradle {
-            try await fetch(gradleRelease, into: gradleFolder, archive: .zip, from: steps[2].from, to: steps[2].to, name: steps[2].name, progress: progress)
-            try flatten(gradleFolder)
-            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: gradle)
-        }
-        if !packages.isEmpty {
-            progress(steps[3].from, "Downloading \(steps[3].name)…")
-            // Google's terms have to be accepted for each package; sdkmanager asks on its input.
-            let accept = "/usr/bin/yes | \"$LAMP_SDKMANAGER\" --licenses > /dev/null 2>&1; \"$LAMP_SDKMANAGER\" --install " +
-                packages.map { "\"\($0)\"" }.joined(separator: " ") + " 2>&1"
-            var output: [String] = []
-            let status = await Shell.run(accept, cwd: folder, env: environment.merging(["LAMP_SDKMANAGER": sdkmanager]) { $1 }, login: false) { line in
-                output.append(line)
-                // sdkmanager prints its own progress bar; the words beside it say which package.
-                if line.contains("%"), let percent = Int(line.split(separator: "%").first?.split(separator: "[").last?.trimmingCharacters(in: .whitespaces) ?? "") {
-                    progress(steps[3].from + (steps[3].to - steps[3].from) * Double(percent) / 100, "Downloading \(steps[3].name)…")
-                }
-            }
-            guard status == 0, hasBuildPackages, !emulator || hasEmulatorPackages else {
-                throw Failure(message: "Google's tools couldn't download the Android platform.\n\n" + output.suffix(6).joined(separator: "\n"))
-            }
-        }
-        if emulator, !hasEmulator {
-            progress(steps[4].from, "Making the emulator…")
-            try await Emulator.create()
+        } catch let failure as LampCLI.Failure {
+            throw Failure(message: failure.message)
         }
         progress(1, "Ready")
     }
 
-    enum Archive { case zip, tar }
+}
 
-    /// Downloads one release into a staging folder beside `destination`, checks it, unpacks it and moves it into place.
-    private static func fetch(_ release: Release, into destination: URL, archive: Archive, from: Double, to: Double, name: String,
-                              progress: @escaping @Sendable (Double, String) -> Void) async throws {
-        let fm = FileManager.default
-        let staging = destination.deletingLastPathComponent().appendingPathComponent(".staging-\(UUID().uuidString)")
-        try fm.createDirectory(at: staging, withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: staging) }
-        let download = staging.appendingPathComponent("download")
-        progress(from, "Downloading \(name)…")
-        try await Download.file(from: release.url, to: download, expected: release.size) { part in progress(from + (to - from) * part * 0.9, "Downloading \(name)…") }
-        guard try sha256(of: download) == release.sha256 else {
-            throw Failure(message: "The download of \(name) didn't match what its maker published, so Lamp didn't use it.")
-        }
-        progress(from + (to - from) * 0.9, "Unpacking \(name)…")
-        let unpacked = staging.appendingPathComponent("unpacked")
-        try fm.createDirectory(at: unpacked, withIntermediateDirectories: true)
-        let result = archive == .tar
-            ? await Subprocess.run("/usr/bin/tar", ["-xzf", download.path, "-C", unpacked.path], timeout: 600)
-            : await Subprocess.run("/usr/bin/unzip", ["-q", download.path, "-d", unpacked.path], timeout: 600)
-        guard result.ok else { throw Failure(message: "Lamp couldn't unpack \(name).") }
-        if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
-        try fm.moveItem(at: unpacked, to: destination)
-    }
-
-    /// An archive that holds one folder with everything in it: that folder's contents become `folder`'s own.
-    private static func flatten(_ folder: URL) throws {
-        let fm = FileManager.default
-        let names = try fm.contentsOfDirectory(atPath: folder.path).filter { !$0.hasPrefix(".") }
-        guard names.count == 1 else { return }
-        let inner = folder.appendingPathComponent(names[0])
-        var isFolder: ObjCBool = false
-        guard fm.fileExists(atPath: inner.path, isDirectory: &isFolder), isFolder.boolValue else { return }
-        for name in try fm.contentsOfDirectory(atPath: inner.path) {
-            try fm.moveItem(at: inner.appendingPathComponent(name), to: folder.appendingPathComponent(name))
-        }
-        try fm.removeItem(at: inner)
-    }
-
-    private static func sha256(of file: URL) throws -> String {
-        let handle = try FileHandle(forReadingFrom: file)
-        defer { try? handle.close() }
-        var hash = SHA256()
-        while let chunk = try handle.read(upToCount: 4 << 20), !chunk.isEmpty { hash.update(data: chunk) }
-        return hash.finalize().map { String(format: "%02x", $0) }.joined()
+/// One download: where it comes from and what it must hash to, as its maker publishes it.
+extension AndroidTools {
+    struct Release {
+        let url: URL
+        let sha256: String
+        let size: Int64
     }
 }
 
@@ -913,13 +852,15 @@ enum Emulator {
         var profile: String { self == .tv ? AndroidTools.tvProfile : AndroidTools.avdProfile }
     }
 
-    /// Makes one of Lamp's emulators from its downloaded system image: a recent Pixel, or a 1080p TV.
+    /// Makes one of Lamp's emulators from its downloaded system image: a recent Pixel, or a 1080p TV (lamp's command
+    /// line's `androidMakeEmulator`, in Lamp's own folder of emulators).
     static func create(_ kind: Kind = .phone) async throws {
-        let result = await Subprocess.run("/bin/sh", ["-c", "echo no | \"$LAMP_AVDMANAGER\" create avd -n \"$LAMP_AVD\" -k \"$LAMP_IMAGE\" -d \"$LAMP_PROFILE\" --force 2>&1"],
-                                          env: AndroidTools.environment.merging(["LAMP_AVDMANAGER": AndroidTools.avdmanager, "LAMP_AVD": kind.avd,
-                                                                                 "LAMP_IMAGE": kind.image, "LAMP_PROFILE": kind.profile]) { $1 },
-                                          timeout: 120)
-        guard result.ok, AndroidTools.has(kind) else { throw AndroidTools.Failure(message: "Lamp couldn't make the emulator.\n\n" + result.output.trimmed) }
+        do {
+            _ = try await LampCLI.ask("androidMakeEmulator", ["lamp": AndroidTools.lamp, "kind": kind == .tv ? "tv" : "phone"])
+        } catch let failure as LampCLI.Failure {
+            throw AndroidTools.Failure(message: "Lamp couldn't make the emulator.\n\n" + failure.message)
+        }
+        guard AndroidTools.has(kind) else { throw AndroidTools.Failure(message: "Lamp couldn't make the emulator.") }
     }
 
     /// The TV emulator, downloaded and made the first time an Android TV app wants it: Google's terms for its image are
@@ -928,13 +869,12 @@ enum Emulator {
         guard !AndroidTools.has(.tv) else { return }
         if !AndroidTools.hasTVImage {
             await note("Downloading the Android TV emulator, about a gigabyte, once…")
-            // The TV image has a license of its own, asked for during the install, so the answer goes to the install itself.
-            let install = "/usr/bin/yes | \"$LAMP_SDKMANAGER\" --install \"$LAMP_IMAGE\" 2>&1"
-            let result = await Subprocess.run("/bin/sh", ["-c", install], env: AndroidTools.environment.merging(["LAMP_SDKMANAGER": AndroidTools.sdkmanager, "LAMP_IMAGE": Kind.tv.image]) { $1 },
-                                              timeout: 3600)
-            guard AndroidTools.hasTVImage else {
-                throw AndroidTools.Failure(message: "Google's tools couldn't download the Android TV emulator.\n\n" + result.output.split(separator: "\n").suffix(6).joined(separator: "\n"))
+            do {
+                _ = try await LampCLI.ask("androidInstall", ["lamp": AndroidTools.lamp, "tv": true])
+            } catch let failure as LampCLI.Failure {
+                throw AndroidTools.Failure(message: "Google's tools couldn't download the Android TV emulator.\n\n" + failure.message)
             }
+            guard AndroidTools.hasTVImage else { throw AndroidTools.Failure(message: "Google's tools couldn't download the Android TV emulator.") }
         }
         await note("Making the Android TV emulator…")
         try await create(.tv)

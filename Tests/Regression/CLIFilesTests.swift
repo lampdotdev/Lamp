@@ -101,20 +101,7 @@ final class CLIFilesTests: XCTestCase {
             try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try text.write(to: url, atomically: true, encoding: .utf8)
         }
-        func release(_ release: AndroidTools.Release) -> [String: Any] {
-            ["url": release.url.absoluteString, "sha256": release.sha256, "size": release.size]
-        }
-        var machine = utsname()
-        uname(&machine)
-        let arch = withUnsafePointer(to: &machine.machine) { $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) } }
-        let tools: [String: Any] = [
-            "arch": arch, "gradle": AndroidTools.gradleVersion, "buildTools": AndroidTools.buildTools, "platform": AndroidTools.platformLevel,
-            "jdk": release(AndroidTools.jdk), "commandLineTools": release(AndroidTools.commandLineTools), "gradleRelease": release(AndroidTools.gradleRelease),
-            "buildPackages": AndroidTools.buildPackages, "emulatorPackages": AndroidTools.emulatorPackages,
-            "phone": ["avd": Emulator.Kind.phone.avd, "image": Emulator.Kind.phone.image, "profile": Emulator.Kind.phone.profile],
-            "tv": ["avd": Emulator.Kind.tv.avd, "image": Emulator.Kind.tv.image, "profile": Emulator.Kind.tv.profile],
-            "apk": "app/build/outputs/apk/debug/app-debug.apk", "banner": GameAndroid.banner, "folder": GameAndroid.folder,
-        ]
+        let tools = AndroidTools.spec
         try JSONSerialization.data(withJSONObject: tools, options: [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes]).write(to: host.appendingPathComponent("tools.json"))
         XCTAssertTrue(GameAndroid.gameActivity.contains("{{PACKAGE}}"))
     }

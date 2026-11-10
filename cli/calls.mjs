@@ -22,6 +22,7 @@ import { lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSy
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Away, OffNetwork, Refused, Rejected, Runner, StillWorking, answersOn, bonjour, pinsAt, searchNetwork, send, ssdp } from "./devices.mjs";
+import { installTools, makeEmulator, toolsThere, useLamps } from "./android.mjs";
 import { Unreachable, ideasOf, latestOf, publishLink, removeFile, removeIdea, removeLink, sendFile } from "./link.mjs";
 import { defaultRoute, homeNetwork, neighbours, samsungAt, subnetOn, tvsIn } from "./network.mjs";
 import { PUBLISHER, identityName, keptSigner, namesOf, packageOf, versionAfter } from "./msix.mjs";
@@ -80,6 +81,28 @@ const linkOf = (given) => ({ id: text(given, "id"), secret: text(given, "secret"
 const siteOf = (given) => text(given, "site").replace(/\/+$/, "");
 
 export const CALLS = {
+  /**
+   * Downloads whichever of Android's tools Lamp's app is missing, into its tools folder, as its tools list says (each
+   * archive checked against what its maker publishes, then Google's packages through its own package manager, which
+   * accepts Google's terms for them: only when the person asked). With `emulator`, the emulator and its phone's image
+   * too; with `tv`, the TV's image. `lamp` is Lamp's app's tools list, folders and environment. Tells how far along it
+   * is (`part`, 0 to 1) and what it's doing (`said`) as it goes; answers which tools are there.
+   */
+  async androidInstall(given, how = {}) {
+    useLamps(given.lamp ?? {});
+    return { there: await installTools({ emulator: given.emulator === true, tv: given.tv === true,
+      said: (line) => how.event?.({ said: line }), progress: (part) => how.event?.({ part }) }) };
+  },
+
+  /** Makes Lamp's app's emulator of a kind ("phone" or "tv") from its downloaded system image. */
+  async androidMakeEmulator(given) {
+    useLamps(given.lamp ?? {});
+    if (given.kind !== "phone" && given.kind !== "tv") throw new Error('the call needs "kind": "phone" or "tv"');
+    await makeEmulator(given.kind);
+    return { there: toolsThere() };
+  },
+
+
   /**
    * Shares a wish's link, or changes what it shows (`earlier`: its id and secret), on `site`, with `body` as the site
    * takes it. Its id, address and secret.

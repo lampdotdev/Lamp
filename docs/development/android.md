@@ -28,6 +28,9 @@ a Mac by itself, so Lamp downloads what it needs the first time (`AndroidTools.i
 window, `AndroidSetup`, which the first Android request, Play and Try On open through `AndroidTools.check`): a Java
 runtime, Google's command-line tools and Gradle, each checked against the checksum its maker publishes, and through
 Google's own package manager the platform tools, a build-tools, the platform and the emulator with one system image.
+The download, and making an emulator from its image, are lamp's command line's (`androidInstall` and
+`androidMakeEmulator` in cli/calls.mjs, the same as `lamp devices add android`), handed the tools list Lamp's code
+holds (`AndroidTools.spec`), its folders and its environment (`AndroidTools.lamp`).
 They go in `Edition.sharedDeveloperFolder` (~/Library/Developer/Lamp), one copy for every Lamp on this Mac, which the
 agent's sandbox lets a build read and never write, so what Lamp runs from there as itself (adb, the emulator) is what
 Lamp put there; Gradle's cache is in `Edition.sharedCachesFolder`, which the sandbox opens for writing, and each app's
