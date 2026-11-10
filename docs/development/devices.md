@@ -127,7 +127,7 @@ setting allows; the license and the password stay the person's, on the Roku. Its
 (pressed only while `developer-enabled` isn't true, and never again after a failure part way), then the person's
 installer, license and password while Lamp waits for the Roku's restart, then what the step itself checks. Its first
 step is the Roku's version: Roku's SDK runs on Roku OS 15.1 and later, so the step reads `software-version` from
-device-info and holds until it's at least that (`atLeast`, a version compared number by number, `Integration.isVersion`),
+device-info and holds until it's at least that (`atLeast`, a version compared number by number, `isVersion` in lamp's command line),
 its lines saying to update the Roku under Settings → System → Software update, and that a Roku still older once it's up
 to date is too old for Lamp's Roku apps. A Roku set up before this has the step as its next one, so nothing is put on it
 until it passes.
