@@ -26,7 +26,8 @@ else if (said.includes("sys.boot_completed")) console.log("1");
 else if (said === "shell date +%s") console.log("1800000000");
 else if (args[0] === "install") { keep({ ...state, installed: true }); console.log("Success"); }
 else if (said.startsWith("shell am force-stop")) keep({ ...state, open: false });
-else if (said.startsWith("shell am start")) { keep({ ...state, open: true }); console.log("Status: ok"); }
+else if (said.startsWith("shell am start")) { keep({ ...state, open: true, front: args.at(-1) }); console.log("Status: ok"); }
+else if (said === "shell dumpsys activity activities") console.log(state.open ? "  mResumedActivity: ActivityRecord{7 u0 " + state.front + " t3}" : "  mResumedActivity: ActivityRecord{2 u0 com.android.launcher/.Home t1}");
 else if (said.startsWith("shell pidof")) { if (state.open) console.log("4242"); else process.exit(1); }
 else if (said === "exec-out screencap -p") process.stdout.write(Buffer.from(process.env.LAMP_TEST_PICTURE, "base64"));
 else if (args[0] === "logcat") console.log("--------- beginning of main\\nI/Lamp    ( 4242): Lamp: 60 frames a second\\nE/AndroidRuntime( 4242): FATAL EXCEPTION: main");
