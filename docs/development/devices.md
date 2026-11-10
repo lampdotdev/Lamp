@@ -45,7 +45,9 @@ restarts), the integration names where it serves that root (`certificateRoot`), 
 connection the first certificate was kept on and keeps beside it, and a later certificate is taken only when that
 root signed it, and
 nothing secret goes to a device whose certificate isn't kept, so a read while finding it sends no password), `DeviceProbe` (TCP, SSDP, Bonjour;
-read only), `DeviceStream` (a TCP log read line by line), `DeviceFields` (what the person typed, kept per device the
+read only, and lamp's command line's too: `search`, `probe` and `look` in `cli/calls.mjs`; a look, `Integrations.Scan.now`, is one search
+for everything with each integration's devices found and read as its JSON says and the devices nobody knows read from
+their descriptions, all in the command line, and what's kept of each, and what it's called, Lamp's app's), `DeviceStream` (a TCP log read line by line), `DeviceFields` (what the person typed, kept per device the
 way `AppSecrets` keeps an app's), `DeviceQR`, `VendorSignIn` (the vendor's https page, answered on a loopback listener
 at a port of its own; the card names the page's domain), `DeviceSSH` (the device's address only, its host key pinned
 in a file of its own the first time, none of the person's SSH settings, no agent, no forwarding, Lamp's key or one the
@@ -163,7 +165,7 @@ shelf of devices (`DeskDevices`, the desk guide) is the one place that looks una
 invites the person to (Find My Devices, the look macOS asks about), and from then on the desk looks each time it's
 shown or Lamp comes to the front, at most once a minute, since macOS has already asked. Never as a
 wish starts, nor as Lamp opens before that first look: those show what Lamp knows without looking (`showKnownDevices`: the last look's devices, and the kept TVs
-and devices as not found). A look macOS refused (`DeviceProbe.search`: nothing
+and devices as not found). A look macOS refused (`Integrations.Scan.now`: nothing
 answered, and Network.framework says the path is local network prohibited, `localNetworkDenied`; a refused send itself
 succeeds) sets `Store.localNetworkRefused`, and where a look was asked for (Your
 Devices, Add a New Device, Try On) a line says so with the way to Privacy & Security, and that Local Network is chosen there (System Settings has no

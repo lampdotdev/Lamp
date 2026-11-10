@@ -203,25 +203,20 @@ enum DeviceHTTP {
 
 // MARK: - probe
 
+/// What answers on the home network: a device's port, a search, a Bonjour service. The looking is lamp's command line's
+/// (`search`, `probe` and `look` in cli/calls.mjs, through `LampCLI.ask`), the same for Lamp's app as for an agent at a
+/// terminal; what's here is how Lamp's app asks, and the one question that's macOS's alone, whether Lamp may look.
 enum DeviceProbe {
     /// Whether the device accepts a TCP connection on a port, within a few seconds. Connects and closes; sends nothing.
     static func tcp(_ address: String, port: Int, timeout: TimeInterval = 3) async -> Bool {
-        guard DeviceAddress.isPrivate(address), let nwPort = NWEndpoint.Port(rawValue: UInt16(clamping: port)) else { return false }
-        let connection = NWConnection(host: NWEndpoint.Host(address), port: nwPort, using: .tcp)
-        return await withCheckedContinuation { continuation in
-            let once = Once()
-            connection.stateUpdateHandler = { state in
-                switch state {
-                case .ready: if once.take() { connection.cancel(); continuation.resume(returning: true) }
-                case .failed, .cancelled, .waiting: if once.take() { connection.cancel(); continuation.resume(returning: false) }
-                default: break
-                }
-            }
-            connection.start(queue: .global())
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                if once.take() { connection.cancel(); continuation.resume(returning: false) }
-            }
-        }
+        guard DeviceAddress.isPrivate(address), (1...65535).contains(port) else { return false }
+        return (try? await LampCLI.ask("probe", ["address": address, "tcp": port, "seconds": timeout]))?["present"] as? Bool ?? false
+    }
+
+    /// Whether the device at `address` answers a search for a target (`kind` "ssdp") or offers a Bonjour service ("bonjour").
+    static func present(_ address: String, _ kind: String, _ value: String) async -> Bool {
+        guard DeviceAddress.isPrivate(address), kind == "ssdp" || kind == "bonjour" else { return false }
+        return (try? await LampCLI.ask("probe", ["address": address, kind: value]))?["present"] as? Bool ?? false
     }
 
     final class Once: @unchecked Sendable {
@@ -239,18 +234,19 @@ enum DeviceProbe {
         let usn: String
     }
 
-    /// An SSDP search of the local network for a search target ("ssdp:all" for everything), for a couple of seconds.
-    static func ssdp(_ target: String, seconds: Double = 2) async -> [SSDPAnswer] {
-        await search(target, seconds: seconds).answers
+    /// The answers as lamp's command line says them.
+    static func answers(from said: Any?) -> [SSDPAnswer] {
+        (said as? [[String: Any]] ?? []).compactMap { answer in
+            guard let address = answer["address"] as? String else { return nil }
+            return SSDPAnswer(address: address, server: answer["server"] as? String ?? "", location: answer["location"] as? String,
+                              searchTarget: answer["target"] as? String ?? "", usn: answer["usn"] as? String ?? "")
+        }
     }
 
-    /// The same search, and whether macOS refused it: Lamp isn't allowed on the local network (Privacy & Security →
-    /// Local Network), or hasn't been answered yet. A refused search only hears nothing, so a look that heard nothing
-    /// asks Network.framework why (`localNetworkDenied`).
-    static func search(_ target: String, seconds: Double) async -> (answers: [SSDPAnswer], refused: Bool) {
-        async let denied = localNetworkDenied()
-        let answers = await Task.detached { search(target, seconds: seconds) }.value
-        return (answers, await denied && answers.isEmpty)
+    /// An SSDP search of the local network for a search target ("ssdp:all" for everything), for a couple of seconds.
+    static func ssdp(_ target: String, seconds: Double = 2) async -> [SSDPAnswer] {
+        guard !target.contains(where: { $0.isNewline }) else { return [] }
+        return answers(from: (try? await LampCLI.ask("search", ["target": target, "seconds": seconds]))?["answers"])
     }
 
     /// Whether macOS refuses Lamp the local network now. A send it refuses still succeeds where Lamp makes it, so a
@@ -272,114 +268,6 @@ enum DeviceProbe {
             connection.start(queue: .global())
             DispatchQueue.global().asyncAfter(deadline: .now() + 2) { if once.take() { connection.cancel(); continuation.resume(returning: false) } }
         }
-    }
-
-    private static func search(_ target: String, seconds: Double) -> [SSDPAnswer] {
-        guard !target.contains(where: { $0.isNewline }) else { return [] }
-        let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
-        guard fd >= 0 else { return [] }
-        defer { close(fd) }
-        var wait = timeval(tv_sec: 0, tv_usec: 250_000)
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
-        var ttl: UInt8 = 2
-        setsockopt(fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, socklen_t(1))
-        var address = sockaddr_in()
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = UInt16(1900).bigEndian
-        address.sin_addr.s_addr = inet_addr("239.255.255.250")
-        let message = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: \(target)\r\n\r\n"
-        for _ in 0..<2 {
-            _ = message.withCString { text in
-                withUnsafePointer(to: &address) {
-                    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { sendto(fd, text, strlen(text), 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
-                }
-            }
-        }
-        var answers: [SSDPAnswer] = []
-        let end = Date().addingTimeInterval(seconds)
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        // Asked again partway through: a device that was asleep or busy misses the first search more often than not.
-        var askedAgain = false
-        while Date() < end {
-            if !askedAgain, Date() > end.addingTimeInterval(-seconds / 2) {
-                askedAgain = true
-                _ = message.withCString { text in
-                    withUnsafePointer(to: &address) {
-                        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { sendto(fd, text, strlen(text), 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
-                    }
-                }
-            }
-            var from = sockaddr_in()
-            var length = socklen_t(MemoryLayout<sockaddr_in>.size)
-            let got = withUnsafeMutablePointer(to: &from) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { recvfrom(fd, &buffer, buffer.count, 0, $0, &length) }
-            }
-            guard got > 0 else { continue }
-            let answer = answer(String(decoding: buffer[0..<got], as: UTF8.self), from: String(cString: inet_ntoa(from.sin_addr)))
-            if !answers.contains(answer) { answers.append(answer) }
-        }
-        return answers
-    }
-
-    /// One SSDP answer's headers, as the device at `address` sent them.
-    static func answer(_ text: String, from address: String) -> SSDPAnswer {
-        var headers: [String: String] = [:]
-        for line in text.split(whereSeparator: \.isNewline) {
-            guard let colon = line.firstIndex(of: ":") else { continue }
-            headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-        }
-        return SSDPAnswer(address: address, server: headers["server"] ?? "", location: headers["location"],
-                          searchTarget: headers["st"] ?? "", usn: headers["usn"] ?? "")
-    }
-
-    /// The devices offering a Bonjour service on the local network, by name and address, browsed for a few seconds.
-    static func bonjour(_ type: String, seconds: Double = 3) async -> [(name: String, address: String)] {
-        guard type.range(of: #"^_[a-z0-9-]{1,40}\._(tcp|udp)$"#, options: .regularExpression) != nil else { return [] }
-        let browser = NWBrowser(for: .bonjour(type: type, domain: "local."), using: .tcp)
-        let results = Collected<NWBrowser.Result>()
-        browser.browseResultsChangedHandler = { all, _ in results.set(Array(all)) }
-        browser.start(queue: .global())
-        try? await Task.sleep(for: .seconds(seconds))
-        browser.cancel()
-        var found: [(String, String)] = []
-        for result in results.items {
-            guard case .service(let name, _, _, _) = result.endpoint else { continue }
-            if let address = await resolve(result.endpoint) { found.append((name, address)) }
-        }
-        return found
-    }
-
-    /// A Bonjour service's address, from a connection made to it and closed at once.
-    private static func resolve(_ endpoint: NWEndpoint) async -> String? {
-        let connection = NWConnection(to: endpoint, using: .tcp)
-        return await withCheckedContinuation { continuation in
-            let once = Once()
-            connection.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    var address: String?
-                    if case .hostPort(let host, _) = connection.currentPath?.remoteEndpoint {
-                        switch host {
-                        case .ipv4(let v4): address = "\(v4)"
-                        case .ipv6(let v6): address = "\(v6)".components(separatedBy: "%").first
-                        default: break
-                        }
-                    }
-                    if once.take() { connection.cancel(); continuation.resume(returning: address) }
-                case .failed, .cancelled: if once.take() { continuation.resume(returning: nil) }
-                default: break
-                }
-            }
-            connection.start(queue: .global())
-            DispatchQueue.global().asyncAfter(deadline: .now() + 3) { if once.take() { connection.cancel(); continuation.resume(returning: nil) } }
-        }
-    }
-
-    final class Collected<T>: @unchecked Sendable {
-        private let lock = NSLock()
-        private var stored: [T] = []
-        func set(_ items: [T]) { lock.lock(); stored = items; lock.unlock() }
-        var items: [T] { lock.lock(); defer { lock.unlock() }; return stored }
     }
 }
 

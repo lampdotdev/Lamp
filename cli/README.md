@@ -182,8 +182,12 @@ and remove an app. Nothing in one is code: `cli/devices.mjs` makes each request 
 Lamp's app, so a change to an integration reaches both. An Xbox is the only device so far (`takesPages`): the one
 whose host for a page lamp packages for.
 
-- **Finding** is one SSDP search of the home network, with each answer read as its integration says (`look`). A
-  device found is only shown; it's kept once a setup step has passed on it, and only a kept one is ever sent anything.
+- **Finding** is one SSDP search of the home network, with each answer read as its integration says
+  (`searchNetwork`: its search target, a Bonjour service, or a page on the device holding words; then its identity
+  read from the device's description or its own pages), and for Lamp's app the devices no integration knows, read
+  from their UPnP descriptions. Bonjour is asked as a one-shot mDNS question from a port of lamp's own, which each
+  device answers there, so nothing listens on mDNS's own port. A device found is only shown; it's kept once a setup
+  step has passed on it, and only a kept one is ever sent anything.
 - **Setting up** (`lamp devices add`) takes the device through its integration's steps in order. What a step asks the
   person to type (an Xbox's Device Portal password) is read from the terminal without being shown, so an agent can't
   give it: run without a terminal, the command says the person runs it themselves.
@@ -276,11 +280,15 @@ does. A problem says its kind where Lamp's app acts on which it was: a device th
   agent wrote is read by Lamp's app on that folder's terms first. A call refuses a link in what it's handed.
 - **The runtime** in Lamp's app is the one it already carries: its bundled agent is built on Bun, and run with
   `BUN_BE_BUN=1` that program is Bun itself (`LampCLI.launch`, the one place that decides). So `calls.mjs` and what it
-  imports must run on Bun as well as Node; `build.sh` copies `cli/*.mjs` into the app. The tests run on both. One
-  thing doesn't work on Bun yet: the search of the network for devices (`ssdp`, over UDP) hears nothing there.
-- **The calls so far:** `msix`, an Xbox's package from a folder of files; and `send`, one request to a device, with
-  the file its certificates are kept in named by Lamp's app (`pinsAt`), so each device has one store whichever asks.
-  What the person typed for a device comes with the request, on the run's input, and is kept nowhere here. Moving a
+  imports must run on Bun as well as Node; `build.sh` copies `cli/*.mjs` into the app. The tests run on both. Run
+  from a copy of Lamp's app, the command line is that app to macOS: it's on the local network only once the app is
+  allowed there (a search before that hears nothing, and a request to a device gets no answer).
+- **The calls so far:** `msix`, an Xbox's package from a folder of files; `send`, one request to a device, with the
+  file its certificates are kept in named by Lamp's app (`pinsAt`), so each device has one store whichever asks
+  (what the person typed for a device comes with the request, on the run's input, and is kept nowhere here); `look`,
+  one look at the home network for the integrations Lamp's app gives it; `search`, a search for one target; and
+  `probe`, whether a device is there now, as a setup step's check asks. Whether macOS lets Lamp look at all is
+  Network.framework's to say, and stays in Lamp's app (`DeviceProbe.localNetworkDenied`). Moving a
   piece of work here means a call for it, the Swift that did it deleted, and a test on each side
   (`cli/tests/calls.test.mjs`, `LampCLITests`).
 

@@ -2,7 +2,8 @@ import XCTest
 @testable import Lamp
 
 /// An LG TV answers an SSDP search for five services, each pointing at a description of its own, and the first to
-/// answer is usually Netflix's, whose description is nine bytes of "status=ok". The answers and descriptions in
+/// answer is usually Netflix's, whose description is nine bytes of "status=ok". (Reading such a device when no
+/// integration knows it is lamp's command line's, and cli/tests/devices.test.mjs holds it to these same recordings.) The answers and descriptions in
 /// Tests/Fixtures/lg-webos-tv are a webOS TV's own, recorded on 2026-10-22 in the order they came, with its
 /// address, ids and hardware addresses replaced.
 final class LGDiscoveryTests: XCTestCase {
@@ -10,9 +11,17 @@ final class LGDiscoveryTests: XCTestCase {
         .appendingPathComponent("Fixtures/lg-webos-tv")
     private let address = "192.168.1.20"
 
+    /// Each recorded answer's headers, as a search hears them.
     private func answers() throws -> [DeviceProbe.SSDPAnswer] {
-        try String(contentsOf: folder.appendingPathComponent("ssdp.txt"), encoding: .utf8)
-            .components(separatedBy: "\n\n").map { DeviceProbe.answer($0, from: address) }
+        try String(contentsOf: folder.appendingPathComponent("ssdp.txt"), encoding: .utf8).components(separatedBy: "\n\n").map { text in
+            var headers: [String: String] = [:]
+            for line in text.split(whereSeparator: \.isNewline) {
+                guard let colon = line.firstIndex(of: ":") else { continue }
+                headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            }
+            return DeviceProbe.SSDPAnswer(address: address, server: headers["server"] ?? "", location: headers["location"],
+                                          searchTarget: headers["st"] ?? "", usn: headers["usn"] ?? "")
+        }
     }
 
     private func description(port: Int?) -> Data? {
@@ -43,14 +52,6 @@ final class LGDiscoveryTests: XCTestCase {
                               model: "LG TV", modelID: "1.0", address: address, os: "webOS", osVersion: "", resolution: "")
         let record = await TVs.lg(at: address, answers: try answers(), earlier: [kept]) { self.description(port: $0.port) }
         XCTAssertEqual(record?.id, kept.id)
-    }
-
-    func testAnUnknownDeviceIsReadFromTheDescriptionThatNamesIt() async throws {
-        let device = await Integrations.described(address, answers: try answers()) { request, _ in
-            self.description(port: request.port).map { DeviceHTTP.Answer(status: 200, body: $0) }
-        }
-        XCTAssertEqual(device?.name, "[LG] webOS TV NANO80ASA")
-        XCTAssertEqual(device?.id, "found:192.168.1.20")
     }
 
     /// The agent's line for a TV app is what Lamp has seen of this TV, and what it hasn't seen (its screen, whether

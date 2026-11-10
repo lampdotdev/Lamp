@@ -163,29 +163,25 @@ final class IntegrationTests: XCTestCase {
 
     /// A look makes one ssdp:all search: an integration's own target, and where its description is, come from the
     /// answers to it, so no integration searches again.
-    func testAnIntegrationFindsItsDeviceInTheLooksOneScan() async throws {
-        let xbox = """
-        {
-          "id": "xbox-test", "name": "Xbox", "maker": "Microsoft",
-          "find": [{ "ssdp": "urn:schemas-upnp-org:device:MediaRenderer:1", "contains": "UPnP-Device-Host" }],
-          "identity": { "os": "Xbox OS", "id": { "description": true, "xml": "device/UDN" },
-                        "model": { "description": true, "xml": "device/modelName", "contains": "Xbox" } },
-          "steps": []
-        }
-        """
-        let integration = try JSONDecoder().decode(Integration.self, from: Data(xbox.utf8))
-        func answer(_ address: String, _ target: String, _ server: String, _ location: String) -> DeviceProbe.SSDPAnswer {
-            DeviceProbe.answer("HTTP/1.1 200 OK\r\nST: \(target)\r\nSERVER: \(server)\r\nLOCATION: \(location)\r\n", from: address)
-        }
-        let scan = Integrations.Scan(answers: [
-            answer("192.168.1.30", "upnp:rootdevice", "Microsoft-Windows/10.0 UPnP/1.0 UPnP-Device-Host/1.0", "http://192.168.1.30:1/root.xml"),
-            answer("192.168.1.30", "urn:schemas-upnp-org:device:mediarenderer:1", "Microsoft-Windows/10.0 UPnP/1.0 UPnP-Device-Host/1.0",
-                   "http://192.168.1.30:10247/renderer.xml"),
-            answer("192.168.1.40", "urn:schemas-upnp-org:device:MediaRenderer:1", "Linux UPnP/1.0 Sonos/86.10", "http://192.168.1.40:1400/xml"),
-        ])
-        let addresses = await Integrations.addresses(for: integration, scan: scan)
-        XCTAssertEqual(addresses, ["192.168.1.30"])
-        XCTAssertEqual(Integrations.describedAt("192.168.1.30", by: integration, scan: scan), Request(port: 10247, path: "/renderer.xml"))
+    /// The look is lamp's command line's (cli/tests/devices.test.mjs holds it); what Lamp's app makes of it is its own:
+    /// each integration's reading as a device, named by its maker and model when it gave no name, and the devices
+    /// nobody knows apart from those another part of Lamp has.
+    func testTheLooksReadingsBecomeTheIntegrationsDevices() throws {
+        let roku = try JSONDecoder().decode(Integration.self, from: Data(roku.utf8))
+        let read = try XCTUnwrap(Integrations.Scan.Identified(said: ["integration": roku.id, "address": "192.168.1.20", "serial": "X01", "model": "Roku Ultra",
+                                                                        "modelID": "4800X", "osVersion": "14.0"]))
+        let other = try XCTUnwrap(Integrations.Scan.Identified(said: ["integration": "someone-else", "address": "192.168.1.21", "serial": "Y", "model": "Z"]))
+        var unknown = Device(id: "found:192.168.1.40", kind: .other, maker: "Made Up", model: "Speaker", modelID: "", name: "Den Speaker", os: "", osVersion: "", reach: .network)
+        unknown.address = "192.168.1.40"
+        let scan = Integrations.Scan(answers: [], found: [read, other], unknown: [unknown])
+        let devices = Integrations.found(roku, in: scan)
+        XCTAssertEqual(devices.map(\.id), ["\(roku.id):X01"])
+        XCTAssertEqual(devices.first?.name, "\(roku.maker) Roku Ultra")
+        XCTAssertEqual(devices.first?.address, "192.168.1.20")
+        XCTAssertEqual(devices.first?.osVersion, "14.0")
+        XCTAssertEqual(Integrations.unknown(scan, except: []).map(\.name), ["Den Speaker"])
+        XCTAssertTrue(Integrations.unknown(scan, except: ["192.168.1.40"]).isEmpty, "a device another part of Lamp has isn't unknown")
+        XCTAssertNil(Integrations.Scan.Identified(said: ["integration": roku.id, "address": "192.168.1.20"]), "a reading with no serial is none")
     }
 
     func testValuesAreReadFromJSONAndXML() {

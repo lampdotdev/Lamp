@@ -2728,11 +2728,7 @@ final class Store: ObservableObject {
         guard let integration = kept else {
             return (400, ["error": "Lamp didn't take the integration. Fix these and call device_integration again:\n" + problems.map { "- " + $0 }.joined(separator: "\n")])
         }
-        let scan = await Integrations.Scan.now()
-        var found: [Device] = []
-        for address in await Integrations.addresses(for: integration, scan: scan) {
-            if let device = await Integrations.identify(integration, at: address, scan: scan) { found.append(device) }
-        }
+        let found = Integrations.found(integration, in: await Integrations.Scan.now(for: [integration]))
         Integrations.remember(found)
         linkSetupConversations(to: found)
         // In the list at once, for the card below; the next look for devices keeps them while they answer.
@@ -3453,11 +3449,10 @@ final class Store: ObservableObject {
             UserDefaults.standard.set(true, forKey: Self.localNetworkAskedKey)
             if firstAsked { answerAwaited = Task { await lookAgainOnceAllowed(everything: everything) } }
             async let tvs = TVs.devices(answers: scan.answers)
-            async let integrated = Integrations.devices(scan: scan)
+            let known = Integrations.devices(scan: scan)
             let kits = await apple + android + tvs
-            let known = await integrated
             // What's on the network that nothing Lamp has knows, after the rest.
-            let unknown = await Integrations.unknown(scan, except: Set((kits + known).compactMap(\.address)))
+            let unknown = Integrations.unknown(scan, except: Set((kits + known).compactMap(\.address)))
             var found = kits + known + unknown
             if found != devices { devices = found }
             if let look = await network?.value {
@@ -11562,11 +11557,7 @@ final class Store: ObservableObject {
     private func deviceForApp(_ project: LampProject) async -> Device? {
         if let device = DeviceApps.device(for: project, among: devices), device.connected { return device }
         guard let integration = DeviceApps.integration(for: project) else { return nil }
-        let scan = await Integrations.Scan.now()
-        var found: [Device] = []
-        for address in await Integrations.addresses(for: integration, scan: scan) {
-            if let device = await Integrations.identify(integration, at: address, scan: scan) { found.append(device) }
-        }
+        let found = Integrations.found(integration, in: await Integrations.Scan.now(for: [integration]))
         Integrations.remember(found)
         for device in found { devices.removeAll { $0.id == device.id }; devices.append(device) }
         return DeviceApps.device(for: project, among: devices)

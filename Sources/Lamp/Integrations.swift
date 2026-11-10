@@ -204,49 +204,103 @@ enum Integrations {
 
     // MARK: Finding
 
-    /// What the network said, once per look, for the TVs, every integration and the unknown devices to share.
+    /// What the network said, once per look, for the TVs, every integration and the unknown devices to share. The look
+    /// is lamp's command line's (`look` in cli/calls.mjs, asked of the run that stays: `LampCLI.ask`): one search for
+    /// everything, each integration's devices found and read as its JSON says, and the devices no integration knows
+    /// read from their own descriptions. What's kept of a device, and what it's called, is Lamp's own, here.
     struct Scan {
         let answers: [DeviceProbe.SSDPAnswer]
         /// macOS refused the search: Lamp isn't allowed on the local network.
         var refused = false
+        /// What each integration read of the device at each address it found, the first integration given having an
+        /// address two found.
+        var found: [Identified] = []
+        /// The devices that answered and that no integration found, each read from a UPnP description that names it.
+        var unknown: [Device] = []
 
-        /// One search for everything: a device answers it once for each of its devices and services, so every
-        /// integration's own search target is among the answers, and no integration needs a search of its own.
-        static func now() async -> Scan {
-            let (answers, refused) = await DeviceProbe.search("ssdp:all", seconds: 2.5)
-            return Scan(answers: answers, refused: refused)
+        /// One integration's reading of a device: its serial and model, and what else it said of itself.
+        struct Identified: Equatable {
+            let integration: String
+            let address: String
+            let serial: String
+            let model: String
+            var modelID: String?
+            var name: String?
+            var osVersion: String?
+
+            /// As lamp's command line says it; nil without what every reading has.
+            init?(said: [String: Any]) {
+                guard let integration = said["integration"] as? String, let address = said["address"] as? String,
+                      let serial = said["serial"] as? String, let model = said["model"] as? String else { return nil }
+                self.integration = integration
+                self.address = address
+                self.serial = serial
+                self.model = model
+                modelID = said["modelID"] as? String
+                name = said["name"] as? String
+                osVersion = said["osVersion"] as? String
+            }
         }
 
-        /// The answers a search for this target alone would have had.
-        func answers(for target: String) -> [DeviceProbe.SSDPAnswer] {
-            target == "ssdp:all" ? answers : answers.filter { $0.searchTarget.caseInsensitiveCompare(target) == .orderedSame }
+        /// One look for these integrations (every one Lamp has, unless it's for one). One that fails finds nothing,
+        /// and says why in Lamp's log.
+        static func now(for integrations: [Integration] = Integrations.all()) async -> Scan {
+            async let denied = DeviceProbe.localNetworkDenied()
+            var scan = Scan(answers: [])
+            do {
+                let given = try integrations.map { try JSONSerialization.jsonObject(with: JSONEncoder().encode($0)) }
+                let done = try await LampCLI.ask("look", ["integrations": given, "seconds": 2.5])
+                scan = Scan(answers: DeviceProbe.answers(from: done["answers"]),
+                            found: ((done["found"] as? [[String: Any]]) ?? []).compactMap { Identified(said: $0) },
+                            unknown: ((done["unknown"] as? [[String: Any]]) ?? []).compactMap { Integrations.unknown(said: $0) })
+            } catch {
+                NSLog("Lamp couldn't look for devices: \(error.localizedDescription)")
+            }
+            scan.refused = await denied && scan.answers.isEmpty
+            return scan
         }
     }
 
-    /// How long a look waits for each answer from a device: one that answered the scan but not on the port asked
-    /// would otherwise hold the whole look up for an install's thirty seconds.
-    static let lookTimeout: TimeInterval = 4
+    /// The devices one integration found in the scan, as Lamp keeps them: a kept device's model is the one its setup
+    /// read, and what it's called and its system's version are kept up to date.
+    static func found(_ integration: Integration, in scan: Scan) -> [Device] {
+        scan.found.filter { $0.integration == integration.id }.map { read in
+            let id = "\(integration.id):\(read.serial)"
+            var model = read.model
+            if let keptOne = kept(id) { model = Integrations.model(of: keptOne) }
+            var device = Device(id: id, kind: .other, maker: integration.maker, model: model, modelID: read.modelID ?? "",
+                                name: read.name ?? "\(integration.maker) \(model)", os: integration.identity.os,
+                                osVersion: read.osVersion ?? "", reach: .network)
+            device.integration = integration.id
+            device.what = integration.kind
+            device.address = read.address
+            device.kept = kept(id) != nil
+            if var keptOne = kept(id) {
+                keptOne.name = device.name
+                keptOne.osVersion = device.osVersion
+                keep(keptOne)
+            }
+            return device
+        }
+    }
+
+    /// A device no integration knows, as the look read it, shown for the moment with Set Up… and never kept.
+    private static func unknown(said: [String: Any]) -> Device? {
+        guard let address = said["address"] as? String, let name = said["name"] as? String else { return nil }
+        let maker = said["maker"] as? String ?? "", model = said["model"] as? String ?? ""
+        var device = Device(id: "found:\(address)", kind: .other, maker: maker, model: model.isEmpty ? maker : model,
+                            modelID: said["modelID"] as? String ?? "", name: name, os: "", osVersion: "", reach: .network)
+        device.address = address
+        device.discovery = said["discovery"] as? String
+        return device
+    }
 
     /// The devices every integration finds in the scan, and the kept ones that aren't on the network now.
-    static func devices(scan: Scan) async -> [Device] {
-        let integrations = all()
-        // The integrations look all at once. Where two find one address, the first by name has it, as when they took turns.
-        var byIntegration: [String: [Device]] = [:]
-        await withTaskGroup(of: (String, [Device]).self) { group in
-            for integration in integrations {
-                group.addTask {
-                    var found: [Device] = []
-                    for address in await addresses(for: integration, scan: scan) {
-                        if let device = await identify(integration, at: address, scan: scan) { found.append(device) }
-                    }
-                    return (integration.id, found)
-                }
-            }
-            for await (id, found) in group { byIntegration[id] = found }
-        }
+    static func devices(scan: Scan) -> [Device] {
+        // Where two integrations find one address, the first has it, as the look already settled.
         var found: [Device] = []
-        for integration in integrations {
-            for device in byIntegration[integration.id] ?? [] where !found.contains(where: { $0.address == device.address }) { found.append(device) }
+        for integration in all() {
+            for device in Self.found(integration, in: scan) where !found.contains(where: { $0.address == device.address }) { found.append(device) }
         }
         // Only what won its address is remembered: another integration's reading of the same device would come back
         // from `recent` as a second device.
@@ -270,37 +324,6 @@ enum Integrations {
         return found
     }
 
-    /// Where an integration's device answers on the network now.
-    static func addresses(for integration: Integration, scan: Scan) async -> [String] {
-        var addresses: [String] = []
-        for find in integration.find {
-            if let target = find.ssdp {
-                addresses += scan.answers(for: target)
-                    .filter { answer in find.contains.map { answer.server.localizedCaseInsensitiveContains($0) } ?? true }
-                    .map(\.address)
-            }
-            if let type = find.bonjour {
-                addresses += await DeviceProbe.bonjour(type)
-                    .filter { found in find.contains.map { found.name.localizedCaseInsensitiveContains($0) } ?? true }
-                    .map(\.address)
-            }
-            if let probe = find.http {
-                let request = Request(port: probe.port, path: probe.path)
-                await withTaskGroup(of: String?.self) { group in
-                    for address in Set(scan.answers.map(\.address)) where DeviceAddress.isPrivate(address) {
-                        group.addTask {
-                            guard let answer = try? await DeviceHTTP.send(request, to: address, values: [:], timeout: lookTimeout),
-                                  answer.ok, answer.text.contains(probe.contains) else { return nil }
-                            return address
-                        }
-                    }
-                    for await address in group { if let address { addresses.append(address) } }
-                }
-            }
-        }
-        return Array(Set(addresses.filter(DeviceAddress.isPrivate))).sorted()
-    }
-
     /// The devices integrations found in the last few minutes, by id: shown until a scan has missed them for that long.
     nonisolated(unsafe) private static var recent: [String: (device: Device, at: Date)] = [:]
 
@@ -316,56 +339,6 @@ enum Integrations {
         return recent.values.map(\.device)
     }
 
-    /// Where the device at an address says its UPnP description is now, from its answer to the integration's own SSDP
-    /// search target in the scan: only a description on the device itself, over plain HTTP.
-    static func describedAt(_ address: String, by integration: Integration, scan: Scan) -> Request? {
-        for target in integration.find.compactMap(\.ssdp) {
-            for answer in scan.answers(for: target) where answer.address == address {
-                guard let location = answer.location, let url = URL(string: location), url.scheme == "http", url.host == address else { continue }
-                return Request(port: url.port ?? 80, path: (url.path.isEmpty ? "/" : url.path) + (url.query.map { "?" + $0 } ?? ""))
-            }
-        }
-        return nil
-    }
-
-    /// The device at an address, read from its own answers as the integration says. Nil when it doesn't answer as one.
-    static func identify(_ integration: Integration, at address: String, scan: Scan) async -> Device? {
-        var answers: [Request: DeviceHTTP.Answer] = [:]
-        var description: Request??
-        func read(_ read: Integration.Read?) async -> String? {
-            guard let read else { return nil }
-            var request = read.http
-            if read.description == true {
-                if description == nil { description = describedAt(address, by: integration, scan: scan) }
-                request = description ?? nil
-            }
-            guard let request else { return nil }
-            if answers[request] == nil, let answer = try? await DeviceHTTP.send(request, to: address, values: [:], timeout: lookTimeout), answer.ok {
-                answers[request] = answer
-            }
-            let value = answers[request].flatMap { DeviceHTTP.value(json: read.json, xml: read.xml, in: $0) }?.trimmed.nilIfEmpty
-            if let needed = read.contains, !(value ?? "").localizedCaseInsensitiveContains(needed) { return nil }
-            return value
-        }
-        let identity = integration.identity
-        guard let serial = await read(identity.id), var model = await read(identity.model) else { return nil }
-        let id = "\(integration.id):\(serial)"
-        if let keptOne = kept(id) { model = Integrations.model(of: keptOne) }
-        var device = Device(id: id, kind: .other, maker: integration.maker, model: model, modelID: await read(identity.modelID) ?? "",
-                            name: await read(identity.name) ?? "\(integration.maker) \(model)", os: identity.os,
-                            osVersion: await read(identity.osVersion) ?? "", reach: .network)
-        device.integration = integration.id
-        device.what = integration.kind
-        device.address = address
-        device.kept = kept(id) != nil
-        if var keptOne = kept(id) {
-            keptOne.name = device.name
-            keptOne.osVersion = device.osVersion
-            keep(keptOne)
-        }
-        return device
-    }
-
     static func device(from kept: Kept, onNetwork: Bool) -> Device {
         let known = integration(kept.integration)
         var device = Device(id: kept.id, kind: .other, maker: known?.maker ?? "", model: model(of: kept), modelID: kept.modelID,
@@ -378,49 +351,10 @@ enum Integrations {
         return device
     }
 
-    /// A device that answered the scan, from the UPnP descriptions its answers point at. A device often answers for
-    /// several services, each with a description of its own, and the first to answer may say nothing of the device
-    /// (a TV's Netflix service answers a few bytes of "status=ok"), so each is tried until one names it. `send` is how
-    /// a description is read; tests answer with recorded ones.
-    static func described(_ address: String, answers: [DeviceProbe.SSDPAnswer],
-                          send: (Request, String) async -> DeviceHTTP.Answer? = { try? await DeviceHTTP.send($0, to: $1, values: [:], timeout: lookTimeout) }) async -> Device? {
-        var locations: [String] = []
-        for location in answers.compactMap(\.location) where !locations.contains(location) && URL(string: location)?.host == address { locations.append(location) }
-        for location in locations {
-            guard let url = URL(string: location), url.scheme == "http",
-                  let answer = await send(Request(port: url.port ?? 80, path: url.path.isEmpty ? "/" : url.path + (url.query.map { "?" + $0 } ?? "")), address),
-                  answer.ok else { continue }
-            let name = DeviceHTTP.xml("friendlyName", in: answer.body)
-            let maker = DeviceHTTP.xml("manufacturer", in: answer.body) ?? ""
-            let model = DeviceHTTP.xml("modelName", in: answer.body) ?? DeviceHTTP.xml("modelDescription", in: answer.body) ?? ""
-            let type = DeviceHTTP.xml("deviceType", in: answer.body) ?? ""
-            // Routers and other plumbing answer every scan; nobody makes apps for them.
-            if type.contains("InternetGatewayDevice") || type.contains("WANDevice") || type.contains("WFADevice") { return nil }
-            guard let name, !maker.isEmpty || !model.isEmpty else { continue }
-            var device = Device(id: "found:\(address)", kind: .other, maker: maker, model: model.isEmpty ? maker : model,
-                                modelID: DeviceHTTP.xml("modelNumber", in: answer.body) ?? "", name: name, os: "", osVersion: "", reach: .network)
-            device.address = address
-            device.discovery = answers.map { "\($0.searchTarget) (\($0.server))" }.joined(separator: "; ")
-            return device
-        }
-        return nil
-    }
-
-    /// The devices that answered the scan and that nothing Lamp has knows: each read from its own UPnP description
-    /// when it has one, shown for the moment with Set Up…, and never kept.
-    static func unknown(_ scan: Scan, except taken: Set<String>) async -> [Device] {
-        var byAddress: [String: [DeviceProbe.SSDPAnswer]] = [:]
-        for answer in scan.answers where !taken.contains(answer.address) && DeviceAddress.isPrivate(answer.address) {
-            byAddress[answer.address, default: []].append(answer)
-        }
-        // This Mac answers too, for its own services.
-        for address in TVs.macAddresses() { byAddress[address] = nil }
-        var devices: [Device] = []
-        await withTaskGroup(of: Device?.self) { group in
-            for (address, answers) in byAddress { group.addTask { await described(address, answers: answers) } }
-            for await device in group { if let device { devices.append(device) } }
-        }
-        return devices.sorted { $0.name < $1.name }
+    /// The devices that answered the scan and that nothing Lamp has knows (none of `taken`'s addresses), shown for the
+    /// moment with Set Up…, and never kept.
+    static func unknown(_ scan: Scan, except taken: Set<String>) -> [Device] {
+        scan.unknown.filter { !taken.contains($0.address ?? "") }
     }
 }
 
@@ -757,8 +691,7 @@ struct IntegrationRunner {
         guard parts.count == 2 else { return false }
         switch parts[0] {
         case "tcp": return await DeviceProbe.tcp(try address, port: Int(parts[1]) ?? 0)
-        case "ssdp": return await DeviceProbe.ssdp(parts[1]).contains { $0.address == device.address }
-        case "bonjour": return await DeviceProbe.bonjour(parts[1]).contains { $0.address == device.address }
+        case "ssdp", "bonjour": return await DeviceProbe.present(try address, parts[0], parts[1])
         default: return false
         }
     }

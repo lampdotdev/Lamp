@@ -68,6 +68,16 @@ function nearest(address) {
 
 // MARK: Looking
 
+/** One SSDP answer's headers, as the device at `address` sent them. */
+export function answerOf(text, address) {
+  const headers = {};
+  for (const line of text.split(/\r?\n/)) {
+    const colon = line.indexOf(":");
+    if (colon > 0) headers[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim();
+  }
+  return { address, server: headers.server ?? "", location: headers.location, target: headers.st ?? "", usn: headers.usn ?? "" };
+}
+
 /** One SSDP search of the home network, for a few seconds: who answered, and what each said of itself. */
 export function ssdp(target = "ssdp:all", seconds = 3) {
   return new Promise((done) => {
@@ -76,12 +86,7 @@ export function ssdp(target = "ssdp:all", seconds = 3) {
     const ask = () => socket.send(message, 1900, "239.255.255.250", () => {});
     socket.on("error", () => { try { socket.close(); } catch {} done([...answers.values()]); });
     socket.on("message", (data, from) => {
-      const headers = {};
-      for (const line of data.toString("utf8").split(/\r?\n/)) {
-        const colon = line.indexOf(":");
-        if (colon > 0) headers[line.slice(0, colon).toLowerCase()] = line.slice(colon + 1).trim();
-      }
-      const answer = { address: from.address, server: headers.server ?? "", location: headers.location, target: headers.st ?? "", usn: headers.usn ?? "" };
+      const answer = answerOf(data.toString("utf8"), from.address);
       answers.set(`${answer.address} ${answer.target} ${answer.usn}`, answer);
     });
     socket.bind(0, () => {
@@ -97,38 +102,127 @@ export function ssdp(target = "ssdp:all", seconds = 3) {
 const sameWords = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 const holds = (text, part) => String(text ?? "").toLowerCase().includes(String(part).toLowerCase());
 
-/**
- * The devices the integrations find on the network now, each read from its own answers as its integration says, with
- * the ones lamp keeps that didn't answer after them (`found: false`, at the address they were last at).
- */
-export async function look({ seconds = 3, reach = isPrivate } = {}) {
-  const answers = await ssdp("ssdp:all", seconds), devices = [];
-  for (const integration of integrations()) {
-    const addresses = new Set();
-    for (const find of integration.find ?? []) {
-      if (!find.ssdp) continue;
-      for (const answer of answers) {
-        if (sameWords(answer.target, find.ssdp) && (!find.contains || holds(answer.server, find.contains)) && reach(answer.address)) addresses.add(answer.address);
-      }
-    }
-    for (const address of [...addresses].sort()) {
-      if (devices.some((device) => device.address === address)) continue;
-      const device = await identify(integration, address, answers, reach);
-      if (device) devices.push(device);
+/** An mDNS name in a packet at `at`, its pointers followed, and where it ends there; null when it can't be read. */
+function nameAt(packet, at) {
+  const labels = [];
+  let end = null;
+  for (let jumps = 0; ; ) {
+    if (at >= packet.length) return null;
+    const length = packet[at];
+    if (length === 0) return { labels, end: end ?? at + 1 };
+    if ((length & 0xc0) === 0xc0) {
+      if (at + 1 >= packet.length || ++jumps > 32) return null;
+      end ??= at + 2;
+      at = ((length & 0x3f) << 8) | packet[at + 1];
+    } else {
+      if (length > 63 || at + 1 + length > packet.length) return null;
+      labels.push(packet.toString("utf8", at + 1, at + 1 + length));
+      at += 1 + length;
     }
   }
-  for (const device of devices) {
-    const mine = kept(device.id);
-    device.kept = !!mine;
-    if (mine) keep({ ...mine, name: device.name, address: device.address });
-    if (mine?.model) device.model = mine.model;
-  }
-  for (const mine of allKept()) if (!devices.some((device) => device.id === mine.id)) devices.push({ ...mine, kept: true, found: false });
-  return devices;
 }
 
-/** The device at an address, read from its own answers as the integration says; null when it doesn't answer as one. */
-async function identify(integration, address, answers, reach) {
+/** Every record of an mDNS answer: its name, and for a pointer, a service or an address what it says. */
+function recordsOf(packet) {
+  if (packet.length < 12) return [];
+  const count = (index) => packet.readUInt16BE(4 + index * 2), records = [];
+  let at = 12;
+  for (let question = 0; question < count(0); question++) {
+    const name = nameAt(packet, at);
+    if (!name) return [];
+    at = name.end + 4;
+  }
+  for (let left = count(1) + count(2) + count(3); left > 0; left--) {
+    const name = nameAt(packet, at);
+    if (!name || name.end + 10 > packet.length) break;
+    const type = packet.readUInt16BE(name.end), length = packet.readUInt16BE(name.end + 8), data = name.end + 10;
+    if (data + length > packet.length) break;
+    const record = { name: name.labels.join(".").toLowerCase(), type };
+    if (type === 12) record.target = nameAt(packet, data)?.labels;
+    else if (type === 33 && length >= 6) record.target = nameAt(packet, data + 6)?.labels;
+    else if (type === 1 && length === 4) record.address = [...packet.subarray(data, data + 4)].join(".");
+    records.push(record);
+    at = data + length;
+  }
+  return records;
+}
+
+/**
+ * The services of a type an mDNS answer offers, each by its name, at the address of the host it names when the
+ * answer gives one, else at the address the answer came from.
+ */
+export function servicesIn(packet, type, from) {
+  const wanted = `${type}.local`.toLowerCase(), records = recordsOf(packet), found = [];
+  for (const offered of records) {
+    if (offered.type !== 12 || offered.name !== wanted || !offered.target?.length) continue;
+    const instance = offered.target.join(".").toLowerCase();
+    const host = records.find((record) => record.type === 33 && record.name === instance)?.target?.join(".").toLowerCase();
+    const address = (host && records.find((record) => record.type === 1 && record.name === host)?.address) || from;
+    found.push({ name: offered.target[0], address });
+  }
+  return found;
+}
+
+/**
+ * The devices offering a Bonjour service of this type ("_airplay._tcp") on the home network, by name and address: an
+ * mDNS question asked from a port of lamp's own, which each device answers there and only there (a one-shot query,
+ * RFC 6762 6.7), asked again partway through as a search is. Nothing is listened for on mDNS's own port, which is this
+ * computer's own responder's.
+ */
+export function bonjour(type, seconds = 3) {
+  if (!/^_[a-z0-9-]{1,40}\._(tcp|udp)$/.test(type)) return Promise.resolve([]);
+  return new Promise((done) => {
+    const socket = dgram.createSocket({ type: "udp4", reuseAddr: true }), found = new Map();
+    const header = Buffer.alloc(12);
+    header.writeUInt16BE(1 + Math.floor(Math.random() * 0xfffe), 0);
+    header.writeUInt16BE(1, 4);
+    const labels = `${type}.local`.split(".").map((label) => Buffer.concat([Buffer.from([label.length]), Buffer.from(label)]));
+    // A question for pointers to the type's services, of the internet class, asking for the answer to come back here.
+    const query = Buffer.concat([header, ...labels, Buffer.from([0, 0, 12, 0x80, 1])]);
+    let ended = false;
+    const end = () => { if (ended) return; ended = true; try { socket.close(); } catch {} done([...found.values()]); };
+    const ask = () => { if (!ended) socket.send(query, 5353, "224.0.0.251", () => {}); };
+    socket.on("error", end);
+    socket.on("message", (packet, from) => {
+      for (const service of servicesIn(packet, type, from.address)) found.set(`${service.name} ${service.address}`, service);
+    });
+    socket.bind(0, () => {
+      try { socket.setMulticastTTL(1); } catch {}
+      ask();
+      setTimeout(ask, (seconds * 1000) / 2);
+      setTimeout(end, seconds * 1000);
+    });
+  });
+}
+
+/**
+ * The addresses an integration's device answers at, by what its `find` says: the search's answers for its search
+ * target (with the server's words holding `contains`), a Bonjour service, or a page on the device holding words.
+ */
+export async function addressesOf(integration, answers, { reach = isPrivate, timeout = 4000 } = {}) {
+  const addresses = new Set();
+  for (const find of integration.find ?? []) {
+    if (find.ssdp) {
+      for (const answer of answers) {
+        if ((find.ssdp === "ssdp:all" || sameWords(answer.target, find.ssdp)) && (!find.contains || holds(answer.server, find.contains))) addresses.add(answer.address);
+      }
+    }
+    if (find.bonjour) for (const found of await bonjour(find.bonjour)) if (!find.contains || holds(found.name, find.contains)) addresses.add(found.address);
+    if (find.http) {
+      const asked = [...new Set(answers.map((answer) => answer.address))].filter(reach);
+      const answered = await Promise.all(asked.map((address) => send({ port: find.http.port, path: find.http.path }, address, {}, { timeout, reach })
+        .then((answer) => answer.ok && answer.text.includes(find.http.contains), () => false)));
+      asked.forEach((address, index) => { if (answered[index]) addresses.add(address); });
+    }
+  }
+  return [...addresses].filter(reach).sort();
+}
+
+/**
+ * What the device at an address says of itself, read as its integration's `identity` says: its serial and model, and
+ * its model's number, name and system's version where it says them. Null when it doesn't answer as one.
+ */
+export async function identify(integration, address, answers, { reach = isPrivate, timeout = 4000 } = {}) {
   const got = new Map();
   const read = async (how) => {
     if (!how) return null;
@@ -136,9 +230,10 @@ async function identify(integration, address, answers, reach) {
     if (how.description) {
       // Where the device says its UPnP description is, in its answer to the integration's own search: only a
       // description on the device itself, over plain HTTP.
+      request = null;
       for (const find of integration.find ?? []) {
         for (const answer of answers) {
-          if (request || answer.address !== address || !find.ssdp || !sameWords(answer.target, find.ssdp) || !answer.location) continue;
+          if (request || answer.address !== address || !find.ssdp || !(find.ssdp === "ssdp:all" || sameWords(answer.target, find.ssdp)) || !answer.location) continue;
           let url;
           try { url = new URL(answer.location); } catch { continue; }
           if (url.protocol === "http:" && url.hostname === address) request = { port: Number(url.port) || 80, path: (url.pathname || "/") + url.search };
@@ -148,7 +243,7 @@ async function identify(integration, address, answers, reach) {
     if (!request) return null;
     const key = JSON.stringify(request);
     if (!got.has(key)) {
-      const answer = await send(request, address, {}, { timeout: 4000, reach }).catch(() => null);
+      const answer = await send(request, address, {}, { timeout, reach }).catch(() => null);
       if (answer?.ok) got.set(key, answer);
     }
     const answer = got.get(key), value = answer && (how.json ? jsonAt(answer.body, how.json) : how.xml ? xmlAt(answer.body, how.xml) : null)?.trim();
@@ -156,12 +251,87 @@ async function identify(integration, address, answers, reach) {
     return value || null;
   };
   const identity = integration.identity ?? {};
-  const serial = await read(identity.id), model = await read(identity.model);
+  const serial = await read(identity.id), model = serial && (await read(identity.model));
   if (!serial || !model) return null;
-  return {
-    id: `${integration.id}:${serial}`, integration: integration.id, what: integration.kind, maker: integration.maker, model,
-    name: (await read(identity.name)) ?? `${integration.maker} ${model}`, address, found: true,
-  };
+  return { integration: integration.id, address, serial, model, modelID: await read(identity.modelID), name: await read(identity.name), osVersion: await read(identity.osVersion) };
+}
+
+// The kinds of device that answer every search and that nobody makes apps for: a router and its parts.
+const PLUMBING = ["InternetGatewayDevice", "WANDevice", "WFADevice"];
+
+/**
+ * A device that answered the search, read from the UPnP descriptions its answers point at, for one that no
+ * integration knows. A device often answers for several services, each with a description of its own, and the first
+ * to answer may say nothing of the device (a TV's streaming service answers a few bytes of "status=ok"), so each is
+ * tried until one names it. Null when none does, and for a router. `get` is how a description is read; tests answer
+ * with recorded ones.
+ */
+export async function describe(address, answers, { reach = isPrivate, timeout = 4000, get = (request) => send(request, address, {}, { timeout, reach }) } = {}) {
+  const locations = [];
+  for (const answer of answers) {
+    let url;
+    try { url = new URL(answer.location); } catch { continue; }
+    if (url.hostname === address && !locations.includes(answer.location)) locations.push(answer.location);
+  }
+  for (const location of locations) {
+    const url = new URL(location);
+    if (url.protocol !== "http:") continue;
+    const answer = await get({ port: Number(url.port) || 80, path: (url.pathname || "/") + url.search }).catch(() => null);
+    if (!answer?.ok) continue;
+    const said = (path) => xmlAt(answer.body, path) || null;
+    const name = said("friendlyName"), maker = said("manufacturer") ?? "", model = said("modelName") ?? said("modelDescription") ?? "";
+    if (PLUMBING.some((kind) => (said("deviceType") ?? "").includes(kind))) return null;
+    if (!name || (!maker && !model)) continue;
+    return { address, name, maker, model: model || maker, modelID: said("modelNumber") ?? "", discovery: answers.map((each) => `${each.target} (${each.server})`).join("; ") };
+  }
+  return null;
+}
+
+/**
+ * One look at the home network for the integrations given: a search for everything, then each integration's
+ * devices found and read, all at once (where two find one address, the first given has it), and with `unknown` the
+ * devices no integration knows, each read from its own description.
+ */
+export async function searchNetwork({ integrations: list = integrations(), seconds = 2.5, unknown = false, reach = isPrivate } = {}) {
+  const answers = await ssdp("ssdp:all", seconds);
+  const each = await Promise.all(list.map(async (integration) => {
+    const read = [];
+    for (const address of await addressesOf(integration, answers, { reach })) {
+      const device = await identify(integration, address, answers, { reach });
+      if (device) read.push(device);
+    }
+    return read;
+  }));
+  const found = [];
+  for (const read of each) for (const device of read) if (!found.some((other) => other.address === device.address)) found.push(device);
+  const others = new Map();
+  if (unknown) {
+    const taken = new Set(found.map((device) => device.address));
+    for (const answer of answers) if (!taken.has(answer.address) && reach(answer.address)) others.set(answer.address, [...(others.get(answer.address) ?? []), answer]);
+  }
+  const described = (await Promise.all([...others].map(([address, said]) => describe(address, said, { reach })))).filter(Boolean);
+  return { answers, found, unknown: described.sort((a, b) => a.name.localeCompare(b.name)) };
+}
+
+/**
+ * The devices the integrations find on the network now, each read from its own answers as its integration says, with
+ * the ones lamp keeps that didn't answer after them (`found: false`, at the address they were last at).
+ */
+export async function look({ seconds = 3, reach = isPrivate } = {}) {
+  const shipped = integrations(), { found } = await searchNetwork({ integrations: shipped, seconds, reach });
+  const devices = found.map((read) => {
+    const integration = shipped.find((each) => each.id === read.integration);
+    return { id: `${integration.id}:${read.serial}`, integration: integration.id, what: integration.kind, maker: integration.maker, model: read.model,
+      name: read.name ?? `${integration.maker} ${read.model}`, address: read.address, found: true };
+  });
+  for (const device of devices) {
+    const mine = kept(device.id);
+    device.kept = !!mine;
+    if (mine) keep({ ...mine, name: device.name, address: device.address });
+    if (mine?.model) device.model = mine.model;
+  }
+  for (const mine of allKept()) if (!devices.some((device) => device.id === mine.id)) devices.push({ ...mine, kept: true, found: false });
+  return devices;
 }
 
 // MARK: What's kept of a device

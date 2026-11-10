@@ -21,10 +21,13 @@
 import { lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Away, OffNetwork, Refused, pinsAt, send } from "./devices.mjs";
+import { Away, OffNetwork, Refused, answersOn, bonjour, pinsAt, searchNetwork, send, ssdp } from "./devices.mjs";
 import { PUBLISHER, identityName, keptSigner, namesOf, packageOf, versionAfter } from "./msix.mjs";
 import { tile } from "./png.mjs";
 import { Problem } from "./state.mjs";
+
+/** A number of seconds a call was given, within what it may take. */
+const seconds = (given, standard, most = 10) => Math.min(Math.max(Number(given) > 0 ? Number(given) : standard, 0.5), most);
 
 const text = (given, name) => {
   if (typeof given[name] !== "string" || !given[name]) throw new Error(`the call needs "${name}"`);
@@ -87,6 +90,33 @@ export const CALLS = {
       timeout: Math.round((Number(given.timeout) > 0 ? Number(given.timeout) : 30) * 1000), stopped,
     });
     return { status: answer.status, body: answer.body.toString("base64"), cookies: answer.cookies, certificate: answer.certificate?.toString("base64") ?? null };
+  },
+
+  /**
+   * One look at the home network for the `integrations` Lamp's app has (each as its JSON): every answer to a search
+   * for everything, what each integration found and read of its devices, and the devices none of them knows, read
+   * from their own descriptions. Which of those Lamp keeps, and what it called them, is Lamp's app's.
+   */
+  async look(given) {
+    const list = (Array.isArray(given.integrations) ? given.integrations : []).filter((integration) => typeof integration?.id === "string");
+    return searchNetwork({ integrations: list, seconds: seconds(given.seconds, 2.5), unknown: given.unknown !== false });
+  },
+
+  /** A search of the home network for one search target, for a few seconds: every answer. */
+  async search(given) {
+    return { answers: await ssdp(typeof given.target === "string" ? given.target : "ssdp:all", seconds(given.seconds, 2)) };
+  },
+
+  /**
+   * Whether the device at `address` is there now, as a step's check asks: it takes a connection on a port (`tcp`), it
+   * answers a search for a target (`ssdp`), or it offers a Bonjour service (`bonjour`).
+   */
+  async probe(given) {
+    const address = text(given, "address");
+    if (Number.isInteger(given.tcp)) return { present: await answersOn(address, given.tcp, { timeout: seconds(given.seconds, 3) * 1000 }) };
+    if (typeof given.ssdp === "string") return { present: (await ssdp(given.ssdp, seconds(given.seconds, 2))).some((answer) => answer.address === address) };
+    if (typeof given.bonjour === "string") return { present: (await bonjour(given.bonjour, seconds(given.seconds, 3))).some((found) => found.address === address) };
+    throw new Error('the call needs "tcp", "ssdp" or "bonjour"');
   },
 };
 

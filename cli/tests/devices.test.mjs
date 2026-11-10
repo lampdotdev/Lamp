@@ -250,3 +250,63 @@ test("a request goes only to a device on the person's network, by a path that st
   assert.throws(() => fill("X: {text}", { text: "a" }, "header"), /goes only in a path, a form or a body/);
   assert.throws(() => fill("/x/{appID}", { appID: "a b" }, "path"), /characters lamp doesn't send/);
 });
+
+test("a look finds an integration's device in its one search, and reads one nobody knows from the description that names it", async () => {
+  const { addressesOf, answerOf, bonjour, describe, identify, servicesIn } = await import("../devices.mjs");
+  const http = await import("node:http");
+  const xbox = { id: "xbox-test", name: "Xbox", maker: "Microsoft", find: [{ ssdp: "urn:schemas-upnp-org:device:MediaRenderer:1", contains: "UPnP-Device-Host" }],
+    identity: { os: "Xbox OS", id: { description: true, xml: "device/UDN" }, model: { description: true, xml: "device/modelName", contains: "Xbox" } } };
+  const said = (address, target, server, location) => answerOf(`HTTP/1.1 200 OK\r\nST: ${target}\r\nSERVER: ${server}\r\nLOCATION: ${location}\r\n`, address);
+  const windows = "Microsoft-Windows/10.0 UPnP/1.0 UPnP-Device-Host/1.0";
+  const answers = [
+    said("192.168.1.30", "upnp:rootdevice", windows, "http://192.168.1.30:1/root.xml"),
+    said("192.168.1.30", "urn:schemas-upnp-org:device:mediarenderer:1", windows, "http://192.168.1.30:10247/renderer.xml"),
+    said("192.168.1.40", "urn:schemas-upnp-org:device:MediaRenderer:1", "Linux UPnP/1.0 Sonos/86.10", "http://192.168.1.40:1400/xml"),
+  ];
+  assert.deepEqual(await addressesOf(xbox, answers), ["192.168.1.30"], "its search target, whatever its case, and its server's words");
+
+  // Read from the description its answer to that search points at: not the root device's, which answered first.
+  const server = http.createServer((asked, answer) => {
+    answer.writeHead(asked.url === "/renderer.xml" ? 200 : 404);
+    answer.end(asked.url === "/renderer.xml" ? "<root><device><UDN>uuid:made-up</UDN><modelName>Xbox Series X</modelName><friendlyName>Den Xbox</friendlyName></device></root>" : "");
+  });
+  await new Promise((done) => server.listen(0, "127.0.0.1", done));
+  try {
+    const here = [said("127.0.0.1", "upnp:rootdevice", windows, "http://127.0.0.1:1/root.xml"),
+      said("127.0.0.1", "urn:schemas-upnp-org:device:MediaRenderer:1", windows, `http://127.0.0.1:${server.address().port}/renderer.xml`)];
+    const read = await identify(xbox, "127.0.0.1", here, { reach: () => true });
+    assert.deepEqual({ serial: read.serial, model: read.model, name: read.name }, { serial: "uuid:made-up", model: "Xbox Series X", name: null });
+  } finally { server.close(); server.closeAllConnections?.(); }
+
+  // An LG TV, as recorded (Tests/Fixtures/lg-webos-tv): its first answer's description says nothing of it, a later one names it.
+  const recorded = new URL("../../Tests/Fixtures/lg-webos-tv/", import.meta.url);
+  const lg = readFileSync(new URL("ssdp.txt", recorded), "utf8").split("\n\n").map((text) => answerOf(text, "192.168.1.20"));
+  const tv = await describe("192.168.1.20", lg, { get: async ({ port }) => {
+    try { const body = readFileSync(new URL(`${port}.xml`, recorded)); return { ok: true, status: 200, body, text: body.toString("utf8") }; } catch { return { ok: false, status: 404 }; }
+  } });
+  assert.equal(tv.name, "[LG] webOS TV NANO80ASA");
+  assert.equal(tv.address, "192.168.1.20");
+  // A router answers every search, and nobody makes apps for it.
+  const router = await describe("192.168.1.1", [said("192.168.1.1", "upnp:rootdevice", "Linux UPnP/1.0", "http://192.168.1.1:5000/rootDesc.xml")], {
+    get: async () => ({ ok: true, body: Buffer.from("<root><device><deviceType>urn:schemas-upnp-org:device:InternetGatewayDevice:1</deviceType><friendlyName>Router</friendlyName><manufacturer>Made Up</manufacturer></device></root>") }) });
+  assert.equal(router, null);
+
+  // A Bonjour answer: the service's name, at the address of the host it names (its name written once and pointed to after).
+  const name = (labels) => Buffer.concat([...labels.map((label) => Buffer.concat([Buffer.from([Buffer.byteLength(label)]), Buffer.from(label)])), Buffer.from([0])]);
+  const record = (owner, type, data) => { const fixed = Buffer.alloc(10); fixed.writeUInt16BE(type, 0); fixed.writeUInt16BE(1, 2); fixed.writeUInt32BE(10, 4); fixed.writeUInt16BE(data.length, 8); return Buffer.concat([owner, fixed, data]); };
+  const header = Buffer.alloc(12); header.writeUInt16BE(0x8400, 2); header.writeUInt16BE(1, 6); header.writeUInt16BE(2, 10);
+  const instance = name(["Den Speaker", "_sonos", "_tcp", "local"]), srv = Buffer.concat([Buffer.from([0, 0, 0, 0, 5, 0x78]), name(["speaker-2", "local"])]);
+  const packet = Buffer.concat([header, record(name(["_sonos", "_tcp", "local"]), 12, instance), record(instance, 33, srv), record(name(["speaker-2", "local"]), 1, Buffer.from([192, 168, 1, 40]))]);
+  assert.deepEqual(servicesIn(packet, "_sonos._tcp", "192.168.1.99"), [{ name: "Den Speaker", address: "192.168.1.40" }]);
+  // The type written once, in the question, and pointed to after: from the answer's owner and from inside the service's name.
+  const asking = Buffer.alloc(12); asking.writeUInt16BE(0x8400, 2); asking.writeUInt16BE(1, 4); asking.writeUInt16BE(1, 6);
+  const question = Buffer.concat([name(["_sonos", "_tcp", "local"]), Buffer.from([0, 12, 0, 1])]);
+  const kitchen = Buffer.concat([Buffer.from([7]), Buffer.from("Kitchen"), Buffer.from([0xc0, 12])]);
+  const pointed = Buffer.concat([asking, question, record(Buffer.from([0xc0, 12]), 12, kitchen)]);
+  assert.deepEqual(servicesIn(pointed, "_sonos._tcp", "192.168.1.41"), [{ name: "Kitchen", address: "192.168.1.41" }],
+    "a name pointed to, and the address the answer came from when it names no host");
+  const looping = Buffer.concat([asking.subarray(0, 4), Buffer.from([0, 0, 0, 1, 0, 0, 0, 0]), Buffer.from([0xc0, 12]), Buffer.alloc(10)]);
+  assert.deepEqual(servicesIn(looping, "_sonos._tcp", "192.168.1.41"), [], "a name that points at itself ends");
+  assert.deepEqual(servicesIn(Buffer.from([1, 2, 3]), "_sonos._tcp", "192.168.1.41"), [], "an answer that can't be read says nothing");
+  assert.deepEqual(await bonjour("not a type"), [], "only a service type is asked for");
+});
