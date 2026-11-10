@@ -27,7 +27,8 @@ import { share, unshare, ideas, finishIdea, readLink, nameOf, siteOrigin, LIMITS
 const here = dirname(fileURLToPath(import.meta.url));
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
-const USAGE = `lamp runs the web app or game in a folder and puts each saved change into the open page.
+const USAGE = `lamp runs the app in a folder and puts each saved change into it: a web app or game, shown in a browser, or a
+Mac app Lamp made in Swift, built and run on this Mac.
 
   lamp new <folder> [--name "Its Name"] [--mac]
       Make a new web game's folder from Lamp's starting files: the game runtime, three.js and a page to build on.
@@ -41,12 +42,14 @@ const USAGE = `lamp runs the web app or game in a folder and puts each saved cha
   lamp open [folder]
       Show it in a window, running it in the background if it isn't running. Returns at once.
   lamp look [folder] [--reopen] [--size 800x600] [--wait seconds] [--json]
-      How the changes since the last look went, a picture of the page, its screen as text, and its log.
-      --reopen opens the page again from its beginning first (a game's saves kept): what someone opening it sees.
+      How the changes since the last look went, a picture of the page (or of a Mac app's windows), its screen as
+      text, and its log. --reopen opens it again from its beginning first (what it saved kept): what someone
+      opening it sees.
       --size looks at it as a window of that size shows it, when no window of the person's is open.
   lamp use [folder] <one of these>
       Try it as a person would, then look:
-        click <x> <y>                         a point of the picture
+        click <x> <y>                         a point of the picture (in a Mac app also: click "A Name" from the
+                                              screen as text)
         type <text>                           into whatever has the keyboard
         key <name> [seconds]                  a key, or several at once (w+a), held: a letter, a digit, space,
                                               enter, escape, tab, backspace, delete, up, down, left, right,
@@ -61,7 +64,8 @@ const USAGE = `lamp runs the web app or game in a folder and puts each saved cha
         lamp use key space then stick left 1 0 3 then button a
   lamp reload [folder] [--fresh]
       Open the page again from its files, a game from where the player is, or with --fresh from its beginning.
-  lamp stop [folder]      Stop running it.
+      A Mac app is quit and opened again.
+  lamp stop [folder]      Stop running it. A Mac app is quit.
   lamp share [folder] --words "What it is" [--name N] [--line "A line under its name"] [--by "Who made it"]
              [--asks "Found a bug?|What's missing?"] [--shape fill|16:9] [--no-picture] [--anyway]
       Put the page on lamp.dev, where anyone with the link plays it and can send an idea. Public, so only when the
@@ -73,8 +77,12 @@ const USAGE = `lamp runs the web app or game in a folder and puts each saved cha
   lamp setup [--remove]   Teach Claude Code and Codex on this computer to work this way (a skill for each).
   lamp guide              What that skill says, for any other agent.
   lamp skills [word]      Lamp's guidance for each kind of work, those about a word; lamp skill <name> reads one.
+  lamp blocks [folder] [Name]
+      Lamp's building blocks for a Mac app (saved data, AI, windows, the menu bar…) with what each is for, or one
+      in full: read from the app's own Sources/LampSupport.swift.
 
-The folder is one Lamp made (its page is in Web/) or any folder with an index.html; without one, the folder you're in.`;
+The folder is one Lamp made (a page in Web/, or a Mac app's Package.swift and build.sh) or any folder with an
+index.html; without one, the folder you're in.`;
 
 // What tells a coding agent how to work with lamp: one file, installed as a skill by `lamp setup` and printed by
 // `lamp guide`. `{{lamp}}` in it is how lamp is run on this computer.
@@ -165,6 +173,7 @@ function report(seen) {
   if (seen.did) lines.push(seen.did);
   if (seen.where) lines.push(`Looked at ${WHERE[seen.where]}${seen.title ? `: "${seen.title}"` : ""}${seen.width ? `, ${seen.width}×${seen.height}` : ""}.${seen.opened ? " It was opened just now, from the files as they are." : ""}${seen.playing ? " The game says it's playing." : seen.playing === false ? " The game hasn't said it's playing yet." : ""}`);
   if (seen.problem) lines.push(seen.problem);
+  if (seen.note) lines.push(seen.note);
   if (seen.unfinished) lines.push(`Taken while ${seen.unfinished}: look again.`);
   if (seen.picture) lines.push(`Picture   ${seen.picture}`);
   for (const other of seen.pictures ?? []) lines.push(`          ${other}  (another of its windows)`);
@@ -352,7 +361,10 @@ async function main() {
     const { rest } = parse(args, []);
     const layout = projectOf(rest[0] ?? ".");
     const opened = await ask(await serverFor(layout.folder), "open", {}, { timeout: 30_000 });
-    if (opened.opened === "app") { console.log(`The app is open, or will be once it's built: ${opened.url}`); return; }
+    if (opened.opened === "app") {
+      console.log(opened.running ? `${opened.url} is open.` : opened.building ? `${opened.url} is being built, and opens when it is: lamp look waits for it.` : `${opened.url} didn't build: lamp look says why.`);
+      return;
+    }
     console.log(opened.opened === "window" ? `Opened in a window: ${opened.url}` : `Opened in the browser: ${opened.url}\nlamp found no browser it can look into (Chrome, Edge, Brave or Chromium), so looks have no picture.`);
     return;
   }
@@ -455,6 +467,8 @@ async function main() {
     const live = await running(layout.folder);
     if (!live) { console.log("lamp dev isn't running for this folder."); return; }
     const answer = await ask(live, command, { fresh: !!options.fresh });
+    // Stopped means gone: the next command finds no server, never one on its way out.
+    if (command === "stop") for (let tries = 0; tries < 50 && (await running(layout.folder)); tries++) await sleep(100);
     console.log(command === "stop" ? "Stopped." : answer.pages ? (layout.kind === "mac" ? "The app is opening again." : "The page is opening again.") : "Nothing is open.");
     return;
   }
@@ -462,6 +476,58 @@ async function main() {
   if (command === "guide") {
     // The skill without what only a skill's file needs in front.
     console.log(skillText().replace(/^---\n[\s\S]*?\n---\n+/, "").trimEnd());
+    return;
+  }
+
+  if (command === "blocks") {
+    // Lamp's building blocks for a Mac app, read from the app's own copy of them (Sources/LampSupport.swift), whose
+    // comments are the whole of how each is used: every one with what it's for, or one in full.
+    const { rest } = parse(args, []);
+    const name = rest.find((word) => /^Lamp\w*$/.test(word)) ?? null;
+    const project = projectOf(rest.find((word) => word !== name) ?? ".");
+    const file = join(project.folder, "Sources", "LampSupport.swift");
+    if (!existsSync(file)) throw new Problem("Lamp's building blocks are a Mac app's (Sources/LampSupport.swift): this folder has none");
+    const lines = readFileSync(file, "utf8").split("\n");
+    const declared = /^ {4}(?:@[\w.]+(?:\([^)]*\))?\s+)*(?:(?:public|final|nonisolated|indirect)\s+)*(enum|struct|class|actor|protocol)\s+(Lamp\w+)/;
+    const blocks = new Map();
+    lines.forEach((line, at) => {
+      const found = declared.exec(line);
+      if (!found || blocks.has(found[2])) return;
+      let above = at - 1;
+      while (above >= 0 && /^ {4}@/.test(lines[above])) above--;
+      const says = [];
+      for (; above >= 0 && /^ {4}\/\/\//.test(lines[above]); above--) says.unshift(lines[above].replace(/^ {4}\/\/\/ ?/, ""));
+      blocks.set(found[2], { at, says });
+    });
+    // What a block offers, by name: its members that aren't its own alone.
+    const offers = (block) => {
+      const names = [];
+      for (let at = block.at + 1; at < lines.length && !/^ {4}\}/.test(lines[at]); at++) {
+        const member = /^ {8}(?:@[\w.]+(?:\([^)]*\))?\s+)*((?:(?:static|public|private|fileprivate|nonisolated|mutating|final)(?:\(set\))?\s+)*)(?:func|var|let)\s+(\w+)/.exec(lines[at]);
+        if (member && !/private/.test(member[1]) && !names.includes(member[2])) names.push(member[2]);
+      }
+      return names;
+    };
+    if (!name) {
+      for (const [block, entry] of blocks) {
+        // What it's for, where its comment says; else what it offers, which says as much.
+        const first = entry.says.join(" ").split(/(?<=[.:])\s/)[0];
+        const said = entry.says.length ? first : (() => { const names = offers(entry); return names.length ? `${names.slice(0, 8).join(", ")}${names.length > 8 ? "…" : ""}` : ""; })();
+        if (said) console.log(`${block}: ${said.length > 150 ? said.slice(0, 150).replace(/\s+\S*$/, "") + "…" : said}`);
+      }
+      console.log(`\n${lampCommand()} blocks <Name> says how one is used.`);
+      return;
+    }
+    const block = blocks.get(name);
+    if (!block) throw new Problem(`there's no building block called ${name}: lamp blocks lists them`);
+    console.log(`${name}  (Sources/LampSupport.swift:${block.at + 1})\n${block.says.length ? `\n${block.says.join("\n")}\n` : ""}`);
+    // What it offers: each member's own comment and how it's written, without what's inside it or what's its own alone.
+    for (let at = block.at + 1; at < lines.length && !/^ {4}\}/.test(lines[at]); at++) {
+      const line = lines[at];
+      if (/^ {8}\/\/\//.test(line)) { console.log(line.slice(4)); continue; }
+      const member = /^ {8}((?:@[\w.]+(?:\([^)]*\))?\s+)*(?:(?:static|public|nonisolated|mutating|final|indirect|convenience)\s+)*(?:func|var|let|init|case|enum|struct|class|subscript|typealias)\b.*)$/.exec(line);
+      if (member && !/\b(private|fileprivate)\b/.test(member[1])) console.log("    " + member[1].replace(/\s*\{.*$/, ""));
+    }
     return;
   }
 

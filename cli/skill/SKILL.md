@@ -36,15 +36,26 @@ A folder with `Package.swift`, `build.sh` and `Sources/LampSupport.swift` and no
 Swift. `{{lamp}} new path/to/folder --mac --name "Its Name"` makes a new one: Lamp's building blocks, and a card it
 shows until its code in `Sources/` is written. The same commands work on it, with these differences:
 
-- **A change is a build.** Each save builds the app again, a few seconds for a small change, and opens it again:
-  what was typed or open in it is gone, so change first and try after. `look` waits for the build.
+- **Lamp's building blocks** are what the app is made with: saved data, AI, windows, the menu bar and the rest.
+  `{{lamp}} blocks` lists them with what each is for, and `{{lamp}} blocks LampStore` says how one is used: read the
+  ones the app needs before writing it. Lamp's `building-blocks` and `app-kinds` skills say which to reach for and
+  how such an app is laid out; where a skill points to rules of Lamp's own that aren't here (a base design), use
+  your judgment.
+- **A change is a build.** Each save to the app's code builds it again, a few seconds for a small change, and opens
+  it again: what was typed or open in it is gone, so change first and try after. `look` waits for the build.
 - **`look`** answers pictures of the app's windows (taken by the app itself, so nothing is asked of the person),
-  its screen as text when the app can read it, what it printed, and when it didn't build, the compiler's errors with
-  their file and line: the app is then as it was before the change.
+  what it printed, and when it didn't build, the compiler's errors with their file and line: the app is then as it
+  was before the change. It answers the screen as text too once the app has been in front with the Mac unlocked;
+  without it, aim by the picture, whose points are the points to click. `look --reopen` quits the app and opens it
+  again first, as `{{lamp}} reload` does.
 - **`use`** takes `click` (a point of the picture, or a name or id from the screen as text: `{{lamp}} use click "Add"`),
-  `type`, `key` (`return`, `escape`, `cmd+a`…), `drag`, `scroll` and `wait`. Only when asked to try it.
-- **Lamp's own files** are `Sources/LampSupport.swift`, `build.sh` and `Package.swift`: read `LampSupport.swift` for
-  what Lamp gives the app, and never edit any of them.
+  `type`, `key` (`return`, `escape`, `cmd+a`…), `drag`, `scroll` and `wait`. It brings the app to the front. Only
+  when asked to try it.
+- **What you add while trying it is the app's real saved data**, kept under the app's own name in the person's
+  Application Support: take it out again, or tell them it's there.
+- **The app stays open** when you finish, as the person's to use. `{{lamp}} stop` quits it, when they only wanted it
+  checked.
+- **Lamp's own files** are `Sources/LampSupport.swift`, `build.sh` and `Package.swift`: never edit any of them.
 - **Not here:** putting a change in without opening the app again, the app's AI (`LampAI`), and sharing one. Those
   are Lamp's app's: say so rather than working around it. What the app keeps secret (`LampSecrets`) is kept for it.
 

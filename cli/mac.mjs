@@ -48,7 +48,10 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
 
   // MARK: The files and their changes
 
-  const ignored = (path) => path.split("/").some((part) => part.startsWith(".") || part === "build" || part === "node_modules") || path.endsWith("~");
+  // What the build reads is a change: the code, the package and the app's own files. The app's notes and what Lamp
+  // knows of it beside them (APP.md, icon.json…) aren't built, so saving one builds nothing.
+  const ignored = (path) => path.split("/").some((part) => part.startsWith(".") || part === "build" || part === "node_modules") || path.endsWith("~")
+    || (!path.includes("/") && /\.(md|json|txt)$/i.test(path));
   const filesUnder = (dir = folder, prefix = "", found = []) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const path = prefix + entry.name;
@@ -96,6 +99,7 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
   // MARK: Building and running
 
   let app = null;               // build/<Name>.app once it's built
+  let shown = slug;             // its name as it shows it
   let child = null, launched = 0, quitting = false, exited = null;
   let building = null;          // the build under way, a promise
   let pendingFiles = new Set(), timer = null;
@@ -150,6 +154,7 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
     };
     spawnSync("/usr/bin/plutil", ["-replace", "LampInstall", "-json", JSON.stringify(values), plist], { stdio: "ignore" });
     spawnSync("/usr/bin/codesign", ["--force", "-s", "-", bundle], { stdio: "ignore" });
+    shown = read("CFBundleName") || shown;
     return read("CFBundleExecutable");
   }
 
@@ -242,20 +247,23 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
   for (const name of readdirSync(state)) if (/^look(-\d+)*\.png$/.test(name)) rmSync(join(state, name), { force: true });
 
   /** How the changes since the last look went, pictures of the app's windows, its screen as text, and its log. */
-  async function look({ wait = 120 } = {}) {
+  async function look({ wait = 120, reopen = false } = {}) {
     lastUsed = Date.now();
     checkAll();
     const until = Date.now() + Math.max(0, wait) * 1000;
     while ((building || timer) && Date.now() < until) await sleep(100);
+    // Opened again from its start, as someone opening it finds it: what it saved is still there.
+    if (reopen && app && !building) { await quit(); launch(); }
     const unfinished = building || timer ? "the app was still being built" : null;
-    let picture = null, more = [], screen = null, problem = null;
+    let picture = null, more = [], screen = null, problem = null, note = null;
     if (child) {
       // A moment for its first window, then the app pictures its own windows and says what's on them.
       if (Date.now() - launched < 2500) await sleep(2500 - (Date.now() - launched));
       const shot = join(runtime, "screenshot.png"), text = join(runtime, "screen.txt");
       const before = (() => { try { return statSync(shot).mtimeMs; } catch { return 0; } })();
       post(`${note}snapshot.${slug}`);
-      for (let tries = 0; tries < 60; tries++) {
+      // The first picture after a build takes longer: the system checks the app's new signature before it answers.
+      for (let tries = 0, most = Date.now() - launched < 20_000 ? 150 : 60; tries < most; tries++) {
         try { if (statSync(shot).mtimeMs > before) break; } catch {}
         await sleep(100);
       }
@@ -271,6 +279,9 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
         }
         rmSync(join(state, `look-${n - 40}.png`), { force: true });
         try { if (statSync(text).mtimeMs >= taken - 2000) screen = readFileSync(text, "utf8").trim() || null; } catch {}
+        // The app reads its screen through accessibility, on itself, which answers only once the app has been in
+        // front with the screen unlocked.
+        if (!screen) note = "The app gave no screen as text (it can read its own screen only once it has been in front, with the Mac unlocked): aim by the picture, whose points are the points to click.";
         if (taken <= before) problem = "The app took no new picture just now (its windows can't be pictured while the screen is locked or the display is asleep): this is its last one.";
       } else {
         problem = "The app took no picture of its windows: they can't be pictured while the screen is locked, the display is asleep, or the app is hidden.";
@@ -288,8 +299,8 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
     lastLookGen = gen;
     lastLookLine = logCount;
     return {
-      where: "mac", opened: false, playing: null, address: app, picture, pictures: more, title: app ? basename(app, ".app") : slug, width: null, height: null, screen,
-      unfinished, changes: since, errors: errors.slice(-20),
+      where: "mac", opened: false, playing: null, address: app, picture, pictures: more, title: shown, width: null, height: null, screen,
+      unfinished, changes: since, errors: errors.slice(-20), note,
       log: fresh.filter((line) => !isError(line)).slice(-25).map((line) => line.text), logLines: fresh.length, logFile, problem,
     };
   }
@@ -303,6 +314,8 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
     const moves = Array.isArray(asked?.moves) ? asked.moves : [asked];
     if (building) await building;
     if (!child) throw new Problem("the app isn't running: lamp look says why");
+    // In front, as Lamp's app puts it: the person sees what's done, and what only answers a real click takes it.
+    activate();
     const number = (value, what) => { const n = Number(value); if (!Number.isFinite(n)) throw new Problem(what); return n; };
     const actions = moves.map((move) => {
       if (move.kind === "click") return move.target ? { action: "click", target: String(move.target) } : { action: "click", x: number(move.x, "click takes a point of the picture, or a name from the screen as text"), y: number(move.y, "click takes a point of the picture, or a name from the screen as text") };
@@ -325,6 +338,11 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
     const did = answer ? (answer.report || "Done.") + (answer.stopped ? "\nThe person took the app back: it's theirs until they ask again." : "")
       : child ? "The app didn't answer: nothing may have been done." : "The app quit while it was being used.";
     return { did, ...(await look({ wait: 30 })) };
+  }
+
+  function activate() {
+    if (!child) return;
+    spawnSync("/usr/bin/osascript", ["-l", "JavaScript", "-e", `ObjC.import("AppKit"); $.NSRunningApplication.runningApplicationWithProcessIdentifier(${child.pid}).activateWithOptions(2)`], { stdio: "ignore", timeout: 10_000 });
   }
 
   // MARK: What the app asks of Lamp
@@ -388,9 +406,9 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
       if (what === "look") return json(200, await inTurn(() => look(asked)));
       if (what === "open") {
         // Opened again when it was quit, and brought to the front.
-        if (!child && app) launch();
-        if (child) spawnSync("/usr/bin/osascript", ["-l", "JavaScript", "-e", `ObjC.import("AppKit"); $.NSRunningApplication.runningApplicationWithProcessIdentifier(${child.pid}).activateWithOptions(2)`], { stdio: "ignore", timeout: 10_000 });
-        return json(200, { opened: "app", url: app ?? slug });
+        if (!child && app && !building) launch();
+        activate();
+        return json(200, { opened: "app", url: shown, running: !!child, building: !!building });
       }
       if (what === "reload") { if (app) { await quit(); launch(); } return json(200, { pages: app ? 1 : 0 }); }
       if (what === "stop") { json(200, { stopped: true }); setTimeout(() => close().then(() => process.exit(0)), 50); return; }

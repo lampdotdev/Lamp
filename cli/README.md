@@ -26,6 +26,7 @@ with an `index.html`; without one, the folder you're in.
 | `lamp unshare` | Takes the link down. |
 | `lamp setup [--remove]` | Teaches Claude Code and Codex on this computer to work this way: a skill for each. |
 | `lamp guide` | What that skill says, for any other agent. |
+| `lamp blocks [Name]` | Lamp's building blocks for a Mac app, each with what it's for, or one in full: read from the app's own `Sources/LampSupport.swift`, whose comments say how each is used. |
 | `lamp skills [word]`, `lamp skill <name>` | Lamp's skills (`Resources/skills`), the one place that says which building blocks to use and how: all of them or those about a word, and one in full, put together from its sections as Lamp's app does (`cli/skills.mjs` follows `Skills.assembled`). |
 
 ## For a coding agent
@@ -123,8 +124,8 @@ The folder holds all it takes, so nothing of Lamp's app is run:
   windows and writes what's on them as text beside its log, in the folder's `.lamp/runtime`. No permission is asked.
 - **Using** is the app's own driver (`LampDriver`): the actions go as Lamp's app sends them (`useApp`), signed with
   the token, and the app answers what it did.
-- **A change** builds the app again and opens it again. The app's own build writes `build/`, `.build/` and
-  `.lamp/` in the folder, as it does under Lamp's app.
+- **A change** to what the build reads (the code, the package, the app's own files) builds the app again and opens
+  it again. The app's own build writes `build/`, `.build/` and `.lamp/` in the folder, as it does under Lamp's app.
 
 - **A new one** (`lamp new --mac`) is a copy of the folder Lamp's app makes for a new Mac app (`Template.scaffold`),
   under the app's own name. Those files are Lamp's own code's doing, and its building blocks change often, so the copy
