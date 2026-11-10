@@ -144,9 +144,9 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
     const read = (key) => spawnSync("/usr/bin/plutil", ["-extract", key, "raw", plist], { encoding: "utf8" }).stdout.trim();
     const values = {
       slug, folder: slug, apps: dirname(folder), dataID: read("CFBundleIdentifier"), token: appToken,
-      // Lamp's app answers the app's own requests (its AI, its secrets, sharing) on this port: nothing does here yet,
-      // which the app takes as Lamp not running.
-      port: "0", scheme: "lamp-cli", note, host: "dev.lamp.cli", macHost: "127.0.0.1", widgetPort: "0", widgetToken: "",
+      // Where the app asks Lamp for what it keeps for it: lamp's own server for this folder, which answers its
+      // secrets and its Reload, and nothing else yet (its AI, sharing), which the app takes as Lamp saying no.
+      port: String(port), scheme: "lamp-cli", note, host: "dev.lamp.cli", macHost: "127.0.0.1", widgetPort: "0", widgetToken: "",
     };
     spawnSync("/usr/bin/plutil", ["-replace", "LampInstall", "-json", JSON.stringify(values), plist], { stdio: "ignore" });
     spawnSync("/usr/bin/codesign", ["--force", "-s", "-", bundle], { stdio: "ignore" });
@@ -327,6 +327,35 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
     return { did, ...(await look({ wait: 30 })) };
   }
 
+  // MARK: What the app asks of Lamp
+
+  // The app's secrets (a service's sign-in, a key: `LampSecrets` in its support code), kept for it here as Lamp's app
+  // keeps them, since macOS ties a Keychain item of the app's own to one build of it. With lamp's state for the
+  // folder, readable only by the person, never in the folder.
+  const secretsFile = join(state, "secrets.json");
+  const secrets = () => { try { return JSON.parse(readFileSync(secretsFile, "utf8")); } catch { return {}; } };
+
+  /** The answer to one thing the app asked: a status and what's said. */
+  async function asksOfLamp(path, asked) {
+    if (path === "/app/secrets") {
+      const name = typeof asked.name === "string" ? asked.name : "";
+      if (!name || name.length > 200) return [400, { error: "a secret has a name" }];
+      const kept = secrets();
+      if (asked.op === "read") return [200, { ok: true, ...(typeof kept[name] === "string" ? { value: kept[name] } : {}) }];
+      if (asked.op === "save" && typeof asked.value === "string" && asked.value.length < 200_000) kept[name] = asked.value;
+      else if (asked.op === "delete") delete kept[name];
+      else return [400, { error: "read, save or delete" }];
+      writeFileSync(secretsFile, JSON.stringify(kept), { mode: 0o600 });
+      return [200, { ok: true }];
+    }
+    // The app menu's Reload asks whether Lamp has a change of the app's waiting to go in: here a change goes in as
+    // it's saved, so none is, and the app opens itself again.
+    if (path === "/app/reload") return [200, { waiting: false }];
+    // Its AI, sharing and the rest are Lamp's app's still.
+    logged(`The app asked Lamp for ${path}, which lamp doesn't answer yet.`);
+    return [404, { error: "Lamp's command line doesn't answer this yet." }];
+  }
+
   // MARK: lamp's own commands
 
   let turns = Promise.resolve();
@@ -345,6 +374,11 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
     const json = (status, value) => { response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }); response.end(JSON.stringify(value)); };
     const host = String(request.headers.host || "").replace(/:\d+$/, "").toLowerCase();
     if (!["localhost", "127.0.0.1"].includes(host) || request.headers.origin) return json(403, { problem: "not lamp's own command" });
+    // What the app itself asks of its Lamp (`LampInstall.port`), shown the token only the two have.
+    if (url.pathname.startsWith("/app/") || url.pathname.startsWith("/ai/")) {
+      if (request.headers.authorization !== `Bearer ${appToken}` || request.method !== "POST") return json(403, { error: "not this app" });
+      return json(...(await asksOfLamp(url.pathname, (await body(request)) ?? {})));
+    }
     if (!url.pathname.startsWith("/__lamp/cli/") || request.headers["x-lamp-token"] !== commandToken) return json(403, { problem: "that isn't lamp's own command" });
     const what = url.pathname.slice("/__lamp/cli/".length);
     try {

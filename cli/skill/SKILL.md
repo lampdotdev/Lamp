@@ -45,8 +45,8 @@ shows until its code in `Sources/` is written. The same commands work on it, wit
   `type`, `key` (`return`, `escape`, `cmd+a`…), `drag`, `scroll` and `wait`. Only when asked to try it.
 - **Lamp's own files** are `Sources/LampSupport.swift`, `build.sh` and `Package.swift`: read `LampSupport.swift` for
   what Lamp gives the app, and never edit any of them.
-- **Not here:** putting a change in without opening the app again, what the app asks of Lamp as it runs (its AI, its
-  secrets), and sharing one. Those are Lamp's app's: say so rather than working around it.
+- **Not here:** putting a change in without opening the app again, the app's AI (`LampAI`), and sharing one. Those
+  are Lamp's app's: say so rather than working around it. What the app keeps secret (`LampSecrets`) is kept for it.
 
 ## A game that's already there
 

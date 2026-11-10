@@ -137,9 +137,14 @@ One difference from Lamp's app matters for an app that came from someone else. L
 its code does while it builds is fenced in. lamp runs the folder's own `build.sh` as it is, as anything run in a
 folder does: build only what you'd run.
 
-What stays Lamp's app's for a Mac app: putting a change in while it runs (`LiveReload`), what the app asks of Lamp
-on its port (AI, secrets, sharing: here nothing answers, which the app takes as Lamp not running), signing for a
-team, and the chat beside the app.
+- **What the app asks of Lamp** as it runs goes to lamp's server for the folder (`LampInstall.port`), shown the
+  token. Its secrets (`LampSecrets`, `/app/secrets`) are kept for it with lamp's state for the folder, readable only
+  by the person, as Lamp's app keeps them for an app whose own Keychain items macOS ties to one build; and its Reload
+  (`/app/reload`) is told no change is waiting, so the app opens itself again. Its AI (`/ai/…`), sharing and the rest
+  aren't answered yet: the app is told so, and the log says what it asked for.
+
+What stays Lamp's app's for a Mac app: putting a change in while it runs (`LiveReload`), its AI and sharing, signing
+for a team, and the chat beside the app.
 
 ## Sharing
 
@@ -179,8 +184,8 @@ can read.
 
 ## What it doesn't do yet
 
-Phones, TVs and consoles as places to run; what an app asks of Lamp as it runs (its AI, its secrets, `lamp.js`'s
-building blocks, a game's phone controllers); putting a change into a Mac app without opening it again; and the
+Phones, TVs and consoles as places to run; an app's AI, `lamp.js`'s building blocks for a page and a game's phone
+controllers; putting a change into a Mac app without opening it again; and the
 build's sandbox.
 
 ## Tests
