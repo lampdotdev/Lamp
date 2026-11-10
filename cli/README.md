@@ -132,11 +132,17 @@ The folder holds all it takes, so nothing of Lamp's app is run:
   isn't kept in the repository: `scripts/cli-files.sh` writes it (`cli/lamps/mac-starter`, through `CLIFilesTests`)
   from the code as it is, and `lamp new --mac` says to run it when there's none.
 
-One difference from Lamp's app matters for an app that came from someone else. Lamp's app writes `build.sh`,
-`Package.swift` and `LampSupport.swift` afresh before every build and runs the build in the app's sandbox
-(`Template.writeOwnedFiles`, `Sandbox.run`), so nothing a folder brought with it in those files ever runs, and what
-its code does while it builds is fenced in. lamp runs the folder's own `build.sh` as it is, as anything run in a
-folder does: build only what you'd run.
+- **The build is fenced in**, as it is under Lamp's app: it runs under `sandbox-exec` with Lamp's profile for a
+  build (`Sandbox.profile`, here `buildProfile`), which closes every person's files and opens the app's own folder
+  and what a build needs, with Lamp's `swift` in front of the real one, since SwiftPM's own sandbox can't start inside
+  another. What the build made is then copied out of the folder, to lamp's state for it, and that copy is given the
+  values and run: what only lamp and the app have is never in the folder for a later build to read, and the app that
+  runs is never one a build changed after it was made.
+
+One difference from Lamp's app remains for an app that came from someone else. Lamp's app writes `build.sh`,
+`Package.swift` and `LampSupport.swift` afresh before every build (`Template.writeOwnedFiles`), so nothing a folder
+brought with it in those files ever runs. lamp runs the folder's own, inside the fence: they can do what a build
+can, in the app's folder and the temporary folders, and no more.
 
 - **What the app asks of Lamp** as it runs goes to lamp's server for the folder (`LampInstall.port`), shown the
   token. Its secrets (`LampSecrets`, `/app/secrets`) are kept for it with lamp's state for the folder, readable only
@@ -186,8 +192,7 @@ can read.
 ## What it doesn't do yet
 
 Phones, TVs and consoles as places to run; an app's AI, `lamp.js`'s building blocks for a page and a game's phone
-controllers; putting a change into a Mac app without opening it again; and the
-build's sandbox.
+controllers; and putting a change into a Mac app without opening it again.
 
 ## Tests
 

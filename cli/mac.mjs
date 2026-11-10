@@ -11,7 +11,8 @@
 import { createServer } from "node:http";
 import { randomBytes, createHash, createHmac } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { watch, existsSync, statSync, mkdirSync, appendFileSync, writeFileSync, readFileSync, readdirSync, rmSync, copyFileSync, openSync, readSync, closeSync } from "node:fs";
+import { watch, existsSync, statSync, mkdirSync, appendFileSync, writeFileSync, readFileSync, readdirSync, rmSync, copyFileSync, openSync, readSync, closeSync, cpSync, realpathSync, readlinkSync, chmodSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import { Problem, stateOf, serverFileOf, firstPortOf } from "./state.mjs";
 
@@ -19,6 +20,77 @@ const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 /** Whether the folder is an app Lamp made in Swift for the Mac: its package, and the build script Lamp writes. */
 export const isMacApp = (folder) => existsSync(join(folder, "Package.swift")) && existsSync(join(folder, "build.sh")) && existsSync(join(folder, "Sources"));
+
+// MARK: The build's sandbox
+//
+// The build runs what's in the folder: its script, its package (which SwiftPM runs as a program before it builds
+// anything) and whatever its code does as it compiles. Lamp's app runs it under sandbox-exec with a profile that
+// closes every person's files and opens the app's own folder and what a build needs (`Sandbox.profile`); this is that
+// profile, for a build. Later rules win, so the order is the meaning.
+
+const real = (path) => { try { return realpathSync.native(path); } catch { return path; } };
+const quotedPath = (path) => JSON.stringify(path);
+
+/** The Xcode or command line tools in use, wherever they are: read by every compile, never written. */
+function developerFolders() {
+  const given = [process.env.DEVELOPER_DIR, (() => { try { return readlinkSync("/var/db/xcode_select_link"); } catch { return null; } })()];
+  const folders = [];
+  for (const folder of given) {
+    if (!folder?.startsWith("/")) continue;
+    const path = real(folder), at = path.indexOf(".app/");
+    const bundle = at < 0 ? path : path.slice(0, at + 4);
+    if (bundle !== "/" && !folders.includes(bundle)) folders.push(bundle);
+  }
+  return folders;
+}
+
+function buildProfile(app) {
+  const home = real(homedir());
+  const lines = [
+    "(version 1)",
+    "(allow default)",
+    '(deny file-read* file-write* (subpath "/Users") (subpath "/Volumes") (subpath "/Network") (subpath "/private/var/root"))',
+    '(deny file-read* file-write* (subpath "/Library/Application Support") (subpath "/Library/Keychains"))',
+    `(deny file-read* file-write* (subpath ${quotedPath(home)}))`,
+    // What a build needs from the home folder: the toolchain, package caches, git's settings. Read only, apart from the caches.
+    `(allow file-read* (subpath ${quotedPath(home + "/Library/Developer")}) (subpath ${quotedPath(home + "/.swiftpm")}) (literal ${quotedPath(home + "/.gitconfig")}) (subpath ${quotedPath(home + "/.config/git")}))`,
+    `(allow file-read* file-write* (subpath ${quotedPath(home + "/Library/Caches")}) (subpath ${quotedPath(home + "/Library/org.swift.swiftpm")}) (subpath "/private/tmp") (subpath "/tmp"))`,
+  ];
+  if (process.env.TMPDIR) lines.push(`(allow file-read* file-write* (subpath ${quotedPath(real(process.env.TMPDIR))}))`);
+  const developer = developerFolders();
+  for (const folder of developer) {
+    lines.push(`(allow file-read* (subpath ${quotedPath(folder)}))`);
+    for (let path = dirname(folder); path !== "/"; path = dirname(path)) lines.push(`(allow file-read-metadata (literal ${quotedPath(path)}))`);
+  }
+  // The app's own folder opens, by its own name.
+  lines.push(`(allow file-read* file-write* (subpath ${quotedPath(app)}))`);
+  // Where programs are found and run from stays as it is: nothing the build leaves there is run by anyone later.
+  lines.push(`(deny file-write* (subpath ${quotedPath(real("/opt/homebrew"))}) (subpath ${quotedPath(real("/usr/local"))}))`);
+  lines.push(`(deny file-write* ${[real("/Applications"), ...developer].map((path) => `(subpath ${quotedPath(path)})`).join(" ")})`);
+  // The folders on the way to the app's can be looked at, not read: a program resolving a path looks at every step.
+  for (let path = dirname(app); path.startsWith(home) && path.length >= home.length; path = dirname(path)) {
+    lines.push(`(allow file-read-metadata (literal ${quotedPath(path)}))`);
+    if (path === home) break;
+  }
+  lines.push(`(allow file-read-metadata (literal ${quotedPath(dirname(home))}))`);
+  // Xcode's helpers that stay running are found through shared memory, whoever started them: each build starts its own.
+  lines.push('(deny ipc-posix-shm* (ipc-posix-name-regex #"^/?ib"))');
+  return lines.join("\n") + "\n";
+}
+
+// SwiftPM runs its builds under a sandbox of its own, which macOS won't start inside another: this `swift`, put first
+// on the build's path, hands its build commands --disable-sandbox (the build is fenced in already) and passes
+// everything else to the real one. Lamp's own (`Sandbox.swiftShim`).
+const SWIFT_SHIM = `#!/bin/bash
+# Written by lamp. SwiftPM's own sandbox can't start inside lamp's, which already confines the build.
+here="$(cd "$(dirname "$0")" && pwd)"
+rest="$(printf '%s' "$PATH" | tr ':' '\\n' | grep -vx "$here" | paste -sd: -)"
+real="$(PATH="$rest" command -v swift)"
+case "$1" in
+    build|test|run|package) exec "$real" "$1" --disable-sandbox "\${@:2}" ;;
+    *) exec "$real" "$@" ;;
+esac
+`;
 
 /** Says something to every app listening for it on this Mac (a distributed notification), as Lamp's app does. */
 function post(name, info = null) {
@@ -45,6 +117,12 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
   if (!existsSync(tokenFile)) writeFileSync(tokenFile, randomBytes(24).toString("hex"), { mode: 0o600 });
   const appToken = readFileSync(tokenFile, "utf8").trim();
   const note = `dev.lamp.cli.${createHash("sha256").update(folder).digest("hex").slice(0, 8)}.`;
+  // The build's fence, kept with lamp's own state, which the fence closes: the build can't change it.
+  const fence = join(state, "sandbox");
+  mkdirSync(join(fence, "bin"), { recursive: true });
+  writeFileSync(join(fence, "bin", "swift"), SWIFT_SHIM);
+  chmodSync(join(fence, "bin", "swift"), 0o755);
+  writeFileSync(join(fence, "build.sb"), buildProfile(folder), { mode: 0o600 });
 
   // MARK: The files and their changes
 
@@ -99,6 +177,7 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
   // MARK: Building and running
 
   let app = null;               // build/<Name>.app once it's built
+  let running = null;           // lamp's own copy of it, which is the one that runs
   let shown = slug;             // its name as it shows it
   let child = null, launched = 0, quitting = false, exited = null;
   let building = null;          // the build under way, a promise
@@ -109,7 +188,8 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
     return new Promise((done) => {
       const began = Date.now();
       let said = "";
-      const script = spawn("/bin/zsh", ["build.sh"], { cwd: folder, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"] });
+      const script = spawn("/usr/bin/sandbox-exec", ["-f", join(fence, "build.sb"), "/bin/zsh", "build.sh"],
+        { cwd: folder, env: { ...process.env, ...env, PATH: `${join(fence, "bin")}:${process.env.PATH}` }, stdio: ["ignore", "pipe", "pipe"] });
       script.stdout.on("data", (chunk) => { said += chunk; });
       script.stderr.on("data", (chunk) => { said += chunk; });
       script.on("error", (error) => done({ ok: false, seconds: 0, errors: [error.message] }));
@@ -142,8 +222,18 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
     return plain;
   }
 
-  /** Tells the built app where its Lamp is: here. The app's signature covers its Info.plist, so it's signed again. */
-  function stage(bundle) {
+  /**
+   * Takes what the build made out of the folder, to where the build can't reach, and tells that copy where its Lamp
+   * is: here. So what only lamp and the app have is never in the folder, for a later build to read, and the app
+   * that runs is never one a build changed after it was made. The app's signature covers its Info.plist, so the copy
+   * is signed again.
+   */
+  function stage(built) {
+    const bundle = join(state, "app", basename(built));
+    rmSync(join(state, "app"), { recursive: true, force: true });
+    mkdirSync(join(state, "app"), { recursive: true });
+    cpSync(built, bundle, { recursive: true, verbatimSymlinks: true });
+    running = bundle;
     const plist = join(bundle, "Contents", "Info.plist");
     const read = (key) => spawnSync("/usr/bin/plutil", ["-extract", key, "raw", plist], { encoding: "utf8" }).stdout.trim();
     const values = {
@@ -166,7 +256,7 @@ export async function serveMac({ folder, port: asked, quiet = false, idle = 0 } 
     launched = Date.now();
     // Kept awake while nobody looks at it (a default macOS reads from an app's arguments): an app the system has
     // put to sleep behind other windows, or with the display off, answers lamp's asking for a picture late or not at all.
-    child = spawn(join(app, "Contents", "MacOS", exe), ["-NSAppSleepDisabled", "YES"], { stdio: ["ignore", "pipe", "pipe"] });
+    child = spawn(join(running, "Contents", "MacOS", exe), ["-NSAppSleepDisabled", "YES"], { stdio: ["ignore", "pipe", "pipe"] });
     const mine = child;
     child.stdout.on("data", (chunk) => logged(chunk));
     child.stderr.on("data", (chunk) => logged(chunk));
