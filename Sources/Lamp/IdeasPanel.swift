@@ -58,6 +58,9 @@ extension Store {
         guard let shared = WishLink.kept(for: project) else { return }
         Task {
             guard let found = try? await WishLink.ideas(for: shared) else { return }
+            // A link taken down (or made again) while this was on its way: its ideas are gone with it, so an answer
+            // about it mustn't bring them back.
+            guard WishLink.kept(for: project)?.id == shared.id else { return }
             if ideas[project.id] != found { ideas[project.id] = found.isEmpty ? nil : found }
         }
     }

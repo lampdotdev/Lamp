@@ -556,6 +556,18 @@ enum Versions {
         try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
     }
 
+    /// What the agent hears after part of a suggested change was put in place from the copy it was prepared in.
+    static func rememberPartBroughtIn(_ project: LampProject, from login: String) {
+        let note = """
+
+
+        Note from Lamp: before this message, the user brought in the part of @\(login)'s suggested changes they asked for, \
+        prepared in a separate copy and reviewed, and saved it as a version. The rest of that request isn't in the app. \
+        The files may no longer match what you remember from this conversation: read them again before editing.
+        """
+        try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
+    }
+
     /// What the agent hears with the request Lamp sends when the latest of a wish was merged into it by git
     /// (`Upstream.merge`) and some files conflicted: which files hold markers, what the markers mean, how to read each
     /// side, and how to settle them. Written in place of any other note, since that request is the next one.
