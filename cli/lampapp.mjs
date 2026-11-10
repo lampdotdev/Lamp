@@ -93,7 +93,7 @@ const SERVED_HIDDEN = new Set([".nojekyll", ".well-known"]);
 const SWIFT_LAMPS = new Set(["LampSupport.swift", "LampScene.swift", "LampWidgetSupport.swift", "LampShareSupport.swift"]);
 
 // Shapes of keys and tokens whoever's they are (`ShareCheck.tokenShapes`).
-const TOKEN_SHAPES = [
+export const TOKEN_SHAPES = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/, /\bsk-(or-v1-|ant-|proj-)?[A-Za-z0-9_\-]{32,}/, /\bgh[pousr]_[A-Za-z0-9]{36,}/, /\bgithub_pat_[A-Za-z0-9_]{60,}/,
   /\bAKIA[0-9A-Z]{16}\b/, /\bAIza[0-9A-Za-z_\-]{35}\b/, /\bxox[abprs]-[A-Za-z0-9\-]{20,}/, /\b(sk|rk)_live_[A-Za-z0-9]{20,}/,
 ];

@@ -29,6 +29,7 @@ import { allSkills } from "./skills.mjs";
 import { share, unshare, ideas, finishIdea, readLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
 import { Runner, allKept, fields, forget, integrationOf, isReady, look as lookForDevices, takesPages } from "./devices.mjs";
 import { placeNamed } from "./place.mjs";
+import { play, RELAY } from "./play.mjs";
 import { androidAdvice, androidDevices, androidDone, emulatorNamed, emulators, forgetAndroid, installTools, knowsAndroid, toolsThere } from "./android.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -109,6 +110,9 @@ Mac app Lamp made in Swift, built and run on this Mac.
       Its app file goes with it (as lamp export makes it), so anyone can open it in Lamp too; --no-file leaves it out.
       --anyway shares a page that logged errors, or uses work that came with no license.
   lamp unshare [folder]   Take the link down.
+  lamp play <code> [--agent claude|codex] [--relay URL] [--yes]
+      PROTOTYPE. Pair with a game's page by the code it shows, so the page can ask your agent to change a copy of the
+      game here; each change that works goes back into the page. Static games only; the agent has no shell.
   lamp ideas [folder] [in <n> | dismiss <n>]
       The ideas people playing the link have sent. "in" says one is in the game now (whoever asked to hear is
       written to); "dismiss" lets one go.
@@ -856,6 +860,12 @@ async function main() {
     console.log(`${before ? "Sent again to its link" : "Shared"}: ${sent.url}`);
     console.log(`"${words.name}"${words.by ? ` by ${words.by}` : ""}: ${sent.files} files, ${(sent.bytes / 1_000_000).toFixed(1)} MB packed, ${shape === "fill" ? "filling the window" : "on its own stage"}${sent.picture ? ", with a picture of it" : ", with no picture"}${sent.file ? ", and its app file, for anyone to open in Lamp" : ""}.`);
     console.log("Anyone with the link can play it and send an idea: lamp ideas shows them. lamp unshare takes it down.");
+    return;
+  }
+
+  if (command === "play") {
+    const { options, rest } = parse(args, ["agent", "relay"]);
+    await play({ code: rest[0], agent: options.agent ?? "claude", relay: options.relay ?? RELAY, yes: !!options.yes });
     return;
   }
 
