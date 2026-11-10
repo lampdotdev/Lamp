@@ -257,7 +257,7 @@ async function devices(args) {
   // add: the one named, or the only one there, taken through its integration's steps in order.
   const candidates = pages.filter((device) => device.found !== false && fits(device));
   if (!candidates.length) {
-    throw new Problem(`lamp found no ${name ? `device called "${words.join(" ")}"` : "device it puts a page on"} on the network. An Xbox answers once it's on and in Developer Mode:\n`
+    throw new Problem(`lamp found no ${name ? `device called "${words.join(" ")}" on the network` : "device on the network that it puts a page on"}. An Xbox answers once it's on and in Developer Mode:\n`
       + (integrationOf("xbox-one")?.steps?.[0]?.lines ?? []).map((line) => `  - ${line}`).join("\n"));
   }
   if (candidates.length > 1) throw new Problem(`lamp found ${candidates.map((device) => `"${device.name}"`).join(" and ")}: say which, lamp devices add <name>`);

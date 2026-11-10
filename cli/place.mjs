@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Problem, stateOf } from "./state.mjs";
-import { Runner, StillWorking, allKept, devicesHome, integrationOf, isReady, takesPages } from "./devices.mjs";
+import { Away, Runner, StillWorking, allKept, answersOn, devicesHome, integrationOf, isReady, kept, look, takesPages } from "./devices.mjs";
 import { PUBLISHER, WEB_HOST, identityName, keptSigner, namesOf, packageOf, versionAfter } from "./msix.mjs";
 import { sizeOf, tile } from "./png.mjs";
 import { nameOf, pageFiles } from "./share.mjs";
@@ -42,6 +42,19 @@ export function deviceNamed(word, { command = "lamp" } = {}) {
   if (found.length > 1) throw new Problem(`"${word}" could be ${found.map((device) => `"${device.name}"`).join(" or ")}: say which by its name.`);
   if (!isReady(found[0], integrationOf(found[0].integration))) throw new Problem(`${found[0].name} isn't all set up yet. ${setUp}.`);
   return found[0];
+}
+
+/**
+ * Makes sure the device answers where lamp last found it, before anything is made for it. One that doesn't may have
+ * been given another address since: lamp looks for it once, and goes on at the address it answers from now.
+ */
+async function reached(runner) {
+  const device = runner.device, port = runner.integration.bridge?.install?.find((action) => action.http)?.http.port;
+  if (!port || (await answersOn(device.address, port, { reach: runner.reach }))) return;
+  await look().catch(() => []);
+  const now = kept(device.id);
+  if (now?.address && now.address !== device.address && (await answersOn(now.address, port, { reach: runner.reach }))) { device.address = now.address; return; }
+  throw new Problem(`${device.name} isn't answering (last at ${device.address}). Make sure it's on and in Developer Mode, then try again.`);
 }
 
 /** Where lamp keeps what it made of an app for one device: the package, its names, and which copy the device has. */
@@ -105,7 +118,7 @@ function valuesOf(layout, identity) {
 const installed = (layout, device) => readJSON(join(buildFolder(layout, device), "installed.json"));
 
 // A device busy closing the app it's replacing can drop a connection, the upload's or the launch's just after it.
-const dropped = (error) => ["ECONNRESET", "EPIPE", "ECONNABORTED"].includes(error?.code) || /socket hang up/i.test(error?.message ?? "");
+const dropped = (error) => error instanceof Away && ["ECONNRESET", "EPIPE", "ECONNABORTED"].includes(error.code);
 
 /**
  * Packages the page and puts it on the device: the copy there is ended, the new one installed and, unless `opens` is
@@ -115,6 +128,7 @@ export async function putOn(layout, device, { opens = true, said = () => {}, run
   runner ??= new Runner({ integration: integrationOf(device.integration), device });
   const integration = runner.integration, bridge = integration.bridge ?? {};
   if (!bridge.install) throw new Problem(`${device.name}'s integration doesn't say how an app goes on it`);
+  await reached(runner);
   said(`Packaging ${nameOf(layout)} for ${device.name}…`);
   const made = packageFor(layout, device, integration), folder = made.folder;
   let waited = false;
@@ -165,6 +179,7 @@ export async function putOn(layout, device, { opens = true, said = () => {}, run
 export async function lookOn(layout, device, { runner } = {}) {
   runner ??= new Runner({ integration: integrationOf(device.integration), device });
   const bridge = runner.integration.bridge ?? {};
+  await reached(runner);
   const mine = installed(layout, device), values = valuesOf(layout, mine);
   const seen = { device: device.name, installed: !!mine, running: null, picture: null, log: null };
   if (mine && bridge.running) {
@@ -191,6 +206,7 @@ export async function stopOn(layout, device, { runner } = {}) {
   runner ??= new Runner({ integration: integrationOf(device.integration), device });
   const stop = runner.integration.bridge?.stop, mine = installed(layout, device);
   if (!mine || !stop) return false;
+  await reached(runner);
   await runner.run(stop, { extra: valuesOf(layout, mine) });
   return true;
 }
@@ -200,6 +216,8 @@ export async function removeFrom(layout, device, { runner } = {}) {
   runner ??= new Runner({ integration: integrationOf(device.integration), device });
   const bridge = runner.integration.bridge ?? {}, folder = buildFolder(layout, device);
   if (!bridge.remove) throw new Problem(`${device.name}'s integration doesn't say how an app comes off it`);
+  if (!readJSON(join(folder, "installed.json")) && !readJSON(join(folder, "pending.json"))) return false;
+  await reached(runner);
   const asked = new Set();
   let removed = false;
   for (const record of ["installed.json", "pending.json"]) {

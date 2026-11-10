@@ -359,10 +359,10 @@ export async function send(request, address, values, { files = {}, pins, timeout
           const bytes = Buffer.concat(chunks);
           done({ status: answer.statusCode, ok: answer.statusCode >= 200 && answer.statusCode < 300, body: bytes, text: bytes.toString("utf8"), cookies, certificate, asks: answer.headers["www-authenticate"] ?? "" });
         });
-        answer.on("error", failed);
+        answer.on("error", (error) => failed(error instanceof Problem ? error : new Away(address, error)));
       });
-      asked.setTimeout(timeout, () => asked.destroy(new Error(`${address} didn't answer in time`)));
-      asked.on("error", failed);
+      asked.setTimeout(timeout, () => asked.destroy(timedOut()));
+      asked.on("error", (error) => failed(error instanceof Problem ? error : new Away(address, error)));
       asked.end(body ?? undefined);
     });
   };
@@ -386,6 +386,15 @@ export async function send(request, address, values, { files = {}, pins, timeout
 /** The device's certificate isn't one lamp takes: waiting won't mend it. */
 export class Refused extends Problem {}
 
+/** The device didn't answer, or let the connection go: it's off, asleep, somewhere else on the network, or busy. */
+export class Away extends Problem {
+  constructor(address, cause) {
+    super(`the device at ${address} ${cause?.timedOut ? "didn't answer in time" : "isn't answering"}: make sure it's on, then try again`);
+    this.code = cause?.code;
+  }
+}
+const timedOut = () => Object.assign(new Error("timed out"), { timedOut: true });
+
 /** A connection to the device over TLS, taken only once its certificate is the one kept (or the first, kept now). */
 function connect(address, port, pins, timeout) {
   return new Promise((done, failed) => {
@@ -398,8 +407,8 @@ function connect(address, port, pins, timeout) {
       if (refused) { socket.destroy(); return failed(new Refused(refused)); }
       done({ socket, certificate });
     });
-    socket.once("timeout", () => socket.destroy(new Error(`${address} didn't answer in time`)));
-    socket.once("error", failed);
+    socket.once("timeout", () => socket.destroy(timedOut()));
+    socket.once("error", (error) => failed(error instanceof Problem ? error : new Away(address, error)));
   });
 }
 
@@ -608,9 +617,9 @@ export class Runner {
         await this.run(launch, { extra, changed });
         launched = true;
         if (!running?.length) return { opened: true };
-        try { await this.run(running, { extra, changed }); return { opened: true }; } catch (error) { if (!(error instanceof Problem)) throw error; }
+        try { await this.run(running, { extra, changed }); return { opened: true }; } catch (error) { if (!(error instanceof Problem) || error instanceof Away) throw error; }
       } catch (error) {
-        if (!(error instanceof Problem) || error instanceof Rejected) throw error;
+        if (!(error instanceof Problem) || error instanceof Rejected || error instanceof Away) throw error;
         refused = error.message;
       }
       if (attempt === tries) break;
