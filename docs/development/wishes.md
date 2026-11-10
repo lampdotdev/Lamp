@@ -494,7 +494,10 @@ engine) lays a request out in the wish's folder of fetched copies (`SharedCopies
 sender's, never Lamp's, and its change as a diff; with `bring_in` the review opens once the turn ends, and with `take`
 (part of a request, in the agent's words for what the person wants) a separate copy of the wish is prepared once the
 turn ends, as an adapted wish's update is (`Store.prepareSuggestion`, an `AppUpdates.Job` with a `suggestion`), whose
-review is the update's. Part of a request moves no credit and is never `accept`ed, so no release marks it merged.
+review is the update's. The copy gets the request laid out as an update's (`SuggestedChanges.layOutForCopy`: the
+whole diff, `latest/` with links left out, and `repo`, or nothing when a commit is missing), kept until the copy is
+put in place, kept or deleted, and any turn there that changes the copy or asks the person something is the part's
+(`AppUpdates.outcome`). Part of a request moves no credit and is never `accept`ed, so no release marks it merged.
 Bring Into My App in the panel asks the wish's chat what the request does (`talkAboutSuggestion`): the agent lists it,
 and the person says what they want. All of it
 is Bring In Changes with the request's head (`refs/pull/<n>/head`) in the repository's latest's place,

@@ -275,7 +275,11 @@ description. It answers in one of three ways:
   you", plus `change.diff`.
 - **`bring_in`:** it queues the review for when the turn ends.
 - **`take`:** it queues the copy for when the turn ends, with what the person wants of the request in the agent's
-  words. The copy's agent gets the request laid out in its `.lamp/update/` (`about.md`, `files.txt`, `changes.diff`).
+  words. The copy's agent gets the request laid out in its `.lamp/update/` as an update's is: `about.md`, `files.txt`,
+  the whole `changes.diff`, every file as the request has it in `latest/` (pictures and sounds included, links left
+  out) and git's copy in `repo` for files as they were. It stays there until the copy is put in place, kept or
+  deleted, so the person can ask for more of the request in the copy. A turn there that changes the copy, or asks
+  them something, counts as the part's, so asking again after a failed try reaches the review too.
 
 Titles and descriptions never go into the system prompt or into Lamp's own notes to the agent. The merge itself
 leaves the usual note (`Versions.rememberMerged`), so the agent reads the files again.
