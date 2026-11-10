@@ -220,14 +220,22 @@ export const wishIDFrom = (part) => {
  */
 async function inTime(write, { seconds = 30, tries = 3, what = "a file" } = {}) {
   for (let attempt = 1; ; attempt++) {
-    try { return await write(AbortSignal.timeout(seconds * 1000)); } catch (error) {
+    // Given up on at its time whatever the blob library is doing: its own retries of a failed request wait between
+    // tries and don't hear a cancel then, so a write that keeps failing could otherwise hold on for minutes.
+    const signal = AbortSignal.timeout(seconds * 1000);
+    let timer;
+    const late = new Promise((_, failed) => { timer = setTimeout(() => failed(new Error(`no answer in ${seconds}s`)), seconds * 1000 + 1000); });
+    try { return await Promise.race([write(signal), late]); } catch (error) {
       if (attempt >= tries) throw error;
       console.warn(`Storing ${what} again (try ${attempt + 1} of ${tries}): ${error?.message ?? error}`);
-    }
+    } finally { clearTimeout(timer); }
   }
 }
 
 export function cloudStore(env, fetcher = fetch) {
+  // The blob library tries a failed request again 10 times by default, waiting longer each time; `inTime` tries again
+  // itself, and says why, so the library's own are few.
+  process.env.VERCEL_BLOB_RETRIES ??= "2";
   const db = redis(env);
   const scope = env.VERCEL_ENV === "production" ? "production" : "preview";
   const key = (id) => `lamp:shared-wish:{${scope}}:${id}`;
@@ -667,7 +675,7 @@ export async function takeDown(id, { env = process.env, fetcher = fetch } = {}) 
 export const PAGE_LIMITS = { files: 3000, total: 128_000_000 };
 
 /** How many of a page's files go to the blob store at once as it's put together. */
-const PAGE_UPLOADS = 32;
+const PAGE_UPLOADS = 12;
 
 /**
  * A zip's files, read from its central directory: stored or deflated, never a link, a folder, an absolute path or one
@@ -992,7 +1000,7 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
                 sizes[file.path] = file.bytes.length;
                 stored.push(urls[file.path]);
               }));
-              if ((n / PAGE_UPLOADS) % 5 === 4) console.log(`Page ${version} of ${id}: ${stored.length} of ${files.length} stored, ${Math.round((Date.now() - began) / 1000)}s`);
+              if ((n / PAGE_UPLOADS) % 10 === 9) console.log(`Page ${version} of ${id}: ${stored.length} of ${files.length} stored, ${Math.round((Date.now() - began) / 1000)}s`);
             }
             console.log(`Page ${version} of ${id}: all ${files.length} stored in ${Math.round((Date.now() - began) / 1000)}s`);
             // As the record is now, not as it was when the parts were read: the link may have changed meanwhile.
@@ -1007,7 +1015,7 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
             await kept.removeImages([...Object.values(current.previousPage?.files ?? {}), ...partBlobs(parts)]);
             await kept.forget(id);
           } catch (error) {
-            console.error(`Page ${version} of ${id} didn't get in: ${error?.message ?? error}`);
+            console.error(`Page ${version} of ${id} didn't get in, ${stored.length} of ${files.length} stored: ${error?.message ?? error}${error?.cause ? ` (${error.cause.message ?? error.cause})` : ""}`);
             try { await kept.removeImages(stored); } catch {}
           }
         });
