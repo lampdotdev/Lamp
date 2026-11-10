@@ -22,6 +22,7 @@ struct LampApp: App {
         }
         // And the player every game and screen on the Mac is a copy of, compiled by build.sh from the Swift this writes.
         if CommandLine.arguments.contains(GameKit.playerSourcesFlag) { GameKit.writePlayerSourcesFromCommandLine() }
+        if CommandLine.arguments.contains(CLIFiles.flag) { CLIFiles.writeFromCommandLine() }
     }
 
     var body: some Scene {

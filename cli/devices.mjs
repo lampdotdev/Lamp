@@ -18,7 +18,7 @@ import { basename, dirname, join } from "node:path";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { bonjour } from "./mdns.mjs";
-import { Problem } from "./state.mjs";
+import { Problem, RESOURCES } from "./state.mjs";
 
 export { bonjour, servicesIn } from "./mdns.mjs";
 
@@ -32,7 +32,7 @@ export const devicesHome = () => process.env.LAMP_DEVICES_HOME || join(homedir()
 
 /** The integrations Lamp ships, as its app reads them. */
 export function integrations() {
-  const folder = join(HERE, "..", "Resources", "Devices");
+  const folder = join(RESOURCES, "Devices");
   return readdirSync(folder).filter((name) => name.endsWith(".json")).sort().map((name) => JSON.parse(readFileSync(join(folder, name), "utf8")));
 }
 

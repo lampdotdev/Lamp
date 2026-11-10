@@ -4,7 +4,18 @@
 import { createHash } from "node:crypto";
 import { existsSync, statSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+/**
+ * Where Lamp's own resources are (its game kit, libraries, skills, device integrations): the repository's Resources/
+ * beside cli/, or in Lamp's app, the bundle's Resources, which holds this copy of lamp in its cli/ (build.sh).
+ */
+export const RESOURCES = (() => {
+  const cli = dirname(fileURLToPath(import.meta.url));
+  const repository = join(cli, "..", "Resources");
+  return existsSync(join(repository, "GameKit")) ? repository : join(cli, "..");
+})();
 
 /** Something the person or agent can put right, said in plain words and shown without a stack. */
 export class Problem extends Error {}

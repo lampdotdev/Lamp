@@ -6,8 +6,9 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { RESOURCES } from "./state.mjs";
 
-export const SKILLS = join(dirname(fileURLToPath(import.meta.url)), "..", "Resources", "skills");
+export const SKILLS = join(RESOURCES, "skills");
 
 /** A SKILL.md: frontmatter between `---` lines, a field a line, then the instructions. */
 function parse(text) {

@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Problem, stateOf } from "./state.mjs";
+import { Problem, RESOURCES, stateOf } from "./state.mjs";
 import { androidDeviceNamed, emulatorNamed, knowsAndroid, lookOnAndroid, putOnAndroid, removeFromAndroid, stopOnAndroid, useOnAndroid } from "./android.mjs";
 import { Away, Runner, StillWorking, allKept, answersOn, devicesHome, integrationOf, isReady, kept, look, takesPages } from "./devices.mjs";
 import { PUBLISHER, WEB_HOST, identityName, keptSigner, namesOf, packageOf, versionAfter } from "./msix.mjs";
@@ -18,7 +18,7 @@ import { sizeOf, tile } from "./png.mjs";
 import { nameOf, pageFiles } from "./share.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const HOST = join(HERE, "..", "Resources", "WebHost");
+const HOST = join(RESOURCES, "WebHost");
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 // The most lamp sends a device.
 const PACKAGE_LIMIT = 1 << 30;

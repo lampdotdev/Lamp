@@ -13,7 +13,7 @@ import { networkInterfaces, hostname } from "node:os";
 import { join, resolve, extname, sep, relative, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { Problem, layoutOf, stateOf, logFileOf, serverFileOf, firstPortOf } from "./state.mjs";
+import { Problem, RESOURCES, layoutOf, stateOf, logFileOf, serverFileOf, firstPortOf } from "./state.mjs";
 import { findBrowser, launch, keyNamed } from "./browser.mjs";
 
 const TYPES = {
@@ -53,7 +53,7 @@ export function lampJS(game = false) {
 export const CONTROLLERS_FILE = "lamp-controllers.js", CONTROLLERS = join(HERE, "lamps", CONTROLLERS_FILE);
 // The libraries Lamp puts beside a game's page when the page uses them (`DeviceSupport`), where they are in Lamp's
 // own folder: a game whose folder has none of one is served Lamp's copy.
-export const LIBRARIES = join(HERE, "..", "Resources", "WebLibraries");
+export const LIBRARIES = join(RESOURCES, "WebLibraries");
 function lampsCopy(name) {
   if (name === CONTROLLERS_FILE) return CONTROLLERS;
   if (!/^(three|phaser|rapier)\//.test(name)) return null;
