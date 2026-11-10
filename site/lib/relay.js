@@ -22,6 +22,9 @@ export const RELAY_LIMITS = {
   files: 3000, file: 16_000_000, total: 64_000_000,   // a version: files, the largest, all together
   stored: 256_000_000,            // bytes a room keeps in Blob, every version together
   uploadMs: 10 * 60_000,          // how long an upload's permission lasts
+  post: 4_000_000,                // bytes of a game sent whole by an AI app (Vercel takes at most 4.5 MB in a request)
+  postsPerHour: 30,               // games a room takes that way in an hour
+  posted: 20,                     // idempotency keys a room remembers
   seedMs: 20_000,                 // how long one call spends copying the link's page into a room
   seedAtOnce: 4,                  // files copied at once
 };
@@ -32,9 +35,17 @@ export const RELAY_QUOTAS = {
   pair: [{ name: "pair", perIP: true, limit: 5, seconds: 60 }, { name: "pair-hour", perIP: true, limit: 30, seconds: 3600 }],
   ask: [{ name: "ask", perIP: true, limit: 60, seconds: 3600 }, { name: "ask-all", limit: 5000, seconds: 86_400 }],
   upload: [{ name: "upload", perIP: true, limit: 60, seconds: 3600 }],
+  post: [{ name: "post", perIP: true, limit: 120, seconds: 3600 }, { name: "post-all", limit: 20_000, seconds: 86_400 }],
 };
 
 const CODE_LETTERS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
+/** An empty room's first version, until the player's AI app sends a game. */
+const WAITING_PAGE = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Waiting for a game</title>
+<style>html,body{margin:0;height:100%;background:#111;color:#bbb;font:16px system-ui,sans-serif;display:grid;place-items:center}</style>
+</head><body><p>Waiting for your game…</p></body></html>
+`;
 const ROOM = /^[0-9a-f]{16}$/;
 const hashOf = (secret) => createHash("sha256").update(String(secret)).digest("hex");
 const same = (a, b) => typeof a === "string" && typeof b === "string" && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -64,10 +75,27 @@ function keysFor(scope) {
   const base = `lamp:relay:{${scope}}`;
   return {
     room: (id) => `${base}:room:${id}`, rev: (id) => `${base}:rev:${id}`, code: (code) => `${base}:code:${code}`,
-    build: (id, version) => `${base}:build:${id}:${version}`, blobs: (id) => `${base}:blobs:${id}`,
+    // A version's list of files is kept under an id of its own, never under its number, and is never written over: two
+    // versions sent at once each write their own, and only the room's compare-and-set decides which one is played.
+    build: (id, build) => `${base}:build:${id}:${build}`, blobs: (id) => `${base}:blobs:${id}`,
     seed: (id) => `${base}:seed:${id}`, seeding: (id) => `${base}:seeding:${id}`,
     prefix: `relay/${scope}/`, file: (id, build, sha) => `relay/${scope}/${id}/${build}/${sha}`,
   };
+}
+
+/** The key of the list of files the room plays as `version`, or null when it plays no such version. */
+const buildKey = (keys, room, version) => (room.builds?.[version] ? keys.build(room.id, room.builds[version]) : null);
+
+/**
+ * Moves the room on to a new version, inside its compare-and-set: the version before stays playable, and the list of
+ * the one before that is answered for removal once the move is in.
+ */
+function advance(room, build) {
+  const dropped = room.previous ? room.builds?.[room.previous] ?? null : null;
+  room.builds = { ...(room.current ? { [room.current]: room.builds?.[room.current] } : {}), [room.current + 1]: build };
+  room.previous = room.current || null;
+  room.current += 1;
+  return dropped;
 }
 
 export function createRelayHandler({ env = process.env, db, blobs, wishes, now = () => Date.now(), limits = RELAY_LIMITS, quotas = RELAY_QUOTAS, limited = true, site = null, playBase = null } = {}) {
@@ -113,7 +141,7 @@ export function createRelayHandler({ env = process.env, db, blobs, wishes, now =
 
   const summary = ({ room, rev }) => ({
     rev, room: room.id, wish: room.wish, version: room.current, play: room.current ? playOf(room.id, room.current) : null, ends: room.ends,
-    seeding: room.seeding ?? null,
+    seeding: room.seeding ?? null, mode: room.mode ?? "helper", posted: room.postedAt ?? null,
     paired: !!room.helperHash, helper: !!room.helperSeen && now() - room.helperSeen < limits.helperMs,
     code: room.helperHash ? null : room.codeEnds > now() ? room.code : null, codeEnds: room.helperHash ? null : room.codeEnds,
     requests: room.requests.map(({ id, prompt, state, message, version }) => ({ id, prompt, state, message, version })),
@@ -130,6 +158,12 @@ export function createRelayHandler({ env = process.env, db, blobs, wishes, now =
   // MARK: Answers
 
   const reply = (status, body, headers = {}) => Response.json(body, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", ...headers } });
+  // What the app reads back: plain words, one line, since it's a person's AI app that reads them and says what happened.
+  const text = (status, words, headers = {}) => new Response(`${words}\n`, { status, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", ...headers } });
+  const etag = (version) => `"${version}"`;
+  const sent = (room, version, again) => new Response(JSON.stringify({ version, play: playOf(room.id, version), again }) + "\n", {
+    status: again ? 200 : 201, headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ETag: etag(version) },
+  });
   const ipOf = (request) => (request.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || request.headers.get("x-real-ip") || "unknown";
   const slowed = async (request, which) => {
     if (!limited) return 0;
@@ -145,7 +179,7 @@ export function createRelayHandler({ env = process.env, db, blobs, wishes, now =
     const [id, secret] = (/^Bearer (\S+)$/.exec(request.headers.get("authorization") ?? "")?.[1] ?? "").split(".");
     if (!ROOM.test(id ?? "") || !secret) return null;
     const found = await read(id);
-    return found && same(found.room[side === "page" ? "pageHash" : "helperHash"], hashOf(secret)) ? found : null;
+    return found && same(found.room[{ page: "pageHash", helper: "helperHash", post: "postHash" }[side]], hashOf(secret)) ? found : null;
   };
 
   return async function relay(request) {
@@ -156,7 +190,14 @@ export function createRelayHandler({ env = process.env, db, blobs, wishes, now =
       // The page's side: from the site's own pages only (a browser always names where a POST comes from), and every
       // call but `open` with the page's credential. The game's frame is on another host, so it's turned away here,
       // and it never holds the credential anyway.
-      if (["open", "seed", "state", "code", "ask", "close"].includes(op)) {
+      // An AI app sending the whole game: its own key, never the page's or the helper's.
+      if (op === "game") {
+        if (origin !== null || request.headers.get("sec-fetch-site")) return text(403, "This address is for an app on your computer, not a web page.");
+        if (request.method === "GET") return await gameSource(request, url);
+        if (request.method === "POST") return await post(request, url);
+        return text(405, "Use GET to read the game, POST to send it.", { Allow: "GET, POST" });
+      }
+      if (["open", "seed", "state", "code", "postkey", "ask", "close"].includes(op)) {
         if (request.method === "POST" && origin !== siteOrigin(url)) return reply(403, { error: "wrong_origin" });
         if (op === "open") return await open(request);
         const found = await holder(request, "page");
@@ -165,6 +206,7 @@ export function createRelayHandler({ env = process.env, db, blobs, wishes, now =
         if (request.method !== "POST") return reply(405, { error: "method_not_allowed" });
         if (op === "seed") return await seed(found.room.id);
         if (op === "code") return await code(found);
+        if (op === "postkey") return await postKey(found);
         if (op === "ask") return await ask(request, found);
         if (op === "close") return await close(found);
       }
@@ -203,30 +245,45 @@ export function createRelayHandler({ env = process.env, db, blobs, wishes, now =
    */
   async function open(request) {
     const body = await readJSON(request, 4096);
-    const wish = body?.wish;
-    if (!isID(wish)) return reply(400, { error: "bad_request" });
-    const record = await wishes.get(wish);
-    const source = record?.page?.files;
-    if (!source || !source["index.html"]) return reply(404, { error: "no_page" });
+    const wish = body?.wish ?? null, mode = body?.mode === "post" ? "post" : "helper";
+    // A room the player's AI app sends whole games to may start empty; one for the helper starts from a link's page.
+    if (wish === null ? mode !== "post" : !isID(wish)) return reply(400, { error: "bad_request" });
+    const record = wish ? await wishes.get(wish) : null;
+    const source = wish ? record?.page?.files : { "index.html": null };
+    if (!source || !("index.html" in source)) return reply(404, { error: "no_page" });
     const paths = Object.keys(source);
-    const sizes = record.page.sizes ?? {};
+    const sizes = record?.page?.sizes ?? {};
     if (paths.length > limits.files || !paths.every(goodPath) || paths.some((path) => (sizes[path] ?? 0) > limits.file)
       || Object.values(sizes).reduce((sum, size) => sum + size, 0) > limits.total) return reply(422, { error: "too_large" });
     const wait = await slowed(request, "open");
     if (wait < 0) return reply(503, { error: "service_unavailable" });
     if (wait) return reply(429, { error: "slow_down" }, { "Retry-After": String(wait) });
-    const id = randomBytes(8).toString("hex"), secret = randomBytes(32).toString("base64url");
+    const id = randomBytes(8).toString("hex"), secret = randomBytes(32).toString("base64url"), postSecret = randomBytes(32).toString("base64url");
     const room = {
-      id, wish, created: now(), active: now(), ends: now() + limits.lifeMs, pageHash: hashOf(secret), helperHash: null, helperSeen: 0,
-      code: null, codeEnds: 0, current: 0, previous: null, running: null, count: 0, requests: [], pending: null,
+      id, wish, mode, created: now(), active: now(), ends: now() + limits.lifeMs, pageHash: hashOf(secret), helperHash: null, helperSeen: 0,
+      postHash: mode === "post" ? hashOf(postSecret) : null, posted: {}, postTimes: [], postedAt: null, stored: 0,
+      code: null, codeEnds: 0, current: 0, previous: null, builds: {}, running: null, count: 0, requests: [], pending: null,
       seeding: { copied: 0, total: paths.length, failed: null },
     };
     const ms = String(lifetime(room));
+    if (!wish) {
+      // An empty room's version 1 is a page of its own that waits for the first game.
+      const bytes = Buffer.from(WAITING_PAGE);
+      const at = keys.file(id, "seed", createHash("sha256").update(bytes).digest("hex"));
+      await blobs.put(at, bytes);
+      const build = randomBytes(6).toString("hex");
+      await db.command(["SET", keys.build(id, build), JSON.stringify({ files: { "index.html": { at, sha256: at.split("/").pop(), size: bytes.length } } }), "PX", String(limits.lifeMs), "NX"]);
+      room.seeding = null;
+      advance(room, build);
+      await db.command(["SET", keys.blobs(id), "{}", "PX", String(limits.lifeMs)]);
+      if (Number(await db.command(["EVAL", casScript, "2", keys.room(id), keys.rev(id), "0", JSON.stringify(room), "1", ms])) !== 1) throw new Error("Room busy");
+      return reply(200, { token: `${id}.${secret}`, postKey: `${id}.${postSecret}`, ...summary({ room, rev: "1" }) });
+    }
     await db.command(["SET", keys.seed(id), JSON.stringify({ source, done: {} }), "PX", String(limits.lifeMs)]);
     await db.command(["SET", keys.blobs(id), "{}", "PX", String(limits.lifeMs)]);
     if (Number(await db.command(["EVAL", casScript, "2", keys.room(id), keys.rev(id), "0", JSON.stringify(room), "1", ms])) !== 1) throw new Error("Room busy");
     const answer = await seed(id);
-    return reply(answer.status, { token: `${id}.${secret}`, ...(await answer.json()) });
+    return reply(answer.status, { token: `${id}.${secret}`, ...(mode === "post" ? { postKey: `${id}.${postSecret}` } : {}), ...(await answer.json()) });
   }
 
   /**
@@ -262,17 +319,20 @@ export function createRelayHandler({ env = process.env, db, blobs, wishes, now =
       }
       const copied = Object.keys(plan.done).length, whole = copied === Object.keys(plan.source).length;
       await db.command(["SET", keys.seed(id), JSON.stringify(plan), "PX", String(Math.max(1, found.room.ends - now()))]);
-      if (whole && !failed) {
+      const build = whole && !failed ? randomBytes(6).toString("hex") : null;
+      if (build) {
         const ms = String(Math.max(1, found.room.ends - now()));
-        await db.command(["SET", keys.build(id, 1), JSON.stringify({ files: plan.done }), "PX", ms]);
+        await db.command(["SET", keys.build(id, build), JSON.stringify({ files: plan.done }), "PX", ms, "NX"]);
         const kept = Object.fromEntries(Object.values(plan.done).map((file) => [file.sha256, { pathname: file.at, size: file.size }]));
         await db.command(["SET", keys.blobs(id), JSON.stringify(kept), "PX", ms]);
       }
-      const code = whole && !failed ? await newCode(id) : null;
+      // A room for the helper gives its code once it plays; one an AI app sends to has its key already.
+      const code = build && found.room.mode !== "post" ? await newCode(id) : null;
       const changed = await update(id, (room) => {
         if (!room.seeding) return false;
         room.seeding = { copied, total: room.seeding.total, failed };
-        if (code) { room.seeding = null; room.current = 1; room.code = code; room.codeEnds = now() + limits.codeMs; }
+        if (build) { room.seeding = null; advance(room, build); }
+        if (code) { room.code = code; room.codeEnds = now() + limits.codeMs; }
       });
       if (whole && !failed) await db.command(["DEL", keys.seed(id)]);
       return reply(200, summary(changed ?? found));
@@ -334,10 +394,134 @@ export function createRelayHandler({ env = process.env, db, blobs, wishes, now =
   async function close(found) {
     const id = found.room.id;
     // Its files stay in Blob until the cleanup, which removes every file of a room that's gone.
-    await db.command(["DEL", keys.room(id), keys.rev(id), keys.blobs(id), keys.build(id, found.room.current), ...(found.room.previous ? [keys.build(id, found.room.previous)] : []),
+    await db.command(["DEL", keys.room(id), keys.rev(id), keys.blobs(id), ...Object.values(found.room.builds ?? {}).map((build) => keys.build(id, build)),
       ...(found.room.code ? [keys.code(found.room.code)] : [])]);
     return reply(200, { closed: true });
   }
+
+  /** A new key for the AI app, in place of the one it had: the old one stops working at once. */
+  async function postKey(found) {
+    if (found.room.mode !== "post") return reply(409, { error: "not_direct" });
+    const secret = randomBytes(32).toString("base64url");
+    const changed = await update(found.room.id, (room) => { room.postHash = hashOf(secret); });
+    if (!changed) return reply(404, { error: "room_gone" });
+    return reply(200, { postKey: `${found.room.id}.${secret}`, ...summary(changed) });
+  }
+
+  // MARK: An AI app sending the whole game
+
+
+  /** The room a post key opens, for the room the address names; the room must take whole games and play one file. */
+  async function poster(request, url) {
+    const found = await holder(request, "post");
+    if (!found || found.room.id !== url.searchParams.get("room")) return { refused: text(401, "That key doesn't open this room. Copy the words from the game's page again.") };
+    if (found.room.mode !== "post") return { refused: text(409, "This room isn't taking games from an app.") };
+    if (found.room.seeding) return { refused: text(409, "The room is still getting its game ready. Try again in a few seconds.") };
+    const key = buildKey(keys, found.room, found.room.current);
+    const build = key ? JSON.parse((await db.command(["GET", key])) ?? "null") : null;
+    const paths = Object.keys(build?.files ?? {});
+    // Only a game that's one file goes back and forth whole: one of several files can't be read or replaced as one.
+    if (paths.length !== 1 || paths[0] !== "index.html") return { refused: text(409, "This game is more than one file, so it can't be sent as one. Change it with lamp play instead.") };
+    return { found, entry: build.files["index.html"] };
+  }
+
+  /**
+   * The game's one file as the app reads it: plain text that never runs (no-store, nosniff, a sandbox with nothing
+   * allowed), with the version it is as its ETag for the app's If-Match.
+   */
+  async function gameSource(request, url) {
+    const { found, entry, refused } = await poster(request, url);
+    if (refused) return refused;
+    const opened = await blobs.open(entry.at);
+    if (!opened) return text(503, "The game couldn't be read. Try again.");
+    return new Response(opened.body, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox", "Content-Disposition": 'attachment; filename="game.html"',
+        ETag: etag(found.room.current), ...(opened.size ? { "Content-Length": String(opened.size) } : {}),
+      },
+    });
+  }
+
+  /** The request's body, as long as it's at most `most` bytes: null past that, whatever the request says its length is. */
+  async function bodyUpTo(request, most) {
+    if (Number(request.headers.get("content-length") ?? 0) > most) return null;
+    if (!request.body) return Buffer.alloc(0);
+    const parts = [];
+    let size = 0;
+    for await (const part of request.body) {
+      size += part.length;
+      if (size > most) return null;
+      parts.push(Buffer.from(part));
+    }
+    return Buffer.concat(parts);
+  }
+
+  /**
+   * A whole game from the player's AI app, as the room's next version. Checked first for a quick answer, then kept in
+   * Blob under a name of its own and listed under an id of its own; it's published only by the room's compare-and-set,
+   * which checks again, against the room as it's replaced, the key, the base version (If-Match), the idempotency key and
+   * the room's quotas. Anything off there and nothing is played; what was written is left for the cleanup.
+   */
+  async function post(request, url) {
+    const { found, refused } = await poster(request, url);
+    if (refused) return refused;
+    const presented = hashOf((/^Bearer \S+\.(\S+)$/.exec(request.headers.get("authorization") ?? ""))?.[1] ?? "");
+    const match = /^\s*(?:W\/)?"?(\d+)"?\s*$/.exec(request.headers.get("if-match") ?? "");
+    if (!match) return text(428, `Send If-Match with the version you changed: read the game first, and use its ETag (now ${etag(found.room.current)}).`);
+    const base = Number(match[1]);
+    const bytes = await bodyUpTo(request, limits.post);
+    if (!bytes) return text(413, `The game is more than ${limits.post.toLocaleString("en-US")} bytes. Make it smaller: one file, nothing big inlined.`);
+    if (!bytes.length) return text(400, "The game was empty. Send the file with --data-binary @game.html.");
+    let html;
+    try { html = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { return text(415, "The game isn't UTF-8 text. Send the HTML file as it is."); }
+    if (!/<(?:!doctype\s+html|html|head|body|script|canvas)[\s>]/i.test(html)) return text(422, "That isn't an HTML page. Send the whole game as one HTML file.");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const given = request.headers.get("idempotency-key");
+    if (given !== null && !/^[\w.:-]{8,128}$/.test(given)) return text(400, "Idempotency-Key is 8 to 128 letters, digits, dots, colons, dashes or underscores.");
+    // Without a key of the app's own, the same file sent again on the same version is the one already taken.
+    const idempotency = given ?? `${base}:${sha256}`;
+    // A retry of a game already taken is answered as it was, whatever the room has played since.
+    const known = found.room.posted?.[idempotency];
+    if (known) return sent(found.room, known.version, true);
+    if (base !== found.room.current) return text(412, `The game changed since you read it: it's version ${found.room.current} now. Read it again, and send your change on top of it.`, { ETag: etag(found.room.current) });
+    const recent = (found.room.postTimes ?? []).filter((at) => now() - at < 3600_000);
+    if (recent.length >= limits.postsPerHour) return text(429, `This room has taken ${limits.postsPerHour} games in the last hour. Wait a while.`);
+    if ((found.room.stored ?? 0) + bytes.length > limits.stored) return text(507, "This room is full. Open a new one from the game's page.");
+    const wait = await slowed(request, "post");
+    if (wait < 0) return text(503, "lamp.dev isn't answering. Try again.");
+    if (wait) return text(429, `Too many games sent from here. Wait ${wait} seconds.`, { "Retry-After": String(wait) });
+
+    const build = randomBytes(6).toString("hex");
+    const at = keys.file(found.room.id, `post-${build}`, sha256);
+    await blobs.put(at, bytes);
+    const ms = String(Math.max(1, found.room.ends - now()));
+    await db.command(["SET", keys.build(found.room.id, build), JSON.stringify({ files: { "index.html": { at, sha256, size: bytes.length } } }), "PX", ms, "NX"]);
+    let dropped = null, why = null;
+    const changed = await update(found.room.id, (room) => {
+      if (!same(room.postHash, presented)) { why = text(401, "That key was replaced. Copy the words from the game's page again."); return false; }
+      if (room.posted?.[idempotency]) return false;
+      if (room.current !== base) { why = text(412, `The game changed since you read it: it's version ${room.current} now. Read it again.`, { ETag: etag(room.current) }); return false; }
+      if (room.running) { why = text(409, "A change is being made to the game right now. Try again when it's done."); return false; }
+      const times = (room.postTimes ?? []).filter((time) => now() - time < 3600_000);
+      if (times.length >= limits.postsPerHour) { why = text(429, `This room has taken ${limits.postsPerHour} games in the last hour.`); return false; }
+      if ((room.stored ?? 0) + bytes.length > limits.stored) { why = text(507, "This room is full."); return false; }
+      dropped = advance(room, build);
+      room.postTimes = [...times, now()];
+      room.stored = (room.stored ?? 0) + bytes.length;
+      room.postedAt = now();
+      room.posted = Object.fromEntries([...Object.entries(room.posted ?? {}), [idempotency, { version: room.current }]].slice(-limits.posted));
+    });
+    if (!changed) return text(404, "This room has closed. Open a new one from the game's page.");
+    if (changed.refused) {
+      await db.command(["DEL", keys.build(found.room.id, build)]);
+      const again = changed.room.posted?.[idempotency];
+      return again ? sent(changed.room, again.version, true) : why ?? text(409, "The game wasn't taken. Try again.");
+    }
+    if (dropped) await db.command(["DEL", keys.build(found.room.id, dropped)]);
+    return sent(changed.room, changed.room.current, false);
+  }
+
 
   // MARK: The helper
 
@@ -427,7 +611,8 @@ export function createRelayHandler({ env = process.env, db, blobs, wishes, now =
   async function fileList(url, found) {
     const version = Number(url.searchParams.get("v") ?? found.room.current);
     if (version !== found.room.current && version !== found.room.previous) return reply(404, { error: "no_such_version" });
-    const build = JSON.parse((await db.command(["GET", keys.build(found.room.id, version)])) ?? "null");
+    const key = buildKey(keys, found.room, version);
+    const build = key ? JSON.parse((await db.command(["GET", key])) ?? "null") : null;
     if (!build) return reply(404, { error: "no_such_version" });
     return reply(200, { version, files: Object.entries(build.files).map(([path, file]) => ({ path, size: file.size, sha256: file.sha256 ?? null })) });
   }
@@ -440,8 +625,8 @@ export function createRelayHandler({ env = process.env, db, blobs, wishes, now =
   }
 
   async function openFile(id, version, path, room) {
-    if (version !== room.current && version !== room.previous) return null;
-    const build = JSON.parse((await db.command(["GET", keys.build(id, version)])) ?? "null");
+    const key = version === room.current || version === room.previous ? buildKey(keys, room, version) : null;
+    const build = key ? JSON.parse((await db.command(["GET", key])) ?? "null") : null;
     const entry = build?.files?.[path];
     if (!entry) return null;
     return blobs.open(entry.at);
@@ -515,27 +700,25 @@ export function createRelayHandler({ env = process.env, db, blobs, wishes, now =
       added[sha256] = { pathname, size };
     }
     const files = Object.fromEntries(Object.entries(room.pending.files).map(([path, { sha256, size }]) => [path, { at: (kept[sha256] ?? added[sha256]).pathname, sha256, size }]));
-    const version = room.current + 1;
     const ms = String(Math.max(1, room.ends - now()));
-    // The version's list and the room's files are written first, apart from the room: neither is played until the
-    // room points at the version, which is the one step that publishes it.
-    await db.command(["SET", keys.build(room.id, version), JSON.stringify({ files }), "PX", ms]);
+    // The version's list is written first, under the upload's own id and never over another: it isn't played until
+    // the room's compare-and-set points at it, which is the one step that publishes it.
+    if (!(await db.command(["SET", keys.build(room.id, build), JSON.stringify({ files }), "PX", ms, "NX"]))) return reply(409, { error: "not_running" });
     const allKept = { ...kept, ...added };
     await db.command(["SET", keys.blobs(room.id), JSON.stringify(allKept), "PX", ms]);
+    let dropped = null;
     const changed = await update(room.id, (next) => {
       const taken = next.requests.find((one) => one.id === id);
       if (next.running !== id || next.pending?.build !== build || !taken) return false;
-      if (next.previous) next.dropped = next.previous;
-      next.previous = next.current;
-      next.current = version;
-      Object.assign(taken, { state: "done", version, message: null, ended: now() });
+      dropped = advance(next, build);
+      Object.assign(taken, { state: "done", version: next.current, message: null, ended: now() });
       next.running = null;
       next.pending = null;
     });
-    if (!changed || changed.refused) return reply(409, { error: "not_running" });
+    if (!changed || changed.refused) { await db.command(["DEL", keys.build(room.id, build)]); return reply(409, { error: "not_running" }); }
     // The version two back is no longer played: its list goes now, and the cleanup removes files nothing points at.
-    if (changed.room.dropped && changed.room.dropped !== version) await db.command(["DEL", keys.build(room.id, changed.room.dropped)]);
-    return reply(200, { id, state: "done", version });
+    if (dropped) await db.command(["DEL", keys.build(room.id, dropped)]);
+    return reply(200, { id, state: "done", version: changed.room.current });
   }
 }
 
@@ -574,8 +757,9 @@ export function createRelayPlayHandler({ env = process.env, db, blobs, anyHost =
     try {
       const [json] = await db.command(["MGET", keys.room(room)]);
       const kept = json ? JSON.parse(json) : null;
-      if (!kept || (version !== kept.current && version !== kept.previous)) return new Response(null, { status: 404, headers });
-      const build = JSON.parse((await db.command(["GET", keys.build(room, version)])) ?? "null");
+      const key = kept && (version === kept.current || version === kept.previous) ? buildKey(keys, kept, version) : null;
+      if (!key) return new Response(null, { status: 404, headers });
+      const build = JSON.parse((await db.command(["GET", key])) ?? "null");
       const entry = build?.files?.[path] ?? build?.files?.[`${path}.html`] ?? build?.files?.[`${path}/index.html`];
       if (!entry) return new Response(null, { status: 404, headers });
       const name = build.files[path] ? path : build.files[`${path}.html`] ? `${path}.html` : `${path}/index.html`;
@@ -590,8 +774,10 @@ export function createRelayPlayHandler({ env = process.env, db, blobs, anyHost =
         headers: {
           ...headers, "Content-Type": pageType(name), "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
           ...(size ? { "Content-Length": String(size) } : {}),
-          // Framed only by the site's own page; the frame there is sandboxed too.
-          "Content-Security-Policy": `frame-ancestors ${siteOrigin}`,
+          // Framed only by the site's own page, whose frame is sandboxed. A page is sandboxed by its own answer too, for
+          // when its address is opened by itself: scripts run and keep their saves on the room's own host, but it can't
+          // take over the window it's in or open others.
+          "Content-Security-Policy": `frame-ancestors ${siteOrigin}${/\.html?$/i.test(name) ? "; sandbox allow-scripts allow-same-origin allow-pointer-lock allow-forms allow-modals" : ""}`,
         },
       });
     } catch (error) {
@@ -624,7 +810,8 @@ export async function cleanupRelay({ db, blobs, now = () => Date.now(), limits =
     if (room.seeding) continue;
     const used = new Set();
     for (const version of [room.current, room.previous].filter(Boolean)) {
-      const build = JSON.parse((await db.command(["GET", keys.build(id, version)])) ?? "null");
+      const key = buildKey(keys, room, version);
+      const build = key ? JSON.parse((await db.command(["GET", key])) ?? "null") : null;
       for (const entry of Object.values(build?.files ?? {})) used.add(entry.at);
     }
     const pending = room.pending?.build;

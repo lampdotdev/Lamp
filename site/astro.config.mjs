@@ -45,12 +45,13 @@ function localAPI() {
         const shared = /^\/w\/([^/]+)(\/card\.png)?$/.exec(path);
         const played = /^\/w\/([^/]+)\/play\/(\d+)\/(.*)$/.exec(path);
         const relayed = /^\/relay-play\/([^/]+)\/(\d+)\/(.*)$/.exec(path);
+        const posted = /^\/r\/([0-9a-f]{16})\/game$/.exec(path);
         if (!/^r-/.test(req.headers.host ?? "")) here = `http://${req.headers.host}`;
-        const handler = path === "/api/relay" ? relay : path === "/__relay-blob/" ? (request) => relayFiles.upload(request) : relayed ? relayPlay
+        const handler = path === "/api/relay" || posted ? relay : path === "/__relay-blob/" ? (request) => relayFiles.upload(request) : relayed ? relayPlay
           : path === "/api/first-idea" ? idea : path === "/api/wishes" ? share : path === "/api/wish-file" ? file : path === "/api/wish-ideas" ? ideas
           : played ? play : shared ? (shared[2] ? card : page) : null;
         if (!handler) return next();
-        const target = relayed ? `/x?room=${encodeURIComponent(relayed[1])}&v=${relayed[2]}&path=${encodeURIComponent(decodeURIComponent(relayed[3]))}`
+        const target = posted ? `/x?op=game&room=${posted[1]}` : relayed ? `/x?room=${encodeURIComponent(relayed[1])}&v=${relayed[2]}&path=${encodeURIComponent(decodeURIComponent(relayed[3]))}`
           : played ? `/x?id=${encodeURIComponent(played[1])}&v=${played[2]}&path=${encodeURIComponent(decodeURIComponent(played[3]))}`
           : shared ? `/x?id=${encodeURIComponent(shared[1])}` : req.url;
         const chunks = [];

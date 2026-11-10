@@ -5,8 +5,10 @@ import Base from "../layouts/Base.astro";
 <!--
   Changing a shared game with your own agent (lamp.dev/change?w=<id>, RELAY.md): the game plays from a host of the
   room's own, the page shows the code that pairs the helper on the player's Mac (`lamp play <code>`), and what's asked
-  for here goes to that helper, one change at a time, each new version put into the frame. The page's credential stays
-  in this tab (sessionStorage on lamp.dev), never in an address and never where the game's frame could read it.
+  for here goes to that helper, one change at a time, each new version put into the frame. With `with=app` (and `w` or
+  not), it's for an AI app on the player's computer instead: the page gives words to paste into the app, with a key
+  that lets it read the game and send a new one whole, and each one it sends comes in here. The page's credentials stay
+  in this tab (sessionStorage on lamp.dev), never in an address and never where the game's frame could read them.
 -->
 <Base title="Change this game · Lamp" description="Change a game with your own coding agent." bare>
   <div class="flex h-dvh flex-col bg-paper text-tape">
@@ -24,6 +26,14 @@ import Base from "../layouts/Base.astro";
         <span data-expires class="text-muted-ink"></span>
         <button type="button" data-new-code hidden class="ink-button">New code</button>
       </div>
+      <div data-direct hidden class="space-y-2 text-sm">
+        <p>Paste this into ChatGPT, Codex or Claude on your computer, then ask it for a game or a change.</p>
+        <textarea data-words readonly rows="5" class="w-full resize-none rounded-md border border-tape/20 bg-white p-2 font-mono text-xs"></textarea>
+        <div class="flex gap-2">
+          <button type="button" data-copy class="ink-button px-4">Copy</button>
+          <button type="button" data-new-key class="rounded-md border border-tape px-4">New key</button>
+        </div>
+      </div>
       <form data-ask hidden class="flex gap-2">
         <input data-prompt autocomplete="off" maxlength="1000" placeholder="What should change?" class="min-w-0 flex-1 rounded-md border border-tape/30 bg-white px-3 py-2" />
         <button type="submit" class="ink-button px-4">Send</button>
@@ -37,11 +47,26 @@ import Base from "../layouts/Base.astro";
 <script>
   const $ = <T extends HTMLElement>(name: string) => document.querySelector(`[data-${name}]`) as T;
   type Request = { id: string; prompt: string; state: string; message: string | null; version: number | null };
-  type Room = { rev: string; room: string; version: number; play: string | null; seeding: { copied: number; total: number; failed: string | null } | null; paired: boolean; helper: boolean; code: string | null; codeEnds: number | null; requests: Request[]; same?: boolean };
+  type Room = { mode: "helper" | "post"; posted: number | null; rev: string; room: string; version: number; play: string | null; seeding: { copied: number; total: number; failed: string | null } | null; paired: boolean; helper: boolean; code: string | null; codeEnds: number | null; requests: Request[]; same?: boolean };
 
-  const wish = new URLSearchParams(location.search).get("w") ?? "";
-  const kept = `lamp.relay.${wish}`;
+  const query = new URLSearchParams(location.search);
+  const wish = query.get("w") ?? "";
+  const direct = query.get("with") === "app";
+  const kept = `lamp.relay.${direct ? "app." : ""}${wish}`;
   let token = sessionStorage.getItem(kept);
+  let postKey = sessionStorage.getItem(`${kept}.key`);
+
+  // The words the player pastes into their AI app: the room's address, its key, and how to read and send the game.
+  function words(room: string) {
+    const address = `${location.origin}/r/${room}/game`;
+    return [
+      "Make or change a browser game for me. It must be ONE self-contained HTML file (CSS and JavaScript inside it, no other files), under 4 MB.",
+      `First read the game I'm playing: curl -sS -D headers.txt -o game.html ${address} -H "Authorization: Bearer ${postKey}"`,
+      "Change game.html as I ask (or replace it with a new game), then send it, with the ETag from headers.txt as If-Match:",
+      `curl -sS -X POST ${address} -H "Authorization: Bearer ${postKey}" -H 'If-Match: "<ETag>"' -H "Content-Type: text/html; charset=utf-8" --data-binary @game.html`,
+      "Tell me what it answers. For every later change, read the game again first.",
+    ].join("\n");
+  }
   let room: Room | null = null;
   let shown = 0;
   let quiet = 0;
@@ -67,6 +92,18 @@ import Base from "../layouts/Base.astro";
       frame.src = next.play;
       frame.hidden = false;
       document.body.dataset.version = String(next.version);
+    }
+    if (next.mode === "post") {
+      $("pair").hidden = true;
+      $("ask").hidden = true;
+      $("requests").hidden = true;
+      if (next.seeding) { $("direct").hidden = true; say(next.seeding.failed ?? `Getting the game ready… ${next.seeding.copied} of ${next.seeding.total} files`); return; }
+      $("direct").hidden = !postKey;
+      $<HTMLTextAreaElement>("words").value = postKey ? words(next.room) : "";
+      say(next.posted
+        ? `Version ${next.version} came in from your AI app at ${new Date(next.posted).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
+        : "Waiting for your AI app to send a game.");
+      return;
     }
     if (next.seeding) {
       $("pair").hidden = true;
@@ -119,9 +156,11 @@ import Base from "../layouts/Base.astro";
         if ((error as { status?: number }).status === 401) { sessionStorage.removeItem(kept); say("This room has closed. Reload to open another."); return; }
         say("Reconnecting…");
       }
-      const busy = room?.requests.some((request) => ["queued", "running"].includes(request.state)) || !room?.paired;
-      await new Promise((done) => setTimeout(done, busy ? 2000 : Math.min(20_000, 2000 * 2 ** Math.min(4, Math.floor(quiet / 5)))));
-      if (!room?.paired && room) show(room);
+      // An AI app may send at any moment, so a room waiting on one is asked at most every five seconds.
+      const direct = room?.mode === "post";
+      const busy = !direct && (room?.requests.some((request) => ["queued", "running"].includes(request.state)) || !room?.paired);
+      await new Promise((done) => setTimeout(done, busy ? 2000 : Math.min(direct ? 5000 : 20_000, 2000 * 2 ** Math.min(4, Math.floor(quiet / 5)))));
+      if (!direct && !room?.paired && room) show(room);
     }
   }
 
@@ -143,12 +182,24 @@ import Base from "../layouts/Base.astro";
     say("lamp.dev didn't answer.");
   });
 
+  $("copy").addEventListener("click", async () => { await navigator.clipboard.writeText($<HTMLTextAreaElement>("words").value); say("Copied. Paste it into your AI app."); });
+  $("new-key").addEventListener("click", async () => {
+    try {
+      const answer = await call("postkey", { method: "POST" });
+      postKey = answer.postKey as string;
+      sessionStorage.setItem(`${kept}.key`, postKey);
+      show(answer);
+      say("New key: the old one no longer works. Paste the new words into your AI app.");
+    } catch { say("No new key."); }
+  });
+
   $("new-code").addEventListener("click", async () => { try { show(await call("code", { method: "POST" })); } catch { say("No new code."); } });
 
   (async () => {
     if (!token) {
       try {
-        const opened = await call("open", { method: "POST", body: { wish } });
+        const opened = await call("open", { method: "POST", body: { ...(wish ? { wish } : {}), ...(direct ? { mode: "post" } : {}) } });
+        if (opened.postKey) { postKey = opened.postKey as string; sessionStorage.setItem(`${kept}.key`, postKey); }
         token = opened.token as string;
         sessionStorage.setItem(kept, token);
         show(opened);

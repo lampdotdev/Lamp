@@ -38,6 +38,38 @@ runs between their calls.
    says. It never sees a credential. The page's calls must come from the site's origin, and the helper's must not come
    from a browser at all.
 
+## An AI app sending the whole game
+
+`/change?with=app` (with `&w=<id>` to start from a link's page, or without it to start empty) opens a room for an AI
+app on the player's computer instead of the helper. ChatGPT or Codex, say, running curl. There's no code and no
+pairing. The page shows words to paste into the app, with the room's address and a key of its own. The key is a third
+credential, apart from the page's and the helper's, and only its hash is kept. "New key" replaces it, and the old one
+stops working at once. The page says when a version came in from the app.
+
+- `GET /r/<room>/game` with `Authorization: Bearer <key>` gives the game's one file as plain text that never runs:
+  `text/plain`, `nosniff`, `no-store`, a sandbox with nothing allowed, and the version it is as its `ETag`.
+- `POST /r/<room>/game` with the key, `If-Match: "<that version>"` and the whole HTML file as the body. The body is
+  at most 4,000,000 bytes, counted in bytes, of strict UTF-8 that reads as an HTML page. The answer is
+  `201 {version, play}`, or one plain line saying what to do.
+  - No If-Match gets 428, and a version that's moved on gets 412 with the version now.
+  - `Idempotency-Key` is optional: without it, the same file sent on the same version is the one already taken (200,
+    `again: true`).
+  - Quotas: 30 games a room an hour, 120 an hour per address, and the room's 256 MB.
+  - Vercel turns away a body over about 4.5 MB before the function runs, with its own 413.
+- Only a game that's one file (`index.html`) goes back and forth whole. A room playing a game of several files
+  answers both with 409, and points to `lamp play`.
+- Publishing is one step. The file goes to Blob under a name of its own, and its list goes under an id of its own,
+  written so it never overwrites anything. Neither is played until the room's compare-and-set points at it. That
+  compare-and-set checks again, against the room it replaces, the key, the base version, the idempotency key, that no
+  helper change is running, and the room's quotas. If two games are sent on the same version at once, one is played
+  and the other gets 412. What a refused send wrote is left for the cleanup. The helper's commit publishes the same
+  way.
+- Anything a browser sends (an `Origin` or `Sec-Fetch-Site` header) is refused on top of that, but the key is what
+  lets a call in.
+- Played on its own host, a page's answer carries a sandbox too (`allow-scripts allow-same-origin allow-pointer-lock
+  allow-forms allow-modals`), for when its address is opened by itself rather than in the page's frame. Same-origin
+  is kept so a game's saves work on the room's own host.
+
 ### When the helper stops or loses lamp.dev
 
 The helper keeps a journal of each request it took and how it ended. When it starts or comes back, it sends the

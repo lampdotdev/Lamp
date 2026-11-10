@@ -32,7 +32,7 @@ async function started() {
     const response = await play(new Request(`https://${host}/x?room=${room}&v=${version}&path=`));
     return { status: response.status, csp: response.headers.get("content-security-policy"), text: response.status === 200 ? await response.text() : null };
   };
-  return { clock, db, blobs, wishes, call, page, played };
+  return { clock, db, blobs, wishes, call, page, played, handler: relay };
 }
 
 test("a code pairs once, runs out after five minutes, and is traded for a credential of the helper's own", async () => {
@@ -109,7 +109,7 @@ test("a version's files are checked before it plays; one that doesn't match leav
   assert.deepEqual([done.status, done.body.version], [200, 2]);
   const served = await relay.played(room.room, 2);
   assert.equal(served.text, "<p>green</p>");
-  assert.equal(served.csp, `frame-ancestors ${SITE}`);
+  assert.match(served.csp, new RegExp(`^frame-ancestors ${SITE}; sandbox `));
   assert.equal((await relay.played(room.room, 2, "r-0000000000000000.play.lamp.dev")).status, 404);
 });
 
@@ -143,4 +143,86 @@ test("the cleanup removes the files of a room that's gone and those no version p
   assert.equal((await cleanupRelay({ db: relay.db, blobs: relay.blobs, now: () => relay.clock.now })).removed, 1);
   // What's left is the room's own copy of version 1, which it plays.
   assert.deepEqual([...relay.blobs.files.keys()].map((path) => path.split("/")[3]), ["seed", "seed"]);
+});
+
+// MARK: An AI app sending the whole game (op=game, /r/<room>/game)
+
+async function direct() {
+  const relay = await started();
+  const room = (await relay.call("open", { origin: SITE, body: { mode: "post" } })).body;
+  const game = async ({ method = "POST", key = room.postKey, body, match, idempotency, origin, roomID = room.room } = {}) => {
+    const response = await relay.handler(new Request(`${SITE}/api/relay?op=game&room=${roomID}`, {
+      method, body,
+      headers: { "x-forwarded-for": "3.3.3.3", ...(key ? { Authorization: `Bearer ${key}` } : {}), ...(match !== undefined ? { "If-Match": match } : {}),
+        ...(idempotency ? { "Idempotency-Key": idempotency } : {}), ...(origin ? { Origin: origin } : {}) },
+    }));
+    return { status: response.status, headers: response.headers, text: await response.text() };
+  };
+  return { relay, room, game };
+}
+const page = (words) => `<!doctype html><html><body><p>${words}</p></body></html>`;
+
+test("a game sent whole needs the room's own key, the version it changed, and is taken once", async () => {
+  const { relay, room, game } = await direct();
+  assert.equal(room.mode, "post");
+  assert.equal(room.code, null);
+  for (const key of [room.token, `${room.room}.not-the-key`, null]) assert.equal((await game({ key, body: page("x"), match: '"1"' })).status, 401);
+  assert.equal((await game({ origin: SITE, body: page("x"), match: '"1"' })).status, 403);
+  assert.equal((await game({ body: page("x") })).status, 428);
+  assert.equal((await game({ body: page("x"), match: '"7"' })).status, 412);
+
+  const first = await game({ body: page("green"), match: '"1"' });
+  assert.deepEqual([first.status, JSON.parse(first.text).version], [201, 2]);
+  // The same file sent again on the same version (a retried curl) is the one already taken, not another version.
+  const again = await game({ body: page("green"), match: '"1"' });
+  assert.deepEqual([again.status, JSON.parse(again.text).version, JSON.parse(again.text).again], [200, 2, true]);
+  assert.equal((await relay.played(room.room, 2)).text, page("green"));
+
+  // A new key stops the old one at once.
+  const renewed = await relay.call("postkey", { origin: SITE, token: room.token });
+  assert.equal(renewed.status, 200, JSON.stringify(renewed.body));
+  assert.equal((await game({ body: page("blue"), match: '"2"' })).status, 401);
+  assert.equal((await game({ key: renewed.body.postKey, body: page("blue"), match: '"2"' })).status, 201);
+});
+
+test("two games sent on the same version at once: one is played, the other is told to read the game again", async () => {
+  const { relay, room, game } = await direct();
+  const answers = await Promise.all(["red", "blue"].map((words, n) => game({ body: page(words), match: '"1"', idempotency: `racing-key-${n}` })));
+  assert.deepEqual(answers.map((answer) => answer.status).sort(), [201, 412]);
+  const winner = answers.find((answer) => answer.status === 201);
+  assert.equal(JSON.parse(winner.text).version, 2);
+  const played = (await relay.played(room.room, 2)).text;
+  assert.ok([page("red"), page("blue")].includes(played));
+  assert.equal((await relay.played(room.room, 3)).status, 404);
+});
+
+test("what's taken is at most 4,000,000 bytes of UTF-8 HTML, and the source is read back as text that never runs", async () => {
+  const { relay, room, game } = await direct();
+  // Counted in bytes: two million and one two-byte letters are fewer characters than the limit but more bytes.
+  assert.equal((await game({ body: page("é".repeat(2_000_001)), match: '"1"' })).status, 413);
+  assert.equal((await game({ body: Buffer.from([0x3c, 0x68, 0x74, 0x6d, 0x6c, 0x3e, 0xff, 0xfe]), match: '"1"' })).status, 415);
+  assert.equal((await game({ body: "just words", match: '"1"' })).status, 422);
+  assert.equal((await game({ body: page("é".repeat(1_999_000)), match: '"1"' })).status, 201);
+
+  const source = await game({ method: "GET" });
+  assert.equal(source.status, 200);
+  assert.equal(source.headers.get("content-type"), "text/plain; charset=utf-8");
+  assert.equal(source.headers.get("cache-control"), "no-store");
+  assert.equal(source.headers.get("x-content-type-options"), "nosniff");
+  assert.match(source.headers.get("content-security-policy"), /sandbox/);
+  assert.equal(source.headers.get("etag"), '"2"');
+  // Played on its own host, a page is sandboxed by its own answer too.
+  assert.match((await relay.played(room.room, 2)).csp, /; sandbox allow-scripts allow-same-origin/);
+});
+
+test("a room playing a game of several files doesn't take or give one file", async () => {
+  const relay = await started();
+  const room = (await relay.call("open", { origin: SITE, body: { wish: WISH, mode: "post" } })).body;
+  assert.equal(room.version, 1);
+  for (const method of ["GET", "POST"]) {
+    const response = await relay.handler(new Request(`${SITE}/api/relay?op=game&room=${room.room}`, {
+      method, headers: { Authorization: `Bearer ${room.postKey}`, "If-Match": '"1"' }, ...(method === "POST" ? { body: page("x") } : {}),
+    }));
+    assert.equal(response.status, 409);
+  }
 });
