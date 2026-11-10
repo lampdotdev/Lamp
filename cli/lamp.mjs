@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { Problem, RESOURCES, layoutOf, manifestOf, projectOf, stateOf, running, ask } from "./state.mjs";
 import { macActions, serveMac, writeMacStarter } from "./mac.mjs";
 import { exportApp, unpack } from "./lampapp.mjs";
+import { updateNotice } from "./update.mjs";
 import { editionName, giveTo, givenTo, keepPictures, reachLamp, takeBack } from "./outside.mjs";
 import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS } from "./dev.mjs";
 import { allSkills } from "./skills.mjs";
@@ -1004,6 +1005,9 @@ async function main() {
 
   throw new Problem(`there's no "${command}"\n\n${USAGE}`);
 }
+
+// A newer lamp from npm is said once a day, before the command's own words (update.mjs).
+{ const notice = updateNotice(); if (notice) console.error(notice); }
 
 // Whatever a command did on Android, its adb server isn't left holding the person's devices (android.mjs).
 main().finally(() => androidDone().catch(() => {})).catch((error) => {
