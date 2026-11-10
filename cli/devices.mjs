@@ -12,7 +12,6 @@
 import { createHash, randomUUID, X509Certificate } from "node:crypto";
 import dgram from "node:dgram";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import http from "node:http";
 import net from "node:net";
 import { homedir, networkInterfaces } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -310,8 +309,16 @@ export async function send(request, address, values, { files = {}, pins, timeout
   if (!Number.isInteger(request.port) || request.port < 1 || request.port > 65535) throw new Problem(`${request.port} isn't a port`);
   const path = fill(request.path, values, "path"), problem = pathProblem(path.split("?")[0]);
   if (problem) throw new Problem(`the path ${problem}`);
+  // lamp writes the request itself, so nothing in it may end a line or start another: the path whole, each header.
+  if (!/^[\x21-\x7e]+$/.test(path)) throw new Problem("the path can't hold spaces");
   const method = (request.method ?? "GET").toUpperCase(), headers = {};
-  for (const [name, value] of Object.entries(request.headers ?? {})) if (name.toLowerCase() !== "host") headers[name] = fill(value, values, "header");
+  if (!/^[A-Z]{1,16}$/.test(method)) throw new Problem(`${method} isn't a way to ask a device`);
+  for (const [name, value] of Object.entries(request.headers ?? {})) {
+    if (name.toLowerCase() === "host") continue;
+    const filled = fill(value, values, "header");
+    if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(name) || /[\r\n\0]/.test(filled)) throw new Problem(`the header ${name} can't be sent as it is`);
+    headers[name] = filled;
+  }
   let body = null;
   if (request.body != null) body = Buffer.from(fill(request.body, values, "body"));
   if (request.form) {
@@ -337,50 +344,160 @@ export async function send(request, address, values, { files = {}, pins, timeout
   if (body) headers["Content-Length"] = String(body.length);
 
   const once = async (authorization) => {
-    let socket = null, certificate = null;
-    if (https) ({ socket, certificate } = await connect(address, request.port, pins, timeout));
-    return await new Promise((done, failed) => {
-      const options = { host: address, port: request.port, method, path, headers: authorization ? { ...headers, Authorization: authorization } : headers };
-      if (socket) options.createConnection = () => socket; else options.agent = false;
-      const asked = http.request(options, (answer) => {
-        const chunks = [];
-        let size = 0;
-        answer.on("data", (chunk) => {
-          size += chunk.length;
-          if (size > ANSWER_LIMIT) asked.destroy(new Problem("the device's answer was bigger than lamp takes"));
-          else chunks.push(chunk);
-        });
-        answer.on("end", () => {
-          const cookies = {};
-          for (const cookie of answer.headers["set-cookie"] ?? []) {
-            const pair = cookie.split(";")[0], equals = pair.indexOf("=");
-            if (equals > 0) cookies[pair.slice(0, equals).trim()] = pair.slice(equals + 1).trim();
-          }
-          const bytes = Buffer.concat(chunks);
-          done({ status: answer.statusCode, ok: answer.statusCode >= 200 && answer.statusCode < 300, body: bytes, text: bytes.toString("utf8"), cookies, certificate, asks: answer.headers["www-authenticate"] ?? "" });
-        });
-        answer.on("error", (error) => failed(error instanceof Problem ? error : new Away(address, error)));
-      });
-      asked.setTimeout(timeout, () => asked.destroy(timedOut()));
-      asked.on("error", (error) => failed(error instanceof Problem ? error : new Away(address, error)));
-      asked.end(body ?? undefined);
-    });
+    const { socket, certificate } = https ? await connect(address, request.port, pins, timeout) : await plain(address, request.port, timeout);
+    const host = `${address.includes(":") ? `[${address}]` : address}:${request.port}`;
+    const answer = await exchange(socket, { method, path, host, headers: authorization ? { ...headers, Authorization: authorization } : headers, body, timeout, address });
+    const cookies = {};
+    for (const cookie of answer.headers["set-cookie"] ?? []) {
+      const pair = cookie.split(";")[0], equals = pair.indexOf("=");
+      if (equals > 0) cookies[pair.slice(0, equals).trim()] = pair.slice(equals + 1).trim();
+    }
+    return { status: answer.status, ok: answer.status >= 200 && answer.status < 300, body: answer.body, text: answer.body.toString("utf8"), cookies, certificate,
+      asks: (answer.headers["www-authenticate"] ?? []).join(", ") };
   };
 
-  // The sign-in goes only in answer to the device's own request for it, with the scheme the integration declared.
-  let authorization = null;
-  if (request.auth) {
-    if (request.auth.digest) throw new Problem("lamp's command line doesn't sign in to a device that asks for a digest yet");
-    authorization = "Basic " + Buffer.from(`${request.auth.user}:${fill(request.auth.password, values, "auth")}`).toString("base64");
-  }
+  // The sign-in goes only in answer to the device's own request for it, once, with the scheme the integration
+  // declared: a password to a device that asks for it plainly, and to one that asks for a digest never the password
+  // itself, only what the device's own challenge makes of it.
+  if (!request.auth) return once(null);
+  const user = request.auth.user, password = fill(request.auth.password, values, "auth"), door = `${address}:${request.port}`;
   session.asked ??= new Set();
-  const door = `${address}:${request.port}`;
-  let answer = await once(authorization && session.asked.has(door) ? authorization : null);
-  if (answer.status === 401 && authorization && !session.asked.has(door) && /^\s*basic\b/i.test(answer.asks)) {
-    session.asked.add(door);
-    answer = await once(authorization);
+  if (request.auth.digest) {
+    const first = await once(null), challenge = digestChallenge(first.asks);
+    return first.status === 401 && challenge ? once(digestAnswer(challenge, { user, password, method, path })) : first;
   }
-  return answer;
+  const basic = "Basic " + Buffer.from(`${user}:${password}`).toString("base64");
+  if (session.asked.has(door)) return once(basic);
+  const first = await once(null);
+  if (first.status !== 401 || !/(^|,)\s*basic\b/i.test(first.asks)) return first;
+  session.asked.add(door);
+  return once(basic);
+}
+
+// MARK: The request itself
+
+/** A connection to the device with nothing over it. */
+function plain(address, port, timeout) {
+  return new Promise((done, failed) => {
+    const socket = net.connect({ host: address, port, timeout });
+    socket.once("connect", () => done({ socket, certificate: null }));
+    socket.once("timeout", () => socket.destroy(timedOut()));
+    socket.once("error", (error) => failed(error instanceof Problem ? error : new Away(address, error)));
+  });
+}
+
+/** An answer's head: its status and its headers, each name in small letters with every value it was given. */
+function headOf(text) {
+  const [first, ...lines] = text.split("\r\n"), status = Number(/^HTTP\/1\.[01] (\d{3})/.exec(first)?.[1]);
+  if (!status) return null;
+  const headers = {};
+  for (const line of lines) {
+    const colon = line.indexOf(":");
+    if (colon > 0) (headers[line.slice(0, colon).trim().toLowerCase()] ??= []).push(line.slice(colon + 1).trim());
+  }
+  return { status, headers };
+}
+
+/** A body sent in chunks, put back together; null while its last chunk hasn't come. */
+function unchunked(bytes) {
+  const parts = [];
+  for (let at = 0; ;) {
+    const line = bytes.indexOf("\r\n", at);
+    if (line < 0) return null;
+    const size = parseInt(bytes.toString("latin1", at, line).split(";")[0].trim(), 16);
+    if (!Number.isInteger(size) || size < 0) throw new Problem("the device's answer couldn't be read");
+    if (size === 0) return Buffer.concat(parts);
+    if (bytes.length < line + 2 + size + 2) return null;
+    parts.push(bytes.subarray(line + 2, line + 2 + size));
+    at = line + 2 + size + 2;
+  }
+}
+
+/**
+ * One request on a connection lamp opened, and its answer read to its end: HTTP/1.1 written out by hand, so the
+ * request goes down the very connection whose certificate was just checked, the same way on Node and on Bun (whose
+ * own client can't be handed a connection). No redirect is followed: an answer that names another place is the answer.
+ */
+function exchange(socket, { method, path, host, headers, body, timeout, address }) {
+  return new Promise((done, failed) => {
+    let settled = false, head = null, kept = [], size = 0, pending = Buffer.alloc(0);
+    const finish = (error, answer) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      if (error) failed(error instanceof Problem ? error : new Away(address, error)); else done(answer);
+    };
+    const tooBig = () => finish(new Problem("the device's answer was bigger than lamp takes"));
+    /** The answer, once all of it is here; `ended` says the device has closed its side. */
+    const read = (ended) => {
+      while (!head) {
+        const end = pending.indexOf("\r\n\r\n");
+        if (end < 0) { if (pending.length > 65536) tooBig(); else if (ended) finish(Object.assign(new Error("cut short"), { code: "ECONNRESET" })); return; }
+        const parsed = headOf(pending.toString("latin1", 0, end));
+        if (!parsed) return finish(new Problem("the device's answer couldn't be read"));
+        pending = pending.subarray(end + 4);
+        // A word to go on (100 Continue) isn't the answer: the answer follows it.
+        if (parsed.status >= 100 && parsed.status < 200 && parsed.status !== 101) continue;
+        head = parsed;
+        kept = [pending];
+        size = pending.length;
+      }
+      const none = method === "HEAD" || head.status === 204 || head.status === 304;
+      const chunked = (head.headers["transfer-encoding"] ?? []).join(",").toLowerCase().includes("chunked");
+      const length = Number(head.headers["content-length"]?.[0]);
+      if (size > ANSWER_LIMIT + 65536) return tooBig();
+      let bytes = null;
+      if (none) bytes = Buffer.alloc(0);
+      else if (chunked) { try { bytes = unchunked(Buffer.concat(kept)); } catch (error) { return finish(error); } }
+      else if (Number.isInteger(length) && length >= 0) { if (size >= length) bytes = Buffer.concat(kept).subarray(0, length); }
+      else if (ended) bytes = Buffer.concat(kept);
+      if (bytes && bytes.length > ANSWER_LIMIT) return tooBig();
+      if (bytes) return finish(null, { status: head.status, headers: head.headers, body: bytes });
+      if (ended) finish(Object.assign(new Error("cut short"), { code: "ECONNRESET" }));
+    };
+    socket.setTimeout(timeout, () => finish(timedOut()));
+    socket.on("data", (chunk) => {
+      if (head) { kept.push(chunk); size += chunk.length; } else pending = Buffer.concat([pending, chunk]);
+      read(false);
+    });
+    socket.on("end", () => read(true));
+    socket.on("close", () => read(true));
+    socket.on("error", (error) => finish(error));
+    const lines = [`${method} ${path} HTTP/1.1`, `Host: ${host}`, ...Object.entries(headers).map(([name, value]) => `${name}: ${value}`), "Connection: close", "", ""];
+    socket.write(Buffer.from(lines.join("\r\n"), "latin1"));
+    if (body?.length) socket.write(body);
+  });
+}
+
+// MARK: A digest sign-in
+
+const quoted = (value) => String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+
+/** What a device asks of a digest sign-in, from its challenge; null when the challenge isn't one lamp answers. */
+function digestChallenge(asks) {
+  const at = /(^|,)\s*digest\s/i.exec(asks);
+  if (!at) return null;
+  const challenge = {};
+  for (const [, name, inQuotes, bare] of asks.slice(at.index + at[0].length).matchAll(/([A-Za-z]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^\s,]+))/g)) {
+    challenge[name.toLowerCase()] ??= inQuotes !== undefined ? inQuotes.replace(/\\(.)/g, "$1") : bare;
+  }
+  const algorithm = (challenge.algorithm ?? "MD5").toUpperCase();
+  if (!challenge.realm || !challenge.nonce || !["MD5", "SHA-256"].includes(algorithm)) return null;
+  const ways = (challenge.qop ?? "").split(",").map((way) => way.trim().toLowerCase()).filter(Boolean);
+  if (ways.length && !ways.includes("auth")) return null;
+  return { ...challenge, algorithm, qop: ways.length ? "auth" : null };
+}
+
+/** The Authorization header that answers a digest challenge (RFC 7616): the password itself is never in it. */
+function digestAnswer(challenge, { user, password, method, path }) {
+  const hash = (text) => createHash(challenge.algorithm === "MD5" ? "md5" : "sha256").update(text).digest("hex");
+  const cnonce = randomUUID().replaceAll("-", ""), count = "00000001";
+  const one = hash(`${user}:${challenge.realm}:${password}`), two = hash(`${method}:${path}`);
+  const response = challenge.qop ? hash(`${one}:${challenge.nonce}:${count}:${cnonce}:auth:${two}`) : hash(`${one}:${challenge.nonce}:${two}`);
+  const parts = [`username="${quoted(user)}"`, `realm="${quoted(challenge.realm)}"`, `nonce="${quoted(challenge.nonce)}"`, `uri="${path}"`, `response="${response}"`, `algorithm=${challenge.algorithm}`];
+  if (challenge.qop) parts.push("qop=auth", `nc=${count}`, `cnonce="${cnonce}"`);
+  if (challenge.opaque !== undefined) parts.push(`opaque="${quoted(challenge.opaque)}"`);
+  return "Digest " + parts.join(", ");
 }
 
 /** The device's certificate isn't one lamp takes: waiting won't mend it. */

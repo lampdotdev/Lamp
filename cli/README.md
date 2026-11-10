@@ -191,7 +191,11 @@ whose host for a page lamp packages for.
   which must be on the home network and never this computer; no redirect is followed; over HTTPS the device's own
   certificate is kept the first time, per port, and another refused from then on unless the device's own root, read
   over that first connection, signed it (an Xbox makes itself a new certificate at each restart); and the password
-  goes only to a device whose certificate is kept, in answer to the device's own request for it.
+  goes only to a device whose certificate is kept, in answer to the device's own request for it (as it is to a
+  device that asks plainly, and to one that asks for a digest only what its challenge makes of it).
+- **A request** is HTTP/1.1 written out by hand on a connection lamp opened itself (`exchange`), so it goes down the
+  very connection whose certificate was just checked, and runs the same on Node and on Bun. Nothing in it may end a
+  line: the path whole and each header are checked before anything is sent.
 - **The package** (`cli/msix.mjs`) is the one package maker, Lamp's app's too ("Lamp's app", below): the manifest,
   the block map, the content types, the Zip64 layout and the Authenticode signature, under a key and certificate of
   lamp's own, which the console installs beside the package. `cli/tests/fixtures/msix` keeps one small package's
@@ -266,8 +270,8 @@ its own fault.
   agent wrote is read by Lamp's app on that folder's terms first. A call refuses a link in what it's handed.
 - **The runtime** in Lamp's app is the one it already carries: its bundled agent is built on Bun, and run with
   `BUN_BE_BUN=1` that program is Bun itself (`LampCLI.launch`, the one place that decides). So `calls.mjs` and what it
-  imports must run on Bun as well as Node; `build.sh` copies `cli/*.mjs` into the app. The commands a person runs
-  aren't held to that yet: a device's requests over HTTPS (`devices.mjs`) don't pass on Bun.
+  imports must run on Bun as well as Node; `build.sh` copies `cli/*.mjs` into the app. The tests run on both. One
+  thing doesn't work on Bun yet: the search of the network for devices (`ssdp`, over UDP) hears nothing there.
 - **The calls so far:** `msix`, an Xbox's package from a folder of files. Moving a piece of work here means a call
   for it, the Swift that did it deleted, and a test on each side (`cli/tests/calls.test.mjs`, `LampCLITests`).
 

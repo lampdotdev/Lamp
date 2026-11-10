@@ -142,3 +142,28 @@ test("a page goes on an Xbox, is looked at there, stopped and taken off", async 
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("a device that asks for a digest is answered with what its challenge makes of the password, never the password", async () => {
+  const { createHash } = await import("node:crypto");
+  const http = await import("node:http");
+  const { send } = await import("../devices.mjs");
+  const md5 = (text) => createHash("md5").update(text).digest("hex"), seen = [];
+  const server = http.createServer((asked, answer) => {
+    const given = asked.headers.authorization ?? "";
+    seen.push(given);
+    const part = (name) => new RegExp(`${name}="?([^",]+)"?`).exec(given)?.[1];
+    const right = md5(`${md5("rokudev:Made Up TV:made-up-password")}:abc123:${part("nc")}:${part("cnonce")}:auth:${md5(`GET:${asked.url}`)}`);
+    if (given.startsWith("Digest ") && part("response") === right && part("opaque") === "o1") { answer.writeHead(200); return answer.end("in"); }
+    answer.writeHead(401, { "WWW-Authenticate": 'Digest realm="Made Up TV", nonce="abc123", qop="auth", opaque="o1", algorithm=MD5' });
+    answer.end();
+  });
+  await new Promise((done) => server.listen(0, "127.0.0.1", done));
+  try {
+    const request = { port: server.address().port, path: "/plugin_install?x=1", auth: { user: "rokudev", password: "{field:password}", digest: true } };
+    const answer = await send(request, "127.0.0.1", { "field:password": "made-up-password" }, { reach: () => true });
+    assert.equal(answer.text, "in");
+    assert.equal(seen[0], "", "nothing of the sign-in before the device asks");
+    assert.ok(!seen.join(" ").includes("made-up-password") && !seen.join(" ").includes(Buffer.from("rokudev:made-up-password").toString("base64")));
+    assert.equal((await send(request, "127.0.0.1", { "field:password": "a-wrong-one" }, { reach: () => true })).status, 401);
+  } finally { server.close(); server.closeAllConnections?.(); }
+});
