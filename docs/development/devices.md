@@ -362,7 +362,8 @@ played are given one at a time (`LampProject.places`, kept in meta.json; `Target
 the person's own, whose Xcode project carries `Web/`), a Samsung or LG TV (`.tv`, staged and installed as a TV app's page
 is), Android and Android TV (`.android`, `.androidTV`: Lamp's Android app in the game's
 `Lamp/Android` (never `Android/`, which `Parts.folders` reads as a wish's Android app), `GameAndroid`, built and installed
-like any Android app of Lamp's: a WebView serving `Web/` from the app's assets, the controllers read natively and handed
+like any Android app of Lamp's: a WebView serving `Web/` from the app's assets (every folder of the page's, those named
+with an underscore first among them, which Android's own list for assets would leave out), the controllers read natively and handed
 to the page's `lampNativePad`; in a wish of several apps it also carries Lamp's Kotlin blocks and answers the page's
 `Lamp.wish` with `LampWish`, the "Wishes" guide) and the Xbox (`.device`, with `LampProject.integration` "xbox-one", the integration's web
 app, installed as a game). `make_app_for` on
