@@ -84,8 +84,9 @@ export function unpack(file, folder = null) {
 const GAME_LAMPS = (path) => ["lamp-game.js", "lamp.js", "lamp-controllers.js", "lamp-phaser.js", "lamp-device.js", "lamp-build.js"].includes(path)
   || path.startsWith("phaser/") || path.startsWith("three/");
 const SCREEN_LAMPS = (path) => path === "lamp.js";
-// What sits beside a page at a folder's top that's the wish's, not the page's: it goes as itself, or not at all.
-const WISH_FILES = new Set(["APP.md", "about.json", "icon.json", "icon-glass.json", "icon-art.png", "icon.png", "credits.json", "lamp-app.json", "capabilities.json", "Assets"]);
+// Lamp's own record of an app, beside a page at a folder's top that has no `.lamp-wish/` (a page lamp made): it goes as
+// itself, never in the page. Anything else there, an Assets/ or an icon.png included, is the page's.
+const WISH_FILES = new Set(["APP.md", "about.json", "icon.json", "icon-glass.json", "icon-art.png", "credits.json", "lamp-app.json", "capabilities.json"]);
 // The hidden files at a page's top that a web server reads, which go with a site (`ScreenFiles.servedHidden`).
 const SERVED_HIDDEN = new Set([".nojekyll", ".well-known"]);
 // The Mac app's own Swift beside Lamp's (`Template`'s support files), which stays behind.
@@ -146,12 +147,15 @@ function identityOf(folder) {
  */
 export function exportApp(given, { anyway = false } = {}) {
   const project = projectOf(given), folder = project.folder, manifest = manifestOf(folder);
-  const credits = (() => { try { return JSON.parse(readFileSync(join(folder, "credits.json"), "utf8")); } catch { return {}; } })();
+  // Where the app's own record is (its credits, licenses, notes, files and the Swift beside its page): the folder, or
+  // for a site laid out as Lamp puts one on GitHub, `.lamp-wish/` beside the page (`StaticSite.layOut`).
+  const wishFolder = existsSync(join(folder, ".lamp-wish", "lamp-app.json")), app = wishFolder ? join(folder, ".lamp-wish") : folder;
+  const credits = (() => { try { return JSON.parse(readFileSync(join(app, "credits.json"), "utf8")); } catch { return {}; } })();
   const upstream = Array.isArray(credits?.upstream) ? credits.upstream.filter((source) => source && typeof source.name === "string") : [];
   const terms = (source) => [source.licenseFile, ...(Array.isArray(source.noticeFiles) ? source.noticeFiles : [])].filter((path) => typeof path === "string");
   const name = String((typeof manifest?.name === "string" && manifest.name.trim()) || (project.kind === "page" ? nameOf(project) : basename(folder))).replace(/[\r\n/:]+/g, " ").trim().slice(0, 60) || "App";
   for (const source of upstream) {
-    const gone = terms(source).find((path) => !existsSync(join(folder, path)));
+    const gone = terms(source).find((path) => !existsSync(join(app, path)));
     if (gone) throw new Problem(`${name} can't be shared: the license of ${source.name} is missing from it. Put ${gone} back.`);
   }
   const unlicensed = upstream.filter((source) => !source.license);
@@ -159,21 +163,22 @@ export function exportApp(given, { anyway = false } = {}) {
     throw new Problem(`${name} uses work that came with no license (${unlicensed.map((source) => source.author ? `${source.name} by ${source.author}` : source.name).join(", ")}). Ask the person whether they're comfortable sharing it; --anyway shares it all the same.`);
   }
 
-  const files = new Map(), from = (path) => readFileSync(join(folder, path));
+  const files = new Map(), from = (path) => readFileSync(join(app, path));
   let kind, site = false, flags = {};
   if (project.kind === "page") {
     kind = typeof manifest?.platform === "string" ? manifest.platform : project.game ? "game" : "web-app";
     const lamps = kind === "game" ? GAME_LAMPS : SCREEN_LAMPS;
     // A page in Web/ goes as it is; a page at the folder's top (a plain site, or a page lamp made) is a site, whose
     // page is Web/ in the file and whose own files beside it go as themselves.
-    site = !project.lamps && kind === "web-app";
-    for (const path of filesUnder(project.root, "", { hidden: (path) => site && SERVED_HIDDEN.has(path), skip: (path) => path === "node_modules" || (!project.lamps && (WISH_FILES.has(path) || isLicenceFile(path) || path === ".lamp-wish")) })) {
+    // A site stays one at every export, whether its page is at the folder's top or (unpacked) in Web/.
+    site = kind === "web-app" && (manifest?.site === true || !project.lamps);
+    for (const path of filesUnder(project.root, "", { hidden: (path) => site && SERVED_HIDDEN.has(path), skip: (path) => path === "node_modules" || (!project.lamps && (wishFolder ? path === ".lamp-wish" || path === "LAMP-LICENSE.txt" : WISH_FILES.has(path))) })) {
       if (!lamps(path)) files.set(`Web/${path}`, readFileSync(join(project.root, path)));
     }
-    if (project.lamps) {
+    if (project.lamps || wishFolder) {
       // The Swift beside the page that answers its calls of the device, and a game's phone page.
-      for (const path of filesUnder(join(folder, "Sources"), "Sources/")) if (path.endsWith(".swift") && (kind === "game" ? path === "Sources/Native.swift" : !["Sources/LampSupport.swift", "Sources/LampPage.swift", "Sources/LampControllerKit.swift", "Sources/LampScreen.swift", "Sources/LampWebApp.swift"].includes(path))) files.set(path, from(path));
-      if (kind === "game") for (const path of [...filesUnder(join(folder, "Phone"), "Phone/"), ...filesUnder(join(folder, "src"), "src/")]) files.set(path, from(path));
+      for (const path of filesUnder(join(app, "Sources"), "Sources/")) if (path.endsWith(".swift") && (kind === "game" ? path === "Sources/Native.swift" : !["Sources/LampSupport.swift", "Sources/LampPage.swift", "Sources/LampControllerKit.swift", "Sources/LampScreen.swift", "Sources/LampWebApp.swift"].includes(path))) files.set(path, from(path));
+      if (kind === "game") for (const path of [...filesUnder(join(app, "Phone"), "Phone/"), ...filesUnder(join(app, "src"), "src/")]) files.set(path, from(path));
     }
   } else {
     kind = "mac";
@@ -191,17 +196,22 @@ export function exportApp(given, { anyway = false } = {}) {
 
   // The app's own files, capped so a file stays small enough to send (`Sharing.maxAttachedBytes`).
   let attached = 0;
-  for (const path of filesUnder(join(folder, "Assets"), "Assets/")) {
-    attached += statSync(join(folder, path)).size;
+  // A page at the folder's top with no `.lamp-wish/` keeps an Assets/ there as its own: it went with the page.
+  for (const path of project.kind === "page" && !project.lamps && !wishFolder ? [] : filesUnder(join(app, "Assets"), "Assets/")) {
+    attached += statSync(join(app, path)).size;
     if (attached > MAX_ARCHIVE - 8 * 1024 * 1024) throw new Problem(`${name} is too big to share: its pictures and other files come to over ${Math.floor((MAX_ARCHIVE - 8 * 1024 * 1024) / 1_000_000)} MB`);
     files.set(path, from(path));
   }
-  if (existsSync(join(folder, "APP.md"))) files.set("APP.md", from("APP.md"));
+  if (existsSync(join(app, "APP.md"))) files.set("APP.md", from("APP.md"));
   // What the app declares; the Lamp that opens the file checks each of it again as it reads it.
   let declares = false;
-  try { const said = JSON.parse(readFileSync(join(folder, "capabilities.json"), "utf8")); if (said && typeof said === "object" && !Array.isArray(said) && Object.keys(said).length) { files.set("capabilities.json", Buffer.from(JSON.stringify(said, null, 2))); declares = true; } } catch {}
+  try { const said = JSON.parse(readFileSync(join(app, "capabilities.json"), "utf8")); if (said && typeof said === "object" && !Array.isArray(said) && Object.keys(said).length) { files.set("capabilities.json", Buffer.from(JSON.stringify(said, null, 2))); declares = true; } } catch {}
   // Its icon's design, and the artwork drawn for it where the folder keeps it at its top (a file Lamp made does).
-  for (const icon of ["icon.json", "icon-glass.json", "icon-art.png", "icon.png"]) if (existsSync(join(folder, icon))) files.set(icon, from(icon));
+  // icon.png at the top of a page lamp made is the page's, which went with it.
+  for (const icon of ["icon.json", "icon-glass.json", "icon-art.png", "icon.png"]) {
+    if (icon === "icon.png" && project.kind === "page" && !project.lamps && !wishFolder) continue;
+    if (existsSync(join(app, icon))) files.set(icon, from(icon));
+  }
 
   // Whoever opens the file is remixing this app: it's added to the chain its credits carry, as one link if it's
   // already the last (`Credits.remixed`).
@@ -210,13 +220,13 @@ export function exportApp(given, { anyway = false } = {}) {
   if (last && (last.wish ? last.wish === me.wish : !last.starter && last.name === me.name)) chain[chain.length - 1] = { ...last, ...me, url: last.url, commit: last.commit };
   else chain.push(me);
   const carried = { remixOf: chain.slice(0, 32).map((link) => Object.fromEntries(Object.entries(link).filter(([, value]) => value != null))), upstream: upstream.slice(0, 32) };
-  if (Array.isArray(credits?.generated) && credits.generated.length) carried.generated = credits.generated.filter((entry) => typeof entry?.file === "string" && existsSync(join(folder, entry.file)));
+  if (Array.isArray(credits?.generated) && credits.generated.length) carried.generated = credits.generated.filter((entry) => typeof entry?.file === "string" && existsSync(join(app, entry.file)));
   files.set("credits.json", Buffer.from(JSON.stringify(sortedKeys(carried), null, 2)));
   // Each license and notice the credits name goes with the work it covers.
   for (const source of upstream) for (const path of terms(source)) if (isLicenceFile(path) && !files.has(path)) files.set(path, from(path));
 
   let description = null;
-  try { const said = JSON.parse(readFileSync(join(folder, "about.json"), "utf8")).description; if (typeof said === "string" && said.trim() && !/[\r\n]/.test(said.trim())) description = said.trim(); } catch {}
+  try { const said = JSON.parse(readFileSync(join(app, "about.json"), "utf8")).description; if (typeof said === "string" && said.trim() && !/[\r\n]/.test(said.trim())) description = said.trim(); } catch {}
   // The number a Lamp that opens it reads it by (`Sharing.format`): a web app or screen 12, a game 11, a Mac app by what it has.
   const format = kind === "web-app" || kind === "screen" ? 12 : kind === "game" ? 11 : flags.scene ? 8 : flags.share ? 7 : declares ? 4 : flags.widget ? 3 : 2;
   files.set("lamp-app.json", Buffer.from(JSON.stringify(sortedKeys({
