@@ -131,6 +131,12 @@ The folder holds all it takes, so nothing of Lamp's app is run:
   isn't kept in the repository: `scripts/cli-files.sh` writes it (`cli/lamps/mac-starter`, through `CLIFilesTests`)
   from the code as it is, and `lamp new --mac` says to run it when there's none.
 
+One difference from Lamp's app matters for an app that came from someone else. Lamp's app writes `build.sh`,
+`Package.swift` and `LampSupport.swift` afresh before every build and runs the build in the app's sandbox
+(`Template.writeOwnedFiles`, `Sandbox.run`), so nothing a folder brought with it in those files ever runs, and what
+its code does while it builds is fenced in. lamp runs the folder's own `build.sh` as it is, as anything run in a
+folder does: build only what you'd run.
+
 What stays Lamp's app's for a Mac app: putting a change in while it runs (`LiveReload`), what the app asks of Lamp
 on its port (AI, secrets, sharing: here nothing answers, which the app takes as Lamp not running), signing for a
 team, and the chat beside the app.
@@ -173,8 +179,9 @@ can read.
 
 ## What it doesn't do yet
 
-Phones, TVs and consoles as places to run, and anything that needs Lamp's Mac app around the page (`lamp.js`'s
-building blocks, `LampNative`, a game's phone controllers).
+Phones, TVs and consoles as places to run; what an app asks of Lamp as it runs (its AI, its secrets, `lamp.js`'s
+building blocks, a game's phone controllers); putting a change into a Mac app without opening it again; and the
+build's sandbox.
 
 ## Tests
 
