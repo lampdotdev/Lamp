@@ -21,7 +21,7 @@
 import { lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Away, OffNetwork, Refused, answersOn, bonjour, pinsAt, searchNetwork, send, ssdp } from "./devices.mjs";
+import { Away, OffNetwork, Refused, Rejected, Runner, StillWorking, answersOn, bonjour, pinsAt, searchNetwork, send, ssdp } from "./devices.mjs";
 import { defaultRoute, homeNetwork, neighbours, samsungAt, subnetOn, tvsIn } from "./network.mjs";
 import { PUBLISHER, identityName, keptSigner, namesOf, packageOf, versionAfter } from "./msix.mjs";
 import { tile } from "./png.mjs";
@@ -58,7 +58,63 @@ function write(file, bytes, mode) {
   renameSync(beside, file);
 }
 
+/**
+ * The runner for an integration's device, as Lamp's app hands it over: the integration (its JSON), the device (its
+ * id, name and address), the values to fill in (what the person typed among them, kept by Lamp's app), the file its
+ * certificates are kept in, and where a key it gives is kept. `event` tells whoever asked each time the device is
+ * waited on; `stopped` ends the run.
+ */
+function runnerOf(given, { stopped, event = () => {} } = {}) {
+  if (typeof given.integration?.id !== "string" || typeof given.device?.id !== "string") throw new Error('the call needs "integration" and "device"');
+  return new Runner({ integration: given.integration, device: { id: given.device.id, name: String(given.device.name ?? "The device"), address: given.device.address },
+    values: given.values ?? {}, pins: pinsAt(text(given, "pins")), keyFile: typeof given.keyFile === "string" ? given.keyFile : undefined,
+    stopped, onWaiting: () => event({ waiting: true }) });
+}
+
+/** What a sequence gave back, as Lamp's app reads it: a picture in base64, and the cookies its next part sends back. */
+const outcomeOf = (outcome) => ({ ...outcome, picture: outcome.picture ? Buffer.from(outcome.picture).toString("base64") : null });
+
 export const CALLS = {
+  /**
+   * One part of an integration's sequence on a device (`sequence`: its requests, waits and probes; what only Lamp's
+   * app does, a command on the device or a sign-in page, is between parts), with `cookies` from the part before. The
+   * settings it changes for itself (`restore`) come back in `changed`, which Lamp's app hands to `putBack` once it's
+   * done with them, or they're put back as the part ends when it asks for that (`putBack: true`).
+   */
+  async run(given, how = {}) {
+    const runner = runnerOf(given, how), changed = Array.isArray(given.changed) ? given.changed : [], before = changed.length;
+    try {
+      const outcome = await runner.run(Array.isArray(given.sequence) ? given.sequence : [], { extra: given.extra ?? {}, files: given.files ?? {}, changed, cookies: given.cookies ?? {} });
+      if (given.putBack === true) await runner.putBack(changed);
+      return { outcome: outcomeOf(outcome), changed };
+    } catch (error) {
+      // A part that fails puts back what it changed itself: the answer that says so carries no settings to hand back.
+      await runner.putBack(changed.splice(before));
+      throw error;
+    }
+  },
+
+  /** Puts back what parts of a sequence changed for themselves (`changed`, as `run` gave it), last first: the settings it couldn't. */
+  async putBack(given, how = {}) {
+    return { missed: await runnerOf(given, how).putBack(Array.isArray(given.changed) ? given.changed : []) };
+  },
+
+  /**
+   * Opens an app just put on the device: `launch`, then `running` until it's seen running, launched again while the
+   * device refuses or doesn't open it, up to `tries` launches. Whether it opened, whether it was ever launched, and
+   * what the device last refused with.
+   */
+  async open(given, how = {}) {
+    const changed = Array.isArray(given.changed) ? given.changed : [];
+    const opened = await runnerOf(given, how).open(given.launch ?? [], given.running ?? null, { extra: given.extra ?? {}, changed, tries: Number.isInteger(given.tries) ? given.tries : 8 });
+    return { ...opened, refused: opened.refused ?? null, changed };
+  },
+
+  /** What a check of a setup's `conditions` finds on the device now: holds, waiting, away or rejected, with why and what it read. */
+  async check(given, how = {}) {
+    return runnerOf(given, how).evaluate(Array.isArray(given.conditions) ? given.conditions : []);
+  },
+
   /**
    * A signed Windows package (msix.mjs) of the files in `payload`, a folder Lamp's app laid out, written to `out`, with
    * the certificate a device installs beside it at `certificate`. The package is named for the app (`slug`) and is a
@@ -157,6 +213,8 @@ function problemOf(error) {
   if (!(error instanceof Problem)) return null;
   const said = { problem: sentence(error.message) };
   if (error instanceof Refused) said.kind = error.kind;
+  else if (error instanceof Rejected) said.kind = "rejected";
+  else if (error instanceof StillWorking) said.kind = "still-working";
   else if (error instanceof OffNetwork) said.kind = "off-network";
   else if (error instanceof Away) Object.assign(said, { kind: "away", code: error.code ?? null, timedOut: error.timedOut });
   return said;
@@ -191,7 +249,7 @@ async function serve() {
     under.set(id, stopping);
     try {
       if (!call) throw new Error(`lamp has no call named "${asked?.call ?? ""}"`);
-      say({ id, done: await call(asked.given ?? {}, { stopped: stopping.signal }) });
+      say({ id, done: await call(asked.given ?? {}, { stopped: stopping.signal, event: (said) => say({ id, event: said }) }) });
     } catch (error) {
       say({ id, ...(problemOf(error) ?? { failed: String(error?.stack ?? error) }) });
     } finally { under.delete(id); }

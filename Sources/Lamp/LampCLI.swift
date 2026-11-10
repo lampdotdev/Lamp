@@ -71,9 +71,10 @@ enum LampCLI {
     /// Asks the run of lamp's command line that stays (`calls.mjs --serve`) to do `name` with what it's `given`, and
     /// gives back its answer. It's started the first time something is asked and again if it ever ends, and it ends
     /// with Lamp: its input closes when Lamp does. Many may be asked at once; each is answered as it finishes. A task
-    /// cancelled while it waits lets go of what it asked, there too.
-    static func ask(_ name: String, _ given: [String: Any]) async throws -> [String: Any] {
-        let line = try await kept.ask(name, given)
+    /// cancelled while it waits lets go of what it asked, there too. `onEvent` hears what the call says while it's
+    /// under way (that it's waiting on the device).
+    static func ask(_ name: String, _ given: [String: Any], onEvent: (@Sendable ([String: Any]) -> Void)? = nil) async throws -> [String: Any] {
+        let line = try await kept.ask(name, given, onEvent: onEvent)
         let answer = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] ?? [:]
         if let done = answer["done"] as? [String: Any] { return done }
         if let problem = answer["problem"] as? String {
@@ -93,12 +94,18 @@ enum LampCLI {
         private var process: Process?
         private var input: FileHandle?
         private var waiting: [Int: CheckedContinuation<Data, Error>] = [:]
+        private var listening: [Int: @Sendable ([String: Any]) -> Void] = [:]
         private var last = 0
         private var unread = Data()
         private var complaints = Data()
 
-        func ask(_ name: String, _ given: [String: Any]) async throws -> Data {
-            let id = lock.withLock { last += 1; return last }
+        func ask(_ name: String, _ given: [String: Any], onEvent: (@Sendable ([String: Any]) -> Void)? = nil) async throws -> Data {
+            let id = lock.withLock { () -> Int in
+                last += 1
+                if let onEvent { listening[last] = onEvent }
+                return last
+            }
+            defer { lock.withLock { _ = listening.removeValue(forKey: id) } }
             var line = try JSONSerialization.data(withJSONObject: ["id": id, "call": name, "given": given])
             line.append(0x0A)
             return try await withTaskCancellationHandler {
@@ -184,6 +191,11 @@ enum LampCLI {
             for line in lines {
                 let start = String(decoding: line.prefix(40), as: UTF8.self)
                 guard start.hasPrefix("{\"id\":"), let id = Int(start.dropFirst(6).prefix { $0.isNumber }) else { continue }
+                // What a call says while it's under way, before its answer.
+                if let said = (try? JSONSerialization.jsonObject(with: Data(line))) as? [String: Any], let event = said["event"] as? [String: Any] {
+                    lock.withLock { listening[id] }?(event)
+                    continue
+                }
                 answer(id, .success(Data(line)))
             }
         }

@@ -368,25 +368,26 @@ final class SetupGuideTests: XCTestCase {
                             name: "Test Roku", os: "Roku OS", osVersion: "14.0", reach: .network)
         device.address = "192.168.1.20"
         let enabled = [Integration.Condition(http: Request(port: 8060, path: "/query/device-info"), xml: "developer-enabled", equals: "true")]
-        func connection(_ answer: @escaping () throws -> DeviceHTTP.Answer) -> HTTPSetupConnection {
+        // What lamp's command line found of the device (cli/tests/devices.test.mjs holds how it tells them apart).
+        func connection(_ found: @escaping @Sendable () throws -> [String: Any]) -> HTTPSetupConnection {
             var runner = IntegrationRunner(integration: integration, device: device)
-            runner.send = { _, _, _, _ in try answer() }
+            runner.cli = { _, _, _ in try found() }
             return HTTPSetupConnection(runner: runner, reach: [Integration.Condition(http: Request(port: 8060, path: "/query/device-info"))])
         }
-        let off = connection { DeviceHTTP.Answer(status: 200, body: Data("<device-info><developer-enabled>false</developer-enabled></device-info>".utf8)) }
+        let off = connection { ["verdict": "waiting", "why": "Waiting for Test Roku…"] }
         try await off.connect()
         let held = try await off.holds(.http(enabled))
         XCTAssertFalse(held)
-        let on = connection { DeviceHTTP.Answer(status: 200, body: Data("<device-info><developer-enabled>true</developer-enabled></device-info>".utf8)) }
+        let on = connection { ["verdict": "holds", "read": "true"] }
         let holds = try await on.holds(.http(enabled))
         XCTAssertTrue(holds)
-        // Answering with an error is still answering: the device is there.
-        try await connection { DeviceHTTP.Answer(status: 503, body: Data()) }.connect()
 
-        let away = connection { throw URLError(.timedOut) }
+        let away = connection { ["verdict": "away", "why": "Waiting for Test Roku…"] }
         await assertThrows(SetupConnectionError.unreachable) { try await away.connect() }
         await assertThrows(SetupConnectionError.unreachable) { _ = try await away.holds(.http(enabled)) }
-        let changed = connection { throw DeviceTLS.Refusal.changed }
+        let gone = connection { throw LampCLI.Failure(message: "Lamp's own tools stopped before they answered.") }
+        await assertThrows(SetupConnectionError.unreachable) { try await gone.connect() }
+        let changed = connection { ["verdict": "rejected", "why": "This isn't the device…", "refused": "changed"] }
         await assertThrows(SetupConnectionError.rejected(DeviceTLS.Refusal.changed.localizedDescription)) { try await changed.connect() }
     }
 
@@ -444,10 +445,10 @@ final class SetupGuideTests: XCTestCase {
                             name: "Simulated Device", os: "Simulated OS", osVersion: "1.0", reach: .network)
         device.address = "192.168.1.20"
         let gate = Gate()
-        let model = DeviceSetupModel(testing: device, integration: integration, skills: [guide.name: guide]) { request, _, _, _ in
+        let model = DeviceSetupModel(testing: device, integration: integration, skills: [guide.name: guide]) { _, _, _ in
             // The first look is the watch's, held until the guide has started; every later one answers at once.
             await gate.firstWaits()
-            return DeviceHTTP.Answer(status: 200, body: Data("<info><developer>false</developer></info>".utf8))
+            return ["verdict": "waiting", "why": "Waiting for Simulated Device…"]
         }
         XCTAssertNotNil(model.guide)
         model.watch()
@@ -475,11 +476,15 @@ final class SetupGuideTests: XCTestCase {
         var device = Device(id: "simulated:AUTH", kind: .other, maker: "Lamp", model: "Simulated", modelID: "SIM-1",
                             name: "Simulated Device", os: "Simulated OS", osVersion: "1.0", reach: .network)
         device.address = "192.168.1.20"
-        var asked: [String] = []
+        final class Asked: @unchecked Sendable { var paths: [String] = [] }
+        let asked = Asked()
         var runner = IntegrationRunner(integration: integration, device: device)
-        runner.send = { request, _, _, _ in
-            asked.append(request.path)
-            return DeviceHTTP.Answer(status: request.path == "/install" ? 401 : 200, body: Data())
+        runner.cli = { name, given, _ in
+            guard name == "run" else { return ["verdict": "holds"] }
+            let paths = (given["sequence"] as? [[String: Any]] ?? []).compactMap { ($0["http"] as? [String: Any])?["path"] as? String }
+            asked.paths += paths
+            if paths.contains("/install") { throw LampCLI.Failure(message: "The device rejected the sign-in. Check the user name and password, then try again.", kind: "rejected") }
+            return ["outcome": [:], "changed": []]
         }
         let steps = try SetupSteps.parse(skill: """
         ```lamp-setup
@@ -496,7 +501,7 @@ final class SetupGuideTests: XCTestCase {
         guided.start(steps, name: "Simulated Device", step: "developer-mode", connect: { HTTPSetupConnection(runner: runner, reach: steps.reach) }, onFinish: {})
         await guided.finished()
         XCTAssertEqual(guided.failure, "The device rejected the sign-in. Check the user name and password, then try again.")
-        XCTAssertFalse(asked.contains("/next"), "the guide went on past a rejected sign-in")
+        XCTAssertFalse(asked.paths.contains("/next"), "the guide went on past a rejected sign-in")
         XCTAssertEqual(guided.lines, [])
     }
 
@@ -530,9 +535,9 @@ final class SetupGuideTests: XCTestCase {
         device.address = "192.168.1.20"
         let gate = Gate()
         // Every check is held until the test lets it go, and then finds the device not ready (nothing is kept).
-        let model = DeviceSetupModel(testing: device, integration: integration, skills: [:]) { _, _, _, _ in
+        let model = DeviceSetupModel(testing: device, integration: integration, skills: [:]) { _, _, _ in
             await gate.waits()
-            return DeviceHTTP.Answer(status: 503, body: Data())
+            return ["verdict": "waiting", "why": "Waiting for Simulated Device…"]
         }
         model.act()
         try await until { gate.count == 1 }
@@ -588,16 +593,15 @@ final class SetupGuideTests: XCTestCase {
         var device = Device(id: "simulated:PORT", kind: .other, maker: "Lamp", model: "Simulated", modelID: "SIM-1",
                             name: "Simulated Device", os: "Simulated OS", osVersion: "1.0", reach: .network)
         device.address = "192.168.1.20"
-        var installerAsked = 0
+        final class Installer: @unchecked Sendable { var asked = 0 }
+        let installer = Installer()
         var runner = IntegrationRunner(integration: integration, device: device)
-        runner.send = { request, _, _, _ in
-            guard request.port == 80 else {
-                return DeviceHTTP.Answer(status: 200, body: Data("<device-info><developer-enabled>true</developer-enabled></device-info>".utf8))
-            }
-            // The installer's port opens on the third look.
-            installerAsked += 1
-            if installerAsked < 3 { throw URLError(.cannotConnectToHost) }
-            return DeviceHTTP.Answer(status: 200, body: Data())
+        runner.cli = { _, given, _ in
+            let ports = (given["conditions"] as? [[String: Any]] ?? []).compactMap { ($0["http"] as? [String: Any])?["port"] as? Int }
+            guard ports.contains(80) else { return ["verdict": "holds", "read": "true"] }
+            // The installer's port opens on the third look: until then the device is away there, and answers where `reach` reads it.
+            installer.asked += 1
+            return installer.asked < 3 ? ["verdict": "away", "why": "Waiting for Simulated Device…"] : ["verdict": "holds"]
         }
         let steps = try SetupSteps.parse(skill: """
         ```lamp-setup
@@ -614,7 +618,7 @@ final class SetupGuideTests: XCTestCase {
         await guided.finished()
         XCTAssertNil(guided.failure, "a port that wasn't open yet stopped the guide")
         XCTAssertEqual(guided.lines.map(\.text), ["Developer mode is on"])
-        XCTAssertEqual(installerAsked, 3)
+        XCTAssertEqual(installer.asked, 3)
         XCTAssertTrue(guided.handedBack)
     }
 

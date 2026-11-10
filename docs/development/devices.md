@@ -65,7 +65,9 @@ chat's card (`.deviceStep`, `DeviceStepLine`; in the sidebar a line that opens t
 hands on the device (`wait`) is checked again every few seconds while it's shown. A step can also have Do It for Me, from a skill that
 says it does that step for the integration (`setup-for` its id), with no Swift for that device: "Do It for Me" in the
 TV guide. `IntegrationRunner` runs steps and
-sequences and keeps a device (`Integrations.Kept`, in Lamp's folder) only once a step has passed on it: a device found
+sequences (their requests, waits and probes, and what each check finds, are lamp's command line's: `run`, `open`,
+`putBack` and `check` in cli/calls.mjs, its `Runner`; between its parts the app does what only it does, a command on
+the device or a downloaded tool once approved, a log read into the app's, a maker's sign-in page) and keeps a device (`Integrations.Kept`, in Lamp's folder) only once a step has passed on it: a device found
 is shown for the moment, never kept. A device whose certificate isn't the one kept (reset, or its developer mode turned
 on again) is refused until the person reconnects it: the step's check or the install that met it puts a reconnect card
 where its setup card goes (`DeviceReconnectCard`, `DeviceSetupModel.certificateChanged`), and Reconnect lets the kept
@@ -244,7 +246,7 @@ bridge launches it by its names (`{packageFullName}`, `{appUserModelID}`, and `{
 Portal a request also carries cookies the device set earlier in its sequence (`{cookie:CSRF-Token}`), polls an install
 that answers 204 until it's done (`poll`) and fails with the device's words unless the answer says what `expect` asks,
 or asks again until it does (`until`), where a JSON path's `*` is any element of a list and the value may be one of
-Lamp's (`IntegrationRunner.meets`): the Xbox's install ends by waiting until the console lists `{packageFullName}`
+Lamp's (`meets` in cli/devices.mjs): the Xbox's install ends by waiting until the console lists `{packageFullName}`
 among its packages, since its install state says it's done before the app can be opened.
 Lamp ships the Xbox's integration (`Resources/Devices/xbox-one.json`): Developer Mode, Device Portal's password, and a
 controller-driven web app (arrow focus) wrapped as MSIX and shown in Lamp's own WebView2 host (`"host": "webview2"`, below). Its identity is

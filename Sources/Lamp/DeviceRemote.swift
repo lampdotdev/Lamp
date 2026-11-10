@@ -31,10 +31,6 @@ enum DeviceFolder {
 /// request is made, by lamp's command line (`pinsAt` in cli/devices.mjs, on the file `Pins` names); what's here is the
 /// store's other uses: the device's root, the person's Reconnect, and the words for a refusal.
 enum DeviceTLS {
-    static func fingerprint(_ certificate: Data) -> String {
-        SHA256.hash(data: certificate).map { String(format: "%02x", $0) }.joined()
-    }
-
     /// Why a certificate wasn't taken, in words for the setup card.
     enum Refusal: LocalizedError, Equatable {
         case changed, unsaved
@@ -44,31 +40,6 @@ enum DeviceTLS {
             case .unsaved: return "Lamp couldn't keep this device's certificate on this Mac, so it sent nothing to it."
             }
         }
-    }
-
-    /// Whether `root` signed `leaf`: the leaf checked against that root alone (no system roots, no name), as a device
-    /// that makes itself a new certificate from a root of its own (Xbox's Device Portal, at each start) is held to it.
-    static func signs(_ root: Data, _ leaf: Data) -> Bool {
-        guard let rootCertificate = SecCertificateCreateWithData(nil, root as CFData),
-              let leafCertificate = SecCertificateCreateWithData(nil, leaf as CFData) else { return false }
-        var trust: SecTrust?
-        guard SecTrustCreateWithCertificates(leafCertificate, SecPolicyCreateBasicX509(), &trust) == errSecSuccess, let trust,
-              SecTrustSetAnchorCertificates(trust, [rootCertificate] as CFArray) == errSecSuccess,
-              SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess else { return false }
-        return SecTrustEvaluateWithError(trust, nil)
-    }
-
-    /// A certificate as a device serves it, PEM or DER, as DER; nil when it isn't one.
-    static func certificate(from data: Data) -> Data? {
-        var der = data
-        let text = String(decoding: data, as: UTF8.self)
-        if text.contains("-----BEGIN CERTIFICATE-----") {
-            let body = text.components(separatedBy: "-----BEGIN CERTIFICATE-----").dropFirst().first?
-                .components(separatedBy: "-----END CERTIFICATE-----").first ?? ""
-            guard let decoded = Data(base64Encoded: body.filter { !$0.isWhitespace }) else { return nil }
-            der = decoded
-        }
-        return SecCertificateCreateWithData(nil, der as CFData) == nil ? nil : der
     }
 
     /// One device's kept certificates: the one it showed first, by port, and for a device whose integration says where
@@ -83,40 +54,13 @@ enum DeviceTLS {
             self.init(file: DeviceFolder.of(deviceID).appendingPathComponent("certificates.json"))
         }
 
-        /// A store of its own lets tests exercise failures without touching Lamp's kept devices.
         init(file: URL) { self.file = file }
-
-        /// The device's root kept for a port, when one is.
-        func root(port: Int) -> Data? {
-            Self.lock.lock(); defer { Self.lock.unlock() }
-            return (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) }?["root:\(port)"]
-                .flatMap { Data(base64Encoded: $0) }
-        }
-
-        /// Keeps the device's root for a port, only when it signed the certificate kept there (`leaf`, the one just
-        /// shown, whose fingerprint must be the kept one), so the root is the device's own, read over a connection
-        /// already held to it.
-        @discardableResult
-        func keepRoot(_ root: Data, signing leaf: Data, port: Int) -> Bool {
-            Self.lock.lock(); defer { Self.lock.unlock() }
-            guard DeviceTLS.signs(root, leaf), let data = try? Data(contentsOf: file),
-                  var pins = try? JSONDecoder().decode([String: String].self, from: data),
-                  pins[String(port)] == DeviceTLS.fingerprint(leaf), pins["root:\(port)"] == nil else { return false }
-            pins["root:\(port)"] = root.base64EncodedString()
-            return (try? JSONEncoder().encode(pins).write(to: file, options: .atomic)) != nil
-        }
 
         /// Lets go of every certificate kept for the device, for the person's Reconnect: the next request keeps the one the
         /// device shows then, as at the first setup.
         func forget() {
             Self.lock.lock(); defer { Self.lock.unlock() }
             try? FileManager.default.removeItem(at: file)
-        }
-
-        /// The certificate kept for a port, for tests and the record.
-        func kept(port: Int) -> String? {
-            Self.lock.lock(); defer { Self.lock.unlock() }
-            return (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) }?[String(port)]
         }
     }
 }

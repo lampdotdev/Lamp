@@ -310,3 +310,84 @@ test("a look finds an integration's device in its one search, and reads one nobo
   assert.deepEqual(servicesIn(Buffer.from([1, 2, 3]), "_sonos._tcp", "192.168.1.41"), [], "an answer that can't be read says nothing");
   assert.deepEqual(await bonjour("not a type"), [], "only a service type is asked for");
 });
+
+test("an Xbox's install is waited for, and its app launched again until it runs, or said not to have opened", async () => {
+  const http = await import("node:http");
+  const { Runner, integrationOf } = await import("../devices.mjs");
+  const names = { packageFullName: "Lamp.test_1.0.0.0_x64__abc", appUserModelID: "Lamp.test_abc!App" };
+  // A made-up console answering each path from its own script, in turn, the last answer over and over.
+  let script = {}, asked = {};
+  const server = http.createServer((request, answer) => {
+    const path = request.url.split("?")[0], list = script[path] ?? [[200, {}]];
+    asked[path] = (asked[path] ?? 0) + 1;
+    const [status, body] = list.length > 1 ? list.shift() : list[0];
+    // It hands out the token a change must carry, as a console does.
+    answer.writeHead(status, { "content-type": "application/json", "set-cookie": "CSRF-Token=made-up; Path=/" });
+    answer.end(JSON.stringify(body));
+  });
+  await new Promise((done) => server.listen(0, "127.0.0.1", done));
+  try {
+    // The console's sequences as it ships them, over plain HTTP to the stand-in, with no sign-in.
+    const plain = (bridge) => Object.fromEntries(Object.entries(bridge).map(([name, actions]) => [name, Array.isArray(actions)
+      ? actions.map((action) => (action.http ? { ...action, http: { ...action.http, https: false, port: server.address().port, auth: undefined } } : action)) : actions]));
+    const bridge = plain(integrationOf("xbox-one").bridge);
+    const runner = new Runner({ integration: integrationOf("xbox-one"), device: { id: "xbox-one:made-up", name: "Den Xbox", address: "127.0.0.1" },
+      values: { "field:password": "made-up-password" }, pins: { admit: () => null, root: () => null, keepRoot: () => false }, reach: () => true, pause: async () => {} });
+    const listing = (key, has) => [200, { [key]: [...(has ? [{ PackageFullName: names.packageFullName }] : []), { PackageFullName: "Other.app_1.0.0.0_x64__xyz" }] }];
+
+    // Installed: the state says so, and the package is listed on the second ask.
+    script = { "/api/app/packagemanager/state": [[200, { Success: true }]], "/api/app/packagemanager/packages": [listing("InstalledPackages", false), listing("InstalledPackages", true)] };
+    asked = {};
+    await runner.run(bridge.install.slice(-2), { extra: names });
+    assert.equal(asked["/api/app/packagemanager/packages"], 2);
+
+    // Refused twice, then opened and running.
+    const refused = [400, { ErrorMessage: "Failed to launch the application.", ErrorCode: -1927937760 }];
+    script = { "/api/taskmanager/app": [refused, refused, [200, {}]], "/api/resourcemanager/processes": [listing("Processes", true)] };
+    asked = {};
+    assert.equal((await runner.open(bridge.launch, bridge.running, { extra: names })).opened, true);
+    assert.equal(asked["/api/taskmanager/app"], 3);
+
+    // Taken, but not running through the whole check, so launched again; then running.
+    script = { "/api/resourcemanager/processes": [...Array(9).fill(listing("Processes", false)), listing("Processes", true)] };
+    asked = {};
+    assert.equal((await runner.open(bridge.launch, bridge.running, { extra: names })).opened, true);
+    assert.equal(asked["/api/taskmanager/app"], 2);
+
+    // Never running: said, not claimed open.
+    script = { "/api/resourcemanager/processes": [listing("Processes", false)] };
+    assert.deepEqual(await runner.open(bridge.launch, bridge.running, { extra: names, tries: 3 }), { opened: false, launched: true, refused: null });
+
+    // Stopped by whoever asked: the launches end between tries.
+    const stopping = new AbortController();
+    const stopped = new Runner({ ...runner, integration: runner.integration, device: runner.device, values: runner.given, pins: runner.pins, reach: () => true,
+      pause: async () => { stopping.abort(); }, stopped: stopping.signal });
+    await assert.rejects(stopped.open(bridge.launch, bridge.running, { extra: names, tries: 5 }), /stopped/);
+  } finally { server.close(); server.closeAllConnections?.(); }
+});
+
+test("a setup's check tells a device that holds from one that answers otherwise, one away, and one that turns the sign-in away", async () => {
+  const http = await import("node:http");
+  const { Runner } = await import("../devices.mjs");
+  let status = 200, body = "<device-info><developer-enabled>true</developer-enabled></device-info>";
+  const server = http.createServer((request, answer) => { answer.writeHead(status); answer.end(body); });
+  await new Promise((done) => server.listen(0, "127.0.0.1", done));
+  try {
+    const port = server.address().port, device = { id: "roku:made-up", name: "Den Roku", address: "127.0.0.1" };
+    const runner = (values = {}) => new Runner({ integration: { id: "roku", steps: [] }, device, values, pins: { admit: () => null, root: () => null }, reach: () => true });
+    const enabled = [{ http: { port, path: "/query/device-info" }, xml: "developer-enabled", equals: "true" }];
+    assert.deepEqual(await runner().evaluate(enabled), { verdict: "holds", read: "true" });
+    body = "<device-info><developer-enabled>false</developer-enabled></device-info>";
+    assert.deepEqual(await runner().evaluate(enabled), { verdict: "waiting", why: "Waiting for Den Roku…" });
+    assert.equal((await runner().evaluate([{ tcp: 1 }])).verdict, "away");
+    assert.deepEqual(await runner().evaluate([{ field: "password" }]), { verdict: "waiting", why: "Waiting for what you type.", needs: "password" });
+    assert.equal((await runner().evaluate([{ signedIn: true }])).why, "Waiting for you to sign in.");
+    status = 401;
+    const signIn = [{ field: "password" }, { http: { port, path: "/plugin_install", auth: { user: "rokudev", password: "{field:password}" } } }];
+    const rejected = await runner({ "field:password": "a-wrong-one" }).evaluate(signIn);
+    assert.equal(rejected.verdict, "rejected");
+    assert.equal(rejected.why, "The device rejected the sign-in. Check the user name and password, then try again.");
+    status = 200;
+    assert.equal((await runner({ "field:password": "made-up-password" }).evaluate(signIn)).verdict, "holds");
+  } finally { server.close(); server.closeAllConnections?.(); }
+});

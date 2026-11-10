@@ -709,7 +709,7 @@ export function plainAnswer(answer) {
 
 /** The device turned the sign-in away: waiting won't mend it, the person has to type it again. */
 export class Rejected extends Problem {
-  constructor() { super("the device rejected the sign-in: check the password, then try again"); }
+  constructor() { super("the device rejected the sign-in. Check the user name and password, then try again"); }
 }
 
 /** The device was still at what it was sent when lamp stopped waiting: a moment later it may be done. */
@@ -720,17 +720,25 @@ export class StillWorking extends Problem {}
  * are how it waits and what it takes for an address on the home network, which a test gives its own.
  */
 export class Runner {
-  constructor({ integration, device, onWaiting = () => {}, pause = sleep, reach = isPrivate }) {
-    Object.assign(this, { integration, device, onWaiting, pause, reach });
+  /**
+   * `values` and `pins`, when given, are another keeper's (Lamp's app keeps what the person typed for a device in its
+   * own store, and names the file its certificates are kept in); `keyFile` is where a key the device gives is kept,
+   * and `stopped` ends the run between requests once whoever asked no longer wants it.
+   */
+  constructor({ integration, device, onWaiting = () => {}, pause = sleep, reach = isPrivate, values, pins, keyFile, stopped }) {
+    Object.assign(this, { integration, device, onWaiting, pause, reach, given: values, pins: pins ?? pinsOf(device.id), keyFile, stopped });
   }
+
+  #stillWanted() { if (this.stopped?.aborted) throw new Problem("stopped"); }
 
   get address() {
     if (!this.device.address || !this.reach(this.device.address)) throw new Problem(`lamp doesn't know where ${this.device.name} is on your network: make sure it's on, then run lamp devices`);
     return this.device.address;
   }
 
-  /** lamp's values for this device, and the caller's (an app's names, whether it's a game). */
+  /** lamp's values for this device, and the caller's (an app's names, whether it's a game), or those given whole. */
   values(extra = {}) {
+    if (this.given) return { ...this.given, ...extra };
     const values = { ...extra, address: this.device.address, deviceID: this.device.id.split(":").slice(1).join(":") };
     const mine = nearest(this.device.address);
     if (mine) values.mac = mine;
@@ -740,7 +748,7 @@ export class Runner {
   }
 
   #send(request, values, more = {}) {
-    return send(request, this.address, values, { pins: pinsOf(this.device.id), reach: this.reach, ...more });
+    return send(request, this.address, values, { pins: this.pins, reach: this.reach, stopped: this.stopped, ...more });
   }
 
   /**
@@ -749,7 +757,7 @@ export class Runner {
    * its own.
    */
   async #learnRoot(request, answer) {
-    const path = this.integration.certificateRoot, pins = pinsOf(this.device.id);
+    const path = this.integration.certificateRoot, pins = this.pins;
     if (!request.https || !path || !answer.certificate || pins.root(String(request.port))) return;
     const got = await this.#send({ port: request.port, path, https: true }, {}).catch(() => null);
     const root = got?.ok && certificateFrom(got.body);
@@ -761,27 +769,39 @@ export class Runner {
    * back as it ends; or, given `changed`, once the caller is done (`putBack`): an Xbox settles an installed package's
    * type only as it's opened, after the install's own sequence.
    */
-  async run(sequence, { extra = {}, files = {}, changed } = {}) {
+  async run(sequence, { extra = {}, files = {}, changed, cookies = {} } = {}) {
     const settings = changed ?? [];
-    try { return await this.#run(sequence, extra, files, settings); } finally { if (!changed) await this.putBack(settings); }
+    try { return await this.#run(sequence, extra, files, settings, cookies); } finally { if (!changed) await this.putBack(settings); }
   }
 
-  /** Each setting as it was before a sequence changed it, last changed first. */
+  /**
+   * Each setting as it was before a sequence changed it, last changed first, sent with the cookies its change went
+   * with (a CSRF token). A device that can't be reached by then keeps what the sequence set: there's nothing more to
+   * do from here. Answers the settings it couldn't put back.
+   */
   async putBack(changed) {
+    const missed = [];
     for (const restore of changed.splice(0).reverse()) {
       const back = { ...restore.request, body: JSON.stringify({ [restore.request.restore]: restore.was }) };
-      const answer = await this.#send(back, restore.values, { session: restore.session }).catch(() => null);
-      if (!answer?.ok) process.stderr.write(`lamp couldn't set ${restore.request.path} on ${this.device.name} back to ${restore.was}\n`);
+      const values = { ...this.values(), ...Object.fromEntries(Object.entries(restore.cookies ?? {}).map(([name, value]) => [`cookie:${name}`, value])) };
+      const answer = await this.#send(back, values, { session: restore.session ?? {} }).catch(() => null);
+      if (!answer?.ok) missed.push(`lamp couldn't set ${restore.request.path} on ${this.device.name} back to ${restore.was}`);
     }
+    return missed;
   }
 
-  async #run(sequence, extra, files, changed) {
-    const outcome = { answers: [] }, cookies = {}, session = {};
+  async #run(sequence, extra, files, changed, given) {
+    const outcome = { answers: [] }, cookies = { ...given }, session = {};
     for (const action of sequence) {
+      this.#stillWanted();
       const values = { ...this.values(extra), ...Object.fromEntries(Object.entries(cookies).map(([name, value]) => [`cookie:${name}`, value])) };
       const request = action.http;
       if (action.wait) { await this.pause(Math.min(Math.max(action.wait, 1), 30) * 1000); continue; }
-      if (!request) throw new Problem(`${this.device.name}'s integration asks for something lamp's command line doesn't do yet (${Object.keys(action).join(", ")})`);
+      if (action.probe) {
+        if (!(await present(this.address, action.probe, { reach: this.reach }))) throw new Problem(`${this.device.name} didn't answer (${action.probe})`);
+        continue;
+      }
+      if (!request) throw new Problem(`${this.device.name}'s integration asks for something lamp's command line doesn't do (${Object.keys(action).join(", ")})`);
       // A setting changed only for this sequence: what it is now, to put back after. Read as it's written, with the
       // same sign-in and headers, but for a cookie the device sets only now.
       if (request.restore) {
@@ -793,7 +813,7 @@ export class Runner {
         const setting = `${request.port}${request.path}`;
         let wanted;
         try { wanted = jsonAt(Buffer.from(fill(request.body ?? "", values, "body")), request.restore); } catch {}
-        if (!changed.some((restore) => `${restore.request.port}${restore.request.path}` === setting) && was !== wanted) changed.push({ request, was, values, session });
+        if (!changed.some((restore) => `${restore.request.port}${restore.request.path}` === setting) && was !== wanted) changed.push({ request, was, cookies: { ...cookies }, session });
       }
       const transfer = () => this.#send(request, values, { files, session });
       let asked = Date.now(), answer = await transfer();
@@ -801,6 +821,7 @@ export class Runner {
       if (request.poll) {
         const until = Date.now() + Math.min(Math.max(request.poll, 2), 600) * 1000;
         while (answer.status === 204 && Date.now() < until) {
+          this.#stillWanted();
           this.onWaiting();
           await this.pause(2000);
           asked = Date.now();
@@ -822,6 +843,7 @@ export class Runner {
         while (!meets(request.expect, answer, values)) {
           if (!request.until) throw new Problem(`${this.device.name} said: ${plainAnswer(answer.text)}`);
           if (spent >= request.until) throw new StillWorking(`${this.device.name} still wasn't ready at ${request.path} after ${request.until} seconds`);
+          this.#stillWanted();
           this.onWaiting();
           await this.pause(2000);
           asked = Date.now();
@@ -834,8 +856,15 @@ export class Runner {
       if (request.keep === "picture") outcome.picture = answer.body;
       else if (request.keep === "screen") outcome.screen = answer.body.subarray(0, 512 << 10).toString("utf8");
       else if (request.keep === "log") outcome.log = answer.body.subarray(Math.max(0, answer.body.length - (256 << 10))).toString("utf8");
-      else outcome.answers.push(answer.text.slice(0, 64 << 10));
+      else if (request.keep === "key") {
+        // A key the device gives this computer to sign in to it with, kept where the caller says, for its person alone.
+        if (!this.keyFile) throw new Problem(`${this.device.name} gave a key, and lamp has nowhere to keep it`);
+        mkdirSync(dirname(this.keyFile), { recursive: true, mode: 0o700 });
+        writeFileSync(this.keyFile, answer.body, { mode: 0o600 });
+        chmodSync(this.keyFile, 0o600);
+      } else outcome.answers.push(answer.text.slice(0, 64 << 10));
     }
+    outcome.cookies = cookies;
     return outcome;
   }
 
@@ -858,6 +887,7 @@ export class Runner {
         refused = error.message;
       }
       if (attempt === tries) break;
+      this.#stillWanted();
       this.onWaiting();
       await this.pause(wait);
       wait = Math.min(wait * 2, 8000);
@@ -866,38 +896,53 @@ export class Runner {
   }
 
   /**
-   * Whether a setup step's check passes now: `passed`, what it read from the device, and when it didn't pass, why,
-   * with `failed` for a reason waiting won't mend (the certificate changed, or the device rejected the sign-in).
+   * What a check of these conditions finds, told apart the way a setup needs it told: `holds` (with the first value
+   * read), `waiting` (the device answered otherwise, or the person hasn't typed what's needed yet), `away` (the device
+   * didn't answer), or `rejected` (it answered, but its certificate isn't the one kept, or it turned the sign-in away).
+   * `needs` names the field a condition waits for.
    */
-  async check(step) {
-    const values = this.values(), waiting = `waiting for ${this.device.name}`;
+  async evaluate(conditions) {
+    const values = this.values(), waiting = `Waiting for ${this.device.name}…`;
     let read;
-    for (const condition of step.check ?? []) {
+    for (const condition of conditions ?? []) {
       if (condition.field) {
-        if (!values[`field:${condition.field}`]) return { passed: false, needs: condition.field, why: "waiting for what you type" };
+        if (!values[`field:${condition.field}`]) return { verdict: "waiting", why: "Waiting for what you type.", needs: condition.field };
+      } else if (condition.signedIn) {
+        if (!values.signIn) return { verdict: "waiting", why: "Waiting for you to sign in." };
       } else if (condition.tcp) {
-        if (!(await answersOn(this.device.address, condition.tcp, { reach: this.reach }))) return { passed: false, why: waiting };
+        if (!this.device.address || !(await answersOn(this.device.address, condition.tcp, { reach: this.reach }))) return { verdict: "away", why: waiting };
       } else if (condition.http) {
         let answer;
         try {
           answer = await this.#send(condition.http, values);
           if (answer.ok) await this.#learnRoot(condition.http, answer);
         } catch (error) {
-          if (error instanceof Refused) return { passed: false, why: error.message, failed: true };
-          return { passed: false, why: waiting };
+          if (error instanceof Refused) return { verdict: "rejected", why: sentence(error.message), refused: error.kind };
+          return { verdict: "away", why: waiting };
         }
-        if (condition.http.auth && answer.status === 401) return { passed: false, why: new Rejected().message, failed: true, rejected: true };
-        if (!answer.ok) return { passed: false, why: waiting };
+        // A device that turns the password away keeps doing so however long one waits: the person has to type it again.
+        if (condition.http.auth && answer.status === 401) return { verdict: "rejected", why: sentence(new Rejected().message), rejected: true };
+        if (!answer.ok) return { verdict: "waiting", why: waiting };
         if (condition.json || condition.xml) {
           const value = condition.json ? jsonAt(answer.body, condition.json) : xmlAt(answer.body, condition.xml);
-          if (value === undefined) return { passed: false, why: `${this.device.name} doesn't say yet` };
-          if (condition.equals && !sameWords(value, condition.equals)) return { passed: false, why: waiting };
-          if (condition.contains && !holds(value, condition.contains)) return { passed: false, why: waiting };
+          if (value === undefined) return { verdict: "waiting", why: `${this.device.name} doesn't say yet.` };
+          if (condition.equals && !sameWords(value, condition.equals)) return { verdict: "waiting", why: waiting };
+          if (condition.contains && !holds(value, condition.contains)) return { verdict: "waiting", why: waiting };
           read ??= value;
         }
       }
     }
-    return { passed: true, read };
+    return { verdict: "holds", read: read ?? null };
+  }
+
+  /**
+   * Whether a setup step's check passes now: `passed`, what it read from the device, and when it didn't pass, why,
+   * with `failed` for a reason waiting won't mend (the certificate changed, or the device rejected the sign-in).
+   */
+  async check(step) {
+    const found = await this.evaluate(step.check);
+    if (found.verdict === "holds") return { passed: true, read: found.read ?? undefined };
+    return { passed: false, why: found.why, needs: found.needs, failed: found.verdict === "rejected", rejected: !!found.rejected };
   }
 
   /** A step passed on this device: it's kept, with the step and what the step read. */
@@ -910,6 +955,19 @@ export class Runner {
     keep(mine);
     Object.assign(this.device, { model: mine.model, kept: true });
   }
+}
+
+/** A problem's words as a sentence. */
+export const sentence = (words) => `${words[0].toUpperCase()}${words.slice(1)}${/[.!?…]$/.test(words) ? "" : "."}`;
+
+/** Whether the device at `address` is there now, as a probe says: a port it takes ("tcp:8060"), a search it answers ("ssdp:roku:ecp") or a Bonjour service it offers. */
+export async function present(address, probe, { reach = isPrivate } = {}) {
+  const [kind, ...rest] = String(probe).split(":"), value = rest.join(":");
+  if (!value || !reach(address)) return false;
+  if (kind === "tcp") return answersOn(address, Number(value), { reach });
+  if (kind === "ssdp") return (await ssdp(value, 2)).some((answer) => answer.address === address);
+  if (kind === "bonjour") return (await bonjour(value, 3)).some((found) => found.address === address);
+  return false;
 }
 
 /** Whether an answer says what `expect` asks, of any element where its path has `*`. */

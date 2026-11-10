@@ -178,9 +178,9 @@ of the link's own.
 
 A page goes on one of the person's devices through the device's integration, the same file Lamp's app reads
 (`Resources/Devices/*.json`): how the device is found, its setup steps, and the requests that install, open, picture
-and remove an app. Nothing in one is code: `cli/devices.mjs` makes each request itself, as `IntegrationRunner` does in
-Lamp's app, so a change to an integration reaches both. An Xbox is the only device so far (`takesPages`): the one
-whose host for a page lamp packages for.
+and remove an app. Nothing in one is code: `cli/devices.mjs` runs it (`Runner`), for lamp and for Lamp's app alike
+(`IntegrationRunner` asks it), so a change to an integration reaches both. An Xbox is the only device lamp puts a page on
+itself so far (`takesPages`): the one whose host for a page lamp packages for.
 
 - **Finding** is one SSDP search of the home network, with each answer read as its integration says
   (`searchNetwork`: its search target, a Bonjour service, or a page on the device holding words; then its identity
@@ -288,7 +288,9 @@ does. A problem says its kind where Lamp's app acts on which it was: a device th
   (what the person typed for a device comes with the request, on the run's input, and is kept nowhere here); `look`,
   one look at the home network for the integrations Lamp's app gives it, with the TVs that answered read as a
   Samsung's API and an LG's descriptions say (`tvsIn`, cli/network.mjs); `tv`, a Samsung TV read again; `search`, a
-  search for one target; `probe`, whether a device is there now, as a setup step's check asks; `network`, the sweep
+  search for one target; `probe`, whether a device is there now, as a setup step's check asks; `run`, `open`, `putBack` and `check`, an
+  integration's sequences and a setup's checks on one device, with the values Lamp's app fills in (what the person
+  typed, from its own store, on the call's input) and, while a call waits on the device, an event that says so; `network`, the sweep
   of this computer's subnet and every Bonjour service (cli/mdns.mjs); and `neighbours`, the gateway and subnet now.
   Two things stay in Lamp's app, since only it can see them: whether macOS lets Lamp look at all, which is
   Network.framework's to say (`DeviceProbe.localNetworkDenied`), and the neighbor table, which macOS shows only to a
