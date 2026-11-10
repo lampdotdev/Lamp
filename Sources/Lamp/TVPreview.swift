@@ -481,6 +481,8 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         let value: String
         let focused: Bool
         let frame: CGRect   // in the picture's pixels
+        /// Its place in the list the page's read made, by which a click finds it (`PageScreen.click`).
+        var ref: Int? = nil
     }
 
     /// What's on the screen, focusable things and text, in reading order.
@@ -496,7 +498,8 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
             counts[letter, default: 0] += 1
             func n(_ key: String) -> CGFloat { CGFloat((entry[key] as? NSNumber)?.doubleValue ?? 0) * scale }
             return Item(id: letter + String(counts[letter]!), kind: kind, name: entry["name"] as? String ?? "", value: entry["value"] as? String ?? "",
-                        focused: entry["focused"] as? Bool ?? false, frame: CGRect(x: n("x"), y: n("y"), width: n("w"), height: n("h")))
+                        focused: entry["focused"] as? Bool ?? false, frame: CGRect(x: n("x"), y: n("y"), width: n("w"), height: n("h")),
+                        ref: (entry["ref"] as? NSNumber)?.intValue)
         }
     }
 
@@ -593,26 +596,20 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
                 }
             case "click", "tap", "left_click", "double_click":
                 let point: CGPoint
-                var what = ""
+                var what = "", want = "null"
                 if let target = action.target {
                     guard let item = find(target) else { report.append("\(n). Nothing on screen matches \"\(target)\"."); continue }
                     point = CGPoint(x: item.frame.midX, y: item.frame.midY)
-                    what = "\(item.kind) \"\(item.name)\""
+                    what = "\(item.kind) \"\(item.name)\": "
+                    want = "{ ref: \(item.ref ?? -1), w: \(item.frame.width / preview.scale), h: \(item.frame.height / preview.scale) }"
                 } else if let x = action.x, let y = action.y {
                     point = CGPoint(x: x, y: y)
-                    what = "the point \(Int(x)),\(Int(y))"
+                    what = "at \(Int(x)),\(Int(y)): "
                 } else { report.append("\(n). click needs a target or x and y."); continue }
-                _ = await js("""
-                    (function () {
-                      var el = document.elementFromPoint(\(point.x / preview.scale), \(point.y / preview.scale));
-                      if (!el) return '';
-                      var focusable = el.closest('[data-focus], button, a[href], input, select, textarea, [tabindex]') || el;
-                      if (focusable.focus) focusable.focus();
-                      if (focusable.click) focusable.click();
-                      return '';
-                    })();
-                    """)
-                report.append("\(n). Clicked \(what).")
+                // The page says what the click landed on, and doesn't click a thing that's dimmed or under another.
+                let answer = await js(PageScreen.click + "(\(point.x / preview.scale), \(point.y / preview.scale), \(want), \(action.action == "double_click" ? 2 : 1))")
+                let said = answer.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }?["said"] as? String
+                report.append("\(n). Click \(what)\(said ?? "the page didn't answer, so whether it was clicked isn't known").")
             case "type":
                 guard let text = action.text else { report.append("\(n). type needs text."); continue }
                 let target = action.target.flatMap(find)
@@ -653,7 +650,10 @@ enum PageScreen {
     static let script = """
         (function () {
           var FOCUSABLE = '[data-focus], button, a[href], input, select, textarea, [tabindex]';
-          var focused = document.activeElement, out = [];
+          var focused = document.activeElement, out = [], els = [];
+          // Each thing listed is kept, by its place in the list (`ref`), so a click names the very thing read
+          // (`PageScreen.click`), whatever else shares its box.
+          function add(el, entry) { entry.ref = els.length; els.push(el); out.push(entry); }
           function box(el) {
             var r = el.getBoundingClientRect();
             if (r.width <= 0 || r.height <= 0 || r.right < 0 || r.bottom < 0 || r.left > window.innerWidth || r.top > window.innerHeight) return null;
@@ -669,7 +669,7 @@ enum PageScreen {
             var takes = el === focused || (el.matches(FOCUSABLE) && !(el.getAttribute('tabindex') === '-1' && !el.hasAttribute('data-focus')));
             if (takes) {
               var field = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA';
-              out.push({ kind: field ? 'field' : el.tagName === 'SELECT' ? 'choice' : 'button',
+              add(el, { kind: field ? 'field' : el.tagName === 'SELECT' ? 'choice' : 'button',
                 name: words(el.getAttribute('aria-label') || el.getAttribute('alt') || (field ? el.getAttribute('placeholder') : el.innerText)).slice(0, 120),
                 value: field ? String(el.value || '') : '', focused: el === focused, x: r.left, y: r.top, w: r.width, h: r.height });
               continue;
@@ -678,11 +678,82 @@ enum PageScreen {
             var own = '';
             for (var c = el.firstChild; c; c = c.nextSibling) if (c.nodeType === 3) own += c.nodeValue;
             own = words(own);
-            if (own) out.push({ kind: 'text', name: own.slice(0, 160), value: '', focused: false, x: r.left, y: r.top, w: r.width, h: r.height });
-            else if (el.tagName === 'IMG' && el.getAttribute('alt')) out.push({ kind: 'image', name: words(el.getAttribute('alt')), value: '', focused: false, x: r.left, y: r.top, w: r.width, h: r.height });
+            if (own) add(el, { kind: 'text', name: own.slice(0, 160), value: '', focused: false, x: r.left, y: r.top, w: r.width, h: r.height });
+            else if (el.tagName === 'IMG' && el.getAttribute('alt')) add(el, { kind: 'image', name: words(el.getAttribute('alt')), value: '', focused: false, x: r.left, y: r.top, w: r.width, h: r.height });
           }
+          window.__lampScreenItems = els;
           return JSON.stringify(out);
         })();
+        """
+
+    /// A click on a page, as a function of the point (CSS pixels), the thing it's meant for (its place in the list the
+    /// last screen read made, `ref`, and its box's size there, the box centered on the point; or null for a bare point)
+    /// and the number of clicks. It answers JSON: whether it clicked
+    /// (`did`), and what happened in words (`said`), naming what the click really landed on.
+    ///
+    /// A thing named on the screen is the one that read listed, so the click goes to that thing or to nothing: one that has
+    /// gone or moved since is reported missed. Dimmed, it
+    /// isn't clicked. Where something else lies over its middle (a page's layer above it), the click goes to a part of
+    /// it that's uncovered, as a person aims at what they see, and the answer names what covers the middle; with
+    /// none uncovered it isn't clicked and the answer says it missed and what's on top. Read in the preview
+    /// (`TVPreview.perform`) and, written in by `GameKit.page`, in the app around a page on the Mac (LampPage.swift).
+    static let click = """
+        (function (x, y, want, clicks) {
+          var FOCUSABLE = '[data-focus], button, a[href], input, select, textarea, [tabindex]';
+          function words(t) { return (t || '').replace(/\\s+/g, ' ').trim(); }
+          function dimmed(el) {
+            return !!(el.disabled || el.getAttribute('aria-disabled') === 'true' || (el.closest && el.closest('fieldset[disabled]')));
+          }
+          function describe(el) {
+            if (!el) return 'nothing';
+            var name = words(el.getAttribute('aria-label') || el.getAttribute('alt') || (el.matches(FOCUSABLE) ? el.innerText : '')).slice(0, 60);
+            var kind = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' ? 'field' : el.tagName === 'SELECT' ? 'choice' : el.matches(FOCUSABLE) ? 'button' : '';
+            var tag = el.tagName.toLowerCase() + (el.id ? '#' + el.id : '');
+            var cls = typeof el.className === 'string' ? el.className : (el.getAttribute('class') || '');
+            cls = words(cls).split(' ').filter(Boolean).slice(0, 2);
+            if (cls.length) tag += '.' + cls.join('.');
+            var said = kind && name ? kind + ' "' + name + '" (' + tag + ')' : 'the page\\'s ' + tag;
+            var holder = el.parentElement && el.parentElement.closest('[id]');
+            if (!(kind && name) && holder && holder !== document.body) said += ' in ' + holder.tagName.toLowerCase() + '#' + holder.id;
+            return said;
+          }
+          function within(el, hit) { return !!hit && (hit === el || el.contains(hit)); }
+          function press(el) {
+            if (el.focus) el.focus();
+            for (var i = 0; i < clicks; i++) if (el.click) el.click();
+            if (clicks === 2) el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+          }
+          var verb = clicks === 2 ? 'double-clicked' : 'clicked';
+          var hit = document.elementFromPoint(x, y);
+          if (!want) {
+            if (!hit) return JSON.stringify({ did: false, said: 'nothing in the page there, so nothing was clicked' });
+            var at = hit.closest(FOCUSABLE) || hit;
+            if (dimmed(at)) return JSON.stringify({ did: false, said: describe(at) + ' is dimmed right now, so nothing happened' });
+            press(at);
+            return JSON.stringify({ did: true, said: verb + ' ' + describe(at) + ' in the page' });
+          }
+          // The thing named: the very one the screen read listed (a control, a piece of text, a picture), still on the
+          // page and where it was read.
+          var found = (window.__lampScreenItems || [])[want.ref], r = found && found.isConnected ? found.getBoundingClientRect() : null;
+          if (!r || Math.abs(r.left + r.width / 2 - x) > 2 || Math.abs(r.top + r.height / 2 - y) > 2 ||
+              Math.abs(r.width - want.w) > 2 || Math.abs(r.height - want.h) > 2) found = null;
+          if (!found) return JSON.stringify({ did: false, said: 'missed: it has moved or gone since the screen was read, so nothing was clicked. Look again' });
+          if (dimmed(found)) return JSON.stringify({ did: false, said: 'blocked: it\\'s dimmed right now, so nothing happened' });
+          if (within(found, hit)) { press(found); return JSON.stringify({ did: true, said: verb + ' it in the page' }); }
+          // Its middle is under something else: a part of it a person could click, from the middle outwards.
+          var box = found.getBoundingClientRect(), spot = null;
+          for (var ring = 1; ring <= 4 && !spot; ring++) {
+            for (var gx = -ring; gx <= ring && !spot; gx++) for (var gy = -ring; gy <= ring && !spot; gy++) {
+              if (Math.max(Math.abs(gx), Math.abs(gy)) !== ring) continue;
+              var px = x + gx * box.width / 10, py = y + gy * box.height / 10;
+              if (within(found, document.elementFromPoint(px, py))) spot = { x: px, y: py };
+            }
+          }
+          if (!spot) return JSON.stringify({ did: false, said: 'missed: ' + describe(hit) + ' is over it, so the click would land there and nothing was clicked' });
+          press(found);
+          return JSON.stringify({ did: true, spot: spot, said: verb + ' it in the page where it shows, ' + Math.round(spot.x - x) + ',' + Math.round(spot.y - y) +
+            ' CSS pixels from its middle: its middle is under ' + describe(hit) + ', which a click there would land on' });
+        })
         """
 }
 
