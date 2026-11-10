@@ -17,7 +17,10 @@ import { homedir, networkInterfaces } from "node:os";
 import { basename, dirname, join } from "node:path";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
+import { bonjour } from "./mdns.mjs";
 import { Problem } from "./state.mjs";
+
+export { bonjour, servicesIn } from "./mdns.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -41,7 +44,7 @@ export const takesPages = (integration) => integration?.app?.declared?.wrap === 
 // MARK: Addresses
 
 /** This computer's own addresses, read each time: they change as it moves between networks. */
-const ownAddresses = () => new Set(Object.values(networkInterfaces()).flat().map((entry) => entry.address.split("%")[0].toLowerCase()));
+export const ownAddresses = () => new Set(Object.values(networkInterfaces()).flat().map((entry) => entry.address.split("%")[0].toLowerCase()));
 
 /** A private or link-local address: where a device in the person's home is. */
 export function onNetwork(address) {
@@ -101,99 +104,6 @@ export function ssdp(target = "ssdp:all", seconds = 3) {
 
 const sameWords = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 const holds = (text, part) => String(text ?? "").toLowerCase().includes(String(part).toLowerCase());
-
-/** An mDNS name in a packet at `at`, its pointers followed, and where it ends there; null when it can't be read. */
-function nameAt(packet, at) {
-  const labels = [];
-  let end = null;
-  for (let jumps = 0; ; ) {
-    if (at >= packet.length) return null;
-    const length = packet[at];
-    if (length === 0) return { labels, end: end ?? at + 1 };
-    if ((length & 0xc0) === 0xc0) {
-      if (at + 1 >= packet.length || ++jumps > 32) return null;
-      end ??= at + 2;
-      at = ((length & 0x3f) << 8) | packet[at + 1];
-    } else {
-      if (length > 63 || at + 1 + length > packet.length) return null;
-      labels.push(packet.toString("utf8", at + 1, at + 1 + length));
-      at += 1 + length;
-    }
-  }
-}
-
-/** Every record of an mDNS answer: its name, and for a pointer, a service or an address what it says. */
-function recordsOf(packet) {
-  if (packet.length < 12) return [];
-  const count = (index) => packet.readUInt16BE(4 + index * 2), records = [];
-  let at = 12;
-  for (let question = 0; question < count(0); question++) {
-    const name = nameAt(packet, at);
-    if (!name) return [];
-    at = name.end + 4;
-  }
-  for (let left = count(1) + count(2) + count(3); left > 0; left--) {
-    const name = nameAt(packet, at);
-    if (!name || name.end + 10 > packet.length) break;
-    const type = packet.readUInt16BE(name.end), length = packet.readUInt16BE(name.end + 8), data = name.end + 10;
-    if (data + length > packet.length) break;
-    const record = { name: name.labels.join(".").toLowerCase(), type };
-    if (type === 12) record.target = nameAt(packet, data)?.labels;
-    else if (type === 33 && length >= 6) record.target = nameAt(packet, data + 6)?.labels;
-    else if (type === 1 && length === 4) record.address = [...packet.subarray(data, data + 4)].join(".");
-    records.push(record);
-    at = data + length;
-  }
-  return records;
-}
-
-/**
- * The services of a type an mDNS answer offers, each by its name, at the address of the host it names when the
- * answer gives one, else at the address the answer came from.
- */
-export function servicesIn(packet, type, from) {
-  const wanted = `${type}.local`.toLowerCase(), records = recordsOf(packet), found = [];
-  for (const offered of records) {
-    if (offered.type !== 12 || offered.name !== wanted || !offered.target?.length) continue;
-    const instance = offered.target.join(".").toLowerCase();
-    const host = records.find((record) => record.type === 33 && record.name === instance)?.target?.join(".").toLowerCase();
-    const address = (host && records.find((record) => record.type === 1 && record.name === host)?.address) || from;
-    found.push({ name: offered.target[0], address });
-  }
-  return found;
-}
-
-/**
- * The devices offering a Bonjour service of this type ("_airplay._tcp") on the home network, by name and address: an
- * mDNS question asked from a port of lamp's own, which each device answers there and only there (a one-shot query,
- * RFC 6762 6.7), asked again partway through as a search is. Nothing is listened for on mDNS's own port, which is this
- * computer's own responder's.
- */
-export function bonjour(type, seconds = 3) {
-  if (!/^_[a-z0-9-]{1,40}\._(tcp|udp)$/.test(type)) return Promise.resolve([]);
-  return new Promise((done) => {
-    const socket = dgram.createSocket({ type: "udp4", reuseAddr: true }), found = new Map();
-    const header = Buffer.alloc(12);
-    header.writeUInt16BE(1 + Math.floor(Math.random() * 0xfffe), 0);
-    header.writeUInt16BE(1, 4);
-    const labels = `${type}.local`.split(".").map((label) => Buffer.concat([Buffer.from([label.length]), Buffer.from(label)]));
-    // A question for pointers to the type's services, of the internet class, asking for the answer to come back here.
-    const query = Buffer.concat([header, ...labels, Buffer.from([0, 0, 12, 0x80, 1])]);
-    let ended = false;
-    const end = () => { if (ended) return; ended = true; try { socket.close(); } catch {} done([...found.values()]); };
-    const ask = () => { if (!ended) socket.send(query, 5353, "224.0.0.251", () => {}); };
-    socket.on("error", end);
-    socket.on("message", (packet, from) => {
-      for (const service of servicesIn(packet, type, from.address)) found.set(`${service.name} ${service.address}`, service);
-    });
-    socket.bind(0, () => {
-      try { socket.setMulticastTTL(1); } catch {}
-      ask();
-      setTimeout(ask, (seconds * 1000) / 2);
-      setTimeout(end, seconds * 1000);
-    });
-  });
-}
 
 /**
  * The addresses an integration's device answers at, by what its `find` says: the search's answers for its search
@@ -288,12 +198,12 @@ export async function describe(address, answers, { reach = isPrivate, timeout = 
 }
 
 /**
- * One look at the home network for the integrations given: a search for everything, then each integration's
- * devices found and read, all at once (where two find one address, the first given has it), and with `unknown` the
- * devices no integration knows, each read from its own description.
+ * One look at the home network for the integrations given: a search for everything (or the `answers` of one just
+ * made), then each integration's devices found and read, all at once (where two find one address, the first given
+ * has it), and with `unknown` the devices no integration knows, each read from its own description.
  */
-export async function searchNetwork({ integrations: list = integrations(), seconds = 2.5, unknown = false, reach = isPrivate } = {}) {
-  const answers = await ssdp("ssdp:all", seconds);
+export async function searchNetwork({ integrations: list = integrations(), seconds = 2.5, unknown = false, reach = isPrivate, answers } = {}) {
+  answers ??= await ssdp("ssdp:all", seconds);
   const each = await Promise.all(list.map(async (integration) => {
     const read = [];
     for (const address of await addressesOf(integration, answers, { reach })) {

@@ -22,6 +22,7 @@ import { lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSy
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Away, OffNetwork, Refused, answersOn, bonjour, pinsAt, searchNetwork, send, ssdp } from "./devices.mjs";
+import { defaultRoute, homeNetwork, neighbours, samsungAt, subnetOn, tvsIn } from "./network.mjs";
 import { PUBLISHER, identityName, keptSigner, namesOf, packageOf, versionAfter } from "./msix.mjs";
 import { tile } from "./png.mjs";
 import { Problem } from "./state.mjs";
@@ -94,12 +95,37 @@ export const CALLS = {
 
   /**
    * One look at the home network for the `integrations` Lamp's app has (each as its JSON): every answer to a search
-   * for everything, what each integration found and read of its devices, and the devices none of them knows, read
-   * from their own descriptions. Which of those Lamp keeps, and what it called them, is Lamp's app's.
+   * for everything, what each integration found and read of its devices, with `unknown` the devices none of them
+   * knows, read from their own descriptions, and with `tvs` what each Samsung or LG TV that answered says of itself.
+   * Which of those Lamp keeps, and what it called them, is Lamp's app's.
    */
   async look(given) {
     const list = (Array.isArray(given.integrations) ? given.integrations : []).filter((integration) => typeof integration?.id === "string");
-    return searchNetwork({ integrations: list, seconds: seconds(given.seconds, 2.5), unknown: given.unknown !== false });
+    const answers = await ssdp("ssdp:all", seconds(given.seconds, 2.5));
+    const [seen, tvs] = await Promise.all([searchNetwork({ integrations: list, answers, unknown: given.unknown === true }), given.tvs === true ? tvsIn(answers) : []]);
+    return { ...seen, tvs };
+  },
+
+  /** What a Samsung TV at `address` says of itself now, as the look reads it; null when it doesn't answer as one. */
+  async tv(given) {
+    return { tv: await samsungAt(text(given, "address")) };
+  },
+
+  /**
+   * Everything on this computer's subnet besides what the look finds: each host with its hardware address and its
+   * Bonjour services, and which subnet was swept.
+   */
+  async network(given) {
+    return homeNetwork({ seconds: seconds(given.seconds, 3) });
+  },
+
+  /**
+   * The network as it is now, read with nothing sent: this computer's neighbor table (each neighbor's IPv4 address
+   * and hardware address), its gateway, and the subnet a sweep would take.
+   */
+  async neighbours() {
+    const route = await defaultRoute();
+    return { table: await neighbours(), gateway: route?.gateway ?? null, subnet: route ? subnetOn(route.interface) : null };
   },
 
   /** A search of the home network for one search target, for a few seconds: every answer. */

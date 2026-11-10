@@ -3439,18 +3439,20 @@ final class Store: ObservableObject {
         Task {
             async let apple = Devices.list()
             async let android = Adb.devices()
+            async let now = HomeNetwork.now()
             // Started at once: the sweep and Bonjour take a few seconds, as the SSDP search does.
             let network = everything ? Task.detached { await HomeNetwork.look() } : nil
             // What answers on the network: one search, which the TVs and the integrations share.
-            let scan = await Integrations.Scan.now()
+            let scan = await Integrations.Scan.now(tvs: true, unknown: true)
             localNetworkRefused = scan.refused
             // Refused the first time is macOS's question still up; refused after it is the person's answer.
             let firstAsked = scan.refused && !UserDefaults.standard.bool(forKey: Self.localNetworkAskedKey)
             UserDefaults.standard.set(true, forKey: Self.localNetworkAskedKey)
             if firstAsked { answerAwaited = Task { await lookAgainOnceAllowed(everything: everything) } }
-            async let tvs = TVs.devices(answers: scan.answers)
+            let tvs = TVs.devices(scan: scan)
             let known = Integrations.devices(scan: scan)
             let kits = await apple + android + tvs
+            let here = await now
             // What's on the network that nothing Lamp has knows, after the rest.
             let unknown = Integrations.unknown(scan, except: Set((kits + known).compactMap(\.address)))
             var found = kits + known + unknown
@@ -3465,7 +3467,7 @@ final class Store: ObservableObject {
                 if merged != hosts { hosts = merged }
                 swept = look.swept
                 sweptRouter = merged.first(where: \.isGateway)?.mac
-            } else if !HomeNetwork.sameNetwork(as: swept, router: sweptRouter) {
+            } else if !HomeNetwork.sameNetwork(as: swept, router: sweptRouter, now: here) {
                 // Another network since the last whole look: its hosts aren't here, and an address may be another's now.
                 if !hosts.isEmpty { hosts = [] }
                 swept = nil
@@ -3473,8 +3475,8 @@ final class Store: ObservableObject {
             } else {
                 // A look of SSDP alone keeps what the last whole look learned of the rest, on the same network, for the
                 // hosts still at their address.
-                let here = HomeNetwork.stillHere(hosts)
-                if here != hosts { hosts = here }
+                let still = HomeNetwork.stillHere(hosts, now: here)
+                if still != hosts { hosts = still }
                 let taken = Set(found.compactMap(\.address))
                 found += hosts.filter { !taken.contains($0.address) && HomeNetwork.couldLearn($0) }.map(HomeNetwork.device(for:))
                 if found != devices { devices = found }

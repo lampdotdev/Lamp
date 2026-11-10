@@ -286,9 +286,13 @@ does. A problem says its kind where Lamp's app acts on which it was: a device th
 - **The calls so far:** `msix`, an Xbox's package from a folder of files; `send`, one request to a device, with the
   file its certificates are kept in named by Lamp's app (`pinsAt`), so each device has one store whichever asks
   (what the person typed for a device comes with the request, on the run's input, and is kept nowhere here); `look`,
-  one look at the home network for the integrations Lamp's app gives it; `search`, a search for one target; and
-  `probe`, whether a device is there now, as a setup step's check asks. Whether macOS lets Lamp look at all is
-  Network.framework's to say, and stays in Lamp's app (`DeviceProbe.localNetworkDenied`). Moving a
+  one look at the home network for the integrations Lamp's app gives it, with the TVs that answered read as a
+  Samsung's API and an LG's descriptions say (`tvsIn`, cli/network.mjs); `tv`, a Samsung TV read again; `search`, a
+  search for one target; `probe`, whether a device is there now, as a setup step's check asks; `network`, the sweep
+  of this computer's subnet and every Bonjour service (cli/mdns.mjs); and `neighbours`, the gateway and subnet now.
+  Two things stay in Lamp's app, since only it can see them: whether macOS lets Lamp look at all, which is
+  Network.framework's to say (`DeviceProbe.localNetworkDenied`), and the neighbor table, which macOS shows only to a
+  process it lets on the local network, and the runtime Lamp carries isn't one (`Neighbours`). Moving a
   piece of work here means a call for it, the Swift that did it deleted, and a test on each side
   (`cli/tests/calls.test.mjs`, `LampCLITests`).
 

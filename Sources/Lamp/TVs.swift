@@ -78,10 +78,12 @@ enum TVs {
     // MARK: Finding them
 
     /// The TVs on this network now, and the kept ones that aren't, as device records. A Samsung TV answers on its own
-    /// local API; an LG TV describes itself in its UPnP description. `answers` is the look's own SSDP search, which the
-    /// integrations share; without it the TVs are searched for here.
-    static func devices(answers: [DeviceProbe.SSDPAnswer]? = nil) async -> [Device] {
-        let found = await scan(answers: answers)
+    /// local API; an LG TV describes itself in its UPnP description. Both are read by lamp's command line, in the look
+    /// (`tvsIn` in cli/network.mjs); what's here is which TV each is to Lamp.
+    static func devices(scan: Integrations.Scan) -> [Device] {
+        let earlier = kept() + lastFound
+        var found: [Record] = []
+        for tv in scan.tvs.map({ adopt($0, earlier: earlier) }) where !found.contains(where: { $0.id == tv.id }) { found.append(tv) }
         lastFound = found
         var records = found
         // A kept TV takes what was found now (its address may have moved); one not found keeps what was known.
@@ -104,103 +106,31 @@ enum TVs {
             .sorted { $0.name < $1.name }
     }
 
-    /// One SSDP search of the local network (two seconds, unless the look's is given), then each device that answered
-    /// as a TV asked who it is.
-    static func scan(answers given: [DeviceProbe.SSDPAnswer]? = nil) async -> [Record] {
-        var byAddress: [String: [DeviceProbe.SSDPAnswer]] = [:]
-        let answers: [DeviceProbe.SSDPAnswer]
-        if let given { answers = given } else { answers = await DeviceProbe.ssdp("ssdp:all", seconds: 2) }
-        for answer in answers { byAddress[answer.address, default: []].append(answer) }
-        let earlier = kept() + lastFound
-        var records: [Record] = []
-        await withTaskGroup(of: Record?.self) { group in
-            for (ip, answers) in byAddress {
-                let said = answers.map { "\($0.server)\n\($0.location ?? "")\n\($0.searchTarget)" }.joined(separator: "\n").lowercased()
-                if said.contains("samsung") {
-                    group.addTask { await samsung(at: ip) }
-                } else if said.contains("webos") || said.contains("lge") {
-                    group.addTask { await lg(at: ip, answers: answers, earlier: earlier) }
-                }
-            }
-            for await record in group { if let record, !records.contains(where: { $0.id == record.id }) { records.append(record) } }
+    /// A TV as lamp's command line read it; nil when it isn't one.
+    static func record(said: [String: Any]) -> Record? {
+        guard JSONSerialization.isValidJSONObject(said), let data = try? JSONSerialization.data(withJSONObject: said) else { return nil }
+        return try? JSONDecoder().decode(Record.self, from: data)
+    }
+
+    /// A TV as Lamp knows it. An LG TV answers for several services, each with an id of its own, and is read under its
+    /// own service's when that answered: one already kept or seen under another of its ids (an earlier Lamp kept
+    /// whichever answered first, and its own may miss a search) keeps that id, so its setup, its key and the apps set to
+    /// open on it still match. It's the same TV when any id it answers for now is one it had then. Its developer mode is
+    /// whether Lamp holds its key.
+    static func adopt(_ read: Record, earlier: [Record]) -> Record {
+        guard !read.isSamsung else { return read }
+        var record = read
+        let udns = Set(read.udns ?? [])
+        if let seen = earlier.first(where: { tv in !tv.isSamsung && !udns.isDisjoint(with: [String(tv.id.dropFirst("lg:".count))] + (tv.udns ?? [])) }) {
+            record.id = seen.id
         }
-        return records
+        record.developerMode = FileManager.default.fileExists(atPath: WebOS.keyURL(record.id).path)
+        return record
     }
 
-    private static func fetch(_ url: URL, timeout: TimeInterval = 3) async -> Data? {
-        var request = URLRequest(url: url, timeoutInterval: timeout)
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-        return data
-    }
-
-    /// A Samsung TV's own description of itself, from its local API.
+    /// What a Samsung TV says of itself now, from its local API, read by lamp's command line; nil when it doesn't answer as one.
     static func samsung(at ip: String) async -> Record? {
-        guard let data = await fetch(URL(string: "http://\(ip):8001/api/v2/")!),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let device = json["device"] as? [String: Any], (device["OS"] as? String) == "Tizen" else { return nil }
-        let modelID = device["modelName"] as? String ?? ""
-        let frame = (device["FrameTVSupport"] as? String) == "true"
-        // The size is in the model code (QN50…, UN65…).
-        let size = modelID.dropFirst(2).prefix(2).allSatisfy(\.isNumber) ? String(modelID.dropFirst(2).prefix(2)) : ""
-        let model = frame ? "The Frame" + (size.isEmpty ? "" : " \(size)") : (size.isEmpty ? modelID : "Smart TV \(size)")
-        // The year is the first part of its internal model ("22_PONTUSM_FTV"), and each year has one Tizen.
-        let year = Int((device["model"] as? String ?? "").prefix(2)) ?? 0
-        let tizen = [17: "3.0", 18: "4.0", 19: "5.0", 20: "5.5", 21: "6.0", 22: "6.5", 23: "7.0", 24: "8.0", 25: "9.0", 26: "10.0"][year] ?? ""
-        let id = (device["id"] as? String ?? device["duid"] as? String ?? ip).replacingOccurrences(of: "uuid:", with: "")
-        return Record(id: "samsung:\(id)", maker: "Samsung", name: device["name"] as? String ?? "Samsung TV", model: model, modelID: modelID,
-                      address: ip, os: "Tizen", osVersion: tizen, resolution: device["resolution"] as? String ?? "", frame: frame,
-                      duid: nil, developerIP: device["developerIP"] as? String, developerMode: (device["developerMode"] as? String) == "1")
-    }
-
-    /// The service an LG TV announces for itself; the description it points at is the TV's own.
-    static let lgTV = "urn:lge:device:tv:1"
-
-    /// An LG TV, from the UPnP descriptions its answers point at. It answers for several services, each with a
-    /// description and an id of its own, and the first to answer is often one that says nothing of the TV (Netflix's,
-    /// a few bytes of "status=ok"), so each is tried until one is an LG TV's: the TV's own service first, which gives
-    /// it the same id at every scan. A TV already kept or seen under another of its services' ids (an earlier Lamp
-    /// kept whichever answered first, and the TV's own may miss a scan) keeps that id, so its setup, its key and the
-    /// apps set to open on it still match: it's the same TV when any id it answers for now is one it had then.
-    /// `fetch` is how a description is read; tests answer with recorded ones.
-    static func lg(at ip: String, answers: [DeviceProbe.SSDPAnswer], earlier: [Record] = [],
-                   fetch: (URL) async -> Data? = { await fetch($0) }) async -> Record? {
-        let own = Set(answers.filter { $0.searchTarget.lowercased() == lgTV }.compactMap(\.location))
-        var locations: [String] = []
-        for location in answers.compactMap(\.location).filter(own.contains) + answers.compactMap(\.location)
-            where !locations.contains(location) && URL(string: location)?.host == ip && URL(string: location)?.scheme == "http" {
-            locations.append(location)
-        }
-        // A USN is "uuid:<udn>" or "uuid:<udn>::<type>".
-        let udns = Set(answers.compactMap { answer -> String? in
-            guard answer.usn.lowercased().hasPrefix("uuid:") else { return nil }
-            let udn = answer.usn.dropFirst(5).components(separatedBy: "::")[0]
-            return udn.isEmpty ? nil : udn
-        })
-        for location in locations {
-            guard let url = URL(string: location), let data = await fetch(url), var record = lg(at: ip, description: data) else { continue }
-            record.udns = Array(udns.union([String(record.id.dropFirst("lg:".count))])).sorted()
-            if let seen = earlier.first(where: { tv in
-                !tv.isSamsung && !udns.isDisjoint(with: [String(tv.id.dropFirst("lg:".count))] + (tv.udns ?? []))
-            }) { record.id = seen.id }
-            record.developerMode = FileManager.default.fileExists(atPath: WebOS.keyURL(record.id).path)
-            return record
-        }
-        return nil
-    }
-
-    /// An LG TV's UPnP description: its name and model. Its webOS version is read once Lamp can reach it.
-    static func lg(at ip: String, description data: Data) -> Record? {
-        let text = String(decoding: data, as: UTF8.self)
-        func tag(_ name: String) -> String? {
-            guard let open = text.range(of: "<\(name)>"), let close = text.range(of: "</\(name)>", range: open.upperBound..<text.endIndex) else { return nil }
-            return String(text[open.upperBound..<close.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        guard (tag("manufacturer") ?? "").uppercased().hasPrefix("LG") else { return nil }
-        let udn = (tag("UDN") ?? ip).replacingOccurrences(of: "uuid:", with: "")
-        return Record(id: "lg:\(udn)", maker: "LG", name: tag("friendlyName") ?? "LG TV", model: tag("modelName") ?? "webOS TV",
-                      modelID: tag("modelNumber") ?? "", address: ip, os: "webOS", osVersion: "", resolution: "")
+        ((try? await LampCLI.ask("tv", ["address": ip]))?["tv"] as? [String: Any]).flatMap(record(said:))
     }
 
     /// This Mac's addresses on the local network, which a Samsung TV in developer mode must name.

@@ -175,25 +175,28 @@ A look for devices (`Store.refreshDevices`) is one at a time: one asked for whil
 (`lookAgain`). It makes one SSDP search for everything (`Integrations.Scan.now`, `ssdp:all`), which the TVs and every
 integration share: an integration's `find.ssdp` target and the description its identity reads are taken from those
 answers (`Scan.answers(for:)`, `describedAt`), never a search of their own, the integrations look at once, and a
-device's answers are waited for a few seconds (`Integrations.lookTimeout`), not an install's thirty. A recheck of the
+device's answers are waited for a few seconds (four, in the command line's look), not an install's thirty. A recheck of the
 phones alone (`refreshAppleDevices`) replaces only Apple's part of the list.
 **The whole network** (`HomeNetwork`, HomeNetwork.swift). Where the person is looking at what's there (More under
 the desk's devices, Add a New Device and its Look Again, `network_devices`: `refreshDevices(everything: true)`), the look also finds what
 SSDP and the integrations don't, and every other look leaves the last of it as it was. Never at launch or on a timer.
-It sends one datagram (a byte to the discard port, 9) to each address of this Mac's own subnet, sixteen at a time,
-paced, so the Mac asks who has each one and its neighbor table fills (`Sweep`); no nmap, raw socket or admin. The
-subnet is the default route's interface's (`Subnet.current`): the whole of a /24 or smaller, and on a bigger network
-only the 256 addresses around this Mac's (`Subnet.widest`), which the agent is told. Then it reads the neighbor table
-and the default route from the kernel's routing table by sysctl (`Neighbors`, what `arp -a` reads; macOS hides the
-table from a process without Local Network access, `swift test`'s helper included, so check it in Lamp or with
-`xctest` from a shell), marks a locally administered hardware address as randomized (`Vendors.isRandomised`: a phone's,
+The sweep and the Bonjour browse are lamp's command line's (`network` in cli/calls.mjs, cli/network.mjs, asked by
+`HomeNetwork.look`): it sends one datagram (a byte to the discard port, 9) to each address of this Mac's own subnet,
+sixteen at a time, paced, so the Mac asks who has each one and its neighbor table fills (`sweep`); no nmap, raw
+socket or admin. The subnet is the default route's interface's (`defaultRoute`, `subnetOn`): the whole of a /24 or
+smaller, and on a bigger network only the 256 addresses around this Mac's, which the agent is told (`Subnet.words`).
+Then Lamp reads the neighbor table from the kernel's routing table by sysctl (`Neighbours`, what `arp -a` reads),
+itself: macOS hides the table from a process it doesn't let on the local network, and the runtime Lamp carries for its
+command line is one, even run by Lamp (so is `swift test`'s helper: check it in Lamp or with `xctest` from a shell).
+It marks a locally administered hardware address as randomized (`Vendors.isRandomised`: a phone's,
 tablet's or computer's private Wi‑Fi address), and looks up each other one's maker by its prefix (`Vendors`, the
 longest of nine, seven and six hex digits) in `Resources/vendors.xz`, made from the IEEE's MA-L, MA-M and MA-S
 registries by `scripts/update-vendors.sh` (names with their legal endings taken off, xz-compressed, about 375 KB; not
-nmap's list, which is under nmap's license). Meanwhile it browses every Bonjour type (`_services._dns-sd._udp`), then
-each type's services, resolving each with `dns_sd` to its host, IPv4 address and the record's model keys only
-(`Bonjour`, `BonjourService.modelKeys`; AirPlay's `md` isn't a model, a Cast device's is), with no connection to the
-device. Each address is one `NetworkHost`: hardware address and maker, randomized or not, this Mac, the gateway, its
+nmap's list, which is under nmap's license). Meanwhile the command line browses every Bonjour type
+(`_services._dns-sd._udp`), then each type's services, each one's host and record and each host's IPv4 address, with
+one-shot mDNS questions from a port of its own (`everything` in cli/mdns.mjs), keeping the record's model keys only
+(`MODEL_KEYS` there, as `BonjourService.modelKeys`; AirPlay's `md` isn't a model, a Cast device's is), with no
+connection to the device. Each address is one `NetworkHost`: hardware address and maker, randomized or not, this Mac, the gateway, its
 Bonjour services and the names they go by, its SSDP server and the UPnP description Lamp read (`HomeNetwork.merge`).
 Hosts are kept in memory only (`Store.hosts`).
 
@@ -212,7 +215,7 @@ linked to an integration's device and given a host's facts only for the same har
 hardware address never is), whose setup note asks the agent to work out what it
 is and to say so plainly when nothing on the home network can reach it; and the hosts with randomized addresses that
 said nothing, counted and never named, since nothing tells one such phone from another. Bonjour also browses a few types
-whether the meta-query names them or not (`Bonjour.alwaysBrowse`: Cast, printers, a gadget's web page), since a
+whether the meta-query names them or not (`ALWAYS` in cli/mdns.mjs: Cast, printers, a gadget's web page), since a
 sleeping device often misses that one answer. What each host is isn't worked out by a list of rules: `network_devices`
 gives the agent every host's facts (`HomeNetwork.facts`), with a few anchors (the gateway is the router, this Mac, a
 randomized address is a phone, tablet or computer, counted), and the agent labels them when the person asks, or when

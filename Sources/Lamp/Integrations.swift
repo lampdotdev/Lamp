@@ -217,6 +217,8 @@ enum Integrations {
         var found: [Identified] = []
         /// The devices that answered and that no integration found, each read from a UPnP description that names it.
         var unknown: [Device] = []
+        /// What each Samsung or LG TV that answered says of itself, as the look read it (`TVs.devices` makes them Lamp's).
+        var tvs: [TVs.Record] = []
 
         /// One integration's reading of a device: its serial and model, and what else it said of itself.
         struct Identified: Equatable {
@@ -242,17 +244,18 @@ enum Integrations {
             }
         }
 
-        /// One look for these integrations (every one Lamp has, unless it's for one). One that fails finds nothing,
-        /// and says why in Lamp's log.
-        static func now(for integrations: [Integration] = Integrations.all()) async -> Scan {
+        /// One look for these integrations (every one Lamp has, unless it's for one), with the TVs and the devices
+        /// nobody knows when asked. One that fails finds nothing, and says why in Lamp's log.
+        static func now(for integrations: [Integration] = Integrations.all(), tvs: Bool = false, unknown: Bool = false) async -> Scan {
             async let denied = DeviceProbe.localNetworkDenied()
             var scan = Scan(answers: [])
             do {
                 let given = try integrations.map { try JSONSerialization.jsonObject(with: JSONEncoder().encode($0)) }
-                let done = try await LampCLI.ask("look", ["integrations": given, "seconds": 2.5])
+                let done = try await LampCLI.ask("look", ["integrations": given, "seconds": 2.5, "tvs": tvs, "unknown": unknown])
                 scan = Scan(answers: DeviceProbe.answers(from: done["answers"]),
                             found: ((done["found"] as? [[String: Any]]) ?? []).compactMap { Identified(said: $0) },
-                            unknown: ((done["unknown"] as? [[String: Any]]) ?? []).compactMap { Integrations.unknown(said: $0) })
+                            unknown: ((done["unknown"] as? [[String: Any]]) ?? []).compactMap { Integrations.unknown(said: $0) },
+                            tvs: ((done["tvs"] as? [[String: Any]]) ?? []).compactMap(TVs.record(said:)))
             } catch {
                 NSLog("Lamp couldn't look for devices: \(error.localizedDescription)")
             }
