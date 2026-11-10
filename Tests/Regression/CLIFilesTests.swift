@@ -4,8 +4,7 @@ import XCTest
 /// lamp's command line (cli/) gives an app the files Lamp's app writes into it, which are made by Lamp's own code. The
 /// list of controllers is one, and a game's runtime can't load without it, so the command line keeps a copy
 /// (cli/lamps/lamp-controllers.js) that must be the list as Lamp writes it. A new Mac app's starting files are another,
-/// made on demand, and the package an Xbox takes a third, which the command line makes itself and a kept example
-/// holds to Lamp's. Run with LAMP_WRITE_CLI_FILES=1 (scripts/cli-files.sh) to write them again.
+/// made on demand. Run with LAMP_WRITE_CLI_FILES=1 (scripts/cli-files.sh) to write them again.
 final class CLIFilesTests: XCTestCase {
     private static let cli = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent("cli/lamps")
@@ -120,66 +119,16 @@ final class CLIFilesTests: XCTestCase {
         XCTAssertTrue(GameAndroid.gameActivity.contains("{{PACKAGE}}"))
     }
 
-    /// The command line makes an Xbox's package itself (cli/msix.mjs), and it must be the package Lamp makes: the same
-    /// manifest, and the same files in the same layout, which the signature says (it signs the hashes of the records,
-    /// the directory, the block map and the content types). So what's kept is the manifest and the signature of one
-    /// small package under a key made for this alone, which the command line's own test makes again and compares.
-    func testTheCommandLinesPackageIsLamps() throws {
-        let folder = Self.cli.deletingLastPathComponent().appendingPathComponent("tests/fixtures/msix")
-        let fm = FileManager.default
-        let writing = ProcessInfo.processInfo.environment["LAMP_WRITE_CLI_FILES"] == "1"
-        let keyURL = folder.appendingPathComponent("key.der"), certificateURL = folder.appendingPathComponent("certificate.der")
-        if writing, !fm.fileExists(atPath: keyURL.path) {
-            let made = try MSIX.Signer.throwaway()
-            var error: Unmanaged<CFError>?
-            let key = try XCTUnwrap(SecKeyCopyExternalRepresentation(made.key, &error) as Data?)
-            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-            try key.write(to: keyURL)
-            try made.certificate.write(to: certificateURL)
-        }
-        let attributes = [kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeyClass: kSecAttrKeyClassPrivate] as CFDictionary
-        let key = try XCTUnwrap(SecKeyCreateWithData(try Data(contentsOf: keyURL) as CFData, attributes, nil))
-        let signer = try MSIX.Signer.from(certificate: try Data(contentsOf: certificateURL), key: key)
-
-        // The same made-up app on both sides: a name that needs escaping, a file in a folder, one with no extension,
-        // one whose name has a space and an ampersand, an empty one, and one of more than a block.
-        let identity = MSIX.Identity(name: MSIX.identityName(for: "harbor-racer-1a2b3c4d"), publisher: MSIX.publisher, version: "1.7.4660.2", architecture: "x64")
-        let manifest = MSIX.manifest(identity: identity, displayName: "Harbor <Racer> & \"Friends\"", entry: .webHost)
-        let files: [(path: String, data: Data)] = [
-            ("App.exe", Data("host".utf8)),
-            ("Web/index.html", Data("<!doctype html><title>Harbor Racer</title>".utf8)),
-            ("Web/LICENSE", Data("MIT".utf8)),
-            ("Web/sea & sky.txt", Data("blue".utf8)),
-            ("Web/empty.js", Data()),
-            ("Web/big.bin", Data((0..<70_000).map { UInt8($0 % 251) })),
-            ("AppxManifest.xml", Data(manifest.utf8)),
-        ]
-        let package = try MSIX.assemble(files, signer: signer)
-
-        // The signature's own record is the one deflated one: read back out, it's what the two sides compare, since
-        // each deflates in its own way.
-        let name = Data("AppxSignature.p7x".utf8)
-        // Its record, not the content types' mention of it nor the directory's entry: the name 30 bytes after a
-        // local record's mark.
-        var found: Int?, from = package.startIndex
-        while let range = package.range(of: name, in: from..<package.endIndex) {
-            if range.lowerBound >= 30, package.subdata(in: (range.lowerBound - 30)..<(range.lowerBound - 26)) == Data([0x50, 0x4B, 0x03, 0x04]) { found = range.lowerBound - 30 }
-            from = range.upperBound
-        }
-        let at = try XCTUnwrap(found)
-        let packed = Int(package[at + 18]) | Int(package[at + 19]) << 8 | Int(package[at + 20]) << 16 | Int(package[at + 21]) << 24
-        let deflated = package.subdata(in: (at + 30 + name.count)..<(at + 30 + name.count + packed))
-        let signature = try (deflated as NSData).decompressed(using: .zlib) as Data
-        let names = try JSONSerialization.data(withJSONObject: ["fullName": identity.fullName, "appUserModelID": identity.appUserModelID,
-                                                                "nextVersion": MSIX.version(at: Date(timeIntervalSince1970: 1_800_000_000), after: "1.0.0.0"),
-                                                                "sameMinute": MSIX.version(at: Date(timeIntervalSince1970: 1_800_000_000), after: "1.8.27776.0")],
-                                                   options: [.sortedKeys, .prettyPrinted])
-        let kept: [(String, Data)] = [("manifest.xml", Data(manifest.utf8)), ("signature.p7x", signature), ("names.json", names)]
-        for (file, data) in kept {
-            let url = folder.appendingPathComponent(file)
-            if writing { try data.write(to: url) }
-            XCTAssertEqual(try Data(contentsOf: url), data, "cli/tests/fixtures/msix/\(file) isn't what Lamp makes now: run scripts/cli-files.sh, then make cli/msix.mjs agree")
-        }
+    /// An Xbox's package is the command line's alone to make (cli/msix.mjs, which Lamp's app has make it: `LampCLI`).
+    /// What Lamp's app still works out itself is what Windows calls a package, which the bridge launches and removes it
+    /// by: held to the example the command line's own test is held to (cli/tests/fixtures/msix, a package as Lamp's
+    /// Swift code made it before the command line took that over).
+    func testWindowsNamesAPackageAsTheCommandLineDoes() throws {
+        let file = Self.cli.deletingLastPathComponent().appendingPathComponent("tests/fixtures/msix/names.json")
+        let names = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: String])
+        let identity = MSIX.Identity(name: "Lamp.harbor-racer-1a2b3c4d", publisher: "CN=Lamp", version: "1.7.4660.2", architecture: "x64")
+        XCTAssertEqual(identity.fullName, names["fullName"])
+        XCTAssertEqual(identity.appUserModelID, names["appUserModelID"])
     }
 
     func testTheCommandLinesControllersAreLamps() throws {

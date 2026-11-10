@@ -192,12 +192,12 @@ whose host for a page lamp packages for.
   certificate is kept the first time, per port, and another refused from then on unless the device's own root, read
   over that first connection, signed it (an Xbox makes itself a new certificate at each restart); and the password
   goes only to a device whose certificate is kept, in answer to the device's own request for it.
-- **The package** (`cli/msix.mjs`) is `MSIX.swift` in Node: the manifest, the block map, the content types, the
-  Zip64 layout and the Authenticode signature, under a key and certificate of lamp's own, which the console installs
-  beside the package. `CLIFilesTests` keeps one small package's manifest and signature as Lamp's code makes them
-  (`cli/tests/fixtures/msix`, written by `scripts/cli-files.sh` under a key made for that alone), and
-  `cli/tests/msix.test.mjs` makes the same package and compares: the signature signs the hashes of every record, the
-  directory, the block map and the content types, so one that matches says the whole package does.
+- **The package** (`cli/msix.mjs`) is the one package maker, Lamp's app's too ("Lamp's app", below): the manifest,
+  the block map, the content types, the Zip64 layout and the Authenticode signature, under a key and certificate of
+  lamp's own, which the console installs beside the package. `cli/tests/fixtures/msix` keeps one small package's
+  manifest and signature as Lamp's Swift code made them before this took its place, under a key made for that alone,
+  and `cli/tests/msix.test.mjs` makes the same package and compares: the signature signs the hashes of every record,
+  the directory, the block map and the content types, so one that matches says the whole package does.
 - **What's in it** (`cli/place.mjs`) is Lamp's web host for the console (`Resources/WebHost`, as it ships), and under
   `Web/` the page as `lamp share` gathers it, with `lamp-device.js` saying it's on an Xbox (the integration's
   `input`, as `GamePage.descriptor` writes it). A page with `lamp-game.js`, or whose folder's `capabilities.json` says
@@ -253,6 +253,23 @@ and put it somewhere.
 
 `cli/tests/android.test.mjs` holds what lamp writes and what it asks of Gradle and adb, with stand-ins for both; it
 runs where `cli/lamps/android-host` has been written.
+
+## Lamp's app
+
+What lamp does, Lamp's app has it do, rather than doing the same again in Swift. The way in is `cli/calls.mjs`, run
+once for each call (`LampCLI.call` in Lamp's app): the call's name is its argument, what it's given is one JSON object
+on standard input, and its answer is the last line it prints, `{"done": …}`, or `{"problem": "…"}` in a sentence for
+what the person can put right. Anything else ends the run with its words on standard error, which Lamp's app shows as
+its own fault.
+
+- **What a call is given** is paths in Lamp's own folders, laid out by Lamp's app, never an app's folder: what an
+  agent wrote is read by Lamp's app on that folder's terms first. A call refuses a link in what it's handed.
+- **The runtime** in Lamp's app is the one it already carries: its bundled agent is built on Bun, and run with
+  `BUN_BE_BUN=1` that program is Bun itself (`LampCLI.launch`, the one place that decides). So `calls.mjs` and what it
+  imports must run on Bun as well as Node; `build.sh` copies `cli/*.mjs` into the app. The commands a person runs
+  aren't held to that yet: a device's requests over HTTPS (`devices.mjs`) don't pass on Bun.
+- **The calls so far:** `msix`, an Xbox's package from a folder of files. Moving a piece of work here means a call
+  for it, the Swift that did it deleted, and a test on each side (`cli/tests/calls.test.mjs`, `LampCLITests`).
 
 ## Where things are kept
 

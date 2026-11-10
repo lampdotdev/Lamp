@@ -225,12 +225,14 @@ step ("Turn on developer mode on it"): that step is for the setup window Set Up�
 device set up with Lamp says its next step in its tip.
 
 **Windows packages.** A declared app kind may say `wrap: "msix"`: the package step leaves a zip of the app's files and
-Lamp makes the package itself (`MSIX`, MSIX.swift), with nothing outside Lamp: the zip read as plain files only (no
-link, nothing above its top), a manifest Lamp writes (the identity is Lamp's: `Lamp.<folder>`, publisher `CN=Lamp`, a
+Lamp makes the package itself, with nothing outside Lamp. Lamp's app reads the zip as plain files only (no link, nothing
+above its top: `MSIX.files`), lays them out in its own folder and has lamp's command line make the package of them
+(`MSIX.make`, through `LampCLI`; `cli/msix.mjs` is the one package maker, "lamp from a terminal"): a manifest it writes
+(the identity is Lamp's: `Lamp.<folder>`, publisher `CN=Lamp`, a
 version from the time so each build replaces the last), logos drawn from the app's icon, the block map and content
 types, laid out as Zip64 with every file stored and the signature the one plain deflated record (Windows opens nothing
 else), and an Authenticode signature (the APPX digest blob in an SpcIndirectDataContent) with a key and self-made
-certificate kept in Lamp's folder (`MSIX.Signer`), which the device installs beside the package (`{certificate}`). The
+certificate kept in Lamp's folder (`MSIX.signerFolder`), which the device installs beside the package (`{certificate}`). The
 bridge launches it by its names (`{packageFullName}`, `{appUserModelID}`, and `{base64:…}` of either). For Xbox's Device
 Portal a request also carries cookies the device set earlier in its sequence (`{cookie:CSRF-Token}`), polls an install
 that answers 204 until it's done (`poll`) and fails with the device's words unless the answer says what `expect` asks,
@@ -853,7 +855,7 @@ processes listing `{packageFullName}`) doesn't see running within a few seconds 
 is said plainly in the chat ("still finishing installing"), never claimed open, and the activity line says "Finishing
 installing on Xbox…" while Lamp waits (`DeviceApps.install`'s `waiting`); `look` is Device Portal's screenshot and `log` reads the game's log from its LocalState. Deleting a wish
 takes its app off every device Lamp put it on (the bridge's `remove`, `DeviceApps.removeEverywhere`), web apps too. The
-package is Lamp's (`MSIX.package` with `.program("App.exe")`, an x64 identity, `MSIX.Identity.architecture`).
+package is Lamp's (`MSIX.make` with `.program("App.exe")`, an x64 identity, `MSIX.Identity.architecture`).
 
 An Xbox gives a package installed as a game far more than one installed as an app (5 GB of memory rather than 1 GB, and
 much more of the GPU and CPU, about twice the frame rate for a scene that fills an app's share). Device Portal can't change one package's type; the console decides it at each install from its "treat UWP apps as

@@ -25,6 +25,8 @@ APP_BUILD="${APP_BUILD:-$APP_VERSION}"
 
 # The pi coding agent (MIT, github.com/badlogic/pi-mono) is bundled inside Lamp.app.
 # Pinned version + checksums from the release's SHA256SUMS; downloads are cached in vendor/.
+# pi is built on Bun, which lamp's command line runs on inside the app (LampCLI.swift): a new pi may carry a new Bun,
+# and .github/workflows/cli-tests.yml tests on the one this pi carries (BUN_BE_BUN=1 pi --version says which).
 PI_VERSION="1.0.0"
 case "$(uname -m)" in
   arm64)  PI_ARCH="arm64"; PI_SHA256="97291e7d2eb2d7d95ab1f67d26de7902302201bc8786c132bbbc9e53fa8526cc" ;;
@@ -232,6 +234,9 @@ rm -rf "$APP/Contents/Resources/LGPhones" && cp -R Resources/LGPhones "$APP/Cont
 rm -rf "$APP/Contents/Resources/bin"
 if [ -x "$XWIN" ]; then mkdir -p "$APP/Contents/Resources/bin" && install -m 755 "$XWIN" "$APP/Contents/Resources/bin/xwin"; fi
 tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'
+# lamp's command line, which Lamp's app has do what's the command line's own (LampCLI.swift): its code alone, run on
+# the runtime pi is built on, so the app carries no second one.
+rm -rf "$APP/Contents/Resources/cli" && mkdir -p "$APP/Contents/Resources/cli" && cp cli/*.mjs "$APP/Contents/Resources/cli/"
 # What Lamp fetches when it's needed rather than carrying it goes into the assets folder, which the release puts on
 # GitHub beside the DMG, each file named by edition and version and pinned in the bundle by address, size and SHA-256:
 # llama.cpp (here), and the starters' prebuilt apps (at the end). A build from source points at its own files.

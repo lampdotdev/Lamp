@@ -43,22 +43,6 @@ final class DeviceAppPackageTests: XCTestCase {
         let identity = MSIX.Identity(name: "Lamp.demo", publisher: "CN=LampTest", version: "1.0.0.0")
         XCTAssertEqual(identity.fullName, "Lamp.demo_1.0.0.0_neutral__t1a59ncyrzgcm")
         XCTAssertEqual(identity.appUserModelID, "Lamp.demo_t1a59ncyrzgcm!App")
-        // Two builds in one minute still get a newer version each, which Windows needs to replace the package.
-        let now = Date()
-        let first = MSIX.version(at: now), second = MSIX.version(at: now, after: first)
-        XCTAssertNotEqual(first, second)
-        XCTAssertTrue(first.split(separator: ".").map { Int($0)! }.lexicographicallyPrecedes(second.split(separator: ".").map { Int($0)! }))
-    }
-
-    /// A web app in Lamp's WebView2 host starts the host, and registers WebView2's classes from the library beside it:
-    /// without them the host can't make a web view, and the console shows nothing.
-    func testTheWebHostsPackageRegistersWebView2() {
-        let identity = MSIX.Identity(name: "Lamp.demo", publisher: MSIX.publisher, version: "1.0.0.0", architecture: "x64")
-        let manifest = MSIX.manifest(identity: identity, displayName: "Demo", entry: .webHost)
-        XCTAssertTrue(manifest.contains("Executable=\"App.exe\""))
-        XCTAssertFalse(manifest.contains("StartPage="))
-        XCTAssertTrue(manifest.contains("<Path>Microsoft.Web.WebView2.Core.dll</Path>"))
-        for name in WebHost.activatableClasses { XCTAssertTrue(manifest.contains("ActivatableClassId=\"\(name)\""), name) }
     }
 
     /// The import map the rules give names the library where the page finds it, nested folders included.
@@ -66,14 +50,6 @@ final class DeviceAppPackageTests: XCTestCase {
         XCTAssertEqual(DeviceSupport.pagePath("Web/three", page: "Web"), "three")
         XCTAssertEqual(DeviceSupport.pagePath("Web/vendor/three", page: "Web"), "vendor/three")
         XCTAssertEqual(DeviceSupport.pagePath("Webby/three", page: "Web"), "Webby/three")
-    }
-
-    /// Every part of a package has a content type, a file with no extension (three.js's LICENSE) too: the Xbox refuses a
-    /// package with an untyped part, as an invalid block map.
-    func testAFileWithNoExtensionStillHasAType() {
-        let types = String(decoding: MSIX.contentTypes(for: ["Web/three/LICENSE", "Web/index.html"]), as: UTF8.self)
-        XCTAssertTrue(types.contains("<Override PartName=\"/Web/three/LICENSE\" ContentType=\"application/octet-stream\"/>"), types)
-        XCTAssertTrue(types.contains("<Default Extension=\"html\""))
     }
 
     /// The package step's zip is read as plain files only: nothing above its top, no links.

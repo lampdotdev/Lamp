@@ -171,7 +171,7 @@ enum DeviceApps {
             guard let data = AppFile.read(zip, in: project), !data.isEmpty else { throw Failure(message: "The game's build left nothing to package.") }
             guard data.count <= packageLimit else { throw Failure(message: "The game is bigger than Lamp sends to a device (\(packageLimit >> 30) GB).") }
             try FileManager.default.createDirectory(at: buildFolder(for: project), withIntermediateDirectories: true)
-            try wrapMSIX(data, for: project, entry: .program("App.exe"))
+            try await wrapMSIX(data, for: project, entry: .program("App.exe"))
             return
         }
         // The package step runs on Lamp's copy of the app, where a game's page is told the device it's on (`GamePage`).
@@ -194,7 +194,7 @@ enum DeviceApps {
         if let page, declared.output.lowercased().hasSuffix(".zip") { try GamePage.check(payload: try MSIX.files(inZip: data), for: page) }
         try FileManager.default.createDirectory(at: buildFolder(for: project), withIntermediateDirectories: true)
         if declared.wrap == "msix" {
-            try wrapMSIX(data, for: project, entry: WebHost.isUsed(by: declared) ? .webHost : .page(declared.start ?? "index.html"))
+            try await wrapMSIX(data, for: project, entry: WebHost.isUsed(by: declared) ? .webHost : .page(declared.start ?? "index.html"))
         } else if !DeviceSupport.libraries(for: project).isEmpty, declared.output.lowercased().hasSuffix(".zip") {
             try await withFilledSupport(data, for: project).write(to: packageURL(for: project), options: .atomic)
         } else {
@@ -262,19 +262,19 @@ enum DeviceApps {
     }
 
 
-    /// The Windows package Lamp makes of the package step's zip: its own manifest, the app's icon as its logos, and
-    /// Lamp's signature, beside the certificate the device installs with it and the identity the bridge launches by.
-    private static func wrapMSIX(_ zip: Data, for project: LampProject, entry: MSIX.Start) throws {
+    /// The Windows package Lamp makes of the package step's zip (`MSIX.make`): its own manifest, the app's icon as its
+    /// logos, and Lamp's signature, beside the certificate the device installs with it and the identity the bridge
+    /// launches by.
+    private static func wrapMSIX(_ zip: Data, for project: LampProject, entry: MSIX.Start) async throws {
         var files = DeviceSupport.fill(try MSIX.files(inZip: zip), for: project)
         if entry == .webHost { files = try WebHost.payload(files, phone: try GamePhones.xboxPage(for: project)) }
         let folder = buildFolder(for: project)
         let previous = (try? Data(contentsOf: folder.appendingPathComponent("identity.json"))).flatMap { try? JSONDecoder().decode(MSIX.Identity.self, from: $0) }
-        var identity = MSIX.Identity(name: MSIX.identityName(for: project.id), publisher: MSIX.publisher, version: MSIX.version(after: previous?.version))
-        if case .page = entry {} else { identity.architecture = "x64" }
-        let icon = AppFile.read(Icons.squareURL(project), in: project).flatMap(NSImage.init(data:))
-        let package = try MSIX.package(payload: files, displayName: project.name, identity: identity, entry: entry, icon: icon)
-        try package.write(to: packageURL(for: project), options: .atomic)
-        try MSIX.certificate().write(to: folder.appendingPathComponent("certificate.cer"), options: .atomic)
+        var architecture: String? = "x64"
+        if case .page = entry { architecture = nil }
+        let identity = try await MSIX.make(payload: files, displayName: project.name, slug: project.id, after: previous?.version, architecture: architecture,
+                                           entry: entry, icon: AppFile.read(Icons.squareURL(project), in: project), in: folder.appendingPathComponent("packaging"),
+                                           package: packageURL(for: project), certificate: folder.appendingPathComponent("certificate.cer"))
         try JSONEncoder().encode(identity).write(to: folder.appendingPathComponent("identity.json"), options: .atomic)
     }
 
