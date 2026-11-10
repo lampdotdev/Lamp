@@ -39,9 +39,14 @@ Mac app, `projectOf`), or any folder with an `index.html`; without one, the fold
 
 ## For a coding agent
 
+On a Mac with Lamp, the lamp to set up is the one in Lamp's app, which updates with Lamp and runs on the app's own
+runtime, so no Node is needed:
+
 ```bash
-node cli/lamp.mjs setup
+/Applications/Lamp.app/Contents/Resources/cli/lamp setup
 ```
+
+From a checkout of this repository, `node cli/lamp.mjs setup`.
 
 writes one skill, [`skill/SKILL.md`](skill/SKILL.md), where each agent found on the computer reads its skills
 (`~/.claude/skills/lamp`, `~/.codex/skills/lamp`), with the command as it's run on this computer filled in. From its
@@ -49,6 +54,12 @@ next session the agent uses lamp by itself in an app's folder: it opens the wind
 files, looks after each change, and tries the app only when asked to. `lamp setup` replaces only a skill it wrote,
 and `--remove` takes it away. That file is the one place that says how an agent works with lamp; `lamp guide`
 prints it for an agent that has no skills.
+
+Lamp's app carries the whole of lamp (`build.sh`): its modules, `page.js`, the skill, and in `lamps/` the controllers'
+list and the files only Lamp's code makes, written by the app itself as it's built (`Lamp --cli-files`, `CLIFiles`), with
+`lamp` beside them, a launcher on pi's runtime (`cli/lamp.sh`: pi is Bun with `BUN_BE_BUN`). Lamp's resources are found
+beside the copy either way (`RESOURCES`: the repository's `Resources/`, or the bundle's). The skill that copy writes
+names its launcher, so the agent always runs the lamp of the Lamp that's installed.
 
 ## How a change goes in
 
