@@ -19,13 +19,14 @@ install, so the two can run side by side.
 
 ## Opening a pull request
 
-- One change per PR, against `main`. A PR runs a build and the regression tests.
+- One change per PR, against `main`. Every PR runs a Mac build; additional checks depend on the files changed.
+  The Swift regression suite runs nightly on `main` and on demand (Actions → Mac build → Run workflow).
 - Lamp drives three coding agents: pi, Claude Code and Codex. A change to how an agent is run, its tools, its
   prompt or what the chat shows must keep all three in step, and the PR description says which engines you
   tried.
 - A visible change gets before and after screenshots in the PR description.
-- Committed files never name a person, a personal device or a hostname, and never narrate a particular
-  session or test run; those details go in the PR description.
+- Follow the public-content rules in [AGENTS.md → Conventions](AGENTS.md#conventions) for files, commit messages,
+  PR descriptions and screenshots. Describe checks and their results in the PR description, not committed files.
 - Comments explain why, in plain prose. Words on screen are short and plain, and never name files, types or
   frameworks.
 - Only vital tests: the suite is kept fast on purpose.
