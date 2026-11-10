@@ -101,8 +101,8 @@ closes by itself ten minutes after you last used it: there's nothing to stop whe
 
 Only when the person asks you to try, play or test the app: a request to change it is made and looked at, not played.
 
-- `{{lamp}} use click 640 400` clicks a point of the picture. The screen as text gives each control's point, its
-  middle: click exactly there. The answer names what the click landed on.
+- `{{lamp}} use click "Add"` clicks a control by its name in the screen as text, and `{{lamp}} use click 640 400` a
+  point of the picture, for what has no name there (a canvas, a drawing). The answer names what the click landed on.
 - `{{lamp}} use type hello` types into whatever has the keyboard: click a field first.
 - `{{lamp}} use key w 2` holds a key for two seconds (a letter, a digit, `space`, `enter`, `escape`, `up`, `left`…),
   and `w+d` holds two at once.

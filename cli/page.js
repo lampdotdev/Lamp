@@ -140,6 +140,18 @@
     return { tab, stage, title: document.title, path: location.pathname + location.search, width, height, dpr: devicePixelRatio || 1, game: !!window.__lampLive, screen: lines.join('\n') };
   };
 
+  // The point of the control called this in the screen as text (`button "Add"`, or just `Add`), for a click by name.
+  window.__lampPoint = called => {
+    const wanted = String(called).trim();
+    for (const el of document.querySelectorAll(CONTROLS)) {
+      const r = el.getBoundingClientRect(), look = getComputedStyle(el);
+      if (r.width < 2 || r.height < 2 || look.display === 'none' || look.visibility === 'hidden') continue;
+      const name = named(el), label = name.slice(name.indexOf('"') + 1, -1);
+      if (name === wanted || label === wanted) return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)];
+    }
+    return null;
+  };
+
   // What's at a point of the page, in the screen's own words, so a click says what it landed on.
   window.__lampAt = (x, y) => {
     const el = document.elementFromPoint(x, y);

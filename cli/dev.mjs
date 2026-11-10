@@ -512,8 +512,11 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       await sleep(250);
       did = `Scrolled ${points > 0 ? "down" : "up"} ${Math.abs(points)}.`;
     } else if (action.kind === "click") {
-      const x = Number(action.x), y = Number(action.y);
-      if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Problem("click takes a point: lamp use click 640 400");
+      // By its name in the screen as text, or by a point of the picture.
+      const named = action.target ? await page.evaluate(`window.__lampPoint ? window.__lampPoint(${JSON.stringify(String(action.target))}) : null`) : null;
+      if (action.target && !named) throw new Problem(`nothing on the screen is called "${action.target}": use a name from the screen as text, or a point of the picture`);
+      const x = named ? named[0] : Number(action.x), y = named ? named[1] : Number(action.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Problem("click takes a point or a name: lamp use click 640 400, or lamp use click \"Add\"");
       const at = await page.evaluate(`window.__lampAt ? window.__lampAt(${x}, ${y}) : null`);
       await page.click(x, y);
       did = `Clicked ${x},${y}${at ? `: ${at}` : ""}.`;

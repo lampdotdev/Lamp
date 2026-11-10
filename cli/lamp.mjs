@@ -48,8 +48,8 @@ Mac app Lamp made in Swift, built and run on this Mac.
       --size looks at it as a window of that size shows it, when no window of the person's is open.
   lamp use [folder] <one of these>
       Try it as a person would, then look:
-        click <x> <y>                         a point of the picture (in a Mac app also: click "A Name" from the
-                                              screen as text)
+        click <x> <y>                         a point of the picture
+        click "A Name"                        a control by its name in the screen as text
         type <text>                           into whatever has the keyboard
         key <name> [seconds]                  a key, or several at once (w+a), held: a letter, a digit, space,
                                               enter, escape, tab, backspace, delete, up, down, left, right,
