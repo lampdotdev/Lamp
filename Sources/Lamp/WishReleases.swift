@@ -166,9 +166,9 @@ enum WishReleases {
 }
 
 /// The questions the box under a wish's app on its link's page asks in turn, where people send its maker ideas: open
-/// questions about what they found broken, what's missing and what would make it better, in this app's own terms
-/// ("Something in the town we're missing?"), rather than changes for them to pick. Lamp writes them as the Share Link
-/// card opens for a link without any; they're the person's to change or clear, and the page asks its own without them.
+/// questions about what they found broken, what's missing and what would make it better, rather than changes for them
+/// to pick. A link without any shows the plain ones on its Share Link card (`fallback`), the person's to change or clear,
+/// and the page asks the same without them.
 enum WishAsks {
     /// What the page asks when the link has none.
     static let fallback = ["Found a bug?", "What's missing?", "What would make it better?"]
@@ -177,26 +177,5 @@ enum WishAsks {
     static func lines(from text: String) -> [String] {
         text.split(separator: "\n").map { String($0).trimmed }.filter { !$0.isEmpty }
             .prefix(WishLink.Limit.asks).map { String($0.prefix(WishLink.Limit.ask)) }
-    }
-
-    static func write(for project: LampProject) async -> [String] {
-        let about = AppDescription.description(of: project) ?? ""
-        let prompt = """
-        An app called \(project.name) is shared as a link: its page shows the app with a box under it where anyone using \
-        it can send its maker an idea. Write three short questions the box asks in turn, to draw out ideas: one about \
-        something broken, one about something missing, one about something that would make it better, each in this \
-        app's own terms where it can (what it's about, its places, its data), under \(WishLink.Limit.ask) characters, \
-        ending with a question mark, in plain words. Never suggest a particular change, and never mention files, code, \
-        AI or Lamp. In the form of \(fallback.map { "\"\($0)\"" }.joined(separator: ", ")), but made for this app.
-        Reply as JSON: {"questions": ["…", "…", "…"]}
-
-        What the app is:
-        \(about.isEmpty ? project.name : about)
-        """
-        guard let (text, _) = try? await AppAI.complete(prompt: prompt, images: [], system: "", json: true, model: await AppAI.helperModel()),
-              let object = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any],
-              let raw = object["questions"] as? [String] else { return fallback }
-        let made = lines(from: raw.filter { $0.trimmed.hasSuffix("?") }.joined(separator: "\n"))
-        return made.isEmpty ? fallback : made
     }
 }
