@@ -1014,7 +1014,7 @@ final class SidebarServer {
     /// a restart and gone once the copy is put in place, kept or deleted.
     static let reviewChangesLine: SidebarLine = {
         var line = SidebarLine(id: UUID(uuidString: "5E1EC7ED-C4A2-4E5B-9E11-AD1E5C0A1B2C")!, kind: .action,
-                               text: "Your changes are ready to review.", gap: 12)
+                               text: "Done changing it? Review it again.", gap: 12)
         line.symbol = "checklist"
         line.button = "Review Changes…"
         line.prominent = true
