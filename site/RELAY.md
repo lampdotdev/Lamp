@@ -46,7 +46,8 @@ pairing. The page shows words to paste into the app, with the room's address and
 credential, apart from the page's and the helper's, and only its hash is kept. "New key" replaces it, and the old one
 stops working at once. The page says when a version came in from the app.
 
-"Change with ChatGPT", above those words, is the same words as a `codex://new?prompt=` link (`src/lib/change-words.ts`
+"Change with ChatGPT" is the page's main control; the words to paste, with Copy and "New key", are folded under
+"Use another AI app". The button is a `codex://new?prompt=` link carrying those words (`src/lib/change-words.ts`
 holds them for both), which opens a new chat in ChatGPT's desktop app on the Mac with them in the message box, unsent.
 The link carries the key on purpose, as the words do when pasted; it's kept out of PostHog's autocapture, and "New
 key" rebuilds it. The link can't choose Codex, so the words say to switch to it when commands can't run. The words
