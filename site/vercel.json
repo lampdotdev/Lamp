@@ -6,6 +6,7 @@
     "api/bug-report.js": { "maxDuration": 15 },
     "api/first-idea.js": { "maxDuration": 30 },
     "api/idea-event.js": { "maxDuration": 5 },
+    "api/idea-mail.js": { "maxDuration": 15 },
     "api/wishes.js": { "maxDuration": 15 },
     "api/wish-file.js": { "maxDuration": 300 },
     "api/wish-ideas.js": { "maxDuration": 10 },

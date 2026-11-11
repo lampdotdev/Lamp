@@ -12,7 +12,7 @@ import { deflateRawSync } from "node:zlib";
 import { NOTES_FILE, Problem, stateOf } from "./state.mjs";
 import { ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS, LIBRARIES } from "./dev.mjs";
 import { LIMITS, FILE_LIMITS, PAGE_LIMITS } from "../site/lib/shared-wishes.js";
-import { ideasOf, publishLink, removeFile, removeIdea, removeLink, sendFile, siteOrigin } from "./link.mjs";
+import { ideasOf, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile, siteOrigin } from "./link.mjs";
 import { exportApp } from "./lampapp.mjs";
 
 export { siteOrigin };
@@ -177,10 +177,10 @@ export async function unshare(folder) {
 }
 
 /** The ideas people playing the link have sent its maker and that are still open: each with its number. */
-export async function ideas(folder) {
+export async function ideas(folder, { earlier = false } = {}) {
   const link = readLink(folder);
   if (!link) throw new Problem("this folder has no link: lamp share makes one");
-  return { url: link.url, ideas: await ideasOf({ site: link.site, link }) };
+  return { url: link.url, ideas: await ideasOf({ site: link.site, link, earlier }) };
 }
 
 /** Says what became of an idea: it's in (the site writes to whoever asked to hear), or it's let go. */
@@ -188,6 +188,13 @@ export async function finishIdea(folder, n, built, note) {
   const link = readLink(folder);
   if (!link) throw new Problem("this folder has no link");
   return removeIdea({ site: link.site, link, n, built, note });
+}
+
+/** Says something more about an idea to whoever sent it; with no note, that their answer is seen to. */
+export async function answerIdea(folder, n, note) {
+  const link = readLink(folder);
+  if (!link) throw new Problem("this folder has no link");
+  return replyIdea({ site: link.site, link, n, note });
 }
 
 /** The page's name where nothing gave one: its title, or its folder's name. */

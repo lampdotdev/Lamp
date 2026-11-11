@@ -43,7 +43,7 @@ function localAPI() {
         for await (const chunk of req) chunks.push(chunk);
         const headers = Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k, Array.isArray(v) ? v.join(", ") : String(v)]));
         const response = await handler(new Request(`http://${req.headers.host}${target}`, {
-          method: req.method, headers, ...(["POST", "PUT"].includes(req.method) ? { body: Buffer.concat(chunks) } : {}),
+          method: req.method, headers, ...(["POST", "PUT", "PATCH", "DELETE"].includes(req.method) ? { body: Buffer.concat(chunks) } : {}),
         }));
         res.writeHead(response.status, Object.fromEntries(response.headers));
         res.end(Buffer.from(await response.arrayBuffer()));

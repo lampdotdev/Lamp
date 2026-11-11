@@ -126,7 +126,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
           <img data-shot-picture alt="The app as it is now" />
           <label><input type="checkbox" data-shot-keep checked /> Include this picture</label>
         </div>
-        <label for="notify-email" class="remix-popup-label">Email me once when it's in <span class="remix-popup-optional">(optional)</span></label>
+        <label for="notify-email" class="remix-popup-label">Email me about it <span class="remix-popup-optional">(optional)</span></label>
         <input id="notify-email" data-notify-email class="remix-popup-input" type="email" autocomplete="email" placeholder="Your email" />
         <div class="remix-popup-rows"><button type="submit" data-confirm-send class="shared-button">Send</button></div>
       </form>
@@ -594,14 +594,16 @@ import { DOWNLOAD_URL } from "../../lib/download";
     // The ideas this browser sent to this link, by number and token, for a later visit to ask what became of them (only
     // theirs, nothing else). Kept here alone: there's no account, and nothing of them goes anywhere but this link's site.
     const MINE = `lamp.shared.ideas.${wish.id}`;
-    type Mine = { n: number; token: string; text: string; at: string };
+    // `heard`: what was last shown of it (its outcome and the maker's last note), so each is said once. Kept as long as
+    // the site keeps the idea, since the maker may write again after its outcome.
+    type Mine = { n: number; token: string; text: string; at: string; heard?: string };
     const mineKept = (): Mine[] => { try { return JSON.parse(localStorage.getItem(MINE) ?? "[]"); } catch { return []; } };
     const keepMine = (all: Mine[]) => { try { all.length ? localStorage.setItem(MINE, JSON.stringify(all.slice(-20))) : localStorage.removeItem(MINE); } catch {} };
     const remember = (answer: { n: number; token: string }, text: string) => {
       if (Number.isInteger(answer?.n) && typeof answer?.token === "string") keepMine([...mineKept(), { n: answer.n, token: answer.token, text, at: new Date().toISOString() }]);
     };
-    // On a visit, one that's in, or that the maker answered with a note, says so once over the app; one dismissed
-    // without a note, or older than the site keeps them, is let go.
+    // On a visit, one that's in, or that the maker has written a note about since, says so once over the app; one the
+    // site no longer keeps is let go.
     (async () => {
       const all = mineKept();
       if (!all.length) return;
@@ -613,11 +615,14 @@ import { DOWNLOAD_URL } from "../../lib/download";
       } catch { return; }
       const status = new Map(answers.map((one) => [one.n, one.status]));
       const notes = new Map(answers.filter((one) => typeof one.note === "string" && one.note).map((one) => [one.n, one.note as string]));
-      const isIn = all.filter((one) => status.get(one.n) === "in");
-      const told = all.filter((one) => status.get(one.n) === "in" || (status.get(one.n) === "dismissed" && notes.has(one.n)));
-      // Against what's kept now: one sent while this was being asked stays.
+      const heard = (n: number) => `${status.get(n)}|${notes.get(n) ?? ""}`;
+      const told = all.filter((one) => status.has(one.n) && (status.get(one.n) === "in" || notes.has(one.n)) && heard(one.n) !== one.heard);
+      // Those just put in, not those in before whose maker has written again.
+      const isIn = told.filter((one) => status.get(one.n) === "in" && !one.heard?.startsWith("in|"));
+      // Against what's kept now: one sent while this was being asked stays, and each answered keeps what was shown.
       const asked = new Set(all.map((one) => one.n));
-      keepMine(mineKept().filter((one) => !asked.has(one.n) || status.get(one.n) === "open"));
+      keepMine(mineKept().filter((one) => !asked.has(one.n) || status.has(one.n))
+        .map((one) => asked.has(one.n) ? { ...one, heard: heard(one.n) } : one));
       if (!told.length) return;
       const bar = $<HTMLElement>("[data-idea-in]");
       $<HTMLElement>("[data-idea-in-text]").textContent = told.length === 1
@@ -672,7 +677,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
       sentText.textContent = idea;
       sentText.hidden = false;
       confirm.hidden = true;
-      notifyNote.textContent = email ? "We'll email you once when it's in." : "";
+      notifyNote.textContent = email ? "We'll email you when it's in, or with an answer." : "";
       $<HTMLElement>("[data-own-lead]").textContent = "Want it sooner? Lamp can make it for you now. It's free on your Mac and works with your ChatGPT or Claude plan.";
     });
     $<HTMLButtonElement>("[data-remix-close]").addEventListener("click", () => dialog.close());
