@@ -230,26 +230,15 @@ enum GitHubRepo {
         if isPublic, repo != nil { try writeButtons(in: tree, page: Publish.pageUse(project)); showcase.remix = true }
         // A web game or a web app is a page too, staged here so it's checked and shown before anything goes up: only in a public
         // repository, since GitHub serves a private one's page only on a paid plan.
-        var page: Staged.Page?
+        let page: Staged.Page? = nil
         let sitePage = site && isPublic ? repo.map(Publish.pageURL) : nil
         if let sitePage {
             showcase.play = sitePage
             showcase.plays = false
-        } else if withPage, isPublic, let repo, Publish.hasPage(project) {
-            let site = work.appendingPathComponent("page")
-            let html = try Publish.copyPage(of: project, into: site, scope: String(repo.split(separator: "/").last ?? ""))
-            try Data(Publish.pageReadme(for: project, credits: credits, repo: repo, site: site).utf8)
-                .write(to: site.appendingPathComponent("README.md"))
-            let leaks = ShareCheck.secrets(in: site, known: Sharing.knownSecrets(project))
-            if let first = leaks.first {
-                throw Sharing.ImportError("\(project.name)'s page can't go on GitHub: it holds a key or a password.",
-                                          detail: "It's in \(first). Ask Lamp to take it out and keep it out of the code.")
-            }
-            page = Staged.Page(folder: site, html: html, credits: credits, chain: chain, link: link,
-                               plays: link != nil && link == WishLink.kept(for: project)?.url && WishLink.kept(for: project)?.plays == true,
-                               suggestions: RemixSuggestions.load(project) ?? RemixOffer.fallback,
-                               about: AppDescription.description(of: project), url: Publish.pageURL(repo))
-            showcase.play = page?.url
+        } else if isPublic, let link, Publish.hasPage(project), link == WishLink.kept(for: project)?.url, WishLink.kept(for: project)?.plays == true {
+            // A web game or a web app is played from its lamp.dev link, which links back here: it no longer goes up as a
+            // GitHub Pages site of its own as well. A Pages site an earlier release made is left as it is.
+            showcase.play = link.absoluteString
             showcase.plays = Publish.pageUse(project) != .use
         }
         // Never "Remixed from" itself: a wish put back where it came from.
