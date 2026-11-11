@@ -342,34 +342,50 @@ export function cloudStore(env, fetcher = fetch) {
       return blob.url;
     },
     async readFile(url) {
-      const address = new URL(url);
-      if (address.protocol !== "https:" || !address.hostname.endsWith(".public.blob.vercel-storage.com")) throw new Error("Not the store's");
-      const response = await fetcher(url, { redirect: "error", signal: AbortSignal.timeout(10000) });
-      if (!response.ok) throw new Error("Part unavailable");
-      return Buffer.from(await response.arrayBuffer());
+      const { body } = await this.openFile(url);
+      return Buffer.from(await new Response(body).arrayBuffer());
     },
     // A page's file as it comes, passed on without being held whole: a big one (a game's map data, tens of MB) is more
     // than a function's answer may hold at once, and more than it can read in the time a whole read is given.
+    // A small one is kept in the instance after its first read (`remembered`): a page's files never change, and a game
+    // asks for some many times over (a worker's script, under an address of its own each time), which the CDN can't
+    // keep. The store turns this function's reads away for a while when they come in bursts (403), and asking again
+    // soon only keeps that going: a refused read is asked once more, a second later, and said with what the store
+    // gave as its reason.
     async openFile(url) {
       const address = new URL(url);
       if (address.protocol !== "https:" || !address.hostname.endsWith(".public.blob.vercel-storage.com")) throw new Error("Not the store's");
-      // A game asks for many of its files at once, and the store turns some reads away for a moment (403, 429 or a
-      // 5xx) when one is read many times close together: each is tried again a few times, a little later, rather than
-      // answered as missing, which the game takes as part of it not loading.
-      for (let attempt = 1; ; attempt++) {
+      const kept = remembered.get(url);
+      if (kept) { remembered.delete(url); remembered.set(url, kept); return { body: kept, length: String(kept.length) }; }
+      let said = null;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        if (attempt > 1) await new Promise((done) => setTimeout(done, 1000 + Math.random() * 500));
+        // The time limit is for the store to start answering: a big file's body may take longer to pass on.
         const waiting = new AbortController();
         const timer = setTimeout(() => waiting.abort(), 10000);
-        try {
-          const response = await fetcher(url, { redirect: "error", signal: waiting.signal });
-          if (response.ok && response.body) return { body: response.body, length: response.headers.get("content-length") };
-          try { await response.body?.cancel(); } catch {}
-          const passing = response.status === 403 || response.status === 429 || response.status >= 500;
-          if (!passing || attempt >= 4) throw new Error(`Part unavailable (${response.status})`);
-        } catch (error) {
-          if (attempt >= 4 || String(error?.message).startsWith("Part unavailable")) throw error;
-        } finally { clearTimeout(timer); }
-        await new Promise((done) => setTimeout(done, 150 * 3 ** (attempt - 1) + Math.random() * 100));
+        let response;
+        try { response = await fetcher(url, { redirect: "error", signal: waiting.signal }); }
+        catch (error) { said = error?.message ?? String(error); continue; }
+        finally { clearTimeout(timer); }
+        const length = response.headers.get("content-length");
+        if (response.ok && response.body) {
+          if (length === null || Number(length) > REMEMBERED_FILE) return { body: response.body, length };
+          const bytes = Buffer.from(await response.arrayBuffer());
+          remember(url, bytes);
+          return { body: bytes, length: String(bytes.length) };
+        }
+        // The start of the store's words, read for a moment at most: a body that stalls never holds up the next try.
+        let words = "";
+        const reader = response.body?.getReader();
+        if (reader) {
+          const first = await Promise.race([reader.read().catch(() => null), new Promise((done) => setTimeout(done, 1000, null))]);
+          if (first?.value) words = Buffer.from(first.value).subarray(0, 100).toString("utf8").replace(/\s+/g, " ");
+          reader.cancel().catch(() => {});
+        }
+        said = [response.status, response.headers.get("x-vercel-error"), response.headers.get("x-vercel-mitigated") && `mitigated ${response.headers.get("x-vercel-mitigated")}`, words && `"${words}"`].filter(Boolean).join(" ");
+        if (!(response.status === 403 || response.status === 429 || response.status >= 500)) break;
       }
+      throw new Error(`Part unavailable (${said})`);
     },
     // The page and its card are cached by Vercel's CDN, tagged with the wish (see `cacheTags`): a change or a removal
     // takes them out at once rather than when they'd have run out.
@@ -380,6 +396,24 @@ export function cloudStore(env, fetcher = fetch) {
       } catch {}
     },
   };
+}
+
+// A page's small files, as read from the store by this instance, the most recently served last: at most REMEMBERED in
+// all, the least recently served going first.
+const REMEMBERED = 96 * 1024 * 1024, REMEMBERED_FILE = 2 * 1024 * 1024;
+const remembered = new Map();
+let rememberedBytes = 0;
+function remember(url, bytes) {
+  // Reads of one file at once each arrive here: the one already kept is counted out before its copy is counted in.
+  rememberedBytes -= remembered.get(url)?.length ?? 0;
+  remembered.delete(url);
+  remembered.set(url, bytes);
+  rememberedBytes += bytes.length;
+  for (const [oldest, kept] of remembered) {
+    if (rememberedBytes <= REMEMBERED) break;
+    remembered.delete(oldest);
+    rememberedBytes -= kept.length;
+  }
 }
 
 /** Kept in memory, for `npm run dev` and the tests: pictures as data: URLs, so nothing else needs serving. */
