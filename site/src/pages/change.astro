@@ -95,6 +95,7 @@ import { CHATGPT_APP_URL, CLAUDE_CODE_URL } from "../lib/change-words";
 
 <script>
   import { appLink, changeWords, gamesFolder, isChangeApp } from "../lib/change-words";
+  import { relayCall } from "../lib/relay-call";
 
   const $ = <T extends HTMLElement>(name: string) => document.querySelector(`[data-${name}]`) as T;
   type Request = { id: string; prompt: string; state: string; message: string | null; version: number | null };
@@ -161,15 +162,8 @@ import { CHATGPT_APP_URL, CLAUDE_CODE_URL } from "../lib/change-words";
   const say = (text: string) => { $("status").textContent = text; };
   const minutes = (ms: number) => { const n = Math.max(1, Math.round(ms / 60000)); return n === 1 ? "a minute" : `${n} minutes`; };
 
-  async function call(op: string, { method = "GET", body, query = "" }: { method?: string; body?: unknown; query?: string } = {}) {
-    const response = await fetch(`/api/relay?op=${op}${query}`, {
-      method, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { "Content-Type": "application/json" } : {}) },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const answer = await response.json().catch(() => ({}));
-    if (!response.ok) throw Object.assign(new Error(answer.error ?? `HTTP ${response.status}`), { status: response.status });
-    return answer;
-  }
+  const call = (op: string, options: { method?: string; body?: unknown; query?: string } = {}) => relayCall(op, { ...options, token });
+
 
   function show(next: Room) {
     room = next;

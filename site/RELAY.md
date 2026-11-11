@@ -74,10 +74,12 @@ so the player gives the whole path and makes the folder. It's checked as Claude 
 whole path from `/`, no `..`, nothing on the network, no control or invisible characters, at most 4,096 characters,
 and not `/` or a home folder itself. A missing or refused one is said in plain words, and the button makes no link.
 
-The link's page offers this beside sending an idea (SHARED_WISHES.md): "I want to make this change myself", then
-ChatGPT or Claude Code, opens `/change?with=app&w=<id>&app=<app>#idea=<the idea>` in a new tab. The idea goes in the
-fragment, which never reaches a server; an inline script on the change page moves it into the tab's sessionStorage and
-takes it out of the address before analytics starts, and those links are kept out of autocapture.
+The link's page offers the same without leaving it (SHARED_WISHES.md): the idea dialog's "Make it myself" tab opens a
+room like this one for the link (`op=open` with `mode: "post"`, then `op=seed` until its copy is whole) as the tab first
+shows, keeps its credentials in that tab's sessionStorage, and has Open for ChatGPT and for Claude Code (with the
+games folder) carry the same words, with the idea as it stands. Once an app is opened, the page asks the room for its
+state every few seconds and plays each new version in its own frame, from the room's play host. `/change?with=app`
+itself still works on its own, and takes an idea as `#idea=`, out of the address before analytics starts.
 
 - `GET /r/<room>/game` with `Authorization: Bearer <key>` gives the game's one file as plain text that never runs:
   `text/plain`, `nosniff`, `no-store`, a sandbox with nothing allowed, and the version it is as its `ETag`.

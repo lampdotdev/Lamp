@@ -34,10 +34,11 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   Lamp, and two ways on side by side: **Open in Lamp** on a Mac (`lamp://wish?shared=<id>` with the change, so the copy
   follows the link, or `lamp://wish?text=…` for a link without the wish's file) and **Get Lamp**, which downloads it and
   copies the change with Lamp's mark naming the link (`data-lamp-wish="shared=<id>"`), so a new Lamp opens the shared app
-  itself as the link would, or the wish and the change for a link without its file (FIRST_IDEA.md). Under the idea,
-  outside its Send form, a page of one file (`page.oneFile`, the only thing the record shows of its files) has a folded
-  "I want to make this change myself" with ChatGPT and Claude Code: each opens the change page for the player's own copy
-  with the idea as it stands (RELAY.md). Get Lamp under a
+  itself as the link would, or the wish and the change for a link without its file (FIRST_IDEA.md). For a page of
+  one file (`page.oneFile`, the only thing the record shows of its files), the dialog has two tabs under the idea:
+  sending it, and "Make it myself", with ChatGPT and Claude Code, which change the player's own copy and send it back
+  to this page, where it plays (RELAY.md); Lamp is offered under sending only when there are no tabs. A picture of the
+  app that's almost all one color isn't offered. Get Lamp under a
   picture copies the same, without a change. A request the link brought (`?ask=`) waits in the box. The function
   serves the built page (`dist/w/index.html`, bundled with it by `includeFiles`) with the wish in `#shared-wish`
   (its play address in `play`) and its own title, description and preview tags in place of the built page's; `npm run

@@ -109,47 +109,78 @@ import { DOWNLOAD_URL } from "../../lib/download";
       <svg aria-hidden="true" viewBox="0 0 16 16" class="size-3.5 fill-none stroke-current stroke-2 [stroke-linecap:round] [stroke-linejoin:round]"><path d="M4 6l4 4 4-4" /></svg>
     </button>
 
-    <!-- An idea, to send to the person who made it once it's confirmed here: its words, which can still be changed, and an
-         address to hear back at, if they want. Once sent, it says so. Under it either way, making one's own with Lamp:
-         opening it (on a Mac) or getting it. -->
+    <!-- An idea, and two ways on with it, as tabs over the same words: send it to the person who made it (its words,
+         which can still be changed, a picture of the app, and an address to hear back at), or make it oneself, in one's
+         own copy, with ChatGPT or Claude Code, which send it back to this page, where it plays. The tabs are there only
+         when a game can be made that way (one file, playing here); otherwise it's sending alone, with Lamp under it. -->
     <dialog data-remix-dialog aria-labelledby="remix-title" class="remix-popup">
       <button type="button" data-remix-close aria-label="Close" class="remix-popup-close">
         <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" /></svg>
       </button>
       <h2 id="remix-title" data-remix-title class="remix-popup-title"></h2>
       <p data-remix-text class="remix-popup-text"></p>
-      <form data-confirm class="remix-popup-confirm">
-        <label for="idea-text" class="sr-only">Your idea</label>
-        <textarea id="idea-text" data-remix-to class="remix-popup-to remix-popup-edit" rows="3" maxlength="1000" required></textarea>
-        <!-- The app as it was when the box was opened, sent with the idea unless it's left out. -->
-        <div data-shot hidden class="remix-popup-shot">
-          <img data-shot-picture alt="The app as it is now" />
-          <label><input type="checkbox" data-shot-keep checked /> Include this picture</label>
-        </div>
-        <label for="notify-email" class="remix-popup-label">Email me about it <span class="remix-popup-optional">(optional)</span></label>
-        <input id="notify-email" data-notify-email class="remix-popup-input" type="email" autocomplete="email" placeholder="Your email" />
-        <div class="remix-popup-rows"><button type="submit" data-confirm-send class="shared-button">Send</button></div>
-      </form>
-      <p data-sent-text hidden class="remix-popup-to"></p>
-      <p data-notify-note class="remix-popup-note empty:hidden" role="status" aria-live="polite"></p>
-      <!-- Making the change oneself, beside sending it: the player's own AI app changes their own copy on the change page
-           (/change?with=app), which opens in a tab of its own with the idea as it stands here. Only for a game of one
-           file, the only kind an app can read and send back whole. Out of autocapture: the links carry the idea. -->
-      <details data-yourself hidden class="remix-popup-yourself ph-no-capture">
-        <summary>I want to make this change myself</summary>
-        <p data-yourself-text class="remix-popup-note"></p>
-        <div class="remix-popup-rows">
-          <a href="/change" data-yourself-app="chatgpt" target="_blank" rel="noopener" class="shared-button shared-button-outline">ChatGPT</a>
-          <a href="/change" data-yourself-app="claude" target="_blank" rel="noopener" class="shared-button shared-button-outline">Claude Code</a>
-        </div>
-      </details>
-      <p data-own-lead class="remix-popup-lead">Or have Lamp make it for you now. It's free on your Mac and works with your ChatGPT or Claude plan.</p>
-      <div class="remix-popup-rows">
-        <!-- One way on: on a Mac it opens Lamp with the idea, or gets Lamp when that doesn't open; elsewhere it gets Lamp. -->
-        <a href={DOWNLOAD_URL} data-download data-download-place="shared-remix" class="shared-button shared-button-outline"><span data-download-label>Get Lamp</span></a>
+      <label for="idea-text" class="sr-only">Your idea</label>
+      <textarea id="idea-text" data-remix-to form="idea-form" class="remix-popup-to remix-popup-edit" rows="3" maxlength="1000" required></textarea>
+      <div data-tabs hidden role="tablist" aria-label="What to do with it" class="remix-tabs">
+        <button type="button" role="tab" data-tab="send" aria-selected="true" aria-controls="idea-send"></button>
+        <button type="button" role="tab" data-tab="make" aria-selected="false" aria-controls="idea-make">Make it myself</button>
       </div>
-      <!-- Empty until Download is pressed, when it says how the wish waits for Lamp. -->
-      <p data-next class="remix-popup-note empty:hidden" role="status" aria-live="polite"></p>
+      <div id="idea-send" data-panel="send" role="tabpanel">
+        <form id="idea-form" data-confirm class="remix-popup-confirm">
+          <!-- The app as it was when the box was opened, sent with the idea unless it's left out. -->
+          <div data-shot hidden class="remix-popup-shot">
+            <img data-shot-picture alt="The app as it is now" />
+            <label><input type="checkbox" data-shot-keep checked /> Include this picture</label>
+          </div>
+          <label for="notify-email" class="remix-popup-label">Email me about it <span class="remix-popup-optional">(optional)</span></label>
+          <input id="notify-email" data-notify-email class="remix-popup-input" type="email" autocomplete="email" placeholder="Your email" />
+          <div class="remix-popup-rows"><button type="submit" data-confirm-send class="shared-button">Send</button></div>
+        </form>
+        <p data-sent-text hidden class="remix-popup-to"></p>
+        <p data-notify-note class="remix-popup-note empty:hidden" role="status" aria-live="polite"></p>
+        <!-- Lamp, for a game that can't be made here: opening it (on a Mac) or getting it. -->
+        <div data-lamp hidden>
+          <p data-own-lead class="remix-popup-lead"></p>
+          <div class="remix-popup-rows">
+            <!-- One way on: on a Mac it opens Lamp with the idea, or gets Lamp when that doesn't open; elsewhere it gets Lamp. -->
+            <a href={DOWNLOAD_URL} data-download data-download-place="shared-remix" class="shared-button shared-button-outline"><span data-download-label>Get Lamp</span></a>
+          </div>
+          <!-- Empty until Download is pressed, when it says how the wish waits for Lamp. -->
+          <p data-next class="remix-popup-note empty:hidden" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+      <!-- Making it oneself. Out of autocapture: its links carry the room's key and the idea. -->
+      <div id="idea-make" data-panel="make" role="tabpanel" hidden class="ph-no-capture">
+        <div class="remix-options">
+          <div class="remix-option" data-option="chatgpt">
+            <div><b>ChatGPT</b><small>The desktop app makes it and sends it back here</small></div>
+            <a href="#" data-open="chatgpt" class="shared-button">Open</a>
+          </div>
+          <div class="remix-option" data-option="claude">
+            <div><b>Claude Code</b><small data-claude-where>Opens in your games folder</small></div>
+            <a href="#" data-open="claude" class="shared-button">Open</a>
+            <!-- Claude Code opens in this folder, asked for once and kept in this browser, so the person trusts it and
+                 never their home folder (lib/change-words.ts `gamesFolder`). -->
+            <form data-folder-form hidden class="remix-folder">
+              <label for="games-folder" class="remix-popup-label">Your games folder</label>
+              <div class="remix-folder-row">
+                <input id="games-folder" data-folder-input class="remix-popup-input" autocomplete="off" spellcheck="false" placeholder="/Users/you/Games" />
+                <button type="submit" class="shared-button shared-button-outline">Save</button>
+              </div>
+              <p data-folder-problem class="remix-folder-problem empty:hidden" role="alert"></p>
+            </form>
+          </div>
+        </div>
+        <ol data-steps hidden class="remix-steps" aria-live="polite">
+          <li data-step="ready"></li>
+          <li data-step="opened"></li>
+          <li data-step="in"></li>
+        </ol>
+        <div data-made hidden class="remix-popup-rows">
+          <button type="button" data-more class="shared-button shared-button-outline">Ask for more</button>
+          <button type="button" data-play-it class="shared-button">Play it</button>
+        </div>
+      </div>
     </dialog>
   </div>
 </Base>
@@ -325,19 +356,49 @@ import { DOWNLOAD_URL } from "../../lib/download";
     font-size: 0.875rem; color: var(--color-muted-ink);
   }
   .remix-popup-lead + .remix-popup-rows { margin-top: 0.75rem; }
-  /* Making it oneself: a quiet line under the idea that opens on its two apps. */
-  .remix-popup-yourself { margin-top: 0.75rem; font-size: 0.8125rem; color: var(--color-muted-ink); }
-  .remix-popup-yourself[hidden] { display: none; }
-  .remix-popup-yourself summary { cursor: pointer; list-style: none; width: fit-content; text-decoration: underline; text-underline-offset: 2px; }
-  .remix-popup-yourself summary::-webkit-details-marker { display: none; }
-  .remix-popup-yourself summary:hover { color: var(--color-tape); }
-  .remix-popup-yourself .remix-popup-note { margin-top: 0.5rem; }
-  .remix-popup-yourself .remix-popup-rows { justify-content: flex-start; margin-top: 0.5rem; }
+  /* Send it or make it oneself: two tabs over the idea, the one shown raised. */
+  .remix-tabs {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 3px; margin-top: 1rem; padding: 3px; border-radius: 0.4375rem;
+    border: 1px solid color-mix(in srgb, var(--color-tape) 15%, transparent); background: color-mix(in srgb, var(--color-tape) 4%, transparent);
+  }
+  .remix-tabs[hidden], [data-panel][hidden], [data-lamp][hidden] { display: none; }
+  .remix-tabs button {
+    padding: 0.4375rem 0; border-radius: 0.3125rem; font-size: 0.875rem; font-weight: 600; color: var(--color-muted-ink); cursor: pointer;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .remix-tabs button[aria-selected="true"] { background: var(--color-paper); color: var(--color-tape); box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); }
+  .remix-tabs button:focus-visible { outline: 2px solid var(--color-muted-ink); outline-offset: 1px; }
+  /* Each app a row: its name and what it does, and Open. The one last chosen is raised, its Open in ink. */
+  .remix-options { display: grid; gap: 0.5rem; margin-top: 0.875rem; }
+  .remix-option {
+    display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0.25rem 0.75rem; padding: 0.625rem 0.75rem;
+    border: 1px solid color-mix(in srgb, var(--color-tape) 15%, transparent); border-radius: 0.375rem; font-size: 0.875rem;
+  }
+  .remix-option small { display: block; margin-top: 0.125rem; font-size: 0.8125rem; color: var(--color-muted-ink); overflow-wrap: anywhere; }
+  .remix-option .shared-button { background: var(--color-paper); color: var(--color-tape); border: 1px solid color-mix(in srgb, var(--color-tape) 15%, transparent); }
+  .remix-option.chosen { border-color: var(--color-tape); box-shadow: inset 0 0 0 1px var(--color-tape); }
+  .remix-option.chosen .shared-button { background: var(--color-tape); color: var(--color-paper); border-color: var(--color-tape); }
+  .remix-folder { grid-column: 1 / -1; margin-top: 0.25rem; }
+  .remix-folder[hidden] { display: none; }
+  .remix-folder .remix-popup-label { margin-top: 0.25rem; }
+  .remix-folder-row { display: flex; gap: 0.5rem; margin-top: 0.375rem; }
+  .remix-folder-row .remix-popup-input { margin-top: 0; font-family: var(--font-mono); font-size: 0.75rem; }
+  .remix-folder-problem { margin: 0.375rem 0 0; font-size: 0.8125rem; color: #a3261b; }
+  /* How making it is going: done steps checked, the one under way open. */
+  .remix-steps { margin: 0.875rem 0 0; padding: 0.75rem; list-style: none; border: 1px solid color-mix(in srgb, var(--color-tape) 15%, transparent); border-radius: 0.375rem; font-size: 0.875rem; }
+  .remix-steps[hidden], .remix-steps li:empty { display: none; }
+  .remix-steps li { display: flex; gap: 0.5rem; align-items: baseline; }
+  .remix-steps li + li { margin-top: 0.5rem; }
+  .remix-steps li::before { content: "○"; flex: none; width: 1rem; color: var(--color-muted-ink); }
+  .remix-steps li.done::before { content: "✓"; color: #2f7a3f; font-weight: 700; }
+  .remix-steps li.failed::before { content: "!"; color: #a3261b; font-weight: 700; }
 </style>
 
 <script>
   import { askFrom, copyWish, sharedWishLink, withAsk, wishLink } from "../../../lib/wish.js";
   import { track } from "../../lib/analytics";
+  import { appLink, changeWords, gamesFolder, type ChangeApp } from "../../lib/change-words";
+  import { relayCall } from "../../lib/relay-call";
 
   type Release = { date: string; lines: string[] };
   type Shared = { id: string; name: string; by?: string; oneFile?: boolean; ideas?: string[]; asks?: string[]; releases?: Release[]; about: string; wish: string; picture: string; icon: string; file?: string; shared?: string; play?: string; shape?: number | "fill" };
@@ -408,6 +469,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
     // A picture of the app as it is, from the page playing it (`pictureScript`), or null when it has none or doesn't
     // answer in a moment.
     let askPicture = async (): Promise<string | null> => null;
+    // The frame the game plays in, for a version the player's own AI app sends (making it oneself, below).
+    let playFrame: HTMLIFrameElement | null = null;
 
     if (wish.play) {
       // The page plays from the link's own host (`playOrigin`), so it can't reach the site or another wish's storage.
@@ -420,6 +483,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
       frame.className = "absolute inset-0 size-full border-0 bg-black";
       stage.prepend(frame);
       stage.hidden = false;
+      playFrame = frame;
       focusPlay = () => { if (document.activeElement !== $<HTMLInputElement>("[data-change]")) frame.focus(); };
       frame.addEventListener("load", focusPlay);
       // A game whose version was replaced while it was open asks for the page again, which plays the newest
@@ -578,6 +642,52 @@ import { DOWNLOAD_URL } from "../../lib/download";
     const shotPicture = $<HTMLImageElement>("[data-shot-picture]");
     const shotKeep = $<HTMLInputElement>("[data-shot-keep]");
     let shot: string | null = null;
+    // A picture that's almost all one color says nothing about the idea (a game whose screen is drawn outside its
+    // canvas, or one between scenes), so it isn't offered: fewer than 1% of a small copy's pixels stand out from the rest.
+    const nearlyBlank = (picture: string) => new Promise<boolean>((done) => {
+      const image = new Image();
+      image.onload = () => {
+        const canvas = Object.assign(document.createElement("canvas"), { width: 64, height: 40 });
+        const context = canvas.getContext("2d");
+        if (!context) return done(false);
+        context.drawImage(image, 0, 0, 64, 40);
+        const { data } = context.getImageData(0, 0, 64, 40);
+        const light: number[] = [];
+        for (let i = 0; i < data.length; i += 4) light.push(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+        const middle = [...light].sort((a, b) => a - b)[light.length >> 1];
+        done(light.filter((value) => Math.abs(value - middle) > 24).length < light.length * 0.01);
+      };
+      image.onerror = () => done(false);
+      image.src = picture;
+    });
+
+    // Send it, or make it oneself: the tabs, there when the game can be made here. The title and its line follow the
+    // tab shown; the idea's words are the same under both.
+    const canMake = Boolean(wish.play && wish.oneFile);
+    const tabs = $<HTMLElement>("[data-tabs]");
+    const sendTab = $<HTMLButtonElement>('[data-tab="send"]');
+    const makeTab = $<HTMLButtonElement>('[data-tab="make"]');
+    tabs.hidden = !canMake;
+    $<HTMLElement>("[data-lamp]").hidden = canMake;
+    sendTab.textContent = maker && first.length <= 12 ? `Send to ${first}` : "Send it";
+    let sent = false;
+    const showTab = (which: "send" | "make") => {
+      sendTab.setAttribute("aria-selected", String(which === "send"));
+      makeTab.setAttribute("aria-selected", String(which === "make"));
+      $<HTMLElement>('[data-panel="send"]').hidden = which !== "send";
+      $<HTMLElement>('[data-panel="make"]').hidden = which !== "make";
+      if (which === "make") {
+        title.textContent = "Make it yourself";
+        text.textContent = `It changes your own copy here, not ${maker ? `${maker}'s` : "the one shared here"}. The new version plays on this page.`;
+        prepare();
+      } else {
+        title.textContent = sent ? (maker ? `Sent to ${maker}` : "Sent") : maker ? `Send to ${maker}?` : "Send your idea?";
+        text.textContent = `${maker || "Whoever made it"} sees every idea, and can add yours to ${wish.name}.`;
+      }
+    };
+    sendTab.addEventListener("click", () => showTab("send"));
+    makeTab.addEventListener("click", () => showTab("make"));
+
     // The bar's send opens the dialog with the idea, to confirm before it goes; nothing is sent until then.
     $<HTMLFormElement>("[data-prompt]").addEventListener("submit", (event) => {
       event.preventDefault();
@@ -588,8 +698,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
       shotBox.hidden = true;
       shotKeep.checked = true;
       const forDraft = draft + 1;
-      askPicture().then((picture) => {
-        if (!picture || forDraft !== draft) return;
+      askPicture().then(async (picture) => {
+        if (!picture || forDraft !== draft || (await nearlyBlank(picture))) return;
         shot = picture;
         shotPicture.src = picture;
         shotBox.hidden = false;
@@ -599,14 +709,13 @@ import { DOWNLOAD_URL } from "../../lib/download";
       draft += 1;
       fromBar = ask;
       confirmSend.disabled = false;
-      title.textContent = maker ? `Send to ${maker}?` : "Send your idea?";
-      text.textContent = `${maker || "Whoever made it"} sees every idea, and can add yours to ${wish.name}.`;
+      sent = false;
       ideaText.value = ask;
       confirm.hidden = false;
       sentText.hidden = true;
       $<HTMLElement>("[data-own-lead]").textContent = "Or have Lamp make it for you now. It's free on your Mac and works with your ChatGPT or Claude plan.";
       notifyNote.textContent = "";
-      yourself.open = false;
+      showTab("send");
       pointOpen();
       dialog.showModal();
       confirmSend.focus();
@@ -693,6 +802,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
       if (mine !== draft) return;
       confirmSend.disabled = false;
       if (!sent) { notifyNote.textContent = "That didn't go. Try again in a moment."; return; }
+      sent = true;
       title.textContent = maker ? `Sent to ${maker}` : "Sent";
       sentText.textContent = idea;
       sentText.hidden = false;
@@ -700,21 +810,134 @@ import { DOWNLOAD_URL } from "../../lib/download";
       notifyNote.textContent = email ? "We'll email you when it's in, or with an answer." : "";
       $<HTMLElement>("[data-own-lead]").textContent = "Want it sooner? Lamp can make it for you now. It's free on your Mac and works with your ChatGPT or Claude plan.";
     });
-    // Making it oneself: each app's link opens the change page for this game with the idea as it stands in the dialog
-    // when it's pressed, in the address's fragment, which never reaches a server and which the change page takes out
-    // before analytics starts.
-    const yourself = $<HTMLDetailsElement>("[data-yourself]");
-    yourself.hidden = !(wish.play && wish.oneFile);
-    $<HTMLElement>("[data-yourself-text]").textContent = `It changes your own copy of the game, not ${maker ? `${maker}'s` : "the one shared here"}.`;
-    for (const link of document.querySelectorAll<HTMLAnchorElement>("[data-yourself-app]")) {
-      link.addEventListener("click", () => {
-        const app = link.dataset.yourselfApp!;
-        const idea = ideaText.value.trim();
-        link.href = `/change?with=app&w=${encodeURIComponent(wish.id)}&app=${app}${idea ? `#idea=${encodeURIComponent(idea)}` : ""}`;
-        // Which app, never what the idea says.
-        track("idea_change_yourself", { idea: wish.name, place: "shared", app });
+    // Making it oneself, on this page: a room of the relay's (RELAY.md) takes a copy of the game as the dialog's tab first
+    // shows, so the app's Open is ready by the time it's pressed; the app is handed the room's words (lib/change-words.ts)
+    // and sends a new version to the room, which this page asks after and plays in its own frame. The room's credentials
+    // stay in this tab (sessionStorage), and its links stay out of autocapture.
+    const KEPT = `lamp.relay.idea.${wish.id}`;
+    type Kept = { token: string; postKey: string; room: string; name: string | null; version: number };
+    let room: Kept | null = null;
+    let preparing: Promise<Kept | null> | null = null;
+    let chosen: ChangeApp = "chatgpt";
+    let waiting: { app: ChangeApp; at: number } | null = null;
+    let watching = false;
+    const FOLDER = "lamp.change.folder";
+    let folder = "";
+    try { const kept = gamesFolder(localStorage.getItem(FOLDER) ?? ""); if ("folder" in kept) folder = kept.folder; } catch {}
+    const names: Record<ChangeApp, string> = { chatgpt: "ChatGPT", claude: "Claude Code" };
+    const step = (which: string, words: string, state: "done" | "failed" | "" = "") => {
+      const item = $<HTMLElement>(`[data-step="${which}"]`);
+      item.textContent = words;
+      item.className = state;
+      $<HTMLElement>("[data-steps]").hidden = false;
+    };
+    const links = () => {
+      for (const link of document.querySelectorAll<HTMLAnchorElement>("[data-open]")) {
+        const app = link.dataset.open as ChangeApp;
+        const ready = room && (app !== "claude" || folder);
+        link.href = ready ? appLink(app, changeWords({
+          guide: `${location.origin}/change-guide.md`, address: `${location.origin}/r/${room!.room}/game`, key: room!.postKey,
+          page: `${location.origin}${location.pathname}`, name: room!.name ?? wish.name, app, idea: ideaText.value,
+        }), folder) : "#";
+      }
+      $<HTMLElement>("[data-claude-where]").textContent = folder ? `Opens in ${folder}` : "Opens in your games folder";
+    };
+    ideaText.addEventListener("input", links);
+    const choose = (app: ChangeApp) => {
+      chosen = app;
+      for (const row of document.querySelectorAll<HTMLElement>("[data-option]")) row.classList.toggle("chosen", row.dataset.option === app);
+    };
+    choose("chatgpt");
+    // The room this tab already has for the game, if it's still open; else a new one, with its copy of the game made a
+    // few files a call. Asked once at a time.
+    const prepare = () => preparing ??= (async () => {
+      try {
+        const kept: Kept | null = JSON.parse(sessionStorage.getItem(KEPT) ?? "null");
+        if (kept) {
+          const state = await relayCall("state", { token: kept.token }).catch(() => null);
+          if (state) { room = { ...kept, name: state.name ?? kept.name, version: state.version }; links(); return room; }
+          sessionStorage.removeItem(KEPT);
+        }
+        let opened = await relayCall("open", { method: "POST", body: { wish: wish.id, mode: "post" } });
+        const token = opened.token as string;
+        for (let tries = 0; opened.seeding && !opened.seeding.failed && tries < 60; tries++) opened = await relayCall("seed", { method: "POST", token });
+        if (opened.seeding) throw new Error("not_ready");
+        room = { token, postKey: opened.postKey as string, room: opened.room as string, name: opened.name ?? null, version: opened.version as number };
+        sessionStorage.setItem(KEPT, JSON.stringify(room));
+        links();
+        return room;
+      } catch (error) {
+        preparing = null;
+        const status = (error as { status?: number }).status;
+        step("ready", status === 429 ? "Too many copies made from here. Try again later." : "Your copy couldn't be made. Try again in a moment.", "failed");
+        return null;
+      }
+    })();
+    // A version the app sends plays here, in the game's own frame; this asks the room every few seconds once an app
+    // has been opened, for as long as the page is open.
+    const watch = async () => {
+      if (watching) return;
+      watching = true;
+      for (;;) {
+        await new Promise((done) => setTimeout(done, 3000));
+        if (!room) continue;
+        let state;
+        try { state = await relayCall("state", { token: room.token }); }
+        catch (error) { if ((error as { status?: number }).status === 401) { sessionStorage.removeItem(KEPT); room = null; preparing = null; watching = false; return; } continue; }
+        if (state.version > room.version && state.play && playFrame) {
+          room.version = state.version;
+          sessionStorage.setItem(KEPT, JSON.stringify(room));
+          playFrame.src = state.play;
+          step("in", `Version ${state.version} is in. It's playing ${dialog.open ? "behind this" : "now"}.`, "done");
+          $<HTMLElement>("[data-made]").hidden = false;
+          track("idea_made_here", { idea: wish.name, place: "shared" });
+        }
+      }
+    };
+    const opened = (app: ChangeApp) => {
+      waiting = null;
+      step("ready", "Your copy is ready", "done");
+      step("opened", `Opened ${names[app]} with your idea`, "done");
+      step("in", "Waiting for the new version… Keep playing: it appears here.");
+      $<HTMLElement>("[data-made]").hidden = true;
+      // Which app, never what the idea says.
+      track("idea_change_yourself", { idea: wish.name, place: "shared", app });
+      watch();
+    };
+    for (const link of document.querySelectorAll<HTMLAnchorElement>("[data-open]")) {
+      link.addEventListener("click", (event) => {
+        const app = link.dataset.open as ChangeApp;
+        choose(app);
+        if (app === "claude" && !folder) {
+          event.preventDefault();
+          $<HTMLElement>("[data-folder-form]").hidden = false;
+          $<HTMLInputElement>("[data-folder-input]").focus();
+          return;
+        }
+        if (link.getAttribute("href") !== "#") return opened(app);
+        // Not ready yet: it opens by itself once the copy is made, while the press still lets the page open an app.
+        event.preventDefault();
+        waiting = { app, at: Date.now() };
+        step("ready", "Making your copy…");
+        prepare().then((ready) => {
+          if (!ready || waiting?.app !== app) return;
+          if (Date.now() - waiting.at < 4000) { location.href = link.href; opened(app); }
+          else { step("ready", `Your copy is ready. Press Open again.`, "done"); waiting = null; }
+        });
       });
     }
+    $<HTMLFormElement>("[data-folder-form]").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const checked = gamesFolder($<HTMLInputElement>("[data-folder-input]").value);
+      $<HTMLElement>("[data-folder-problem]").textContent = "problem" in checked ? checked.problem : "";
+      if ("problem" in checked) return;
+      folder = checked.folder;
+      try { localStorage.setItem(FOLDER, folder); } catch {}
+      $<HTMLElement>("[data-folder-form]").hidden = true;
+      links();
+    });
+    $<HTMLButtonElement>("[data-more]").addEventListener("click", () => { ideaText.value = ""; ideaText.focus(); $<HTMLElement>("[data-steps]").hidden = true; $<HTMLElement>("[data-made]").hidden = true; });
+    $<HTMLButtonElement>("[data-play-it]").addEventListener("click", () => { dialog.close(); focusPlay(); });
     $<HTMLButtonElement>("[data-remix-close]").addEventListener("click", () => dialog.close());
     dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
 
