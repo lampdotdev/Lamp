@@ -686,8 +686,17 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
     private let lock = NSLock()
     private var changed: [String: URL] = [:]
     private var gone: Set<String> = []
+    private var askedFor: Set<String> = []
 
     init(scheme: String) { self.scheme = scheme }
+
+    /// Every file of the page the page asked for since the app opened, there or not: a change says them, so a game's page
+    /// that doesn't run on the runtime tells a file it uses from one it doesn't (`LampPageLive.gameScript`), which the
+    /// page can't see itself.
+    var asked: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return askedFor.sorted()
+    }
 
     func take(changed: [String: URL], gone: Set<String>) {
         lock.lock(); defer { lock.unlock() }
@@ -722,6 +731,7 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
         let path = url.path.isEmpty || url.path.hasSuffix("/") ? url.path + "index.html" : url.path
         let relative = String(path.drop(while: { $0 == "/" }))
         lock.lock()
+        askedFor.insert(relative)
         let newer = changed[relative], removed = gone.contains(relative)
         lock.unlock()
         if let newer { return try? Data(contentsOf: newer) }
@@ -1279,8 +1289,10 @@ typealias LampPageHolderBase = UIView
 /// The web view the page is shown in: its sound and pictures without a tap first, nothing to scroll or bounce.
 @MainActor enum LampPageView {
     /// A page that logs its own errors (a game's runtime does) leaves `catchErrors` off, or each would be logged twice.
-    /// `live` takes Lamp's changes while the app is open (`LampPageLive`).
-    static func make(_ files: LampPageFiles, catchErrors: Bool = true, live: Bool = false) -> WKWebView {
+    /// `live` takes Lamp's changes while the app is open (`LampPageLive`). `gameChanges`, a game's page: one that doesn't
+    /// run on Lamp's game runtime still takes a change while it's played where it can (`LampPageLive.gameScript`), where
+    /// any other page opens again for it.
+    static func make(_ files: LampPageFiles, catchErrors: Bool = true, live: Bool = false, gameChanges: Bool = false) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.setURLSchemeHandler(files, forURLScheme: files.scheme)
         // LampAI and the page's calls of this device, and its console into the app's log.
@@ -1289,6 +1301,10 @@ typealias LampPageHolderBase = UIView
         LampPageGuard.attach(to: configuration, scheme: files.scheme)
         let changes = live ? LampPageLive(files: files) : nil
         if let changes { configuration.userContentController.add(changes, contentWorld: .page, name: "lampLive") }
+        if changes != nil, gameChanges {
+            configuration.userContentController.addUserScript(WKUserScript(source: LampPageLive.gameScript, injectionTime: .atDocumentStart,
+                                                                           forMainFrameOnly: true, in: .page))
+        }
         configuration.mediaTypesRequiringUserActionForPlayback = []
         #if os(iOS)
         configuration.allowsInlineMediaPlayback = true
@@ -1579,7 +1595,8 @@ typealias LampPageHolderBase = UIView
 /// there's a change, or after a while with nothing), fetches the files that differ from its bundle into its caches, has
 /// `LampPageFiles` serve them in place of the bundle's, and tells the page (`window.__lampLive` in lamp-game.js), which
 /// puts new pictures, models, sounds and the code its modules take in as it runs, and opens itself again for code they
-/// don't, keeping the player's place.
+/// don't, keeping the player's place. A game's page that doesn't run on the runtime is told by `gameScript`, which puts
+/// in what it safely can and holds the rest for Reload; any other page opens again.
 /// What the page did is told back to Lamp, which says so in the chat. The files are kept for the next launch of this
 /// same bundle, so the app opens as Lamp last changed it; a new bundle (Lamp installed the app again) starts from its own.
 @MainActor final class LampPageLive: NSObject, WKScriptMessageHandler {
@@ -1588,6 +1605,9 @@ typealias LampPageHolderBase = UIView
     private(set) weak static var current: LampPageLive?
     #endif
     private let files: LampPageFiles
+    /// A game's page that doesn't run on Lamp's game runtime takes changes with this (lamp-live.js, written in by Lamp),
+    /// given to it before any script of its own; the runtime, as it loads, takes over from it.
+    static let gameScript = "{{PAGE_LIVE_SCRIPT}}"
     private weak var page: WKWebView?
     private var epoch = "", gen = 0
     private var have: [String: String] = [:]
@@ -1701,10 +1721,11 @@ typealias LampPageHolderBase = UIView
         let pageChanged = answer["changed"] as? [String] ?? []
         // Only the phone page: the game's own page has nothing to do.
         if pageChanged.isEmpty, !now { tell(next, "phone"); return }
-        let change: [String: Any] = ["gen": next, "changed": pageChanged, "removed": answer["removed"] as? [String] ?? [], "now": now, "pill": Self.place != "mac"]
+        let change: [String: Any] = ["gen": next, "changed": pageChanged, "removed": answer["removed"] as? [String] ?? [], "now": now, "pill": Self.place != "mac",
+                                     "read": files.asked]
         guard let page, let json = try? JSONSerialization.data(withJSONObject: change) else { return }
         let taken = try? await page.evaluateJavaScript("window.__lampLive ? window.__lampLive(\(String(decoding: json, as: UTF8.self))) : false", in: nil, contentWorld: .page)
-        // A page without Lamp's game runtime is opened again as it is.
+        // A page that takes no changes (a web app's, a screen's) is opened again as it is.
         if taken as? Bool != true {
             page.reload()
             tell(next, "reloading")

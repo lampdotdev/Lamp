@@ -3,7 +3,9 @@
 //
 // A game made with Lamp's runtime (lamp-game.js beside the page) keeps the player's place: the runtime is handed the
 // change exactly as Lamp's app around the page hands it over (`window.__lampLive`), and swaps the code in, runs it
-// again in place, or opens the page again from where the player was. Any other page is opened again.
+// again in place, or opens the page again from where the player was. A game's page that doesn't run on the runtime is
+// handed it too, through lamp-live.js (given after page.js), which puts in what it safely can and holds the rest for
+// Reload. Any other page is opened again.
 
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
@@ -37,6 +39,9 @@ export default {"keys":{"AltLeft":"Alt / Option","AltRight":"Alt / Option","Back
 `;
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PAGE_SCRIPT = readFileSync(join(HERE, "page.js"), "utf8");
+// What a game's page is given after lamp's script, as Lamp's app gives it (`LampPageLive.gameScript`): a game that
+// doesn't run on Lamp's runtime takes a change while it's played where it can. Read from Lamp's own copy.
+const GAME_SCRIPT = (() => { try { return readFileSync(join(RESOURCES, "GameKit", "page", "lamp-live.js"), "utf8"); } catch { return ""; } })();
 // Lamp's building blocks for a page (saved data, the app's files, AI through Lamp's app): lamp.js, which Lamp's app
 // writes at each build from its own code. A page whose folder has none is given it as that code writes it, when it has
 // been written out for the command line (scripts/cli-files.sh, cli/lamps/lamp.js), and else a stand-in, so the page loads.
@@ -137,6 +142,9 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
   const pages = new Map();        // page id → { response, tab, at: the change it has taken, ready, since }
   const reopening = new Map();    // tab → when the page it said it's opening again is given up on
   const early = new Map();        // what a page said before its line for changes was open
+  // Every file of the page a page asked for, by any page since the server started: a change says them, so a game's page
+  // that doesn't run on the runtime tells a file it uses from one it doesn't (lamp-live.js), which no page can see itself.
+  const served = new Set();
   const printed = new Set();
 
   const named = (change) => {
@@ -155,7 +163,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     const change = { gen, changed, removed, said: new Map(), line: logCount };
     changes.push(change);
     if (changes.length > 40) changes.shift();
-    const data = JSON.stringify({ gen, changed, removed, now: false, pill: true, ...changingWords() });
+    const data = JSON.stringify({ gen, changed, removed, now: false, pill: true, read: [...served], ...changingWords() });
     for (const page of pages.values()) { page.told = Date.now(); tell(page, "change", data, gen); }
     if (!pages.size) print(`${named(change)}: no page is open; it's in the next one opened`);
   }
@@ -634,7 +642,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       }
     }
 
-    if (url.pathname === "/__lamp/page.js") return send(200, TYPES[".js"], `const LAMP = ${JSON.stringify({ gen, run })};\n${PAGE_SCRIPT}`);
+    if (url.pathname === "/__lamp/page.js") return send(200, TYPES[".js"], `const LAMP = ${JSON.stringify({ gen, run })};\n${PAGE_SCRIPT}${layout.game ? `\n${GAME_SCRIPT}` : ""}`);
     if (url.pathname === "/__lamp/events") {
       const id = url.searchParams.get("page") || randomBytes(4).toString("hex"), tab = url.searchParams.get("tab") || id;
       // The last change this page has: what its files were served at, or what it last heard when the line broke.
@@ -654,7 +662,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
           for (const path of change.changed) { changed.add(path); removed.delete(path); }
           for (const path of change.removed) { removed.add(path); changed.delete(path); }
         }
-        tell(page, "change", JSON.stringify({ gen, changed: [...changed], removed: [...removed], now: false, pill: true, ...changingWords() }), gen);
+        tell(page, "change", JSON.stringify({ gen, changed: [...changed], removed: [...removed], now: false, pill: true, read: [...served], ...changingWords() }), gen);
       } else if (missed.length) {
         // More was saved than is remembered: the page opens again from the files as they are.
         tell(page, "reload", "now");
@@ -678,6 +686,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     let file = resolve(join(root, path));
     if (file !== root && !file.startsWith(root + sep)) return send(403, "text/plain", "Outside the page");
     const name = relative(root, file).split(sep).join("/");
+    served.add(name);
     // Hidden files (.git, .lamp, .env) are no part of the page.
     if (name.split("/").some((part) => part.startsWith("."))) return send(404, "text/plain", "Not found");
     let info;
