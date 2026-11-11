@@ -119,8 +119,8 @@ export async function removeFile({ site = siteOrigin(), link, page = false }) {
 }
 
 /** The ideas sent to the link that are still open, oldest first: each with its number. Only the link's secret reads them. */
-export async function ideasOf({ site = siteOrigin(), link }) {
-  try { return (await call("GET", `${site}/api/wish-ideas?id=${encodeURIComponent(link.id)}`, { secret: link.secret })).said.ideas ?? []; }
+export async function ideasOf({ site = siteOrigin(), link, earlier = false }) {
+  try { return (await call("GET", `${site}/api/wish-ideas?id=${encodeURIComponent(link.id)}${earlier ? "&earlier=1" : ""}`, { secret: link.secret })).said.ideas ?? []; }
   catch (error) { if (error.status === 404) return []; throw error; }
 }
 

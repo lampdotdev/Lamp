@@ -145,6 +145,12 @@ extension Store {
         return true
     }
 
+    /// Those seen to, for the panel's Earlier: nil when lamp.dev can't be reached.
+    func earlierIdeas(_ project: LampProject) async -> [WishLink.Idea]? {
+        guard let shared = WishLink.kept(for: project) else { return [] }
+        return try? await WishLink.ideas(for: shared, earlier: true)
+    }
+
     private func dropIdea(_ number: Int, of project: LampProject) {
         ideas[project.id]?.removeAll { $0.n == number }
         if ideas[project.id]?.isEmpty == true { ideas[project.id] = nil }
@@ -159,6 +165,8 @@ struct IdeasPanel: View {
     let back: () -> Void
     /// The gallery's made-up app and ideas, in place of the store's.
     var preview: (project: LampProject, ideas: [WishLink.Idea], new: Set<Int>)? = nil
+    /// The gallery's made-up ideas seen to, under Earlier.
+    var previewEarlier: [WishLink.Idea]? = nil
 
     /// Those new when the panel opened, which stay marked while it's open.
     @State private var newHere: Set<Int> = []
@@ -168,6 +176,12 @@ struct IdeasPanel: View {
     @State private var failed: Int?
     /// Notes to the senders, by number, as they're written: each goes with its idea's It's In or Dismiss.
     @State private var notes: [Int: String] = [:]
+    /// Ideas seen to, under Earlier once it's opened (asked of lamp.dev then), and whether that failed.
+    @State private var showingEarlier = false
+    @State private var earlier: [WishLink.Idea]?
+    @State private var earlierFailed = false
+    /// Conversations shown whole, by number: a long one shows its last messages until asked.
+    @State private var opened: Set<Int> = []
 
     private var project: LampProject? { preview?.project ?? store.projects.first { $0.id == wish } }
     private var shown: [WishLink.Idea] { (preview?.ideas ?? store.ideas[wish] ?? []).sorted { $0.n > $1.n } }
@@ -176,24 +190,27 @@ struct IdeasPanel: View {
         VStack(spacing: 0) {
             header
             Divider().overlay(Paper.rule)
-            if shown.isEmpty {
-                Spacer()
-                Text("No ideas here right now.").foregroundStyle(Paper.muted)
-                Spacer()
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        ForEach(shown) { line($0) }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if shown.isEmpty {
+                        Text("No ideas here right now.").foregroundStyle(Paper.muted)
+                            .frame(maxWidth: .infinity).padding(.vertical, 40)
                     }
-                    .padding(18)
-                    .frame(maxWidth: 720, alignment: .leading)
-                    .frame(maxWidth: .infinity)
+                    ForEach(shown) { line($0) }
+                    earlierSection
                 }
+                .padding(18)
+                .frame(maxWidth: 720, alignment: .leading)
+                .frame(maxWidth: .infinity)
             }
         }
         .background(Paper.panel)
         .onAppear {
-            if let preview { newHere = preview.new; return }
+            if let preview {
+                newHere = preview.new
+                if previewEarlier != nil { showingEarlier = true; loadEarlier() }
+                return
+            }
             guard let project else { return }
             let seen = WishIdeas.seen(project)
             newHere = Set(shown.filter { $0.n > seen }.map(\.n))
@@ -225,13 +242,54 @@ struct IdeasPanel: View {
         .padding(.horizontal, 18).padding(.vertical, 12)
     }
 
+    /// Earlier: the ideas seen to, the latest word first, each with its conversation, to look back on or answer again.
+    @ViewBuilder private var earlierSection: some View {
+        Button {
+            showingEarlier.toggle()
+            if showingEarlier { loadEarlier() }
+        } label: {
+            Label("Earlier", systemImage: showingEarlier ? "chevron.down" : "chevron.right")
+                .font(.system(size: 13, weight: .semibold)).foregroundStyle(Paper.muted)
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 8)
+        if showingEarlier {
+            if let earlier, !earlier.isEmpty {
+                ForEach(earlier) { line($0) }
+            } else if earlierFailed {
+                Text("Couldn't reach lamp.dev. Try again.").font(.system(size: 12.5)).foregroundStyle(Paper.muted)
+            } else if earlier != nil {
+                Text("Nothing seen to yet.").font(.system(size: 12.5)).foregroundStyle(Paper.muted)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+        }
+    }
+
+    private func loadEarlier() {
+        if let previewEarlier { earlier = previewEarlier; return }
+        guard let project else { return }
+        earlierFailed = false
+        Task {
+            let found = await store.earlierIdeas(project)
+            earlierFailed = found == nil
+            earlier = found ?? earlier
+        }
+    }
+
     private func finish(_ idea: WishLink.Idea, built: Bool) {
         settle(idea) { await store.finishIdea(idea, built: built, note: notes[idea.n], in: $0) }
     }
 
     /// Send (with what's written) or Done (without).
     private func answer(_ idea: WishLink.Idea, saying: Bool) {
-        settle(idea) { await store.answerIdea(idea, note: saying ? notes[idea.n] : nil, in: $0) }
+        let note = saying ? notes[idea.n]?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+        settle(idea) { project in
+            guard await store.answerIdea(idea, note: note, in: project) else { return false }
+            // Seen to, it's under Earlier now: one answered from there shows what was said, one from the list goes there.
+            if showingEarlier { loadEarlier() }
+            return true
+        }
     }
 
     private func settle(_ idea: WishLink.Idea, _ work: @escaping (LampProject) async -> Bool) {
@@ -262,7 +320,7 @@ struct IdeasPanel: View {
             Text(verbatim: idea.text).font(.system(size: 14)).foregroundStyle(Paper.ink).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             if let picture = idea.picture { IdeaPicture(address: picture) }
-            if let thread = idea.thread, !thread.isEmpty { conversation(thread) }
+            if let thread = idea.thread, !thread.isEmpty { conversation(thread, of: idea.n) }
             TextField(idea.status == nil ? "Note to them (optional)" : "Reply to them", text: Binding(get: { notes[idea.n] ?? "" }, set: { notes[idea.n] = String($0.prefix(2000)) }), axis: .vertical)
                 .textFieldStyle(.roundedBorder).font(.system(size: 13)).lineLimit(1...6)
                 .frame(maxWidth: 480, alignment: .leading)
@@ -300,10 +358,12 @@ struct IdeasPanel: View {
                             .disabled(finishing.contains(idea.n))
                             .help(idea.wantsNews == true ? "Emails them your reply. They can answer again." : "Shows them your reply on the link's page")
                     }
-                    Button("Done") { answer(idea, saying: false) }
-                        .buttonStyle(PaperButtonStyle(.outline, height: 28))
-                        .disabled(finishing.contains(idea.n))
-                        .help("Takes it off the list without a reply")
+                    if idea.waiting == true {
+                        Button("Done") { answer(idea, saying: false) }
+                            .buttonStyle(PaperButtonStyle(.outline, height: 28))
+                            .disabled(finishing.contains(idea.n))
+                            .help("Takes it off the list without a reply")
+                    }
                 }
                 if failed == idea.n {
                     Text("Couldn't reach lamp.dev. Try again.").font(.system(size: 12)).foregroundStyle(Paper.muted)
@@ -316,10 +376,16 @@ struct IdeasPanel: View {
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Paper.rule))
     }
 
-    /// What's been said about the idea since it came, each way, under a rule.
-    private func conversation(_ thread: [WishLink.Idea.Said]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(thread.enumerated()), id: \.offset) { _, said in
+    /// What's been said about the idea since it came, each way, under a rule: the last two of a longer one, with the
+    /// rest a click away.
+    private func conversation(_ thread: [WishLink.Idea.Said], of number: Int) -> some View {
+        let hidden = opened.contains(number) ? 0 : max(0, thread.count - 2)
+        return VStack(alignment: .leading, spacing: 8) {
+            if hidden > 0 {
+                Button("Show \(hidden) earlier") { opened.insert(number) }
+                    .buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundStyle(Paper.muted)
+            }
+            ForEach(Array(thread.enumerated().dropFirst(hidden)), id: \.offset) { _, said in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(verbatim: [said.by == "maker" ? "You" : "They", WishIdeas.when(said.at)].compactMap { $0 }.joined(separator: " · "))
                         .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Paper.muted)
@@ -373,9 +439,10 @@ extension Gallery {
         ideas("Ideas, the narrowest window", width: 540),
         ideas("No ideas left", ideas: []),
         ideas("An idea they answered", only: 1),
+        ideas("Earlier, opened", only: 3, earlier: true),
     ]
 
-    private static func ideas(_ name: String, ideas: [WishLink.Idea]? = nil, only: Int? = nil, width: CGFloat = 940) -> Entry {
+    private static func ideas(_ name: String, ideas: [WishLink.Idea]? = nil, only: Int? = nil, earlier: Bool = false, width: CGFloat = 940) -> Entry {
         Entry(group: "Sent to you", name: name) {
             let project = LampProject(id: "gallery-harbor-racer", name: "Harbor Racer", exe: "HarborRacer", dir: URL(fileURLWithPath: "/nonexistent"))
             let now = Date()
@@ -388,7 +455,16 @@ extension Gallery {
                     .init(by: "sender", text: "Love the ferry! Could it honk when you get close?", at: at(1)),
                 ]),
             ]
-            return AnyView(IdeasPanel(wish: project.id, back: {}, preview: (project, made.filter { only == nil || $0.n == only }, [3]))
+            let seenTo = !earlier ? nil : [
+                WishLink.Idea(n: 0, text: "A night mode with streetlights", wantsNews: true, at: at(200), status: "in", thread: [
+                    .init(by: "maker", text: "Night mode is in! Press N to switch.", at: at(150)),
+                    .init(by: "sender", text: "So good. Can the headlights light up the road too?", at: at(140)),
+                    .init(by: "maker", text: "Good idea, I'll try it.", at: at(120)),
+                    .init(by: "sender", text: "Thanks!", at: at(118)),
+                    .init(by: "maker", text: "Headlights are in now too.", at: at(20)),
+                ]),
+            ]
+            return AnyView(IdeasPanel(wish: project.id, back: {}, preview: (project, made.filter { only == nil || $0.n == only }, [3]), previewEarlier: seenTo)
                 .frame(width: width, height: 600)
                 .background(Paper.page)
                 .environmentObject(Store.shared))

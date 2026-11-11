@@ -177,10 +177,10 @@ export async function unshare(folder) {
 }
 
 /** The ideas people playing the link have sent its maker and that are still open: each with its number. */
-export async function ideas(folder) {
+export async function ideas(folder, { earlier = false } = {}) {
   const link = readLink(folder);
   if (!link) throw new Problem("this folder has no link: lamp share makes one");
-  return { url: link.url, ideas: await ideasOf({ site: link.site, link }) };
+  return { url: link.url, ideas: await ideasOf({ site: link.site, link, earlier }) };
 }
 
 /** Says what became of an idea: it's in (the site writes to whoever asked to hear), or it's let go. */

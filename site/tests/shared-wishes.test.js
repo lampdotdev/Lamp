@@ -498,6 +498,9 @@ test("the maker and an idea's sender talk by email, the replies kept on the idea
   assert.equal((await listed()).find((one) => one.n === other)?.waiting, true);
   await call("DELETE", `&n=${other}&built=1`);
   assert.deepEqual(await listed(), [], "given its outcome, it's seen to");
+  const earlier = (await (await call("GET", "&earlier=1")).json()).ideas;
+  assert.deepEqual(earlier.map((one) => one.n), [other, n], "those seen to, the latest word first");
+  assert.ok(earlier.every((one) => one.thread && !("mailbox" in one) && !("email" in one)));
 });
 
 test("a link's questions go to its page, and only as questions within the limits", async () => {

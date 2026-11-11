@@ -316,9 +316,10 @@ enum WishLink {
         }
     }
 
-    /// The ideas sent to the link so far, oldest first. Only the link's secret reads them.
-    static func ideas(for shared: Shared) async throws -> [Idea] {
-        let done = try await ask("linkIdeas", secret(shared))
+    /// The ideas sent to the link still open or answered since, oldest first; with `earlier`, those seen to, the latest
+    /// word first. Only the link's secret reads them.
+    static func ideas(for shared: Shared, earlier: Bool = false) async throws -> [Idea] {
+        let done = try await ask("linkIdeas", earlier ? secret(shared).merging(["earlier": true]) { $1 } : secret(shared))
         let data = try JSONSerialization.data(withJSONObject: done["ideas"] as? [Any] ?? [])
         return try JSONDecoder().decode([Idea].self, from: data)
     }

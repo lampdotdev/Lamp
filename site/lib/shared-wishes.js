@@ -657,7 +657,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
 // MARK: Ideas for the maker
 
 /** What someone playing a shared wish may send its maker: their idea, and an address to hear back at if they want. */
-export const IDEA_LIMITS = { text: 1000, note: 2000, thread: 60, email: 200, picture: 400_000, kept: 500, asked: 20, keptDone: 90 * 86400_000 };
+export const IDEA_LIMITS = { text: 1000, note: 2000, thread: 60, earlier: 100, email: 200, picture: 400_000, kept: 500, asked: 20, keptDone: 90 * 86400_000 };
 // A visitor sends a handful an hour; a link takes a few hundred a day; overall, a ceiling on a flood.
 export const IDEA_QUOTAS = [
   { name: "idea-ip", perIP: true, limit: 12, seconds: 3600 },
@@ -751,7 +751,7 @@ const ideaPictures = (ideas) => ideas.map((one) => one.picture).filter((url) => 
  * what someone using it would change, an address to hear back at, if they gave one, and the picture of the app the
  * page took as they opened the box, if they kept it in (in the store, until the idea has its outcome). GET, with the
  * link's secret, answers for Lamp to show the maker those still open and those whose sender has answered since
- * (`waiting`), each with its picture's address and its thread: never the keys or the addresses, only whether someone
+ * (`waiting`), or with `earlier=1` those seen to, each with its picture's address and its thread: never the keys or the addresses, only whether someone
  * wants to hear back. DELETE ?n= with the secret lets one go: with `built=1` it's in, and the site writes to whoever
  * asked (`writeToSender`); without, it's dismissed. Its JSON body may carry the maker's `note`, the first of the idea's
  * thread. PATCH ?n= with the secret and a `note` says something more, written to the sender if they gave an address;
@@ -842,6 +842,12 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
           if (one.mailbox) { try { await kept.closeMailbox(one.mailbox); } catch {} }
         }
         try { await kept.removeImages(ideaPictures(old)); } catch {}
+        // `earlier=1`: those seen to, the latest word first, for the maker to look back on or answer again.
+        if (url.searchParams.get("earlier") === "1") {
+          const settled = all.filter((one) => one.status && !one.waiting && !old.includes(one))
+            .sort((a, b) => String(b.last ?? b.done).localeCompare(String(a.last ?? a.done)));
+          return reply(200, { ideas: settled.slice(0, IDEA_LIMITS.earlier).map(shownToMaker) });
+        }
         return reply(200, { ideas: all.filter((one) => !one.status || one.waiting).map(shownToMaker) });
       }
       const link = linkFor(url.origin, id, record.name);

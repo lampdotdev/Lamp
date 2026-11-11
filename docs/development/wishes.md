@@ -411,7 +411,9 @@ Reply-To when `LAMP_IDEAS_REPLY_DOMAIN` is set (`idea-<mailbox>@` it, receiving 
 a link to stop them. A reply comes back through Resend's `email.received` webhook (`/api/idea-mail`,
 `createIdeaMailHandler`, signed with `RESEND_WEBHOOK_SECRET`): only from the address the idea came with, its own words
 (`replyWords`), onto the thread, which puts the idea back in the panel marked Answered, outcome or not, until the
-maker sends something more (in the same email thread) or presses Done. The maker sees only that someone wants to hear
+maker sends something more (in the same email thread) or presses Done. Under the list, Earlier asks for those seen to
+(`?earlier=1`), the latest word first, to look back on or answer again; a conversation longer than two messages shows
+its last two until it's opened. The maker sees only that someone wants to hear
 back, never their address. Either way the idea is kept with its outcome for 90 days past its last word (`finishIdea`, one step, so the
 email goes once): the sender's browser keeps each idea's number and a token the site answered, asks after them on its
 next visit (`?mine=`), and an idea that's in says so once in a bar over the app, with See What's New and the maker's

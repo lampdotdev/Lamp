@@ -173,9 +173,9 @@ export const CALLS = {
     return {};
   },
 
-  /** The ideas sent to the link that are still open. */
+  /** The ideas sent to the link that are still open or answered since; with `earlier`, those seen to. */
   async linkIdeas(given) {
-    return { ideas: await ideasOf({ site: siteOf(given), link: linkOf(given) }) };
+    return { ideas: await ideasOf({ site: siteOf(given), link: linkOf(given), earlier: given.earlier === true }) };
   },
 
   /** Lets an idea go; with `built` it's in, and the site writes to whoever asked to hear, with `note` if there is one. */
