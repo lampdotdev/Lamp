@@ -501,6 +501,12 @@ test("the maker and an idea's sender talk by email, the replies kept on the idea
   const earlier = (await (await call("GET", "&earlier=1")).json()).ideas;
   assert.deepEqual(earlier.map((one) => one.n), [other, n], "those seen to, the latest word first");
   assert.ok(earlier.every((one) => one.thread && !("mailbox" in one) && !("email" in one)));
+  // A note kept on its own, from before threads, is the start of one, and stays so when the maker writes again.
+  const legacy = await store.addIdea(id, { text: "A lighthouse", at: "2026-11-10T10:00:00.000Z", token: "x".repeat(16), status: "dismissed", done: "2026-11-10T12:00:00.000Z", note: "We have one already" });
+  const legacyThread = async () => (await (await call("GET", "&earlier=1")).json()).ideas.find((one) => one.n === legacy).thread.map((one) => one.text);
+  assert.deepEqual(await legacyThread(), ["We have one already"]);
+  await call("PATCH", `&n=${legacy}`, { note: "It's by the docks" });
+  assert.deepEqual(await legacyThread(), ["We have one already", "It's by the docks"]);
 });
 
 test("a link's questions go to its page, and only as questions within the limits", async () => {

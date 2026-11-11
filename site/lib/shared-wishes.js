@@ -335,6 +335,11 @@ export function cloudStore(env, fetcher = fetch) {
         local op = ARGV[2]
         if op == "say" then
           local said = cjson.decode(ARGV[3])
+          -- A note given before ideas had threads starts its thread.
+          if idea.note and not idea.thread then
+            idea.thread = {{by = "maker", text = idea.note, at = idea.done or idea.at}}
+            idea.note = nil
+          end
           local thread = idea.thread or {}
           if #thread >= tonumber(ARGV[4]) then return false end
           if said.mid then for _, one in ipairs(thread) do if one.mid == said.mid then return false end end end
@@ -514,6 +519,7 @@ export function memoryStore() {
       if (!idea) return null;
       const before = structuredClone(idea);
       if (op === "say") {
+        if (idea.note && !idea.thread) { idea.thread = [{ by: "maker", text: idea.note, at: idea.done ?? idea.at }]; delete idea.note; }
         const thread = idea.thread ?? [];
         if (thread.length >= IDEA_LIMITS.thread || (value.mid && thread.some((one) => one.mid === value.mid))) return null;
         idea.thread = [...thread, value];
@@ -884,12 +890,18 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
   }
 }
 
-/** An idea as its maker sees it: never its sender's address, its token or its mailbox, only whether they want to hear. */
-const shownToMaker = ({ email, token: _token, mailbox: _mailbox, subject: _subject, ...shown }) => ({
+/**
+ * An idea as its maker sees it: never its sender's address, its token or its mailbox, only whether they want to hear.
+ * A note given before ideas had threads is shown as the start of one.
+ */
+const shownToMaker = ({ email, token: _token, mailbox: _mailbox, subject: _subject, note, ...given }) => {
+  const shown = note && !given.thread ? { ...given, thread: [{ by: "maker", text: note, at: given.done ?? given.at }] } : given;
+  return {
   ...shown,
   ...(shown.thread ? { thread: shown.thread.map(({ by, text, at }) => ({ by, text, at })) } : {}),
   ...(email ? { wantsNews: true } : {}),
-});
+  };
+};
 
 /** The address in a From line, in lower case: `Someone <a@b.c>` or `a@b.c`. */
 const addressIn = (from) => (/<([^<>\s]+@[^<>\s]+)>/.exec(from ?? "")?.[1] ?? String(from ?? "").trim()).toLowerCase();
