@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 import { Away, OffNetwork, Refused, Rejected, Runner, StillWorking, answersOn, bonjour, pinsAt, searchNetwork, send, ssdp } from "./devices.mjs";
 import { adbCommand, connectTo, deviceListing, deviceProperties, displaySizeOf, dumpIn, installApk, installTools, launchApp, makeEmulator, pairWith, processIn, processOf,
   rowsOf, saveState, screenItems, screenshotOf, tellApp, toolsThere, useLamps } from "./android.mjs";
-import { Unreachable, ideasOf, latestOf, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile } from "./link.mjs";
+import { Unreachable, ideasOf, latestOf, makerOf, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile } from "./link.mjs";
 import { defaultRoute, homeNetwork, neighbours, samsungAt, subnetOn, tvsIn } from "./network.mjs";
 import { PUBLISHER, identityName, keptSigner, namesOf, packageOf, versionAfter } from "./msix.mjs";
 import { tile } from "./png.mjs";
@@ -188,6 +188,11 @@ export const CALLS = {
   async linkReplyIdea(given) {
     const note = typeof given.note === "string" && given.note.trim() ? given.note.trim() : undefined;
     return replyIdea({ site: siteOf(given), link: linkOf(given), n: Number(given.n), note });
+  },
+
+  /** The maker's own address for the link's ideas; with `email` (a string, "" for none), given, to be confirmed. */
+  async linkMaker(given) {
+    return makerOf({ site: siteOf(given), link: linkOf(given), ...(typeof given.email === "string" ? { email: given.email.trim() } : {}) });
   },
 
   /** Takes the link down. */

@@ -171,6 +171,8 @@ struct IdeasPanel: View {
     var preview: (project: LampProject, ideas: [WishLink.Idea], new: Set<Int>)? = nil
     /// The gallery's made-up ideas seen to, under Earlier.
     var previewEarlier: [WishLink.Idea]? = nil
+    /// The gallery's made-up address for the maker's own emails.
+    var previewMaker = WishLink.Maker(email: nil, confirmed: false)
 
     /// Those new when the panel opened, which stay marked while it's open.
     @State private var newHere: Set<Int> = []
@@ -240,8 +242,9 @@ struct IdeasPanel: View {
             }
             .menuStyle(.borderlessButton).fixedSize()
             Text("\(shown.count) \(shown.count == 1 ? "idea" : "ideas") from people playing it")
-                .font(.system(size: 13)).foregroundStyle(Paper.muted)
+                .font(.system(size: 13)).foregroundStyle(Paper.muted).lineLimit(1)
             Spacer()
+            if let project { IdeasByEmail(project: project, preview: preview == nil ? nil : previewMaker) }
         }
         .padding(.horizontal, 18).padding(.vertical, 12)
     }
@@ -409,6 +412,85 @@ struct IdeasPanel: View {
     }
 }
 
+/// Email Me: the maker's own address for the link's ideas and replies, so they come by email too and can be answered
+/// from there. lamp.dev emails the address a link to confirm it first; the button says which it's waiting for.
+private struct IdeasByEmail: View {
+    let project: LampProject
+    /// The gallery's, in place of asking lamp.dev.
+    var preview: WishLink.Maker?
+
+    /// The address last given for any link, offered for the next.
+    private static let lastKey = "LampIdeasEmail"
+    @State private var maker: WishLink.Maker?
+    @State private var open = false
+    @State private var typed = ""
+    @State private var working = false
+    @State private var problem: String?
+
+    private var label: String {
+        guard maker?.email != nil else { return "Email Me" }
+        return maker?.confirmed == true ? "Emails On" : "Confirm Email"
+    }
+
+    var body: some View {
+        Button {
+            typed = maker?.email ?? UserDefaults.standard.string(forKey: Self.lastKey) ?? ""
+            problem = nil
+            open = true
+        } label: {
+            Label(label, systemImage: maker?.confirmed == true ? "envelope.fill" : "envelope")
+        }
+        .buttonStyle(PaperButtonStyle(.outline, height: 28))
+        .fixedSize()
+        .help(maker?.email.map { maker?.confirmed == true ? "New ideas and their replies go to \($0)" : "Waiting for \($0) to be confirmed" }
+              ?? "New ideas and their replies by email, answered from there")
+        .popover(isPresented: $open, arrowEdge: .bottom) { form.padding(16).frame(width: 320) }
+        .task(id: project.id) {
+            if let preview { maker = preview; return }
+            maker = nil
+            guard let shared = WishLink.kept(for: project) else { return }
+            maker = try? await WishLink.maker(for: shared)
+        }
+    }
+
+    private var form: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Get new ideas and their replies by email, and answer them from there.")
+                .font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
+            TextField("you@example.com", text: $typed).textFieldStyle(.roundedBorder).onSubmit { save(typed) }
+            if let email = maker?.email, maker?.confirmed == false, typed.trimmed == email {
+                Text("Check \(email) for a link to confirm it.").font(.system(size: 12)).foregroundStyle(Paper.muted)
+            }
+            if let problem { Text(problem).font(.system(size: 12)).foregroundStyle(Paper.muted) }
+            HStack {
+                if maker?.email != nil { Button("Stop Emails") { save("") }.disabled(working) }
+                Spacer()
+                Button(typed.trimmed == maker?.email && maker?.confirmed == false ? "Send Again" : "Save") { save(typed) }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(working || typed.trimmed.isEmpty)
+            }
+        }
+    }
+
+    private func save(_ email: String) {
+        let email = email.trimmed
+        if !email.isEmpty, email == maker?.email, maker?.confirmed == true { open = false; return }
+        guard preview == nil, let shared = WishLink.kept(for: project) else { return }
+        working = true
+        problem = nil
+        Task {
+            defer { working = false }
+            do {
+                maker = try await WishLink.maker(for: shared, email: email)
+                if !email.isEmpty { UserDefaults.standard.set(email, forKey: Self.lastKey) }
+                if email.isEmpty { open = false }
+            } catch let failure as WishLink.Failure where failure.message.contains("couldn't take") {
+                problem = "Check the address and try again."
+            } catch { problem = "Couldn't reach lamp.dev. Try again." }
+        }
+    }
+}
+
 /// The app as the sender saw it when they opened the box, small under their idea; a click shows it full size.
 private struct IdeaPicture: View {
     let address: String
@@ -449,9 +531,11 @@ extension Gallery {
         ideas("No ideas left", ideas: []),
         ideas("An idea they answered", only: 1),
         ideas("Earlier, opened", only: 3, earlier: true),
+        ideas("Ideas by email", only: 3, maker: WishLink.Maker(email: "maker@example.com", confirmed: true), width: 640),
     ]
 
-    private static func ideas(_ name: String, ideas: [WishLink.Idea]? = nil, only: Int? = nil, earlier: Bool = false, width: CGFloat = 940) -> Entry {
+    private static func ideas(_ name: String, ideas: [WishLink.Idea]? = nil, only: Int? = nil, earlier: Bool = false,
+                              maker: WishLink.Maker = .init(email: nil, confirmed: false), width: CGFloat = 940) -> Entry {
         Entry(group: "Sent to you", name: name) {
             let project = LampProject(id: "gallery-harbor-racer", name: "Harbor Racer", exe: "HarborRacer", dir: URL(fileURLWithPath: "/nonexistent"))
             let now = Date()
@@ -473,7 +557,7 @@ extension Gallery {
                     .init(by: "maker", text: "Headlights are in now too.", at: at(20)),
                 ]),
             ]
-            return AnyView(IdeasPanel(wish: project.id, back: {}, preview: (project, made.filter { only == nil || $0.n == only }, [3]), previewEarlier: seenTo)
+            return AnyView(IdeasPanel(wish: project.id, back: {}, preview: (project, made.filter { only == nil || $0.n == only }, [3]), previewEarlier: seenTo, previewMaker: maker)
                 .frame(width: width, height: 600)
                 .background(Paper.page)
                 .environmentObject(Store.shared))

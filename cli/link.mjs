@@ -149,6 +149,16 @@ export async function replyIdea({ site = siteOrigin(), link, n, note }) {
   }
 }
 
+/**
+ * The maker's own address for the link's ideas and replies, as `{ email, confirmed }`; with `email`, given ("" takes it
+ * away), and the site emails it to confirm first.
+ */
+export async function makerOf({ site = siteOrigin(), link, email }) {
+  const { said } = await call(email === undefined ? "GET" : "PUT", `${site}/api/wish-ideas?id=${encodeURIComponent(link.id)}&maker=1`,
+    { secret: link.secret, ...(email === undefined ? {} : { json: { email } }) });
+  return { email: typeof said.email === "string" ? said.email : null, confirmed: said.confirmed === true, ...(email ? { sent: said.sent === true } : {}) };
+}
+
 /** Takes the link down, with its page and the ideas sent to it. A link the site no longer has is down already. */
 export async function removeLink({ site = siteOrigin(), link }) {
   try { await call("DELETE", `${site}/api/wishes?id=${encodeURIComponent(link.id)}`, { secret: link.secret }); }

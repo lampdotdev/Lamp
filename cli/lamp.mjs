@@ -27,7 +27,7 @@ import { editionName, giveTo, givenTo, keepPictures, lampOwning, reachLamp, take
 import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS } from "./dev.mjs";
 import { findBrowser, noBrowser } from "./browser.mjs";
 import { allSkills } from "./skills.mjs";
-import { share, unshare, ideas, finishIdea, answerIdea, readLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
+import { share, unshare, ideas, finishIdea, answerIdea, makerEmail, readLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
 import { Runner, allKept, fields, forget, integrationOf, isReady, look as lookForDevices, takesPages } from "./devices.mjs";
 import { placeNamed } from "./place.mjs";
 import { androidAdvice, androidDevices, androidDone, emulatorNamed, emulators, forgetAndroid, installTools, knowsAndroid, toolsThere } from "./android.mjs";
@@ -115,12 +115,13 @@ Mac app Lamp made in Swift, built and run on this Mac.
       --no-github and --put-on-github in their place. --preview says what would go and sends nothing. Its link
       stays Lamp's; --new-link has lamp make one of its own instead.
   lamp unshare [folder]   Take the link down.
-  lamp ideas [folder] [--earlier | in <n> | dismiss <n> | reply <n> | done <n>] [note]
+  lamp ideas [folder] [--earlier | in <n> | dismiss <n> | reply <n> | done <n> | email <address|off>] [note]
       The ideas people playing the link have sent, with a picture of the app as they saw it when they kept one
       in, and what's been said about each since. "in" says one is in the game now (whoever asked to hear is
       written to); "dismiss" lets one go. Words after the number are a note to whoever sent it, on the link's
       page and in that email; they can answer it by email. "reply" says something more, and "done" leaves
-      their answer without one. --earlier lists those seen to, to look back on or answer again.
+      their answer without one. --earlier lists those seen to, to look back on or answer again. "email"
+      sends new ideas and replies to your own address too (once you confirm it), and you can answer from there.
   lamp setup [--remove]   Teach Claude Code and Codex on this computer to work this way (a skill for each).
   lamp guide              What that skill says, for any other agent.
   lamp skills [word]      Lamp's guidance for each kind of work, those about a word; lamp skill <name> reads one.
@@ -937,7 +938,7 @@ async function main() {
   }
 
   if (command === "ideas") {
-    const outcomes = ["in", "dismiss", "reply", "done"];
+    const outcomes = ["in", "dismiss", "reply", "done", "email"];
     // Everything after the outcome's number is a note to whoever sent it, word for word: never read as options, so
     // "--fullscreen" or "--help" in it stays in it.
     const at = args.findIndex((arg) => outcomes.includes(arg));
@@ -947,6 +948,15 @@ async function main() {
     const lamps = lampsLink(folder);
     if (lamps) throw new Problem(`${lamps} keeps this app's link, and the ideas people send to it: they're on its Share Link card in ${lamps}.`);
     const layout = layoutOf(folder);
+    if (rest[0] === "email") {
+      // The maker's own address for this link's ideas and replies: confirmed by an email first; "off" stops them.
+      const given = [...rest.slice(1), ...noted].join(" ").trim();
+      if (!given) throw new Problem("email takes your address, or off: lamp ideas email you@example.com");
+      const answer = await makerEmail(layout.folder, given === "off" ? "" : given);
+      console.log(given === "off" ? "No more emails about this link's ideas."
+        : answer.confirmed ? `Ideas and replies go to ${answer.email}.` : `Sent a confirmation to ${answer.email}: ideas and replies come there once you confirm it.`);
+      return;
+    }
     if (rest.length) {
       const n = Number(rest[1]);
       if (!outcomes.includes(rest[0]) || !Number.isInteger(n) || n < 1) throw new Problem("ideas takes in, dismiss, reply or done, and a number: lamp ideas lists them with their numbers");
@@ -962,7 +972,8 @@ async function main() {
       console.log(rest[0] === "in" ? `Idea ${n} is in.${answer.notified ? " Whoever sent it asked to hear, and has been written to." : ""}` : `Idea ${n} is let go.${note ? " Your note is on the link's page for them." : ""}`);
       return;
     }
-    const sent = await ideas(layout.folder, { earlier: options.earlier === true });
+    const [sent, maker] = await Promise.all([ideas(layout.folder, { earlier: options.earlier === true }), makerEmail(layout.folder).catch(() => null)]);
+    if (maker?.email) console.log(maker.confirmed ? `Ideas and replies go to ${maker.email} too.` : `Waiting for ${maker.email} to be confirmed: the link is in the email lamp.dev sent it.`);
     if (!sent.ideas.length) { console.log(options.earlier ? `Nothing seen to yet on ${sent.url}` : `No ideas waiting for ${sent.url}`); return; }
     console.log(options.earlier ? `Ideas seen to on ${sent.url}, the latest first` : `Ideas sent to ${sent.url}`);
     for (const idea of sent.ideas) {
