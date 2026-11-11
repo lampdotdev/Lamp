@@ -388,7 +388,7 @@ the file kept in lamp.dev's Blob store; the file always goes when the wish can g
 each Release Update sends the file again, which counts the link's version up (see "Releases" below). A wish with a page (a web app, a web
 game, a screen: `Publish.hasPage`) sends that too (`WishLink.playablePage`, the page a release puts on GitHub, which
 stays as it is), and its link's page opens on it, playing, with the ways to make one's own under it: whoever has the
-link tries the wish first and remixes it after (SHARED_WISHES.md). At the band's left is a link to the app's repository
+link tries the wish first and remixes it after (SHARED_WISHES.md). After when it was updated, its header links to the app's repository
 on GitHub when a release sent one (`github`: from Lamp's app, one Lamp put there, `GitHubRepo.kept`; from `lamp share`, the
 folder's own `origin` when the folder is the top of its checkout, `publicRepoOf`; either only when GitHub says anyone can
 read it as the release goes). The box under it (labeled only for screen readers) asks
