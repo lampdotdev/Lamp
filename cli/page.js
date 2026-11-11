@@ -5,6 +5,7 @@
   // game's code left running each time that code runs again, and a timer of lamp's set through the page's
   // `setTimeout` would go with them, and the log with it.
   const later = window.setTimeout.bind(window), ask = window.fetch.bind(window);
+  const unlater = window.clearTimeout.bind(window), every = window.setInterval.bind(window), unevery = window.clearInterval.bind(window);
   // A page opened again to show its beginning (`lamp look --reopen`) says so to the game runtime, which then starts
   // the game from its start, its saves kept (`window.lampFreshStart` in lamp-game.js).
   const FRESH = 'lamp.dev.fresh';
@@ -97,25 +98,29 @@
     };
     let breathing = null;
     const breathe = () => {
-      clearInterval(breathing);
+      unevery(breathing);
       // As the Look's birth rate: a puff in each color for every 66 points of the page's width, each second.
-      const every = 1000 / Math.max(1, innerWidth / 66 * HUES.length / 3);
-      breathing = setInterval(() => puff(false), every);
+      const gap = 1000 / Math.max(1, innerWidth / 66 * HUES.length / 3);
+      breathing = every(() => puff(false), gap);
     };
     const fadeTo = (el, to, ms, delay = 0) => {
       const from = getComputedStyle(el).opacity;
       el.animate([{ opacity: from }, { opacity: to }], { duration: ms, delay, fill: 'forwards', easing: 'ease-out' });
     };
     const goAfter = seconds => {
-      clearTimeout(gone);
-      gone = setTimeout(() => { clearInterval(breathing); wisps = 0; rolls.forEach(a => a.cancel()); rolls = []; turning = null; root && root.remove(); root = null; }, seconds * 1000);
+      unlater(gone);
+      gone = later(() => { unevery(breathing); wisps = 0; rolls.forEach(a => a.cancel()); rolls = []; turning = null; root && root.remove(); root = null; }, seconds * 1000);
     };
-    let hidden = false;
+    let hidden = false, safety = null;
+    // Never left over a page that doesn't say its change is on screen (a game stopped by an error): it goes after a
+    // minute, as the light in Lamp's app goes when Lamp stops renewing it.
+    const watch = () => { unlater(safety); safety = later(() => api.fade(), 60000); };
     const api = {
       // A change came: the glow and the smoke come up.
       glow() {
         make();
-        clearTimeout(gone);
+        unlater(gone);
+        watch();
         glowEl.style.boxShadow = `inset 0 0 54px 6px ${HUES[0]}cc, inset 0 0 24px 2px ${HUES[0]}`;
         glowEl.animate(HUES.concat(HUES[0]).map(hue => ({ boxShadow: `inset 0 0 54px 6px ${hue}cc, inset 0 0 24px 2px ${hue}` })), { duration: 5000, iterations: Infinity });
         fadeTo(glowEl, 0.22, 600);
@@ -125,7 +130,8 @@
       // The game stands still taking it in: the stripes roll up every few seconds until `reveal`.
       turn() {
         make();
-        clearTimeout(gone);
+        unlater(gone);
+        watch();
         if (still() || turning) return;
         turning = performance.now();
         roll(Infinity, TURN_EVERY);
@@ -133,7 +139,8 @@
       // The change is on screen: the smoke surges and the stripes roll up once (or the turn under way finishes), and it all goes.
       reveal() {
         if (!root) return;
-        clearInterval(breathing);
+        unlater(safety);
+        unevery(breathing);
         if (still()) { fadeTo(glowEl, 0, 600); fadeTo(smoke, 0, 600); wisps = 0; return goAfter(0.8); }
         let left;
         if (turning !== null) {
@@ -153,8 +160,9 @@
       },
       // The change didn't go in now (held for a pause or a Reload): the glow and the smoke go.
       fade() {
+        unlater(safety);
         if (!root) return;
-        clearInterval(breathing);
+        unevery(breathing);
         wisps = 0;
         turning = null;
         fadeTo(glowEl, 0, 500);
@@ -182,7 +190,9 @@
     else if (state === 'rerun') light.turn();
     else if (state === 'reloading') { light.turn(); turnAcross(); }
     else if (state === 'held') light.fade();
-    else if (['shown', 'restored', 'fresh', 'started'].includes(state)) light.reveal();
+    // Once its new frames can show, as Lamp's app reads it (`PageLive`): a game put back where it was says so before its
+    // first frame and its shaders.
+    else if (state === 'shown') light.reveal();
   };
 
   // What Lamp's app around a page gives it: with these the game runtime knows changes come while it's played, and says
