@@ -108,7 +108,9 @@ function redisBinary(variable, name) {
 }
 const redisServer = redisBinary("REDIS_SERVER", "redis-server");
 const redisCLI = redisBinary("REDIS_CLI", "redis-cli");
-test("actual Redis Lua: concurrent IP/global quotas, expiry and persistence across handlers", { skip: !redisServer || !redisCLI }, async () => {
+// Skipped without Redis on a Mac, never in CI (`LAMP_REQUIRE_REDIS`), where it fails instead.
+test("actual Redis Lua: concurrent IP/global quotas, expiry and persistence across handlers", { skip: !process.env.LAMP_REQUIRE_REDIS && (!redisServer || !redisCLI) }, async () => {
+  assert.ok(redisServer && redisCLI, "redis-server and redis-cli are needed here");
   const socket = net.createServer();
   await new Promise((resolve) => socket.listen(0, "127.0.0.1", resolve));
   const port = socket.address().port;

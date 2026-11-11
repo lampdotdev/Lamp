@@ -5,6 +5,7 @@
   // game's code left running each time that code runs again, and a timer of lamp's set through the page's
   // `setTimeout` would go with them, and the log with it.
   const later = window.setTimeout.bind(window), ask = window.fetch.bind(window);
+  const unlater = window.clearTimeout.bind(window), every = window.setInterval.bind(window), unevery = window.clearInterval.bind(window);
   // A page opened again to show its beginning (`lamp look --reopen`) says so to the game runtime, which then starts
   // the game from its start, its saves kept (`window.lampFreshStart` in lamp-game.js).
   const FRESH = 'lamp.dev.fresh';
@@ -19,10 +20,135 @@
   };
   const said = message => post('said', message, true);
 
+  // MARK: The card on a change
+  // The same card Lamp's app puts on an open app as a change goes in (`LampTransition.Look`, TransitionLook.swift, which
+  // says how it looks: keep the two in step), at the foot of the page: Lamp's mark turning, "Updating" and what's
+  // changing (the words the coding agent gave with `lamp changing`, if it did), then "Updated" for a moment once the
+  // change is on screen, so every change is seen to land. It covers nothing but itself and lets every click through.
+  // The mark turns by the browser's compositor, so it keeps turning while the page is busy with the new code. Never in
+  // a picture lamp takes (`__lampLightHidden`), and still where less motion is asked for.
+  const light = (() => {
+    const HUES = ['#1f8a4a', '#7cbf3a', '#f6b81c', '#f08a1c', '#e2402a', '#d23778'];
+    // As in the Look: the card stays at least this long, "Updated" this long, and the mark turns once in this long.
+    const SHOWN_AT_LEAST = 1.2, HELD_AFTER = 1.4, SPIN_EVERY = 1.4;
+    const still = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } };
+    let root = null, card = null, bands = null, title = null, detail = null, spinning = null, shownAt = 0, gone = null, hidden = false, safety = null;
+    // The card's way out ("Updated" fading, or a fade), which a change coming meanwhile stops.
+    let outgoing = null;
+    const make = () => {
+      if (root && root.isConnected) return;
+      root = document.createElement('div');
+      root.setAttribute('aria-hidden', 'true');
+      root.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647;overflow:hidden;contain:strict';
+      card = document.createElement('div');
+      card.style.cssText = 'position:absolute;left:50%;bottom:min(20px,6vh);transform:translateX(-50%);display:flex;align-items:center;gap:8px;' +
+        'height:36px;box-sizing:border-box;padding:0 16px 0 12px;max-width:min(460px,calc(100vw - 32px));border-radius:18px;' +
+        'background:rgba(20,20,20,.86);border:1px solid rgba(255,255,255,.12);box-shadow:0 3px 12px rgba(0,0,0,.3);' +
+        'font:13px/17px -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;color:#fff;white-space:nowrap;opacity:0';
+      // Lamp's mark: its stripes on their slant, in a disc, which turns while the change is under way.
+      const mark = document.createElement('div');
+      mark.style.cssText = 'flex:none;width:18px;height:18px;border-radius:50%;overflow:hidden;position:relative';
+      bands = document.createElement('div');
+      bands.style.cssText = `position:absolute;left:-5.4px;top:-5.4px;width:28.8px;height:28.8px;transform:rotate(${-30}deg);` +
+        `background:linear-gradient(to bottom, ${HUES.map((hue, i) => `${hue} ${i * 100 / 6}% ${(i + 1) * 100 / 6}%`).join(', ')})`;
+      mark.appendChild(bands);
+      title = document.createElement('span');
+      title.style.cssText = 'flex:none;font-weight:600';
+      detail = document.createElement('span');
+      detail.style.cssText = 'min-width:0;overflow:hidden;text-overflow:ellipsis;opacity:.72';
+      card.append(mark, title, detail);
+      root.appendChild(card);
+      // Beside the body rather than in it: a game running its code again clears what its body held.
+      document.documentElement.appendChild(root);
+      if (hidden) root.style.visibility = 'hidden';
+    };
+    const goAfter = seconds => {
+      unlater(gone);
+      gone = later(() => { spinning = null; root && root.remove(); root = null; shownAt = 0; }, seconds * 1000);
+    };
+    const show = () => {
+      make();
+      unlater(gone);
+      if (outgoing) { outgoing.cancel(); outgoing = null; }
+      if (shownAt) return;
+      shownAt = performance.now();
+      card.animate([{ opacity: 0, transform: still() ? 'translateX(-50%)' : 'translate(-50%, 10px)' }, { opacity: 1, transform: 'translateX(-50%)' }],
+        { duration: 250, easing: 'ease-out', fill: 'forwards' });
+    };
+    const spin = () => {
+      if (still() || spinning) return;
+      spinning = bands.animate([{ transform: 'rotate(-30deg)' }, { transform: 'rotate(330deg)' }], { duration: SPIN_EVERY * 1000, iterations: Infinity });
+    };
+    // Never left over a page that doesn't say its change is on screen (a game stopped by an error): it goes after a
+    // minute, as the card in Lamp's app goes when Lamp stops renewing it.
+    const watch = () => { unlater(safety); safety = later(() => api.fade(), 60000); };
+    let words = '';
+    const api = {
+      // A change came: the card comes up with "Updating", what's changing, and the mark turning.
+      glow(given) {
+        if (typeof given === 'string') words = given;
+        show();
+        watch();
+        title.textContent = 'Updating';
+        detail.textContent = words;
+        spin();
+      },
+      // The game stands still taking it in: the card stays as it is until `reveal`.
+      turn() { api.glow(); },
+      // The change is on screen: "Updated" for a moment, then the card goes.
+      reveal() {
+        if (!root) return;
+        unlater(safety);
+        title.textContent = 'Updated';
+        if (spinning) { spinning.cancel(); spinning = null; }
+        if (!still()) bands.parentNode.animate([{ transform: 'scale(1.25)' }, { transform: 'scale(1)' }], { duration: 300, easing: 'ease-out' });
+        const wait = Math.max(HELD_AFTER, SHOWN_AT_LEAST - (performance.now() - shownAt) / 1000);
+        if (outgoing) outgoing.cancel();
+        outgoing = card.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, delay: wait * 1000, fill: 'forwards', easing: 'ease-in-out' });
+        words = '';
+        goAfter(wait + 0.35);
+      },
+      // The change didn't go in now (held for a pause or a Reload): the card goes.
+      fade() {
+        unlater(safety);
+        if (!root) return;
+        if (outgoing) outgoing.cancel();
+        outgoing = card.animate([{ opacity: getComputedStyle(card).opacity }, { opacity: 0 }], { duration: 250, fill: 'forwards' });
+        words = '';
+        goAfter(0.3);
+      },
+      hide(on) { hidden = !!on; if (root) root.style.visibility = on ? 'hidden' : ''; },
+      get words() { return words; },
+    };
+    return api;
+  })();
+  // Left out of the pictures lamp takes of the page.
+  window.__lampLightHidden = on => light.hide(on);
+  // A page opening again for a change goes on saying so until its new code draws, with the same words.
+  const TURNING = 'lamp.dev.turning', WORDS = 'lamp.dev.words';
+  const turnAcross = () => { try { sessionStorage.setItem(TURNING, String(Date.now())); sessionStorage.setItem(WORDS, light.words); } catch (e) {} };
+  try {
+    const since = Number(sessionStorage.getItem(TURNING)), carried = sessionStorage.getItem(WORDS) || '';
+    sessionStorage.removeItem(TURNING);
+    sessionStorage.removeItem(WORDS);
+    if (since && Date.now() - since < 30000) light.glow(carried);
+  } catch (e) {}
+  // How the game said a change went, read for the card: it goes in now, stands still taking it in, waits, or is on screen.
+  const lit = message => {
+    const state = message && message.state;
+    if (state === 'swapped') light.reveal();
+    else if (state === 'rerun') light.turn();
+    else if (state === 'reloading') { light.turn(); turnAcross(); }
+    else if (state === 'held') light.fade();
+    // Once its new frames can show, as Lamp's app reads it (`PageLive`): a game put back where it was says so before its
+    // first frame and its shaders.
+    else if (state === 'shown') light.reveal();
+  };
+
   // What Lamp's app around a page gives it: with these the game runtime knows changes come while it's played, and says
   // how each one went and when the game is past its loading screen.
   const handlers = {
-    lampLive: { postMessage: said }, lampPlaying: { postMessage: state => said({ state: 'page-' + state }) },
+    lampLive: { postMessage: message => { lit(message); said(message); } }, lampPlaying: { postMessage: state => said({ state: 'page-' + state }) },
     // The person played while lamp held the game's controller (`lamp use stick`), and has it back.
     lampDriveTakenOver: { postMessage: why => said({ state: 'taken-over', why: String(why || '') }) },
   };
@@ -44,7 +170,8 @@
   // A page with the game runtime logs its own errors; any other page's are logged here.
   addEventListener('error', e => { if (!window.__lampLive) say('error', [e.message + ' (' + (String(e.filename || '').split('/').pop() || 'the page') + ':' + e.lineno + ')']); });
   addEventListener('unhandledrejection', e => { if (!window.__lampLive) say('error', [String(e.reason && e.reason.message || e.reason)]); });
-  addEventListener('load', () => said({ state: 'page-loaded' }));
+  // A page without the game runtime is on screen once it has loaded.
+  addEventListener('load', () => { said({ state: 'page-loaded' }); if (!window.__lampLive) light.reveal(); });
 
   // Changes. The line says which change this copy's files had, so one saved while the page was opening comes as soon
   // as the line is open; the browser says the last it heard when the line is opened again after a break.
@@ -62,10 +189,11 @@
   events.addEventListener('hello', e => { if (e.data !== LAMP.run) location.reload(); });
   events.addEventListener('change', e => {
     const change = JSON.parse(e.data);
+    light.glow(typeof change.words === 'string' ? change.words : '');
     // A game takes the change and keeps the player's place; any other page opens again.
     let taken = false;
     try { taken = !!(window.__lampLive && window.__lampLive(change)); } catch (e) {}
-    if (!taken) { said({ gen: change.gen, state: 'reloading' }); location.reload(); }
+    if (!taken) { light.turn(); turnAcross(); said({ gen: change.gen, state: 'reloading' }); location.reload(); }
   });
   events.addEventListener('reload', reopen);
   // With no browser lamp can look into, the page says what's on it itself.

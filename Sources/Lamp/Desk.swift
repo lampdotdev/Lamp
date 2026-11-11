@@ -237,7 +237,8 @@ struct WishDesk: View {
     }
 
     /// The ways to what people sent: changes, and ideas from people playing a link, each a line of its own, as quiet as the
-    /// rest of the column, there only once someone has sent some, with how many are new. Each opens at the app with the
+    /// rest of the column, with how many are new. Changes are there once someone has sent some; Ideas whenever a wish has
+    /// a link, so those seen to stay a click away. Each opens at the app with the
     /// most new, and from either the other is a click away, seen or not.
     @ViewBuilder private var sentToYou: some View {
         let wishes = store.wishesWithSuggestions

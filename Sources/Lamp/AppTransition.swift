@@ -2,8 +2,8 @@ import AppKit
 import CryptoKit
 import SwiftUI
 
-/// Smoke curls up from the bottom of the open app's windows while Lamp builds a change for it, and Lamp's stripes
-/// roll up across them as it goes in (`LampTransition` in LampSupport.swift, which draws it). Lamp is the only one who asks: each
+/// A small card at the foot of the open app's windows says it's updating, and what's changing, while Lamp builds a
+/// change for it, and "Updated" as it goes in (`LampTransition` in LampSupport.swift, which draws it). Lamp is the only one who asks: each
 /// request is signed with the app's token, over its phase, an id and the time, so no other process can start it
 /// or play one again, and the app's own code has no way to.
 ///
@@ -23,6 +23,12 @@ enum AppTransition {
 
     static func signature(phase: String, id: String, at: String, token: String) -> String {
         HMAC<SHA256>.authenticationCode(for: Data("transition\n\(id)\n\(phase)\n\(at)".utf8), using: SymmetricKey(data: Data(token.utf8)))
+            .map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The card's words are signed apart, over the request's id, so an app that doesn't read them still takes it.
+    static func wordsSignature(id: String, words: String, token: String) -> String {
+        HMAC<SHA256>.authenticationCode(for: Data("transition-words\n\(id)\n\(words)".utf8), using: SymmetricKey(data: Data(token.utf8)))
             .map { String(format: "%02x", $0) }.joined()
     }
 
@@ -53,7 +59,7 @@ enum AppTransition {
     }
 
     /// The open app stands still taking the change in (a game running its code again, or opening its page again): the
-    /// stripes roll up it every few seconds, from the glow already over it, until the change is on screen (`land`).
+    /// card already on it says it's updating until the change is on screen (`land`).
     static func turn(_ project: LampProject) {
         guard glowing[project.id] != nil, canShow(project) else { return }
         send(.turn, to: project)
@@ -102,15 +108,21 @@ enum AppTransition {
         return true
     }
 
-    /// Distributed notifications reach every process, so the token never travels: only its signature does.
+    /// Distributed notifications reach every process, so the token never travels: only its signature does. A begin
+    /// or a land says what's changing, as the person asked for it (`Store.changeWords`).
     static func send(_ phase: Phase, to project: LampProject) {
         let id = UUID().uuidString
         let at = String(Int(Date().timeIntervalSince1970))
+        let token = Template.token(for: project)
+        var info: [String: String] = ["phase": phase.rawValue, "id": id, "at": at,
+                                      marker: signature(phase: phase.rawValue, id: id, at: at, token: token)]
+        if phase == .begin || phase == .land, let words = Store.shared.changeWords(for: project) {
+            info["words"] = words
+            info["lampTransitionWords"] = wordsSignature(id: id, words: words, token: token)
+        }
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name(Edition.notificationPrefix + "transition.\(project.id)"), object: nil,
-            userInfo: ["phase": phase.rawValue, "id": id, "at": at,
-                       marker: signature(phase: phase.rawValue, id: id, at: at, token: Template.token(for: project))],
-            deliverImmediately: true)
+            userInfo: info, deliverImmediately: true)
     }
 }
 

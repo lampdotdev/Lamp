@@ -369,6 +369,14 @@ final class SidebarServer {
         locals.values.forEach { $0.push() }
     }
 
+    /// The chat's box takes the keyboard wherever the chat is shown (`SidebarState.focusBox`): after Keep Editing, the
+    /// person goes straight on typing what to change.
+    func focusBox(of projectID: String) {
+        focusRequests[projectID, default: 0] += 1
+        pushNow()
+    }
+    private var focusRequests: [String: Int] = [:]
+
     // MARK: What the sidebar shows
 
     /// Bumped when the draft is changed anywhere but the sidebar itself, which then takes it up.
@@ -482,6 +490,9 @@ final class SidebarServer {
                                          button: store.setup.installRequested ? "Show Installer" : "Install…")
         }
         state.readingAt = readingAt[project.id]
+        state.focusBox = focusRequests[project.id]
+        // A copy kept for more changes after its review (`Store.keepEditing`), idle: the way back to its review.
+        if Store.shared.offersReviewChanges(project, busy: busy) { state.lines.append(Self.reviewChangesLine) }
         state.panel = panels[project.id]
         switch state.panel {
         case .versions:
@@ -998,6 +1009,18 @@ final class SidebarServer {
         return out
     }
 
+    /// Review Changes…, at the foot of the chat of a copy made for part of a suggested change while it's ready and idle
+    /// (`Store.offersReviewChanges`). Worked out each time from the copy's job, not kept in its chat, so it's there after
+    /// a restart and gone once the copy is put in place, kept or deleted.
+    static let reviewChangesLine: SidebarLine = {
+        var line = SidebarLine(id: UUID(uuidString: "5E1EC7ED-C4A2-4E5B-9E11-AD1E5C0A1B2C")!, kind: .action,
+                               text: "Done changing it? Review it again.", gap: 12)
+        line.symbol = "checklist"
+        line.button = "Review Changes…"
+        line.prominent = true
+        return line
+    }()
+
     /// An attachment as the sidebar shows it: its name, and a picture of it or its icon, as Lamp's window has it.
     fileprivate static func attachment(_ url: URL) -> SidebarAttachment {
         SidebarAttachment(name: url.lastPathComponent, thumbnail: thumbnail(url), isImage: Attachments.isImage(url))
@@ -1224,6 +1247,7 @@ final class SidebarServer {
             }
             store.attach(urls, to: project)
         case .offer(let id):
+            if id == Self.reviewChangesLine.id { return store.reviewChanges(project) }
             guard let line = store.logs[project.id]?.first(where: { $0.id == id }) else { return }
             // Reload is done where the person is, beside the app.
             if line.kind == .reload { return store.reloadWaiting(project.id) }

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { deflateSync, crc32 } from "node:zlib";
-import { createShareHandler, createFileHandler, createIdeasHandler, IDEA_LIMITS, createPlayHandler, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, slugFor, wishIDFrom, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
+import { createShareHandler, createFileHandler, createIdeasHandler, createIdeaMailHandler, replyWords, IDEA_LIMITS, createPlayHandler, pictureScript, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, slugFor, wishIDFrom, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
 import { createPageHandler } from "../lib/shared-wish-page.js";
 import { createCardHandler } from "../lib/wish-card.js";
 
@@ -345,7 +345,8 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   assert.equal(served.status, 200);
   assert.match(served.headers.get("content-type"), /^text\/html/);
   assert.equal(served.headers.get("content-security-policy"), "frame-ancestors https://lamp.dev");
-  assert.deepEqual(Buffer.from(await served.arrayBuffer()), html);
+  // The page as it was, after what lets the link's page ask it for a picture of it, which only the site may ask.
+  assert.equal(await served.text(), html.toString().replace("<!doctype html>", "<!doctype html>" + pictureScript("https://lamp.dev")), "after its doctype, so it isn't drawn in quirks mode");
   assert.equal((await play(new Request(`https://lamp.dev/api/wish-play?id=${id}&v=1&path=index.html`))).status, 404, "never on the site's own host");
   assert.equal((await play(new Request(`https://play.lamp.dev/api/wish-play?id=${id}&v=1&path=index.html`))).status, 404, "only on the link's own host");
   const gone = await play(new Request(`https://${own}/api/wish-play?id=${id}&v=2&path=index.html`));
@@ -372,9 +373,19 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   const big = await ask("lamp.js", "script");
   assert.equal(big.status, 302);
   assert.equal(big.headers.get("location"), "https://store.example/lamp.js");
-  assert.equal(big.headers.get("vary"), "Sec-Fetch-Dest");
+  assert.equal(big.headers.get("vary"), "Sec-Fetch-Dest, Sec-Fetch-Mode");
   assert.notEqual((await ask("lamp.js", "worker")).status, 302, "a worker's script stays on the page's origin");
   assert.equal((await ask("index.html")).status, 200, "never a page's HTML");
+  // A game's data goes to the store from a much smaller size; its scripts don't.
+  const data = createPlayHandler({ store, env, direct: 1e9, directData: 5, now: () => (later += 61_000) });
+  const pageNow = store.records.get(id).page;
+  pageNow.files["map.bin"] = "https://store.example/map.bin";
+  pageNow.sizes = { ...pageNow.sizes, "map.bin": 10, "lamp.js": 10 };
+  const asked = (path, mode = "cors") => data(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=${path}`, { headers: { "sec-fetch-mode": mode } }));
+  assert.equal((await asked("map.bin")).headers.get("location"), "https://store.example/map.bin");
+  assert.notEqual((await asked("map.bin", "no-cors")).status, 302, "an element's load stays on the page's origin");
+  assert.notEqual((await asked("lamp.js")).status, 302, "a script stays where its imports resolve");
+  delete pageNow.files["map.bin"];
   stored["lamp.js"] = kept;
   const without = await (await createPageHandler({ store, env: {}, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
   assert.doesNotMatch(without, /"play"/, "with no play host, nothing plays");
@@ -416,6 +427,179 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   assert.deepEqual([await plays(2), await plays(3), await plays(4)], [404, 200, 200]);
 });
 
+test("the maker and an idea's sender talk by email, the replies kept on the idea's thread", async () => {
+  const { createHmac } = await import("node:crypto");
+  const store = memoryStore();
+  const { id, secret } = await (await send(createShareHandler({ store, limited: false }), "POST", { ...share, by: "Alex" })).json();
+  const secretKey = Buffer.from("a webhook's own secret").toString("base64");
+  const env = { RESEND_API_KEY: "re_test", LAMP_IDEAS_FROM: "Lamp <ideas@lamp.dev>", LAMP_IDEAS_REPLY_DOMAIN: "reply.lamp.dev", RESEND_WEBHOOK_SECRET: `whsec_${secretKey}` };
+  const mails = [];
+  let received = "Yes please, and rain too!\n\nOn Tue, Nov 10, 2026 at 9:00 AM Lamp <ideas@lamp.dev> wrote:\n> Alex added your idea";
+  const fetcher = async (url, init) => {
+    if (String(url).includes("/emails/receiving/")) return Response.json({ text: received });
+    mails.push(JSON.parse(init.body));
+    return Response.json({});
+  };
+  const ideas = createIdeasHandler({ store, limited: false, fetcher, env });
+  const mailIn = createIdeaMailHandler({ store, fetcher, env });
+  const call = (method, query, body) => ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}${query}`, {
+    method, headers: { ...(method === "POST" ? {} : { authorization: `Bearer ${secret}` }), "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) }));
+  const { n } = await (await call("POST", "", { text: "Bigger waves", email: "Someone@Example.com" })).json();
+  await call("DELETE", `&n=${n}&built=1`, { note: "Done, try the harbor" });
+  const box = /^idea-([0-9a-f]{20})@reply\.lamp\.dev$/.exec(mails[0].reply_to[0])?.[1];
+  assert.ok(box, "replies go to the idea's own mailbox");
+  assert.match(mails[0].text, /Done, try the harbor[\s\S]*Reply to this email to answer Alex/);
+  assert.match(mails[0].headers["List-Unsubscribe"], new RegExp(`stop=${box}`));
+
+  const deliver = (from, at = Date.now(), key = secretKey, mid = "<reply-1@example.com>") => {
+    const body = JSON.stringify({ type: "email.received", data: { email_id: mid, from, to: [`idea-${box}@reply.lamp.dev`], message_id: mid } });
+    const stamp = String(Math.floor(at / 1000));
+    const signature = createHmac("sha256", Buffer.from(key, "base64")).update(`msg_1.${stamp}.${body}`).digest("base64");
+    return mailIn(new Request("https://lamp.dev/api/idea-mail", { method: "POST", body, headers: { "svix-id": "msg_1", "svix-timestamp": stamp, "svix-signature": `v1,${signature}` } }));
+  };
+  const listed = async () => (await (await call("GET", "")).json()).ideas;
+  assert.equal((await deliver("someone@example.com", Date.now(), Buffer.from("another").toString("base64"))).status, 401, "only what Resend signed");
+  assert.equal((await deliver("someone@example.com", Date.now() - 600_000)).status, 401, "nor an old one sent again");
+  assert.equal((await deliver("Not Them <other@example.com>")).status, 200);
+  assert.deepEqual(await listed(), [], "nothing from another address");
+  assert.equal((await deliver("Someone <someone@example.com>")).status, 200);
+  assert.equal((await deliver("Someone <someone@example.com>")).status, 200);
+  const [waiting] = await listed();
+  assert.deepEqual([waiting.n, waiting.status, waiting.waiting, waiting.wantsNews], [n, "in", true, true]);
+  assert.deepEqual(waiting.thread.map((one) => [one.by, one.text]), [["maker", "Done, try the harbor"], ["sender", "Yes please, and rain too!"]], "their words, once, without the email they quote");
+  assert.ok(!JSON.stringify(waiting).includes(box) && !JSON.stringify(waiting).includes("example.com"), "never the mailbox or the address");
+
+  assert.equal((await (await call("PATCH", `&n=${n}`, { note: "Rain is next" })).json()).notified, true);
+  assert.equal(mails[1].subject, `Re: Your idea is in ${share.name}`);
+  assert.equal(mails[1].headers["In-Reply-To"], "<reply-1@example.com>");
+  assert.deepEqual(await listed(), [], "answered, it's off the list");
+  received = "One more thing";
+  await deliver("someone@example.com", Date.now(), secretKey, "<reply-2@example.com>");
+  assert.deepEqual((await listed())[0].thread.map((one) => one.text), ["Done, try the harbor", "Yes please, and rain too!", "Rain is next", "One more thing"]);
+  assert.equal((await call("PATCH", `&n=${n}`)).status, 200);
+  assert.deepEqual(await listed(), [], "seen to without a word");
+
+  assert.equal((await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${n}&stop=${box}`))).status, 200);
+  assert.equal((await (await call("PATCH", `&n=${n}`, { note: "Anyone there?" })).json()).notified, false, "no more emails once they stop them");
+  assert.equal(replyWords("Sure\n\n-----Original Message-----\nFrom: Lamp"), "Sure");
+  // Two first emails at once go with one mailbox; an outcome given to an answered idea takes it off the list.
+  const other = (await (await call("POST", "", { text: "Night races", email: "someone@example.com" })).json()).n;
+  const before = mails.length;
+  await Promise.all([call("PATCH", `&n=${other}`, { note: "Do you mean a full race?" }), call("PATCH", `&n=${other}`, { note: "Or just a lap?" })]);
+  assert.deepEqual(new Set(mails.slice(before).map((mail) => mail.reply_to[0])).size, 1);
+  const otherBox = /^idea-([0-9a-f]{20})@/.exec(mails.at(-1).reply_to[0])[1];
+  const answerOther = () => {
+    const body = JSON.stringify({ type: "email.received", data: { email_id: "e2", from: "someone@example.com", to: [`idea-${otherBox}@reply.lamp.dev`], message_id: "<reply-3@example.com>" } });
+    const stamp = String(Math.floor(Date.now() / 1000));
+    const signature = createHmac("sha256", Buffer.from(secretKey, "base64")).update(`msg_2.${stamp}.${body}`).digest("base64");
+    return mailIn(new Request("https://lamp.dev/api/idea-mail", { method: "POST", body, headers: { "svix-id": "msg_2", "svix-timestamp": stamp, "svix-signature": `v1,${signature}` } }));
+  };
+  await answerOther();
+  assert.equal((await listed()).find((one) => one.n === other)?.waiting, true);
+  await call("DELETE", `&n=${other}&built=1`);
+  assert.deepEqual(await listed(), [], "given its outcome, it's seen to");
+  const earlier = (await (await call("GET", "&earlier=1")).json()).ideas;
+  assert.deepEqual(earlier.map((one) => one.n), [other, n], "those seen to, the latest word first");
+  assert.ok(earlier.every((one) => one.thread && !("mailbox" in one) && !("email" in one)));
+  // A note kept on its own, from before threads, is the start of one, and stays so when the maker writes again.
+  const legacy = await store.addIdea(id, { text: "A lighthouse", at: "2026-11-10T10:00:00.000Z", token: "x".repeat(16), status: "dismissed", done: "2026-11-10T12:00:00.000Z", note: "We have one already" });
+  const legacyThread = async () => (await (await call("GET", "&earlier=1")).json()).ideas.find((one) => one.n === legacy).thread.map((one) => one.text);
+  assert.deepEqual(await legacyThread(), ["We have one already"]);
+  await call("PATCH", `&n=${legacy}`, { note: "It's by the docks" });
+  assert.deepEqual(await legacyThread(), ["We have one already", "It's by the docks"]);
+});
+
+test("the maker can have ideas and replies at their own address, and answer them from it", async () => {
+  const { createHmac } = await import("node:crypto");
+  const store = memoryStore();
+  const { id, secret } = await (await send(createShareHandler({ store, limited: false }), "POST", { ...share, by: "Alex" })).json();
+  const secretKey = Buffer.from("a webhook's own secret").toString("base64");
+  const env = { RESEND_API_KEY: "re_test", LAMP_IDEAS_FROM: "Lamp <ideas@lamp.dev>", LAMP_IDEAS_REPLY_DOMAIN: "reply.lamp.dev", RESEND_WEBHOOK_SECRET: `whsec_${secretKey}` };
+  const mails = [];
+  let received = "";
+  const fetcher = async (url, init) => {
+    if (String(url).includes("/emails/receiving/")) return Response.json({ text: received });
+    mails.push(JSON.parse(init.body));
+    return Response.json({});
+  };
+  let clock = Date.now();
+  const ideas = createIdeasHandler({ store, limited: false, fetcher, env, now: () => new Date(clock) });
+  const mailIn = createIdeaMailHandler({ store, fetcher, env });
+  const call = (method, query, body, auth = true) => ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}${query}`, {
+    method, headers: { ...(auth ? { authorization: `Bearer ${secret}` } : {}), "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) }));
+  // Each email as Resend received it has an id of its own, sent again with the same one.
+  const deliver = (from, to, mid, emailID = mid) => {
+    const body = JSON.stringify({ type: "email.received", data: { email_id: emailID, from, to: [to], ...(mid ? { message_id: mid } : {}) } });
+    const stamp = String(Math.floor(Date.now() / 1000));
+    const signature = createHmac("sha256", Buffer.from(secretKey, "base64")).update(`m.${stamp}.${body}`).digest("base64");
+    return mailIn(new Request("https://lamp.dev/api/idea-mail", { method: "POST", body, headers: { "svix-id": "m", "svix-timestamp": stamp, "svix-signature": `v1,${signature}` } }));
+  };
+
+  assert.equal((await call("PUT", "&maker=1", { email: "alex@example.com" }, false)).status, 404, "only with the link's secret");
+  assert.equal((await call("PUT", "&maker=1", { email: "not an address" })).status, 400);
+  assert.deepEqual(await (await call("PUT", "&maker=1", { email: "Alex@Example.com" })).json(), { email: "Alex@Example.com", confirmed: false, sent: true });
+  const key = /confirm=([0-9a-f]{20})/.exec(mails[0].text)[1];
+  assert.equal((await call("PUT", "&maker=1", { email: "alex@example.com" })).status, 429, "at most one a minute");
+  await call("POST", "", { text: "Before it's confirmed" }, false);
+  assert.equal(mails.length, 1, "nothing goes to an address until it's confirmed");
+  await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&confirm=${"0".repeat(20)}`));
+  assert.equal((await (await call("GET", "&maker=1")).json()).confirmed, false, "only with its own key");
+  await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&confirm=${key}`));
+  assert.deepEqual(await (await call("GET", "&maker=1")).json(), { email: "Alex@Example.com", confirmed: true });
+
+  const { n } = await (await call("POST", "", { text: "Bigger waves", email: "someone@example.com" }, false)).json();
+  const toMaker = mails.at(-1);
+  assert.deepEqual(toMaker.to, ["Alex@Example.com"]);
+  assert.match(toMaker.subject, /^Idea for .+: Bigger waves$/);
+  const makerBox = /^idea-([0-9a-f]{20})@/.exec(toMaker.reply_to[0])[1];
+
+  // The maker answers from their email: on the thread as theirs, and on to the sender, once however often it comes,
+  // with or without a message id.
+  received = "Is it big waves or tall ones?";
+  await deliver("alex@example.com", `idea-${makerBox}@reply.lamp.dev`, undefined, "no-id-1");
+  await deliver("alex@example.com", `idea-${makerBox}@reply.lamp.dev`, undefined, "no-id-1");
+  assert.equal(mails.filter((mail) => /tall ones/.test(mail.text)).length, 1);
+  const asked = mails.length;
+  received = "Coming this week!\n\nOn Tue, Lamp wrote:\n> Someone playing";
+  assert.equal((await deliver("Someone Else <someone@example.com>", `idea-${makerBox}@reply.lamp.dev`, "<m1@example.com>")).status, 200);
+  assert.equal(mails.length, asked, "only from the maker's own address");
+  await deliver("alex@example.com", `idea-${makerBox}@reply.lamp.dev`, "<m1@example.com>");
+  await deliver("alex@example.com", `idea-${makerBox}@reply.lamp.dev`, "<m1@example.com>");
+  const toSender = mails.at(-1);
+  assert.deepEqual([toSender.to, mails.length], [["someone@example.com"], asked + 1], "once, however often it comes");
+  assert.match(toSender.text, /Coming this week!/);
+  const senderBox = /^idea-([0-9a-f]{20})@/.exec(toSender.reply_to[0])[1];
+
+  // The sender answers: on the thread, and to the maker in that idea's conversation.
+  received = "Yay";
+  await deliver("someone@example.com", `idea-${senderBox}@reply.lamp.dev`, "<s1@example.com>");
+  assert.deepEqual(mails.at(-1).to, ["Alex@Example.com"]);
+  assert.equal(mails.at(-1).headers["In-Reply-To"], toMaker.headers["Message-ID"]);
+  const idea = (await (await call("GET", "")).json()).ideas.find((one) => one.n === n);
+  assert.deepEqual(idea.thread.map((one) => [one.by, one.text]), [["maker", "Is it big waves or tall ones?"], ["maker", "Coming this week!"], ["sender", "Yay"]]);
+  assert.ok(!JSON.stringify(idea).includes(makerBox));
+
+  // The stop link in the maker's emails lets the address go, and only while it's that address's.
+  const stop = /stopmaker=([0-9a-f]{20})/.exec(toMaker.text)[1];
+  clock += 61_000;
+  await call("PUT", "&maker=1", { email: "other@example.com" });
+  await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&stopmaker=${stop}`, { method: "POST" }));
+  assert.equal((await (await call("GET", "&maker=1")).json()).email, "other@example.com", "an old link doesn't stop a new address");
+  await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&confirm=${key}`));
+  assert.equal((await (await call("GET", "&maker=1")).json()).confirmed, false, "nor confirm it");
+  await call("PUT", "&maker=1", { email: "" });
+  clock += 61_000;
+  await call("PUT", "&maker=1", { email: "Alex@Example.com" });
+  await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&confirm=${/confirm=([0-9a-f]{20})/.exec(mails.at(-1).text)[1]}`));
+  // The key in its confirmation is the one its emails' stop links carry.
+  await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&stopmaker=${/confirm=([0-9a-f]{20})/.exec(mails.at(-1).text)[1]}`, { method: "POST" }));
+  await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&stopmaker=${stop}`, { method: "POST" }));
+  assert.deepEqual(await (await call("GET", "&maker=1")).json(), { email: null, confirmed: false });
+  const before = mails.length;
+  await call("POST", "", { text: "Fireworks" }, false);
+  assert.equal(mails.length, before);
+});
+
 test("a link's questions go to its page, and only as questions within the limits", async () => {
   const store = memoryStore();
   const handler = createShareHandler({ store, limited: false });
@@ -451,6 +635,7 @@ test("ideas reach the link's maker, and only the maker reads them", async () => 
   assert.deepEqual(kept.map((idea) => [idea.n, idea.text, idea.wantsNews]), [[1, "Add a night mode", undefined], [2, "Bigger waves", true]]);
   assert.ok(kept.every((idea) => !("email" in idea) && typeof idea.at === "string"), "never the addresses");
 
+
   const done = await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
   assert.equal(done.status, 200);
   assert.deepEqual((await (await list()).json()).ideas.map((idea) => idea.n), [2]);
@@ -461,12 +646,12 @@ test("ideas reach the link's maker, and only the maker reads them", async () => 
   const mails = [];
   const fetcher = async (url, init) => { mails.push([url, JSON.parse(init.body)]); return new Response("{}", { status: 200 }); };
   const built = createIdeasHandler({ store, limited: false, fetcher, env: { RESEND_API_KEY: "re_test", LAMP_IDEAS_FROM: "Lamp <ideas@lamp.dev>" } });
-  const answer = await (await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=2&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }))).json();
+  const answer = await (await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=2&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" }, body: JSON.stringify({ note: "Thanks, the waves are huge now" }) }))).json();
   assert.equal(answer.notified, true);
   assert.equal(mails.length, 1);
   assert.equal(mails[0][0], "https://api.resend.com/emails");
   assert.deepEqual(mails[0][1].to, ["someone@example.com"]);
-  assert.match(mails[0][1].text, /Bigger waves[\s\S]*https:\/\/lamp\.dev\/w\//);
+  assert.match(mails[0][1].text, /Bigger waves[\s\S]*Thanks, the waves are huge now[\s\S]*https:\/\/lamp\.dev\/w\//);
   assert.deepEqual((await (await list()).json()).ideas.map((idea) => idea.n), [3]);
   assert.equal(mails.length, 1);
   // Two at once for one idea: one email.
@@ -483,8 +668,10 @@ test("ideas reach the link's maker, and only the maker reads them", async () => 
   assert.deepEqual(await mine(`${kept1.n}.${kept1.token},${kept2.n}.${kept2.token}`), [{ n: kept1.n, status: "open" }, { n: kept2.n, status: "open" }]);
   assert.deepEqual(await mine(`${kept1.n}.${"x".repeat(16)}`), [], "only with its token");
   await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${kept1.n}&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
-  await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${kept2.n}`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
-  assert.deepEqual((await mine(`${kept1.n}.${kept1.token},${kept2.n}.${kept2.token}`)).map((one) => one.status), ["in", "dismissed"]);
+  const noted = (note) => built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${kept2.n}`, { method: "DELETE", headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" }, body: JSON.stringify({ note }) }));
+  assert.equal((await noted("x".repeat(IDEA_LIMITS.note + 1))).status, 400, "a note too long is turned away, the idea left open");
+  await noted("We have fog at night already");
+  assert.deepEqual((await mine(`${kept1.n}.${kept1.token},${kept2.n}.${kept2.token}`)).map((one) => [one.status, one.note]), [["in", undefined], ["dismissed", "We have fog at night already"]]);
   assert.ok(!(await (await list()).json()).ideas.some((one) => one.n === kept1.n || one.n === kept2.n), "the maker sees only those still open");
   // Dealing with ideas makes room for more: the cap counts those still open.
   const full = memoryStore();
@@ -498,4 +685,11 @@ test("ideas reach the link's maker, and only the maker reads them", async () => 
   const quiet = await (await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=3&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }))).json();
   assert.equal(quiet.notified, false, "nobody asked");
   assert.equal(mails.length, 2);
+  // A picture of the app goes with an idea when the sender keeps it in, and goes once the idea has its outcome.
+  const dot = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  assert.equal((await post({ text: "Look here", picture: "not a picture" })).status, 400);
+  const shot = await (await post({ text: "Look here", picture: dot })).json();
+  assert.equal((await (await list()).json()).ideas.find((one) => one.n === shot.n).picture, `data:image/png;base64,${dot}`);
+  await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${shot.n}`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
+  assert.equal((await store.ideas(id)).find((one) => one.n === shot.n).picture, undefined);
 });

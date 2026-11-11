@@ -3312,6 +3312,9 @@ enum Template {
     /// first of a batch above all (`LampDriver.lead` in LampSupport.swift, which must say the same). Every other
     /// action's spot is announced during the pause before it, with the time until it happens, so nothing waits.
     static let useAppLead = 0.2
+    /// How long a Mac app's `use_app` answer waits for a file its actions are saving (`LampSaves.wait` in LampSupport.swift,
+    /// which must say the same), and so how much longer Lamp waits for that answer.
+    static let useAppSaveWait = 8.0
 
     static let lampSupportSwift = Connectors.fill(lampSupportTemplate).replacingOccurrences(of: "{{WISH_LEAVES_LAMP_CLOSED}}", with: wishLeavesLampClosed)
         + "\n#if os(macOS)" + lampGlyphSwift + "#endif\n"
@@ -7883,8 +7886,8 @@ enum Template {
     }
 
     // LampTransition
-    /// While Lamp builds a change for this app, smoke curls up from the bottom of its windows, and when the change
-    /// goes in Lamp's stripes roll up across them once, so the change looks alive rather than abrupt. Only Lamp starts it: the
+    /// While Lamp builds a change for this app, a small card at the foot of its windows says it's updating, and what's
+    /// changing; when the change goes in it says "Updated" for a moment, so every change is seen. Only Lamp starts it: the
     /// request is signed with the app's token (the "lampTransitionSignature" key marks the builds that understand
     /// it), and nothing here is reachable from the app's own code. It's drawn in clear windows laid over the app's
     /// (children, so they move and stack with them) that let every click through, and the pictures Lamp takes for
@@ -7897,12 +7900,15 @@ enum Template {
                 let info = note.userInfo
                 let phase = info?["phase"] as? String ?? "", id = info?["id"] as? String ?? ""
                 let at = info?["at"] as? String ?? "", signature = info?["lampTransitionSignature"] as? String ?? ""
+                // What's changing, signed apart, so an app that doesn't read it still takes the request.
+                let given = info?["words"] as? String
+                let words = given.flatMap { Gate.wordsSignature(id: id, words: $0, token: LampInstall.token) == info?["lampTransitionWords"] as? String ? String($0.prefix(200)) : nil }
                 MainActor.assumeIsolated {
                     guard gate.admits(phase: phase, id: id, at: at, signature: signature, now: Date()) else { return }
                     switch phase {
-                    case "begin": begin()
+                    case "begin": begin(words: words)
                     case "turn": turn()
-                    case "land": land()
+                    case "land": land(words: words)
                     default: end()
                     }
                 }
@@ -7930,6 +7936,11 @@ enum Template {
                     .map { String(format: "%02x", $0) }.joined()
             }
 
+            static func wordsSignature(id: String, words: String, token: String) -> String {
+                HMAC<SHA256>.authenticationCode(for: Data("transition-words\n\(id)\n\(words)".utf8), using: SymmetricKey(data: Data(token.utf8)))
+                    .map { String(format: "%02x", $0) }.joined()
+            }
+
             mutating func admits(phase: String, id: String, at: String, signature: String, now: Date) -> Bool {
                 guard !token.isEmpty, !id.isEmpty, ["begin", "turn", "land", "end"].contains(phase), let sent = Double(at),
                       abs(now.timeIntervalSince1970 - sent) < 10, !seen.contains(id),
@@ -7954,31 +7965,41 @@ enum Template {
                 && (LampMagic.isAppWindow($0) || LampDriver.isBarPanel($0)) && $0.frame.width > 40 && $0.frame.height > 40 }
         }
 
-        @MainActor static func begin() {
+        @MainActor static func begin(words: String?) {
             renew()
             glasses.removeAll { $0.over == nil || $0.isLeaving }
+            // A request the person sent since says what's changing now, on the cards already up too.
+            if let words { for glass in glasses { glass.words = words } }
             for window in windows where !glasses.contains(where: { $0.over === window }) {
                 let glass = Glass(over: window)
+                glass.words = words
                 glasses.append(glass)
                 glass.glow(still: reduceMotion)
             }
         }
 
-        /// The app is standing still taking the change in (a game running its code again): the stripes roll up its
-        /// windows every few seconds until the change is on screen (`land`). Only over windows already glowing for it.
+        /// The app is standing still taking the change in (a game running its code again): the card stays until the
+        /// change is on screen (`land`). Only over windows already showing it.
         @MainActor static func turn() {
             renew()
             for glass in glasses where !glass.isLeaving { glass.turn(still: reduceMotion) }
         }
 
-        /// The change went in: the stripes roll up each window once (fading where motion is reduced), then the smoke and the glow go.
-        @MainActor static func land() {
+        /// The change went in: each card says "Updated" for a moment, then goes.
+        @MainActor static func land(words: String?) {
             timeout?.cancel()
             if glasses.isEmpty {
                 // A copy opened for this change never saw the begin: it shows that it's new all the same.
-                for window in windows { glasses.append(Glass(over: window)) }
+                for window in windows {
+                    let glass = Glass(over: window)
+                    glass.words = words
+                    glasses.append(glass)
+                }
             }
-            for glass in glasses { glass.reveal(still: reduceMotion) }
+            for glass in glasses {
+                if let words { glass.words = words }
+                glass.reveal(still: reduceMotion)
+            }
             glasses.removeAll()
         }
 
@@ -7995,7 +8016,7 @@ enum Template {
             DispatchQueue.main.asyncAfter(deadline: .now() + patience, execute: work)
         }
 
-        /// A clear window over one of the app's, holding the effect's layers (`Look`).
+        /// A clear window over one of the app's, holding the card (`Look`).
         @MainActor final class Glass: NSPanel {
             weak var over: NSWindow?
             private(set) var isLeaving = false
@@ -8029,6 +8050,11 @@ enum Template {
                 if window.responds(to: NSSelectorFromString("_cornerRadius")),
                    let radius = window.value(forKey: "_cornerRadius") as? CGFloat, radius > 0 { return radius }
                 return 12
+            }
+
+            var words: String? {
+                get { look.words }
+                set { look.words = newValue }
             }
 
             func fit() {
@@ -8069,16 +8095,11 @@ enum Template {
         }
 
         // TransitionLook
-        /// The effect's layers, filling the window they're laid over and cut to its rounding. Core Animation runs
-        /// them out of the app's process, so they keep moving while the app is busy taking the change in.
-        ///
-        /// While the change is built, smoke in Lamp's stripe colors curls up from the bottom edge, thick there and thinning
-        /// as it rises a third of the way up, with a faint glow round the edge: noticeable on any ground, and out of the way
-        /// of most of the window. When the change goes in the smoke surges for a moment, then the stripes roll up the window
-        /// on Lamp's slant, as if round a drum: each comes in as a thin line, widens to the middle and thins again as it
-        /// leaves, and at the middle of the roll they cover the window whole, leaving it clear behind them. While the app
-        /// stands still taking the change in (a game running its code again), the stripes roll up every few seconds, so the
-        /// frame held there reads as the change going in, and once it's on screen the turn under way finishes.
+        /// A small card at the foot of the app's window while Lamp builds its change and as it goes in: Lamp's mark
+        /// turning, "Updating" and what's changing, in the person's words; then "Updated" for a moment once the change is
+        /// in, so every change is seen to land, however quick. It covers nothing but itself, and every click goes through
+        /// to the app. Core Animation runs it out of the app's process, so it keeps turning while the app is busy taking
+        /// the change in.
         @MainActor final class Look: NSView {
             /// Lamp's stripes, in the order they come up: green, lime, yellow, orange, red and magenta.
             static let hues: [NSColor] = [
@@ -8090,43 +8111,69 @@ enum Template {
                 NSColor(red: 0.824, green: 0.216, blue: 0.471, alpha: 1),
             ]
 
-            /// The stripes' slant, as on the website: rising to the right.
-            private static let slant: CGFloat = .pi / 6
+            /// The window's own rounding: the card keeps its own, so this only says how the window is cut.
+            var cornerRadius: CGFloat = 12
 
-            /// The window's own rounding, so the glow follows its corners.
-            var cornerRadius: CGFloat = 12 {
+            /// What's changing, as the person asked for it, after "Updating": cut to the card's width.
+            var words: String? {
                 didSet {
-                    guard cornerRadius != oldValue else { return }
-                    layer?.cornerRadius = cornerRadius
+                    guard words != oldValue else { return }
                     arranged = .zero
                     needsLayout = true
                 }
             }
 
-            /// One turn of the drum, in seconds.
-            private static let roll = 1.1
-            /// The roll's place in the turn while the app stands still: the stripes roll up once as it starts (`turn`), then
-            /// the glow and the smoke alone say the change is under way, so a long wait isn't a run of rainbows.
-            private static let turnEvery = 3.2
-            /// When the stripes began turning while the app stood still (`turn`), in the stripes' time.
-            private var turning: CFTimeInterval?
+            /// The card stays at least this long, so a change that lands at once is still seen.
+            private static let shownAtLeast = 1.2
+            /// "Updated" stays this long before the card goes.
+            private static let heldAfter = 1.4
+            /// One turn of the mark, in seconds.
+            private static let spinEvery = 1.4
 
-            private let glowLayer = CALayer()
-            private let wisps = CAEmitterLayer()
-            private let stripes = CALayer()
+            private let card = CALayer()
+            private let mark = CALayer()
+            private let bands = CALayer()
+            private let title = CATextLayer()
+            private let detail = CATextLayer()
+            private var heading = "Updating"
             private var arranged = CGRect.zero
+            private var shownAt: CFTimeInterval?
 
             override init(frame: NSRect) {
                 super.init(frame: frame)
                 wantsLayer = true
                 autoresizingMask = [.width, .height]
-                layer?.masksToBounds = true
-                layer?.cornerRadius = cornerRadius
-                for sublayer in [glowLayer, wisps, stripes] {
-                    sublayer.opacity = 0
-                    layer?.addSublayer(sublayer)
+                card.opacity = 0
+                card.backgroundColor = NSColor(white: 0.08, alpha: 0.86).cgColor
+                card.borderColor = NSColor(white: 1, alpha: 0.12).cgColor
+                card.borderWidth = 1
+                card.shadowColor = NSColor.black.cgColor
+                card.shadowOpacity = 0.3
+                card.shadowRadius = 12
+                card.shadowOffset = CGSize(width: 0, height: -3)
+                layer?.addSublayer(card)
+                // Lamp's mark: its stripes on their slant, in a disc, which turns while the change is under way.
+                mark.masksToBounds = true
+                for (index, hue) in Self.hues.enumerated() {
+                    let band = CALayer()
+                    band.backgroundColor = hue.cgColor
+                    band.name = String(index)
+                    bands.addSublayer(band)
                 }
-                wisps.birthRate = 0
+                mark.addSublayer(bands)
+                card.addSublayer(mark)
+                for text in [title, detail] {
+                    text.isWrapped = false
+                    text.truncationMode = .end
+                    text.alignmentMode = .left
+                    text.foregroundColor = NSColor.white.cgColor
+                    card.addSublayer(text)
+                }
+                title.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+                title.fontSize = 13
+                detail.font = NSFont.systemFont(ofSize: 13)
+                detail.fontSize = 13
+                detail.opacity = 0.72
             }
 
             required init?(coder: NSCoder) { nil }
@@ -8149,238 +8196,122 @@ enum Template {
                 CATransaction.commit()
             }
 
+            private static func width(of text: String, weight: NSFont.Weight) -> CGFloat {
+                ceil(NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 13, weight: weight)]).size().width)
+            }
+
             private func arrange() {
-                // Only blur, no line: each band of the glow is drawn just outside the window, where the window's own
-                // rounding cuts it off, so all that shows is its shadow coming in from the edge, going round the colors.
-                glowLayer.frame = bounds
-                glowLayer.sublayers?.forEach { $0.removeFromSuperlayer() }
-                for (blur, strength) in [(CGFloat(54), Float(0.8)), (24, 1)] {
-                    let width: CGFloat = 40
-                    let edge = CAShapeLayer()
-                    edge.frame = bounds
-                    edge.path = CGPath(roundedRect: bounds.insetBy(dx: -width / 2, dy: -width / 2), cornerWidth: cornerRadius + width / 2,
-                                       cornerHeight: cornerRadius + width / 2, transform: nil)
-                    edge.fillColor = nil
-                    edge.strokeColor = NSColor.white.cgColor
-                    edge.lineWidth = width
-                    edge.shadowColor = Self.hues[0].cgColor
-                    edge.shadowOpacity = strength
-                    edge.shadowRadius = blur
-                    edge.shadowOffset = .zero
-                    let cycle = CAKeyframeAnimation(keyPath: "shadowColor")
-                    cycle.values = (Self.hues + [Self.hues[0]]).map(\.cgColor)
-                    cycle.duration = 5
-                    cycle.repeatCount = .infinity
-                    edge.add(cycle, forKey: "hue")
-                    glowLayer.addSublayer(edge)
+                let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+                let words = (self.words ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let height: CGFloat = 36, side: CGFloat = 18, inset: CGFloat = 12
+                let titleWidth = Self.width(of: heading, weight: .semibold)
+                let wordsWidth = words.isEmpty ? 0 : Self.width(of: words, weight: .regular) + 8
+                let widest = max(160, min(bounds.width - 32, 460))
+                let width = min(widest, inset + side + 8 + titleWidth + wordsWidth + inset + 4)
+                card.frame = CGRect(x: ((bounds.width - width) / 2).rounded(), y: min(20, bounds.height * 0.06), width: width, height: height)
+                card.cornerRadius = height / 2
+                card.shadowPath = CGPath(roundedRect: card.bounds, cornerWidth: height / 2, cornerHeight: height / 2, transform: nil)
+                mark.frame = CGRect(x: inset, y: (height - side) / 2, width: side, height: side)
+                mark.cornerRadius = side / 2
+                // Wider than the disc, so its stripes reach the edge however it's turned.
+                let across = side * 1.6
+                bands.bounds = CGRect(x: 0, y: 0, width: across, height: across)
+                bands.position = CGPoint(x: side / 2, y: side / 2)
+                for band in bands.sublayers ?? [] {
+                    let index = CGFloat(Int(band.name ?? "0") ?? 0)
+                    band.frame = CGRect(x: 0, y: across - (index + 1) * across / 6, width: across, height: across / 6 + 0.5)
                 }
-
-                // Smoke rising from below the bottom edge, a stream of puffs for each color. How far it rises goes with
-                // the window's height (speed times life, and the puffs growing), so it reaches about a third of the way
-                // up at any size.
-                wisps.frame = bounds
-                wisps.emitterShape = .line
-                wisps.emitterPosition = CGPoint(x: bounds.midX, y: -24)
-                wisps.emitterSize = CGSize(width: bounds.width * 1.1, height: 0)
-                let rise = bounds.height * 0.1, life: Float = 6
-                wisps.emitterCells = Self.hues.enumerated().map { index, hue in
-                    let cell = CAEmitterCell()
-                    cell.contents = Self.puff
-                    cell.color = hue.withAlphaComponent(0.42).cgColor
-                    cell.redRange = 0.08; cell.greenRange = 0.08; cell.blueRange = 0.08
-                    cell.birthRate = Float(bounds.width / 66)
-                    cell.lifetime = life; cell.lifetimeRange = 1.5
-                    cell.velocity = rise; cell.velocityRange = rise * 0.45
-                    cell.emissionLongitude = .pi / 2; cell.emissionRange = 0.55
-                    cell.xAcceleration = index.isMultiple(of: 2) ? 3 : -3
-                    cell.scale = 0.8; cell.scaleRange = 0.35; cell.scaleSpeed = 0.16
-                    cell.alphaSpeed = -0.42 / life
-                    cell.spinRange = 0.6
-                    return cell
-                }
-
-                // The stripes: level in a layer turned to the slant and just big enough that, across its height, they reach
-                // from one corner of the window to the opposite one. Each starts with no height, waiting at the bottom.
-                let along = bounds.width * cos(Self.slant) + bounds.height * sin(Self.slant)
-                let across = bounds.width * sin(Self.slant) + bounds.height * cos(Self.slant)
-                stripes.bounds = CGRect(x: 0, y: 0, width: along, height: across)
-                stripes.position = CGPoint(x: bounds.midX, y: bounds.midY)
-                stripes.setAffineTransform(CGAffineTransform(rotationAngle: Self.slant))
-                stripes.sublayers?.forEach { $0.removeFromSuperlayer() }
-                for (index, hue) in Self.hues.enumerated() {
-                    let stripe = CALayer()
-                    stripe.backgroundColor = hue.cgColor
-                    stripe.allowsEdgeAntialiasing = true
-                    stripe.anchorPoint = .zero
-                    Self.place(stripe, index: index, roll: 0, across: across, along: along)
-                    stripes.addSublayer(stripe)
-                }
-                // Laid out again while the app stands still (its window resized, or put in full screen): the new stripes take up
-                // the roll where it is, from when it began.
-                if let began = turning { rollStripes(from: began, turns: 1, every: Self.turnEvery) }
+                if bands.animation(forKey: "spin") == nil { bands.transform = CATransform3DMakeRotation(.pi / 6, 0, 0, 1) }
+                let line: CGFloat = 17, textY = (height - line) / 2
+                let textX = inset + side + 8
+                title.contentsScale = scale
+                detail.contentsScale = scale
+                title.string = heading
+                title.frame = CGRect(x: textX, y: textY, width: min(titleWidth, width - textX - inset), height: line)
+                detail.string = words
+                let detailX = textX + titleWidth + 8
+                detail.frame = CGRect(x: detailX, y: textY, width: max(0, width - detailX - inset - 4), height: line)
             }
 
-            /// Where a stripe's edges are at a point of the roll, from 0 to 2π: the stripes lie side by side round a drum
-            /// whose near half is the window. An edge's height is the drum's seen from the front, so the stripes are thin
-            /// where the drum turns away, top and bottom, and the six together are as tall as the window at π.
-            private static func edges(index: Int, roll: CGFloat, across: CGFloat) -> (bottom: CGFloat, top: CGFloat) {
-                let share = CGFloat.pi / CGFloat(hues.count)
-                func height(_ angle: CGFloat) -> CGFloat { (1 - cos(min(max(angle, 0), .pi))) / 2 * across }
-                return (height(roll - CGFloat(index + 1) * share), height(roll - CGFloat(index) * share))
-            }
-
-            /// A stripe at a point of the roll, held a point past its lower edge so no line of the window shows between two.
-            private static func place(_ stripe: CALayer, index: Int, roll: CGFloat, across: CGFloat, along: CGFloat) {
-                let edge = edges(index: index, roll: roll, across: across)
-                stripe.position = CGPoint(x: 0, y: edge.bottom)
-                stripe.bounds = CGRect(x: 0, y: 0, width: along, height: edge.top > edge.bottom ? edge.top - edge.bottom + 1 : 0)
-            }
-
-            /// A puff of smoke: white, soft all the way to its edge, tinted by the cell that uses it.
-            private static let puff: CGImage? = {
-                let size = 128
-                guard let context = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
-                                              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
-                      let gradient = CGGradient(colorsSpace: nil, colors: [NSColor(white: 1, alpha: 0.9).cgColor, NSColor(white: 1, alpha: 0.45).cgColor,
-                                                                           NSColor(white: 1, alpha: 0).cgColor] as CFArray, locations: [0, 0.45, 1])
-                else { return nil }
-                let center = CGPoint(x: size / 2, y: size / 2)
-                context.drawRadialGradient(gradient, startCenter: center, startRadius: 0, endCenter: center, endRadius: CGFloat(size / 2), options: [])
-                return context.makeImage()
-            }()
-
-            /// The glow and the smoke come up; where motion is reduced, only the glow, still.
+            /// A change is being built: the card comes up with "Updating" and the mark turning.
             func glow(still: Bool) {
-                layoutSubtreeIfNeeded()
-                Self.animate(glowLayer, "opacity", from: 0, to: 0.22, duration: 0.6)
-                guard !still else { return }
-                Self.animate(wisps, "opacity", from: 0, to: 1, duration: 1.2)
-                wisps.birthRate = 1
+                say("Updating")
+                show(still: still)
+                spin(still: still)
             }
 
-            /// The app stands still taking the change in: the stripes roll up the window once, the smoke and the glow staying
+            /// The app stands still taking the change in (a game running its code again): the card stays as it is.
+            func turn(still: Bool) { glow(still: still) }
 
-            /// until `reveal`. Where motion is reduced, the glow alone stays, as while it was built.
-            func turn(still: Bool) {
-                layoutSubtreeIfNeeded()
-                guard !still, turning == nil else { return }
-                let now = stripes.convertTime(CACurrentMediaTime(), from: nil)
-                turning = now
-                rollStripes(from: now, turns: 1, every: Self.turnEvery)
-            }
-
-            /// The change went in: the smoke surges and the stripes roll up (the stripes fading where motion is reduced), and
-            /// the glow and the smoke go. Answers how long that takes, after which the layers can go.
+            /// The change is in: "Updated", the mark stops, and the card goes after a moment. A change that lands without
+            /// a begin (a copy just opened with it) shows the card all the same.
             func reveal(still: Bool) -> TimeInterval {
-                layoutSubtreeIfNeeded()
-                let glowing = glowLayer.presentation()?.opacity ?? glowLayer.opacity
-                let across = stripes.bounds.height, along = stripes.bounds.width
-                let layers = stripes.sublayers ?? []
-                if still {
-                    wisps.birthRate = 0
-                    Self.animate(glowLayer, "opacity", from: glowing, to: 0, duration: 0.6)
-                    Self.animate(wisps, "opacity", from: wisps.presentation()?.opacity ?? wisps.opacity, to: 0, duration: 0.6)
-                    CATransaction.begin()
-                    CATransaction.setDisableActions(true)
-                    for (index, stripe) in layers.enumerated() {
-                        Self.place(stripe, index: index, roll: .pi, across: across, along: along)
-                    }
-                    CATransaction.commit()
-                    Self.animate(stripes, "opacity", from: 0.35, to: 0, duration: 0.7)
-                    return 0.8
+                show(still: still)
+                say("Updated")
+                bands.removeAnimation(forKey: "spin")
+                bands.transform = CATransform3DMakeRotation(.pi / 6, 0, 0, 1)
+                if !still {
+                    let pop = CABasicAnimation(keyPath: "transform.scale")
+                    pop.fromValue = 1.25
+                    pop.toValue = 1
+                    pop.duration = 0.3
+                    pop.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    mark.add(pop, forKey: "pop")
                 }
-                // Turning already (`turn`): its one roll, still under way, is the last and finishes; after it, one more rolls
-                // now, so the change landing is marked as it is without turning. The smoke and the glow go meanwhile.
-                if let began = turning {
-                    turning = nil
-                    let now = stripes.convertTime(CACurrentMediaTime(), from: nil)
-                    let done: Double = 0
-                    let rolling = now - began < Self.roll
-                    if rolling { rollStripes(from: began, turns: Float(done + 1), every: Self.turnEvery) }
-                    else { rollStripes(from: now, turns: 1, every: Self.roll) }
-                    wisps.birthRate = 0
-                    Self.animate(wisps, "opacity", from: wisps.presentation()?.opacity ?? wisps.opacity, to: 0, duration: 0.6)
-                    Self.animate(glowLayer, "opacity", from: glowing, to: 0, duration: 0.6)
-                    let left = rolling ? began + done * Self.turnEvery + Self.roll - now : Self.roll
-                    return max(left, 0.6) + 0.2
-                }
-                // The smoke gathers itself, more of it and rising faster, for a moment before the roll. Timed by
-                // animations, not by the main thread, which may be busy with the new code.
-                let gather = 0.3
-                wisps.opacity = 1
-                Self.animate(wisps, "velocity", from: 1, to: 3.5, duration: gather, timing: CAMediaTimingFunction(name: .easeIn))
-                let surge = CAKeyframeAnimation(keyPath: "birthRate")
-                surge.values = [1, 3, 0]
-                surge.keyTimes = [0, 0.95, 1]
-                surge.duration = gather
-                surge.calculationMode = .discrete
-                wisps.birthRate = 0
-                wisps.add(surge, forKey: "surge")
-
-                // Then the stripes roll up at the drum's steady turn, which is what eases them in and out at the edges, and
-                // the smoke and the glow go with them.
-                rollStripes(from: stripes.convertTime(CACurrentMediaTime(), from: nil) + gather, turns: 1, every: Self.roll)
-                Self.animate(wisps, "opacity", from: 1, to: 0, duration: 0.6, delay: gather + 0.1)
-                Self.animate(glowLayer, "opacity", from: glowing, to: 0, duration: 0.6, delay: gather)
-                return gather + Self.roll + 0.2
+                let now = CACurrentMediaTime()
+                let wait = max(Self.heldAfter, Self.shownAtLeast - (now - (shownAt ?? now)))
+                Self.animate(card, "opacity", from: 1, to: 0, duration: 0.3, delay: wait)
+                return wait + 0.35
             }
 
-            /// The stripes roll up the window from `begin` (in the stripes' time), `turns` times round, each stripe's edges
-            /// worked out ahead along the roll so Core Animation runs them without the app, and each left with no height
-            /// after. A turn comes round `every` seconds, the window clear between rolls. Rolled again from the same `begin`,
-            /// the roll goes on unbroken with its new number of turns.
-            private func rollStripes(from begin: CFTimeInterval, turns: Float, every: Double) {
-                let across = stripes.bounds.height, along = stripes.bounds.width
-                let steps = 60
-                // The roll takes its own time at the start of each turn, then the stripes wait at the top, with no height.
-                let share = Self.roll / max(every, Self.roll)
-                let times = (0...steps).map { NSNumber(value: share * Double($0) / Double(steps)) } + (share < 1 ? [1] : [])
-                CATransaction.begin()
-                CATransaction.setDisableActions(true)
-                stripes.opacity = 1
-                for (index, stripe) in (stripes.sublayers ?? []).enumerated() {
-                    let frames = (0...steps).map { Self.edges(index: index, roll: 2 * .pi * CGFloat($0) / CGFloat(steps), across: across) }
-                    let held = share < 1 ? 1 : 0
-                    let bottoms = frames.map(\.bottom), heights = frames.map { $0.top > $0.bottom ? $0.top - $0.bottom + 1 : 0 }
-                    Self.follow(stripe, "position.y", values: bottoms + bottoms.suffix(held), times: times, every: every, from: begin, turns: turns)
-                    Self.follow(stripe, "bounds.size.height", values: heights + heights.suffix(held), times: times, every: every, from: begin, turns: turns)
-                    Self.place(stripe, index: index, roll: 2 * .pi, across: across, along: along)
-                }
-                CATransaction.commit()
-            }
-
-            private static func follow(_ layer: CALayer, _ key: String, values: [CGFloat], times: [NSNumber], every: Double,
-                                       from begin: CFTimeInterval, turns: Float) {
-                let animation = CAKeyframeAnimation(keyPath: key)
-                animation.values = values
-                animation.keyTimes = times
-                animation.duration = every
-                animation.repeatCount = turns
-                animation.beginTime = begin
-                animation.fillMode = .backwards
-                layer.add(animation, forKey: key)
-            }
-
-            /// The glow and the smoke go without a change going in. Answers how long that takes.
+            /// Nothing goes in after all (the build failed, or the change waits for the person): the card goes.
             func fade() -> TimeInterval {
-                wisps.birthRate = 0
-                Self.animate(glowLayer, "opacity", from: glowLayer.presentation()?.opacity ?? glowLayer.opacity, to: 0, duration: 0.5)
-                Self.animate(wisps, "opacity", from: wisps.presentation()?.opacity ?? wisps.opacity, to: 0, duration: 1.0)
-                return 1.1
+                guard shownAt != nil else { return 0 }
+                Self.animate(card, "opacity", from: card.presentation()?.opacity ?? card.opacity, to: 0, duration: 0.25)
+                return 0.3
             }
 
-            private static func animate(_ layer: CALayer, _ key: String, from: Float, to: Float, duration: Double, delay: Double = 0,
-                                        timing: CAMediaTimingFunction = CAMediaTimingFunction(name: .easeOut)) {
+            private func say(_ heading: String) {
+                guard heading != self.heading else { return }
+                self.heading = heading
+                arranged = .zero
+                needsLayout = true
+                layoutSubtreeIfNeeded()
+            }
+
+            private func show(still: Bool) {
+                guard shownAt == nil else { return }
+                shownAt = CACurrentMediaTime()
+                layoutSubtreeIfNeeded()
+                Self.animate(card, "opacity", from: 0, to: 1, duration: still ? 0.15 : 0.25)
+                guard !still else { return }
+                let rise = CABasicAnimation(keyPath: "transform.translation.y")
+                rise.fromValue = -10
+                rise.toValue = 0
+                rise.duration = 0.3
+                rise.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                card.add(rise, forKey: "rise")
+            }
+
+            private func spin(still: Bool) {
+                guard !still, bands.animation(forKey: "spin") == nil else { return }
+                let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+                spin.fromValue = CGFloat.pi / 6
+                spin.toValue = CGFloat.pi / 6 - 2 * .pi
+                spin.duration = Self.spinEvery
+                spin.repeatCount = .infinity
+                bands.add(spin, forKey: "spin")
+            }
+
+            private static func animate(_ layer: CALayer, _ key: String, from: Float, to: Float, duration: Double, delay: Double = 0) {
                 let animation = CABasicAnimation(keyPath: key)
                 animation.fromValue = from
                 animation.toValue = to
                 animation.duration = duration
-                animation.timingFunction = timing
-                if delay > 0 {
-                    animation.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil) + delay
-                    animation.fillMode = .backwards
-                }
-                layer.setValue(to, forKey: key)
+                animation.beginTime = CACurrentMediaTime() + delay
+                animation.fillMode = .backwards
+                animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                layer.setValue(to, forKeyPath: key)
                 layer.add(animation, forKey: key)
             }
         }
@@ -8978,6 +8909,9 @@ enum Template {
             var frame: CGRect         // in the picture's pixels
             var selected = false
             var disabled = false
+            /// A page's own thing: its place in the list the page's read made (`LampPageReader`), by which a click
+            /// finds that very thing. Nil for what the accessibility tree lists.
+            var ref: Int? = nil
         }
 
         /// The most things listed: a full window is a few dozen, and past this the list costs more than it tells.
@@ -9169,7 +9103,7 @@ enum Template {
             // which keeps running while the dialog is open only because the action isn't itself on that queue.
             after(0) {
                 guard Handover.current?.carriesOn == true else { return }
-                LampShowcase.note("did", run(action))
+                LampShowcase.note("did", run(action) { said, _ in LampShowcase.note("did", said) })
             }
             try? await Task.sleep(for: .milliseconds(150))
         }
@@ -9210,8 +9144,12 @@ enum Template {
         static var items: (NSWindow) -> [LampScreen.Item] = { _ in [] }
         /// Carries out an action aimed at a page (`point`, in the window's frame view, on it; or none, with the page
         /// holding the keyboard) in the page's own script, which takes it whether or not the app is in front, where
-        /// WebKit lets an event made by the app go. What it did, or nil when the action isn't the page's.
-        static var act: ((LampDriver.Action, NSPoint?, NSWindow) -> String?)?
+        /// WebKit lets an event made by the app go. What it did, or nil when the action isn't the page's. A click is
+        /// meant for the page's thing given, if any, and its outcome comes later, from the page: in words, and whether
+        /// it clicked (a thing that was dimmed, gone or under another isn't).
+        static var act: ((LampDriver.Action, NSPoint?, LampScreen.Item?, NSWindow, @escaping @MainActor (String, Bool) -> Void) -> String?)?
+        /// What `act` says of a click until the page answers it: the batch waits for that answer before going on.
+        static let sent = "sent to the page, which hasn't said what it landed on"
         /// Whether the game on a page is playing (`LampPagePlaying`): nil for an app with no game, false while it loads.
         @MainActor static var playing: Bool?
         /// Gives a game's controller to Lamp for batch `id` (seconds it may run) or back (nil): only that batch's own
@@ -9221,6 +9159,116 @@ enum Template {
         /// otherwise the page's answer comes to `said`, in words for the report, and whether the page holds it.
         static var hold: ((LampDriver.Action, NSWindow, LampDriver.Handover, @escaping @MainActor (String, Bool) -> Void) -> Bool)?
     }
+
+    // begin LampSaves
+    /// What a save that `use_app` set off came to: a page's download (`LampPageDownloads` in LampPage.swift) says here
+    /// where it was told to go and how it ended, and the driver's answer says it, so the builder knows the file is there,
+    /// how big it is and what a zip holds without reading the person's folders itself. Only saves whose panel a batch answered
+    /// are kept: the person's own are none of the builder's business. A save can end after that batch has answered, so
+    /// each is said again once it ends, in a later answer, marked as from earlier.
+    @MainActor
+    enum LampSaves {
+        enum State: Equatable { case saving, saved, canceled, failed(String), notMoved(String) }
+
+        final class Save {
+            let name: String
+            /// The batch that answered its panel.
+            let batch: String
+            var destination: URL?
+            var state = State.saving
+            /// What the builder was last told of it.
+            var told: State?
+            init(name: String, batch: String) { self.name = name; self.batch = batch }
+        }
+
+        /// How long a batch's answer waits for a file it's saving (`Store.use` waits as long beyond the actions).
+        static let wait = 8.0
+        /// The batch running now, if any (`LampDriver.perform` sets it).
+        static var batch: String?
+        private(set) static var all: [Save] = []
+
+        /// A save the batch running now answered the panel for (its Save or Cancel): kept only during a batch, so the person's
+        /// own saves are left out, and a download whose panel came up only after the batch that clicked it had answered is
+        /// still the batch's that answers its panel.
+        static func began(_ name: String) -> Save? {
+            guard let batch else { return nil }
+            let save = Save(name: name, batch: batch)
+            all.append(save)
+            return save
+        }
+
+        static func chose(_ save: Save?, _ url: URL) { save?.destination = url }
+
+        static func ended(_ save: Save?, _ state: State) { save?.state = state }
+
+        /// Whether a save that has somewhere to go is still being written.
+        static var writing: Bool { all.contains { $0.state == .saving && $0.destination != nil } }
+
+        /// What the builder hasn't been told yet, one line per save, for batch `id`; each said is marked told, and one that
+        /// has ended is forgotten. A save still waiting in its panel has nothing to say yet.
+        static func news(for id: String) -> [String] {
+            var lines: [String] = []
+            for save in all where save.told != save.state && !(save.state == .saving && save.destination == nil) {
+                save.told = save.state
+                let earlier = save.batch == id ? "" : " (from an earlier use of the app)"
+                let place = save.destination.map { ($0.path as NSString).abbreviatingWithTildeInPath } ?? "\"\(save.name)\""
+                switch save.state {
+                case .saving: lines.append("Still saving \(place)\(earlier): it isn't finished yet, so it isn't saved yet.")
+                case .saved: lines.append("Saved\(earlier): " + (save.destination.map(describe) ?? place))
+                case .canceled: lines.append("Not saved\(earlier): the save panel for \"\(save.name)\" was canceled.")
+                case .failed(let why): lines.append("Not saved\(earlier): the download of \(place) failed (\(why)).")
+                case .notMoved(let why): lines.append("Not saved\(earlier): the download of \(place) finished but couldn't be put there (\(why)).")
+                }
+            }
+            all.removeAll { $0.told == $0.state && $0.state != .saving }
+            return lines
+        }
+
+        /// The file at `url`: where it is, its size and, for a zip, the names of what it holds (never what's in them).
+        nonisolated static func describe(_ url: URL) -> String {
+            let path = (url.path as NSString).abbreviatingWithTildeInPath
+            guard let handle = try? FileHandle(forReadingFrom: url) else { return "\(path) (Lamp couldn't inspect it)" }
+            defer { try? handle.close() }
+            guard let size = try? handle.seekToEnd() else { return "\(path) (Lamp couldn't inspect it)" }
+            let bytes = size < 1000 ? "\(size) bytes" : ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file) + " (\(size) bytes)"
+            return "\(path), \(bytes), " + zip(handle, size: size)
+        }
+
+        /// A zip's list of files is at its end: the end record says where it starts, and each entry there names a file.
+        private nonisolated static func zip(_ handle: FileHandle, size: UInt64) -> String {
+            func read(_ offset: UInt64, _ count: Int) -> [UInt8]? {
+                guard (try? handle.seek(toOffset: offset)) != nil, let data = try? handle.read(upToCount: count), data.count == count else { return nil }
+                return [UInt8](data)
+            }
+            func u16(_ b: [UInt8], _ i: Int) -> Int { Int(b[i]) | Int(b[i + 1]) << 8 }
+            func u32(_ b: [UInt8], _ i: Int) -> UInt64 { UInt64(u16(b, i)) | UInt64(u16(b, i + 2)) << 16 }
+            guard size >= 4, let head = read(0, 4) else { return "not a zip archive" }
+            guard head[0] == 0x50, head[1] == 0x4b, (head[2] == 3 && head[3] == 4) || (head[2] == 5 && head[3] == 6) else {
+                return "not a zip archive"
+            }
+            let unreadable = "it starts like a zip archive but its list of files couldn't be read, so it may be cut short or damaged"
+            let tailCount = Int(min(size, 22 + 65_535))
+            guard let tail = read(size - UInt64(tailCount), tailCount), tailCount >= 22 else { return unreadable }
+            guard let end = stride(from: tailCount - 22, through: 0, by: -1).first(where: {
+                tail[$0] == 0x50 && tail[$0 + 1] == 0x4b && tail[$0 + 2] == 5 && tail[$0 + 3] == 6
+            }) else { return unreadable }
+            let total = u16(tail, end + 10), listSize = u32(tail, end + 12), listStart = u32(tail, end + 16)
+            if total == 0xffff || listStart == 0xffff_ffff { return "a large zip archive whose files Lamp didn't list" }
+            guard listStart + listSize <= size, listSize <= 1 << 20, let list = read(listStart, Int(listSize)) else { return unreadable }
+            var names: [String] = [], at = 0
+            for _ in 0..<total {
+                guard at + 46 <= list.count, list[at] == 0x50, list[at + 1] == 0x4b, list[at + 2] == 1, list[at + 3] == 2 else { return unreadable }
+                let nameLength = u16(list, at + 28), next = at + 46 + nameLength + u16(list, at + 30) + u16(list, at + 32)
+                guard next <= list.count else { return unreadable }
+                if names.count < 12 { names.append(String(String(decoding: list[(at + 46)..<(at + 46 + nameLength)], as: UTF8.self).prefix(100))) }
+                at = next
+            }
+            guard total > 0 else { return "an empty zip archive" }
+            let more = total > names.count ? ", and \(total - names.count) more" : ""
+            return "a zip archive of \(total) \(total == 1 ? "entry" : "entries"): " + names.joined(separator: ", ") + more
+        }
+    }
+    // end LampSaves
 
     /// Lets Lamp's builder use the app the way a person would: it clicks, types, presses keys and picks from
     /// menus in the front window, from inside the app, so no Accessibility permission is needed. An action names
@@ -9415,7 +9463,15 @@ enum Template {
             let front = LampRuntime.windowsOnScreen.first
             let before = front.flatMap(LampRuntime.picture), dialog = front.map(isDialog) ?? false
             var report: [String] = []
+            // A download the actions set off is this batch's until it answers (`LampSaves`).
+            LampSaves.batch = id
             func answer(stopped: Bool) {
+                // A newer batch, begun meanwhile, says what's saved in its own answer. So does the next one after a stop:
+                // Lamp may stop reading for this answer once it has stopped, and what's saved would be said to no one.
+                if LampSaves.batch == id || LampSaves.batch == nil {
+                    LampSaves.batch = nil
+                    if !stopped { report += LampSaves.news(for: id) }
+                }
                 var answer = ["id": id, "report": report.joined(separator: "\n")]
                 if stopped { answer["stopped"] = "person" }
                 // Once the pictures are written, which Lamp reads with the answer.
@@ -9459,18 +9515,34 @@ enum Template {
             }
             /// `shown` is where Lamp's cursor was sent for this action during the pause before it, if anywhere;
             /// the spot is found again now that it's due, since the app may have moved it meanwhile.
+            /// A click whose answer the page hasn't given yet (its report line), and the step waiting for it: nothing goes on,
+            /// and the report isn't written, until the page has said what the click landed on, or `unanswered` has passed.
+            var awaiting: (line: Int, resume: (() -> Void)?)?
             func step(_ index: Int, shown: Aim?) {
                 guard batch.carriesOn else { return }
+                if awaiting != nil {
+                    awaiting?.resume = { step(index, shown: shown) }
+                    return
+                }
                 keepBarPanel()
                 note()
                 guard index < actions.count else {
-                    batch.end()
-                    // Let the app react, then show the result.
-                    after(0.6) {
-                        keepBarPanel()
-                        report.append(outcome(since: front, before, wasDialog: dialog))
-                        answer(stopped: false)
+                    // Let the app react, then show the result: once a file the actions are saving is written, or up to
+                    // `LampSaves.wait` seconds, after which it's said to be still saving. The batch is still running till
+                    // then, so Lamp's Stop or the person's own click ends the wait and answers at once (`Handover`).
+                    func finish(waited: Double) {
+                        // Stopped (it has answered) or replaced by a newer batch.
+                        guard batch.carriesOn else { return }
+                        guard LampSaves.writing, waited < LampSaves.wait else {
+                            batch.end()
+                            keepBarPanel()
+                            report.append(outcome(since: front, before, wasDialog: dialog))
+                            answer(stopped: false)
+                            return
+                        }
+                        after(0.25) { finish(waited: waited + 0.25) }
                     }
+                    after(0.6) { finish(waited: 0) }
                     return
                 }
                 let action = actions[index]
@@ -9547,7 +9619,45 @@ enum Template {
                             goOn(after: Self.settle)
                         }
                     } else {
-                        report[line] = run(action)
+                        // A click on a page is answered by the page (`LampPageItems.act`), in its own time: the batch
+                        // waits for that answer only once `run` has said the click went to a page. Any other click (one
+                        // that opens a modal alert or panel, and doesn't return until it closes) never waits, so the
+                        // steps that answer the modal still run.
+                        var waits = false
+                        var early: (said: String, clicked: Bool)?
+                        func take(_ said: String, _ clicked: Bool) {
+                            // The page's answer in place of "sent"; a click that didn't happen isn't one that should
+                            // have changed the screen.
+                            report[line] = said
+                            if !clicked, last?.line == line { last = nil }
+                        }
+                        func goOn() {
+                            let resume = awaiting?.resume
+                            awaiting = nil
+                            resume?()
+                        }
+                        let did = run(action) { said, clicked in
+                            guard waits else {
+                                if early == nil { early = (said, clicked) }
+                                return
+                            }
+                            guard awaiting?.line == line else { return }
+                            take(said, clicked)
+                            goOn()
+                        }
+                        report[line] = did
+                        if let early {
+                            take(early.said, early.clicked)
+                        } else if did.hasSuffix(LampPageItems.sent) {
+                            waits = true
+                            awaiting = (line, nil)
+                            after(Self.unanswered) {
+                                guard awaiting?.line == line else { return }
+                                report[line] = report[line].replacingOccurrences(of: LampPageItems.sent, with:
+                                    "the page didn't answer within \(LampScreen.number(Self.unanswered)) s, so whether it was clicked isn't known")
+                                goOn()
+                            }
+                        }
                     }
                     // A page reads its things again, for the next action's target: ready well within the pause.
                     LampPageItems.refresh? {}
@@ -9567,7 +9677,7 @@ enum Template {
         /// How long after an action the next one's spot is looked for: a press is taken up on the run loop's
         /// next turn, so what it opened or changed is on screen by then.
         static let settle = 0.1
-        /// How long a game's page has to answer a hold of its controller before the batch goes on without it.
+        /// How long a game's page has to answer a hold of its controller, or a page a click, before the batch goes on without it.
         static let unanswered = 3.0
 
         /// Where an action happens on screen, what it's doing in a few words, which window that's in, and
@@ -9663,7 +9773,9 @@ enum Template {
                 "clicked or typed in from here: press return to save there, or escape to cancel."
         }
 
-        private static func run(_ action: Action) -> String {
+        /// What `action` did. A click on a page says so later, from the page (`late`, with whether it clicked), once
+        /// the page has said what the click landed on; what's returned then is only that it was sent.
+        private static func run(_ action: Action, late: @escaping @MainActor (String, Bool) -> Void = { _, _ in }) -> String {
             if action.action == "menu" { return menuBar(action.item) }
             if action.action == "bar_icon" { return barIcon(action.item) }
             // A game's controller is held in the game's page (`step`): an app with none has nothing to hold.
@@ -9701,7 +9813,8 @@ enum Template {
                     // The panel's own Save button answers to the real keyboard only; end it as that would.
                     if let parent = panel.sheetParent { parent.endSheet(panel, returnCode: .OK) } else { NSApp.stopModal(withCode: .OK) }
                     panel.orderOut(nil)
-                    return "pressed return: saved as \(panel.url?.path ?? panel.nameFieldStringValue)"
+                    return "pressed return: the save panel accepted \(panel.url?.path ?? panel.nameFieldStringValue) as where to save. " +
+                        "That alone doesn't mean the file was written there"
                 case ("key", "escape"):
                     panel.cancel(nil)
                     return "pressed escape: canceled the panel"
@@ -9710,9 +9823,14 @@ enum Template {
                 }
             }
             // On a page (LampPage.swift's), the page carries the action out itself.
-            if let act = LampPageItems.act, !(window is NSSavePanel), ["click", "double_click", "type", "key"].contains(action.action),
-               let did = act(action, action.x != nil && action.y != nil ? point : nil, window) {
-                return (what.map { "\(action.action) \($0): " } ?? "\(action.action): ") + did
+            if let act = LampPageItems.act, !(window is NSSavePanel), ["click", "double_click", "type", "key"].contains(action.action) {
+                let label = what.map { "\(action.action) \($0): " }
+                    ?? (action.x != nil && action.y != nil && action.action.hasSuffix("click") ? "\(action.action) at \(Int(action.x ?? 0)), \(Int(action.y ?? 0)): " : "\(action.action): ")
+                // A page's own thing (what the accessibility tree has no element for) is the one the click is for.
+                let meant = named.flatMap { $0.element == nil ? $0.item : nil }
+                if let did = act(action, action.x != nil && action.y != nil ? point : nil, meant, window, { late(label + $0, $1) }) {
+                    return label + did
+                }
             }
             // A game's own: what isn't on its page (the window's edge, a dialog in front) is left alone. Lamp looks for
             // these words in the app (`Store.gamePageMarker`) before it sends a game's page any click.

@@ -119,17 +119,44 @@ export async function removeFile({ site = siteOrigin(), link, page = false }) {
 }
 
 /** The ideas sent to the link that are still open, oldest first: each with its number. Only the link's secret reads them. */
-export async function ideasOf({ site = siteOrigin(), link }) {
-  try { return (await call("GET", `${site}/api/wish-ideas?id=${encodeURIComponent(link.id)}`, { secret: link.secret })).said.ideas ?? []; }
+export async function ideasOf({ site = siteOrigin(), link, earlier = false }) {
+  try { return (await call("GET", `${site}/api/wish-ideas?id=${encodeURIComponent(link.id)}${earlier ? "&earlier=1" : ""}`, { secret: link.secret })).said.ideas ?? []; }
   catch (error) { if (error.status === 404) return []; throw error; }
 }
 
 /** Lets an idea go: with `built` it's in, and the site first writes to whoever asked to hear. Whether it did. */
-export async function removeIdea({ site = siteOrigin(), link, n, built = false }) {
+export async function removeIdea({ site = siteOrigin(), link, n, built = false, note }) {
   try {
-    const { said } = await call("DELETE", `${site}/api/wish-ideas?id=${encodeURIComponent(link.id)}&n=${Number(n)}${built ? "&built=1" : ""}`, { secret: link.secret });
+    const { said } = await call("DELETE", `${site}/api/wish-ideas?id=${encodeURIComponent(link.id)}&n=${Number(n)}${built ? "&built=1" : ""}`,
+      { secret: link.secret, ...(note ? { json: { note } } : {}) });
     return { notified: said.notified === true };
   } catch (error) { if (error.status === 404) return { notified: false }; throw error; }
+}
+
+/**
+ * Says something more about an idea, its sender emailed if they gave an address, and answers whether they were;
+ * without a note, only that the maker has seen to their answer.
+ */
+export async function replyIdea({ site = siteOrigin(), link, n, note }) {
+  try {
+    const { said } = await call("PATCH", `${site}/api/wish-ideas?id=${encodeURIComponent(link.id)}&n=${Number(n)}`,
+      { secret: link.secret, ...(note ? { json: { note } } : {}) });
+    return { notified: said.notified === true };
+  } catch (error) {
+    if (error.status === 404) throw new Problem(`there's no idea ${Number(n)} on this link`);
+    if (error.status === 429) throw new Problem(`idea ${Number(n)} has as many messages as it can keep`);
+    throw error;
+  }
+}
+
+/**
+ * The maker's own address for the link's ideas and replies, as `{ email, confirmed }`; with `email`, given ("" takes it
+ * away), and the site emails it to confirm first.
+ */
+export async function makerOf({ site = siteOrigin(), link, email }) {
+  const { said } = await call(email === undefined ? "GET" : "PUT", `${site}/api/wish-ideas?id=${encodeURIComponent(link.id)}&maker=1`,
+    { secret: link.secret, ...(email === undefined ? {} : { json: { email } }) });
+  return { email: typeof said.email === "string" ? said.email : null, confirmed: said.confirmed === true, ...(email ? { sent: said.sent === true } : {}) };
 }
 
 /** Takes the link down, with its page and the ideas sent to it. A link the site no longer has is down already. */

@@ -777,6 +777,15 @@ enum Gallery {
             AnyView(ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.queued("Hot Shelf"), button: "Reload",
                                         disabled: true, prominent: true) {})
         },
+        // A copy of part of a suggested change, kept after its review to change it more: the way back to the review.
+        Entry(group: "Activity", name: "Review Changes in a kept copy") {
+            let line = SidebarServer.reviewChangesLine
+            return AnyView(VStack(alignment: .leading, spacing: 8) {
+                ChatLook.AgentText("The bike lanes are thicker now, and the night map is still left out.")
+                ChatLook.Worked("Worked for 41 s") { EmptyView() }
+                ChatLook.ActionLine(symbol: line.symbol ?? "", text: line.text, button: line.button ?? "", prominent: true) {}
+            })
+        },
         Entry(group: "Activity", name: "Under the agent's progress lines") {
             let started = Date().addingTimeInterval(-95)
             return AnyView(VStack(alignment: .leading, spacing: 12) {
@@ -903,6 +912,13 @@ enum Gallery {
             concerns: [], risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false),
             asked: true, detected: found("Connects to the internet"), partial: true),
                app: "New York Update", existing: "New York", prepared: true),
+        // Part of someone's suggested change, prepared in a copy: Keep Editing goes back to the copy's chat.
+        review("Prepared part of a suggested change", ImportReview(
+            summary: "A bike map of your city with its bike lanes marked, and a night map that dims the streets after dark.",
+            capabilities: ["Shows a map of your city", "Marks bike lanes on the map"],
+            concerns: [], risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false),
+            asked: true, detected: found("Connects to the internet")),
+               app: "Bike Map Update", existing: "Bike Map", prepared: true, keepEditing: true),
         review("Android app", ImportReview(summary: "Counts your taps on one screen and remembers the count after closing.",
                                            capabilities: [], concerns: [], risk: .low,
                                            reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true,
@@ -929,11 +945,12 @@ enum Gallery {
     private static func review(_ name: String, _ review: ImportReview?, app: String = "Drive Anywhere", description: String? = nil,
                                existing: String? = nil, changedHere: Bool = false, android: Bool = false, prepared: Bool = false,
                                mix: Bool = false, trying: Bool = false, progress: String? = nil, failure: String? = nil,
-                               room: CGFloat = .infinity, ownFolder: Bool = false, folderChange: String? = nil) -> Entry {
+                               room: CGFloat = .infinity, ownFolder: Bool = false, folderChange: String? = nil, keepEditing: Bool = false) -> Entry {
         Entry(group: "Shared app", name: name) {
             AnyView(ImportReviewCard(name: app, description: description,
                                      icon: nil, review: review, existing: existing, changedHere: changedHere, room: room, cancel: {}, open: {}, update: {}, android: android,
-                                     prepared: prepared, mix: mix ? {} : nil, trying: trying, ownFolder: ownFolder, folderChange: folderChange, progress: progress, failure: failure)
+                                     prepared: prepared, mix: mix ? {} : nil, trying: trying, ownFolder: ownFolder, folderChange: folderChange, progress: progress, failure: failure,
+                                     keepEditing: keepEditing ? {} : nil)
                 .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
@@ -986,7 +1003,6 @@ enum Gallery {
     private static let wishLinkEntries: [Entry] = [
         wishLink("New link"),
         wishLink("New link, no picture", picture: false),
-        wishLink("New link, writing questions", writingAsks: true),
         wishLink("New link, with questions", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish,
                                                          asks: "Found a folder it got wrong?\nA place on your Mac it should look at?\nWhat would make it easier to read?")),
         wishLink("New link, nothing to take again", retake: false),
@@ -1077,7 +1093,7 @@ enum Gallery {
     private static func wishLink(_ name: String, values: WishLinkCard.Values? = nil, picture: Bool = true, retake: Bool = true,
                                  stage: WishLinkCard.Stage = .editing, link: Bool = false, copied: Bool = false,
                                  changed: Bool = false, canIncludeFile: Bool = false, noLicense: String? = nil, writingNotes: Bool = false,
-                                 writingAsks: Bool = false, gitHub: Bool = false, gitHubBehind: Bool = false, gitHubNote: String? = nil, gitHubStage: WishLinkCard.GitHubStage? = nil,
+                                 gitHub: Bool = false, gitHubBehind: Bool = false, gitHubNote: String? = nil, gitHubStage: WishLinkCard.GitHubStage? = nil,
                                  checkingGitHub: Bool = false, setup: WishLinkCard.GitHubSetup? = nil, width: CGFloat? = 440) -> Entry {
         Entry(group: "Share Link", name: name) {
             let folder = Starters.folder?.appendingPathComponent("diskmap")
@@ -1087,7 +1103,7 @@ enum Gallery {
                 values: .constant(values ?? .init(name: "Disk Map", line: diskMapLine, words: diskMapWish)),
                 limits: WishLink.cardLimits, link: link ? "https://lamp.dev/w/AyTkit4xCc" : nil, changed: !link || changed,
                 stage: stage, copied: copied, retake: retake ? {} : nil, retaking: false, canIncludeFile: canIncludeFile, noLicense: noLicense,
-                writingNotes: writingNotes, writingAsks: writingAsks, gitHub: gitHub ? "someone/disk-map" : nil, gitHubNote: gitHubNote, gitHubStage: gitHubStage,
+                writingNotes: writingNotes, gitHub: gitHub ? "someone/disk-map" : nil, gitHubNote: gitHubNote, gitHubStage: gitHubStage,
                 checkingGitHub: checkingGitHub, retryGitHub: { if case .failed = gitHubStage, !gitHubBehind { return {} } else { return nil } }(),
                 gitHubBehind: gitHubBehind ? "someone/disk-map" : nil, bringIn: gitHubBehind ? {} : nil, gitHubSetup: setup,
                 share: {}, copy: {}, stop: {}, close: {}, width: width)
@@ -1207,11 +1223,13 @@ enum Gallery {
 
     // MARK: Transition
 
-    /// The glow and the light are drawn by the app itself (`LampTransition` in LampSupport.swift). Their layers
+    /// The card on a change is drawn by the app itself (`LampTransition` in LampSupport.swift). Its layers
     /// (`LampTransition.Look`) are compiled into Lamp too, so they're tried here over pictures of apps, and on a
     /// real one with the same signed requests a build sends, to an app open now.
     private static let transitionEntries: [Entry] = [
         Entry(group: "Transition", name: "On pictures of apps") { AnyView(TransitionPlayground()) },
+        Entry(group: "Transition", name: "Updating") { AnyView(TransitionPlayground(opensAt: .glowing)) },
+        Entry(group: "Transition", name: "Updated") { AnyView(TransitionPlayground(opensAt: .leaving)) },
         Entry(group: "Transition", name: "On an open app") { AnyView(TransitionTrial()) },
     ]
 

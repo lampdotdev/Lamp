@@ -98,12 +98,15 @@ here: keep its license file, its copyright headers and its author's credit on sc
 
 1. **Show the person the app** once, when you start, unless they don't want to watch: `{{lamp}} open`. It opens a
    window they can use and play in while you work, and returns at once.
-2. **Change the files.**
+2. **Change the files.** While the person watches a page you opened, first say what you're changing, in a few words
+   of theirs: `{{lamp}} changing "Rain on the roads"`. The page shows it on the card it puts up as the change goes in.
 3. **Look**: `{{lamp}} look`. It waits for the change to go in, then answers how it went, a picture of the page (a
    file: read it; the last forty are kept), the screen as text, and the errors and the log since your last look. Look
    after every change, and read the errors and the picture before saying it works. `{{lamp}} look --reopen` opens the
    page again from its beginning first, a game with its saves kept: what someone opening it sees. `--size 900x600`
    looks at it as a window of that size shows it, for a layout that has to hold at any shape (with no window open).
+   When the answer says lamp found no Chrome, Edge, Brave or Chromium, there's no picture and `use` can't play the
+   page: tell the person, since only they can install one.
 
 Nothing has to be running first. With no window open, `look` runs the app itself in a copy of the page nobody sees,
 opened from the files as they are, so the first look has no changes to report. The copy goes on running between
@@ -175,14 +178,27 @@ every command here works on a web app, a game, a screen or a Mac app in one, and
 
 Only when the person asks: a link is public, and anyone who has it can play the page.
 
-- `{{lamp}} share --words "What it is, in a sentence or a few"` puts the page on lamp.dev and answers its link. `--line`
-  is a line under its name, `--asks "Found a bug?|What's missing?"` what the box under the page asks people, and
-  `--by "Their Name"` who it's by: only a name the person gave you to show. A page that's logging errors isn't shared
-  until they're put right.
-- Again, after changes, it sends the page as it is now to the same link, with the same words unless you give new ones.
-- `{{lamp}} ideas` lists what people playing it have sent. Once one is in the game and the game shared again,
+- Start with `{{lamp}} share --preview`: it says what would go and sends nothing. Show the person, and share only once they
+  say so.
+- **An app of Lamp's own** (its folder is in Lamp's, or a link to one; the preview says it's going through Lamp) is
+  shared by Lamp, which must be open, to the link it already has, filled as its Share Link card fills itself: its words,
+  the questions and what's new Lamp writes, its file, its GitHub release. Run `{{lamp}} share` with no words of your own,
+  and give `--line`, `--by`, `--asks "a|b"` or `--notes "What's new|And more"` only for what the person wants changed.
+  Its ideas and taking it down are on Lamp's Share Link card, not `ideas` and `unshare` here.
+- **Any other page:** `{{lamp}} share --words "What it is, in a sentence or a few"` puts it on lamp.dev and answers its
+  link. `--line` is a line under its name, `--asks "Found a bug?|What's missing?"` what the box under the page asks
+  people, and `--by "Their Name"` who it's by: only a name the person gave you to show. A page that's logging errors
+  isn't shared until they're put right. Again, after changes, it sends the page as it is now to the same link, with the
+  same words unless you give new ones.
+- `{{lamp}} ideas` lists what people playing it have sent, each with the address of a picture of the app as they saw
+  it when they kept one in: look at it before building the idea. Once one is in the game and the game shared again,
   `{{lamp}} ideas in <number>` says so, and whoever asked to hear is written to; `{{lamp}} ideas dismiss <number>` lets
-  one go.
+  one go. Words after the number are a note to whoever sent it, shown on the link's page and put in that email: write
+  one only when the person asks you to answer them, in their words. Senders can answer by email: `{{lamp}} ideas` shows
+  what's been said under each idea, and those they've answered; `{{lamp}} ideas reply <number> <words>` answers again,
+  and `{{lamp}} ideas done <number>` leaves one without a word. `{{lamp}} ideas --earlier` lists those seen to. `{{lamp}} ideas email <address>` sends new ideas and replies to the
+  person's own address too, once they confirm it from the email it sends (`off` stops them): only with an address
+  they gave you.
 - `{{lamp}} unshare` takes the link down.
 
 Tell the person the link, and that it's public.

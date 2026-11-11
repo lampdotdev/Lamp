@@ -23,10 +23,11 @@ import { Problem, RESOURCES, layoutOf, manifestOf, projectOf, stateOf, running, 
 import { macActions, serveMac, writeMacStarter } from "./mac.mjs";
 import { exportApp, unpack } from "./lampapp.mjs";
 import { updateNotice } from "./update.mjs";
-import { editionName, giveTo, givenTo, keepPictures, reachLamp, takeBack } from "./outside.mjs";
+import { editionName, giveTo, givenTo, keepPictures, lampOwning, reachLamp, takeBack } from "./outside.mjs";
 import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS } from "./dev.mjs";
+import { findBrowser, noBrowser } from "./browser.mjs";
 import { allSkills } from "./skills.mjs";
-import { share, unshare, ideas, finishIdea, readLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
+import { share, unshare, ideas, finishIdea, answerIdea, makerEmail, readLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
 import { Runner, allKept, fields, forget, integrationOf, isReady, look as lookForDevices, takesPages } from "./devices.mjs";
 import { placeNamed } from "./place.mjs";
 import { play, RELAY } from "./play.mjs";
@@ -92,6 +93,9 @@ Mac app Lamp made in Swift, built and run on this Mac.
   lamp reload [folder] [--fresh]
       Open the page again from its files, a game from where the player is, or with --fresh from its beginning.
       A Mac app is quit and opened again.
+  lamp changing [folder] <words>
+      Say what you're about to change, in a few words from the person's request ("Rain on the roads"): the open
+      page shows it on the card it puts up as the change goes in, for the next few minutes of changes.
   lamp stop [folder] [--on <device>]
       Stop running it. A Mac app is quit. --on ends it on a device instead (and closes an emulator lamp started
       with no window).
@@ -109,14 +113,23 @@ Mac app Lamp made in Swift, built and run on this Mac.
       person asks. Again, it sends the page as it is now to the same link, with the same words unless new ones are given.
       Its app file goes with it (as lamp export makes it), so anyone can open it in Lamp too; --no-file leaves it out.
       --anyway shares a page that logged errors, or uses work that came with no license.
+      An app of Lamp's (its folder is in Lamp's own, or a link to it) is shared by Lamp's app, which must be running,
+      as its Share Link card shares it: the card's own words, the questions and what's new Lamp writes, the app's
+      file and its GitHub release, with --line, --by, --asks "a|b", --notes "What's new|And more", --no-file,
+      --no-github and --put-on-github in their place. --preview says what would go and sends nothing. Its link
+      stays Lamp's; --new-link has lamp make one of its own instead.
   lamp unshare [folder]   Take the link down.
   lamp play <code> [--yes] | lamp play --rejoin <room>
       Pair with a shared game's page on lamp.dev by the code it shows, so the page can ask Claude Code here to change a
       copy of the game; each change that works goes back into the page. Static games only; the agent has no shell.
       --rejoin takes up a room this Mac paired with before.
-  lamp ideas [folder] [in <n> | dismiss <n>]
-      The ideas people playing the link have sent. "in" says one is in the game now (whoever asked to hear is
-      written to); "dismiss" lets one go.
+  lamp ideas [folder] [--earlier | in <n> | dismiss <n> | reply <n> | done <n> | email <address|off>] [note]
+      The ideas people playing the link have sent, with a picture of the app as they saw it when they kept one
+      in, and what's been said about each since. "in" says one is in the game now (whoever asked to hear is
+      written to); "dismiss" lets one go. Words after the number are a note to whoever sent it, on the link's
+      page and in that email; they can answer it by email. "reply" says something more, and "done" leaves
+      their answer without one. --earlier lists those seen to, to look back on or answer again. "email"
+      sends new ideas and replies to your own address too (once you confirm it), and you can answer from there.
   lamp setup [--remove]   Teach Claude Code and Codex on this computer to work this way (a skill for each).
   lamp guide              What that skill says, for any other agent.
   lamp skills [word]      Lamp's guidance for each kind of work, those about a word; lamp skill <name> reads one.
@@ -397,7 +410,7 @@ const WHERE = {
   mac: "the app as it runs on this Mac",
   window: "the window the person has open",
   copy: "lamp's own copy of the page, which nobody sees (no window is open)",
-  page: "a page open in a browser lamp can't look into",
+  page: "a page open in a browser lamp can't take pictures of or play",
 };
 
 function report(seen) {
@@ -440,6 +453,18 @@ async function inLamp(layout) {
   const lamp = await reachLamp([bundle]);
   if (!lamp) throw new Problem(`This app is given to ${editionName(bundle)}, which isn't running: open it, or run ${lampCommand()} open --here to have lamp build and run its own copy again.`);
   return lamp;
+}
+
+/**
+ * A folder whose link is Lamp's app's, not lamp's: one of Lamp's apps that lamp has no link of its own for. Its ideas
+ * and taking it down are on Lamp's Share Link card, said so rather than "no link".
+ */
+function lampsLink(folder) {
+  let real = resolve(folder);
+  try { real = realpathSync(real); } catch {}
+  if (readLink(real)) return null;
+  const owner = lampOwning(real);
+  return owner ? editionName(owner) : null;
 }
 
 /** What Lamp's app answered, as lamp says things: how the change went in, its words, and where its pictures are. */
@@ -795,7 +820,7 @@ async function main() {
       console.log(opened.running ? `${opened.url} is open.` : opened.building ? `${opened.url} is being built, and opens when it is: lamp look waits for it.` : `${opened.url} didn't build: lamp look says why.`);
       return;
     }
-    console.log(opened.opened === "window" ? `Opened in a window: ${opened.url}` : `Opened in the browser: ${opened.url}\nlamp found no browser it can look into (Chrome, Edge, Brave or Chromium), so looks have no picture.`);
+    console.log(opened.opened === "window" ? `Opened in a window: ${opened.url}` : `Opened in the browser: ${opened.url}\n${noBrowser()}`);
     return;
   }
 
@@ -824,11 +849,54 @@ async function main() {
       }
     }
     if (!any) console.log(options.remove ? "There was no skill of lamp's to take away." : "Neither Claude Code nor Codex is set up on this computer. `lamp guide` prints what to give another agent.");
+    // Web apps and games are looked at and played in a browser lamp drives: said now, before a first look comes back
+    // without a picture. Only said, never a failure: a Mac app needs no browser, and one can be installed later.
+    if (!options.remove && !findBrowser()) console.log(`For web apps and games: ${noBrowser()}`);
     return;
   }
 
   if (command === "share") {
-    const { options, rest } = parse(args, ["name", "words", "line", "by", "asks", "shape"]);
+    const { options, rest } = parse(args, ["name", "words", "line", "by", "asks", "shape", "notes"]);
+    // An app of Lamp's, with no link of lamp's own: shared by Lamp's app, as its Share Link card shares it, filled as the
+    // card fills itself (its last words, the questions and what's new Lamp writes, its file, its GitHub), with what's
+    // given here in their place. Its link's secret stays in Lamp.
+    // By its folder alone: Lamp's app shares kinds lamp doesn't run itself (an iPhone app, a wish of several). Only a
+    // folder that's a Lamp's: one in its own folder, or one given to it (`lamp open --in-lamp`). Any other folder is
+    // lamp's to share, whatever Lamp is running.
+    const project = { folder: (() => { const given = resolve(rest[0] ?? "."); try { return realpathSync(given); } catch { return given; } })() };
+    const owner = lampOwning(project.folder), given = owner ? null : givenTo(project.folder);
+    if (!readLink(project.folder) && !options["new-link"] && (owner || given)) {
+      const lamp = await reachLamp([owner ?? given]);
+      if (lamp) {
+        const list = (text) => String(text).split("|").map((item) => item.trim()).filter(Boolean);
+        const values = {
+          path: project.folder, ...(options.preview ? { preview: true } : {}),
+          ...(options.by !== undefined ? { by: String(options.by) } : {}),
+          ...(options.line ?? options.words) !== undefined ? { line: String(options.line ?? options.words) } : {},
+          ...(options.asks !== undefined ? { asks: list(options.asks) } : {}), ...(options.notes !== undefined ? { notes: list(options.notes) } : {}),
+          ...(options["no-file"] ? { file: false } : {}), ...(options["no-github"] ? { github: false } : {}),
+          ...(options["put-on-github"] ? { put_on_github: true } : {}),
+        };
+        console.log(options.preview ? `This is an app of ${lamp.name}'s: it shares it, to the link it has, as its Share Link card would.`
+          : `Sharing through ${lamp.name}, as its Share Link does…`);
+        let answer;
+        try { answer = await lamp.call("share_link", values); } finally { lamp.close(); }
+        // A Lamp from before it shared for lamp: an app of its own waits for it to be updated, since a link of lamp's
+        // would be a second one; a folder only given to it is lamp's to share.
+        // lamp shares only a page, so a Mac app given to it waits for Lamp too.
+        const older = /has no tool share_link\b/.test(answer.words ?? "");
+        const hasPage = (() => { try { layoutOf(project.folder); return true; } catch { return false; } })();
+        if (older && (owner || !hasPage)) throw new Problem(`${lamp.name} is older than this lamp and can't share for it: update ${lamp.name}, then run this again${hasPage ? " (or --new-link to make lamp a link of its own)" : ""}.`);
+        if (older) console.log(`${lamp.name} can't share for lamp yet, so lamp shares it with a link of its own.`);
+        else if (answer.facts?.taken_on !== false) {
+          console.log(answer.words);
+          if (answer.failed) process.exitCode = 1;
+          return;
+        }
+      } else if (owner) {
+        throw new Problem(`This is an app of ${editionName(owner)}'s, which shares it with its own link: open ${editionName(owner)}, then run this again (or --new-link to make lamp a link of its own).`);
+      }
+    }
     const layout = layoutOf(rest[0] ?? ".");
     const before = readLink(layout.folder)?.site === siteOrigin() ? readLink(layout.folder) : null;
     // The link's words: what's given now, else what it went out with before. Its name, where nothing says, is the page's.
@@ -838,6 +906,11 @@ async function main() {
       asks: options.asks !== undefined ? String(options.asks).split("|").map((ask) => ask.trim()).filter(Boolean) : before?.asks ?? [],
     };
     const count = (text) => [...new Intl.Segmenter("en", { granularity: "grapheme" }).segment(text)].length;
+    if (options.preview) {
+      console.log(`Nothing was shared. This is what would go:\n${before ? `The link ${before.url}` : "A new link"} for "${words.name}"${words.by ? ` by ${words.by}` : ""}: ${words.line || words.words || "(no words yet: give --words)"}`);
+      console.log(`Questions its page asks: ${words.asks.length ? words.asks.join(" · ") : "the page's own"}\nThe app's file: ${options["no-file"] ? "doesn't go" : "goes with it"}`);
+      return;
+    }
     if (!words.words) throw new Problem('a link says what the page is: share it with --words "What it is, in a sentence or a few"');
     if (!words.name || count(words.name) > LIMITS.name) throw new Problem(`a link's name is at most ${LIMITS.name} characters: --name "Its Name"`);
     if (count(words.words) > LIMITS.words) throw new Problem(`a link's words are at most ${LIMITS.words} characters`);
@@ -872,29 +945,64 @@ async function main() {
 
   if (command === "unshare") {
     const { rest } = parse(args, []);
+    const lamps = lampsLink(rest[0] ?? ".");
+    if (lamps) throw new Problem(`${lamps} keeps this app's link: take it down from its Share Link card (Stop Sharing).`);
     console.log(`Taken down: ${await unshare(layoutOf(rest[0] ?? ".").folder)}`);
     return;
   }
 
   if (command === "ideas") {
-    const { rest } = parse(args, []);
-    const outcomes = ["in", "dismiss"];
+    const outcomes = ["in", "dismiss", "reply", "done", "email"];
+    // Everything after the outcome's number is a note to whoever sent it, word for word: never read as options, so
+    // "--fullscreen" or "--help" in it stays in it.
+    const at = args.findIndex((arg) => outcomes.includes(arg));
+    const { options, rest } = parse(at < 0 ? args : args.slice(0, at + 2), []);
+    const noted = at < 0 ? [] : args.slice(at + 2);
     const folder = rest.length && !outcomes.includes(rest[0]) ? rest.shift() : ".";
+    const lamps = lampsLink(folder);
+    if (lamps) throw new Problem(`${lamps} keeps this app's link, and the ideas people send to it: they're on its Share Link card in ${lamps}.`);
     const layout = layoutOf(folder);
-    if (rest.length) {
-      const n = Number(rest[1]);
-      if (!outcomes.includes(rest[0]) || !Number.isInteger(n) || n < 1) throw new Problem("ideas takes in <number> or dismiss <number>: lamp ideas lists them with their numbers");
-      const answer = await finishIdea(layout.folder, n, rest[0] === "in");
-      console.log(rest[0] === "in" ? `Idea ${n} is in.${answer.notified ? " Whoever sent it asked to hear, and has been written to." : ""}` : `Idea ${n} is let go.`);
+    if (rest[0] === "email") {
+      // The maker's own address for this link's ideas and replies: confirmed by an email first; "off" stops them.
+      const given = [...rest.slice(1), ...noted].join(" ").trim();
+      if (!given) throw new Problem("email takes your address, or off: lamp ideas email you@example.com");
+      const answer = await makerEmail(layout.folder, given === "off" ? "" : given);
+      if (given !== "off" && !answer.confirmed && answer.sent === false) throw new Problem(`lamp.dev couldn't send the confirmation to ${answer.email} just now: try again in a minute`);
+      console.log(given === "off" ? "No more emails about this link's ideas."
+        : answer.confirmed ? `Ideas and replies go to ${answer.email}.` : `Sent a confirmation to ${answer.email}: ideas and replies come there once you confirm it.`);
       return;
     }
-    const sent = await ideas(layout.folder);
-    if (!sent.ideas.length) { console.log(`No ideas waiting for ${sent.url}`); return; }
-    console.log(`Ideas sent to ${sent.url}`);
-    for (const idea of sent.ideas) {
-      console.log(`  ${idea.n}. ${String(idea.text).split("\n").join("\n     ")}${idea.wantsNews ? "  (wants to hear when it's in)" : ""}`);
+    if (rest.length) {
+      const n = Number(rest[1]);
+      if (!outcomes.includes(rest[0]) || !Number.isInteger(n) || n < 1) throw new Problem("ideas takes in, dismiss, reply or done, and a number: lamp ideas lists them with their numbers");
+      // On the link's page, and in the email if they asked for one.
+      const note = [...rest.slice(2), ...noted].join(" ").trim() || undefined;
+      if (rest[0] === "reply" || rest[0] === "done") {
+        if (rest[0] === "reply" && !note) throw new Problem("reply takes what to say after the number: lamp ideas reply <number> <words>");
+        const answer = await answerIdea(layout.folder, n, rest[0] === "reply" ? note : undefined);
+        console.log(rest[0] === "done" ? `Idea ${n} is seen to.` : `Said to whoever sent idea ${n}${answer.notified ? ", by email too" : ", on the link's page"}.`);
+        return;
+      }
+      const answer = await finishIdea(layout.folder, n, rest[0] === "in", note);
+      console.log(rest[0] === "in" ? `Idea ${n} is in.${answer.notified ? " Whoever sent it asked to hear, and has been written to." : ""}` : `Idea ${n} is let go.${note ? " Your note is on the link's page for them." : ""}`);
+      return;
     }
-    console.log("Say what became of one with: lamp ideas in <number>, or lamp ideas dismiss <number>.");
+    const [sent, maker] = await Promise.all([ideas(layout.folder, { earlier: options.earlier === true }), makerEmail(layout.folder).catch(() => null)]);
+    if (maker?.email) console.log(maker.confirmed ? `Ideas and replies go to ${maker.email} too.` : `Waiting for ${maker.email} to be confirmed: the link is in the email lamp.dev sent it.`);
+    if (!sent.ideas.length) { console.log(options.earlier ? `Nothing seen to yet on ${sent.url}` : `No ideas waiting for ${sent.url}`); return; }
+    console.log(options.earlier ? `Ideas seen to on ${sent.url}, the latest first` : `Ideas sent to ${sent.url}`);
+    for (const idea of sent.ideas) {
+      const state = options.earlier ? `  (${idea.status === "in" ? "in" : "dismissed"})` : idea.waiting ? `  (${idea.status === "in" ? "in" : idea.status === "dismissed" ? "dismissed" : "open"}, they answered)` : idea.wantsNews ? "  (wants to hear back)" : "";
+      console.log(`  ${idea.n}. ${String(idea.text).split("\n").join("\n     ")}${state}`);
+      // What's been said since, each way.
+      for (const said of Array.isArray(idea.thread) ? idea.thread : [])
+        console.log(`     ${said.by === "maker" ? "You" : "They"}: ${String(said.text).split("\n").join("\n       ")}`);
+      // The app as they saw it when they opened the box, if they kept it in: there until the idea has its outcome.
+      if (typeof idea.picture === "string" && idea.picture.startsWith("https://")) console.log(`     picture: ${idea.picture}`);
+    }
+    if (options.earlier) { console.log("Say something more with: lamp ideas reply <number> <words>."); return; }
+    console.log("Say what became of one with: lamp ideas in <number>, or lamp ideas dismiss <number>, with a note to them after it if you like.");
+    if (sent.ideas.some((idea) => idea.waiting)) console.log("Answer one with: lamp ideas reply <number> <words>, or lamp ideas done <number> to leave it.");
     return;
   }
 
@@ -907,6 +1015,19 @@ async function main() {
   }
 
   if (command === "devices") return await devices(args);
+
+  if (command === "changing") {
+    // What the next change is, in the person's words, for the card the page shows as it goes in.
+    const named = args.length > 1 && existsSync(args[0]) && statSync(args[0]).isDirectory();
+    const folder = named ? args[0] : ".";
+    const words = (named ? args.slice(1) : args).join(" ").trim();
+    if (!words) throw new Problem('changing takes what you\'re about to change, in a few words: lamp changing "Rain on the roads"');
+    const live = await running(projectOf(folder).folder);
+    if (!live) { console.log("lamp dev isn't running for this folder: nothing shows it."); return; }
+    await ask(live, "changing", { words });
+    console.log("The page says so as the change goes in.");
+    return;
+  }
 
   if (command === "reload" || command === "stop") {
     const { options, rest } = parse(args, ["on"]);

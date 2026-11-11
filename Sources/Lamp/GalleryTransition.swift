@@ -12,6 +12,9 @@ struct TransitionPlayground: View {
 
     @AppStorage("galleryTransitionScreen") private var screen = Screen.mac
     @StateObject private var stage = TransitionStage()
+    /// Shown already updating, as a change is built (the gallery's "Updating"), or once it's in ("Updated"), the
+    /// change going in a moment after it opens.
+    var opensAt: TransitionStage.State? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -22,7 +25,7 @@ struct TransitionPlayground: View {
             .labelsHidden()
 
             HStack {
-                Button("Glow") { stage.begin() }.disabled(stage.state != .idle)
+                Button("Begin") { stage.begin() }.disabled(stage.state != .idle)
                 Button("Stands Still") { stage.turn() }.disabled(stage.state != .glowing)
                     .help("The app stands still taking the change in, as a game running its code again does")
                 Button("Change Goes In") { stage.land() }.disabled(stage.state == .leaving)
@@ -36,6 +39,11 @@ struct TransitionPlayground: View {
             ForEach(screen == .all ? [.mac, .darkGame, .brightGame] : [screen]) { shown in
                 MockWindow(screen: shown, stage: stage)
             }
+        }
+        .onAppear {
+            guard let opensAt, stage.state == .idle else { return }
+            stage.begin()
+            if opensAt == .leaving { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { stage.land() } }
         }
     }
 }
@@ -113,6 +121,7 @@ private struct LookLayer: NSViewRepresentable {
     func makeNSView(context: Context) -> LampTransition.Look {
         let look = LampTransition.Look(frame: .zero)
         look.cornerRadius = cornerRadius
+        look.words = "Rain that makes the roads slippery"
         stage.register(look)
         return look
     }

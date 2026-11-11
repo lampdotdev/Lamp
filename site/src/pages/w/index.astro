@@ -41,9 +41,12 @@ import { DOWNLOAD_URL } from "../../lib/download";
     <!-- The thing itself, as big as the room between the header and the band allows: a playing page filling it, and a
          picture only as big as it is. -->
     <main data-stage class="stage relative flex min-h-0 flex-1 items-center justify-center p-3 sm:px-6" aria-label="The app">
-      <!-- An idea this browser sent that the maker has since put in, said once on a later visit. -->
+      <!-- An idea this browser sent that the maker has since put in, or answered with a note, said once on a later visit. -->
       <div data-idea-in hidden role="status" class="idea-in">
-        <span data-idea-in-text></span>
+        <div class="idea-in-words">
+          <span data-idea-in-text></span>
+          <p data-idea-in-note hidden class="idea-in-note"></p>
+        </div>
         <button type="button" data-idea-in-news hidden class="idea-in-news">See what's new</button>
         <button type="button" data-idea-in-close aria-label="Close" class="idea-in-close">
           <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" /></svg>
@@ -118,7 +121,12 @@ import { DOWNLOAD_URL } from "../../lib/download";
       <form data-confirm class="remix-popup-confirm">
         <label for="idea-text" class="sr-only">Your idea</label>
         <textarea id="idea-text" data-remix-to class="remix-popup-to remix-popup-edit" rows="3" maxlength="1000" required></textarea>
-        <label for="notify-email" class="remix-popup-label">Email me once when it's in <span class="remix-popup-optional">(optional)</span></label>
+        <!-- The app as it was when the box was opened, sent with the idea unless it's left out. -->
+        <div data-shot hidden class="remix-popup-shot">
+          <img data-shot-picture alt="The app as it is now" />
+          <label><input type="checkbox" data-shot-keep checked /> Include this picture</label>
+        </div>
+        <label for="notify-email" class="remix-popup-label">Email me about it <span class="remix-popup-optional">(optional)</span></label>
         <input id="notify-email" data-notify-email class="remix-popup-input" type="email" autocomplete="email" placeholder="Your email" />
         <div class="remix-popup-rows"><button type="submit" data-confirm-send class="shared-button">Send</button></div>
       </form>
@@ -243,7 +251,12 @@ import { DOWNLOAD_URL } from "../../lib/download";
   .idea-in[hidden], .idea-in-news[hidden] { display: none; }
   /* Under the header while it's shown, which lies over the top of the app. */
   [data-bars="shown"] .idea-in { top: 4.25rem; }
+  .idea-in-words { min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
   .idea-in span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The maker's note, under it: the bar grows to hold a few lines, and scrolls past that. */
+  .idea-in:has(.idea-in-note:not([hidden])) { align-items: flex-start; border-radius: 1rem; padding-top: 0.625rem; }
+  .idea-in-note { max-height: 7.5rem; overflow-y: auto; white-space: pre-line; overflow-wrap: anywhere; opacity: 0.85; }
+  .idea-in-note[hidden] { display: none; }
   .idea-in-news { flex: none; padding: 0.25rem 0.75rem; border-radius: 999px; background: var(--color-paper); color: var(--color-tape); font-weight: 600; cursor: pointer; }
   .idea-in-close { flex: none; display: grid; place-items: center; width: 1.5rem; height: 1.5rem; border-radius: 999px; cursor: pointer; opacity: 0.8; }
   .idea-in-close svg { width: 0.625rem; height: 0.625rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
@@ -290,6 +303,11 @@ import { DOWNLOAD_URL } from "../../lib/download";
     border: 1px solid color-mix(in srgb, var(--color-tape) 15%, transparent); background: var(--color-paper); color: inherit;
   }
   .remix-popup-input:focus { outline: 2px solid color-mix(in srgb, var(--color-tape) 30%, transparent); outline-offset: 0; }
+  /* The app's picture, small under the idea, with whether it goes. */
+  .remix-popup-shot { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.75rem; font-size: 0.875rem; }
+  .remix-popup-shot[hidden] { display: none; }
+  .remix-popup-shot img { width: 6rem; aspect-ratio: 16 / 10; object-fit: cover; border-radius: 0.25rem; border: 1px solid color-mix(in srgb, var(--color-tape) 15%, transparent); background: #000; }
+  .remix-popup-shot label { display: flex; align-items: center; gap: 0.375rem; cursor: pointer; }
   /* Making one's own: a line over its two buttons, set apart from the idea. */
   .remix-popup-lead {
     margin: 1.25rem 0 0; padding-top: 1rem; border-top: 1px solid color-mix(in srgb, var(--color-tape) 12%, transparent);
@@ -368,6 +386,9 @@ import { DOWNLOAD_URL } from "../../lib/download";
     // the start, so here the frame takes focus when it loads and again after the page's own buttons, unless the person
     // is typing in the box.
     let focusPlay = () => {};
+    // A picture of the app as it is, from the page playing it (`pictureScript`), or null when it has none or doesn't
+    // answer in a moment.
+    let askPicture = async (): Promise<string | null> => null;
 
     if (wish.play) {
       // The page plays from the link's own host (`playOrigin`), so it can't reach the site or another wish's storage.
@@ -384,8 +405,22 @@ import { DOWNLOAD_URL } from "../../lib/download";
       frame.addEventListener("load", focusPlay);
       // A game whose version was replaced while it was open asks for the page again, which plays the newest
       // (lamp-game.js's `loadProblem`). Only from this frame, and it only reloads.
+      const pictures = new Map<number, (picture: string | null) => void>();
+      let pictureAsked = 0;
       window.addEventListener("message", (event) => {
-        if (event.source === frame.contentWindow && event.data?.lamp === "reload-page") location.reload();
+        if (event.source !== frame.contentWindow) return;
+        if (event.data?.lamp === "reload-page") location.reload();
+        if (event.data?.lamp === "picture") {
+          const picture = event.data.picture;
+          pictures.get(event.data.n)?.(typeof picture === "string" && picture.startsWith("data:image/jpeg;base64,") ? picture : null);
+        }
+      });
+      askPicture = () => new Promise((done) => {
+        const n = ++pictureAsked;
+        const timer = setTimeout(() => answer(null), 1500);
+        const answer = (picture: string | null) => { clearTimeout(timer); pictures.delete(n); done(picture); };
+        pictures.set(n, answer);
+        try { frame.contentWindow?.postMessage({ lamp: "picture", n }, new URL(wish.play!).origin); } catch { answer(null); }
       });
       frame.src = wish.play;
       // The same button takes the wish out of full screen, and shows which way it goes.
@@ -519,11 +554,27 @@ import { DOWNLOAD_URL } from "../../lib/download";
     // Each time the bar opens the dialog is a draft of its own: an answer to one sent earlier never changes a later one.
     let draft = 0;
     let fromBar = "";
+    // The app's picture for the idea being written, taken as the dialog opens.
+    const shotBox = $<HTMLElement>("[data-shot]");
+    const shotPicture = $<HTMLImageElement>("[data-shot-picture]");
+    const shotKeep = $<HTMLInputElement>("[data-shot-keep]");
+    let shot: string | null = null;
     // The bar's send opens the dialog with the idea, to confirm before it goes; nothing is sent until then.
     $<HTMLFormElement>("[data-prompt]").addEventListener("submit", (event) => {
       event.preventDefault();
       const ask = asked();
       if (!ask) return change.focus();
+      // The app as it is now, asked for before the dialog covers it.
+      shot = null;
+      shotBox.hidden = true;
+      shotKeep.checked = true;
+      const forDraft = draft + 1;
+      askPicture().then((picture) => {
+        if (!picture || forDraft !== draft) return;
+        shot = picture;
+        shotPicture.src = picture;
+        shotBox.hidden = false;
+      });
       // That one was written, never what it says.
       track("idea_own_change", { idea: wish.name, place: "shared" });
       draft += 1;
@@ -543,31 +594,46 @@ import { DOWNLOAD_URL } from "../../lib/download";
     // The ideas this browser sent to this link, by number and token, for a later visit to ask what became of them (only
     // theirs, nothing else). Kept here alone: there's no account, and nothing of them goes anywhere but this link's site.
     const MINE = `lamp.shared.ideas.${wish.id}`;
-    type Mine = { n: number; token: string; text: string; at: string };
+    // `heard`: what was last shown of it (its outcome and the maker's last note), so each is said once. Kept as long as
+    // the site keeps the idea, since the maker may write again after its outcome.
+    type Mine = { n: number; token: string; text: string; at: string; heard?: string };
     const mineKept = (): Mine[] => { try { return JSON.parse(localStorage.getItem(MINE) ?? "[]"); } catch { return []; } };
     const keepMine = (all: Mine[]) => { try { all.length ? localStorage.setItem(MINE, JSON.stringify(all.slice(-20))) : localStorage.removeItem(MINE); } catch {} };
     const remember = (answer: { n: number; token: string }, text: string) => {
       if (Number.isInteger(answer?.n) && typeof answer?.token === "string") keepMine([...mineKept(), { n: answer.n, token: answer.token, text, at: new Date().toISOString() }]);
     };
-    // On a visit, one that's in says so once, over the app; one dismissed, or older than the site keeps them, is let go.
+    // On a visit, one that's in, or that the maker has written a note about since, says so once over the app; one the
+    // site no longer keeps is let go.
     (async () => {
       const all = mineKept();
       if (!all.length) return;
-      let answers: { n: number; status: string }[] = [];
+      let answers: { n: number; status: string; note?: string }[] = [];
       try {
         const response = await fetch(`/api/wish-ideas?id=${encodeURIComponent(wish.id)}&mine=${all.map((one) => `${one.n}.${one.token}`).join(",")}`, { signal: AbortSignal.timeout(8000) });
         if (!response.ok) return;
         answers = (await response.json()).ideas ?? [];
       } catch { return; }
       const status = new Map(answers.map((one) => [one.n, one.status]));
-      const isIn = all.filter((one) => status.get(one.n) === "in");
-      // Against what's kept now: one sent while this was being asked stays.
+      const notes = new Map(answers.filter((one) => typeof one.note === "string" && one.note).map((one) => [one.n, one.note as string]));
+      const heard = (n: number) => `${status.get(n)}|${notes.get(n) ?? ""}`;
+      const told = all.filter((one) => status.has(one.n) && (status.get(one.n) === "in" || notes.has(one.n)) && heard(one.n) !== one.heard);
+      // Those just put in, not those in before whose maker has written again.
+      const isIn = told.filter((one) => status.get(one.n) === "in" && !one.heard?.startsWith("in|"));
+      // Against what's kept now: one sent while this was being asked stays, and each answered keeps what was shown.
       const asked = new Set(all.map((one) => one.n));
-      keepMine(mineKept().filter((one) => !asked.has(one.n) || status.get(one.n) === "open"));
-      if (!isIn.length) return;
+      keepMine(mineKept().filter((one) => !asked.has(one.n) || status.has(one.n))
+        .map((one) => asked.has(one.n) ? { ...one, heard: heard(one.n) } : one));
+      if (!told.length) return;
       const bar = $<HTMLElement>("[data-idea-in]");
-      $<HTMLElement>("[data-idea-in-text]").textContent = isIn.length === 1
-        ? `Your idea is in: “${isIn[0].text}”` : `${isIn.length} of your ideas are in`;
+      $<HTMLElement>("[data-idea-in-text]").textContent = told.length === 1
+        ? (isIn.length ? `Your idea is in: “${told[0].text}”` : `About your idea “${told[0].text}”`)
+        : isIn.length === told.length ? `${told.length} of your ideas are in` : `${told.length} of your ideas have answers`;
+      // The maker's words under it: one alone, or each after the idea it answers.
+      const noted = told.filter((one) => notes.has(one.n));
+      const by = wish.by?.trim();
+      const note = $<HTMLElement>("[data-idea-in-note]");
+      note.textContent = noted.map((one) => `${told.length > 1 ? `“${one.text}”: ` : ""}${notes.get(one.n)}${by ? ` — ${by}` : ""}`).join("\n\n");
+      note.hidden = !noted.length;
       const news = $<HTMLButtonElement>("[data-idea-in-news]");
       const newsButton = $<HTMLButtonElement>("[data-news]");
       news.hidden = newsButton.hidden;
@@ -589,7 +655,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
       let sent = false;
       try {
         const response = await fetch(`/api/wish-ideas?id=${encodeURIComponent(wish.id)}`, {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(email ? { text: idea, email } : { text: idea }),
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: idea, ...(email ? { email } : {}), ...(shot && shotKeep.checked ? { picture: shot.slice(shot.indexOf(",") + 1) } : {}) }),
           signal: AbortSignal.timeout(8000),
         });
         sent = response.status === 201;
@@ -610,7 +677,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
       sentText.textContent = idea;
       sentText.hidden = false;
       confirm.hidden = true;
-      notifyNote.textContent = email ? "We'll email you once when it's in." : "";
+      notifyNote.textContent = email ? "We'll email you when it's in, or with an answer." : "";
       $<HTMLElement>("[data-own-lead]").textContent = "Want it sooner? Lamp can make it for you now. It's free on your Mac and works with your ChatGPT or Claude plan.";
     });
     $<HTMLButtonElement>("[data-remix-close]").addEventListener("click", () => dialog.close());

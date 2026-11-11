@@ -6,7 +6,7 @@
 // carries the folder's path there and the answer back.
 
 import { createConnection } from "node:net";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Problem, stateOf } from "./state.mjs";
@@ -111,6 +111,20 @@ export function answerOf(result) {
   const words = (outcome ? lines.slice(lines[1]?.startsWith("{") ? 2 : 1) : lines).join("\n").trim();
   const pictures = content.filter((part) => part.type === "image" && part.data).map((part) => Buffer.from(part.data, "base64"));
   return { outcome, facts, words, pictures, failed: result?.isError === true };
+}
+
+/**
+ * The Lamp whose own folder an app's is in (`~/Library/Application Support/<Lamp>/Apps/…`, followed through a link to
+ * it), by its bundle id, or null for a folder of anyone else's.
+ */
+export function lampOwning(folder) {
+  let real = folder;
+  try { real = realpathSync(folder); } catch {}
+  const name = new RegExp(`${join(homedir(), "Library", "Application Support").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/(Lamp(?: Nightly| Dev(?: [A-Za-z0-9-]+)?)?)/Apps/`).exec(real)?.[1];
+  if (!name) return null;
+  if (name === "Lamp") return "dev.lamp.host";
+  if (name === "Lamp Nightly") return "dev.lamp.host.nightly";
+  return name === "Lamp Dev" ? "dev.lamp.host.dev" : `dev.lamp.host.dev.${name.slice("Lamp Dev ".length)}`;
 }
 
 // MARK: Which folders are Lamp's app's

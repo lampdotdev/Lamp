@@ -1234,6 +1234,16 @@ final class Store: ObservableObject {
         }
     }
     private var turns: [String: Turn] = [:]
+
+    /// What's changing in the open app, for the card that says so on it (`AppTransition`): the request the turn under
+    /// way took last, in the person's own words, on one line and cut short. Nil with no turn (a Reload, a change from
+    /// outside), when the card says only that it's updating.
+    func changeWords(for project: LampProject) -> String? {
+        guard let turn = turns[project.id], let said = turn.messages.last ?? turn.request else { return nil }
+        let line = said.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard !line.isEmpty else { return nil }
+        return line.count > 120 ? String(line.prefix(119)).trimmingCharacters(in: .whitespaces) + "…" : line
+    }
     /// What each game's page has said of its first frame (`showDraft`).
     let firstFrames = FirstFrames()
 
@@ -3042,7 +3052,8 @@ final class Store: ObservableObject {
     func initRepo(_ project: LampProject, message: String) async -> Bool {
         // A game or a screen is made before Apple's tools, git among them, are on the Mac: it has no versions until then.
         guard Versions.hasGit else { return true }
-        guard await Versions.git("git init -q", cwd: project.dir) == 0 else { return false }
+        // On `main` whatever the person's git says, as the repositories Lamp starts for GitHub are.
+        guard await Versions.git("git init -q -b main", cwd: project.dir) == 0 else { return false }
         guard await Versions.commitAll("-qm \"$LAMP_MESSAGE\"", in: project.dir, env: ["LAMP_MESSAGE": message]) == .saved else { return false }
         versionsRevision += 1
         return true
@@ -4345,6 +4356,32 @@ final class Store: ObservableObject {
         if let pending = pendingImport { try? FileManager.default.removeItem(at: pending.package.folder) }
         if let copy = pendingImport?.copy { Task { await discardPreparedCopy(copy, movingQueuedTo: nil) } }
         pendingImport = nil
+    }
+
+    /// Keep Editing, on the review of a copy made for part of someone's suggested change: the review closes and the copy
+    /// stays as it is (its code, chat, draft and waiting messages, what was laid out for it in .lamp/update/, and its job,
+    /// still ready), so the person can go on asking for changes in its chat. A check still running is stopped and the
+    /// package unpacked for the review goes, as on Cancel, but nothing of the copy does. It still isn't opened until it's
+    /// reviewed (`AppUpdates.mayOpen`); a turn that changes it reviews it again, and its chat offers Review Changes… meanwhile.
+    func keepEditing() {
+        guard let pending = pendingImport, pending.prepared?.suggestion != nil, let copy = pending.copy else { return }
+        endReview()
+        try? FileManager.default.removeItem(at: pending.package.folder)
+        editingAfterReview = (pending.id, copy)
+        pendingImport = nil
+    }
+
+    /// The copy whose chat comes forward once the review Keep Editing closed has gone from the screen (`reviewClosed`).
+    private var editingAfterReview: (sheet: UUID, copy: String)?
+
+    /// A review's sheet has gone from the screen. After Keep Editing, the copy's chat comes forward with its box ready to
+    /// type in: not before, since the sheet's window would take the keyboard back as the sheet went.
+    func reviewClosed(_ sheet: UUID) {
+        guard let after = editingAfterReview, after.sheet == sheet else { return }
+        editingAfterReview = nil
+        guard projects.contains(where: { $0.id == after.copy }) else { return }
+        showChat(after.copy)
+        SidebarServer.shared.focusBox(of: after.copy)
     }
 
     func confirmImport() {
@@ -7600,7 +7637,8 @@ final class Store: ObservableObject {
             default: total
             }
         }
-        let wait = Double(actions.count) * (0.4 + 0.45) + waits + 5
+        // And a file the actions are saving: the app waits for it before it answers (`LampSaves`).
+        let wait = Double(actions.count) * (0.4 + 0.45) + waits + 5 + Template.useAppSaveWait
         // Once stopped, the app answers at once; one inside a dialog of its own can't until that closes, and isn't waited for.
         let answer = await Runtime.useReport(of: project, id: id, waiting: wait) { [weak self] in
             !app.isTerminated && (stoppedAt.map { Date().timeIntervalSince($0) < 2 } ?? true)
@@ -10486,7 +10524,7 @@ final class Store: ObservableObject {
 
     /// A game whose page is open on this Mac takes each change the agent saves the same way, once it compiles: the page
     /// is built (a TypeScript game bundled, which fails on what doesn't) and put into the open game (`pageInPlace`), which
-    /// swaps it in or runs the game's code again from where the player is, the smoke over the window until it's on
+    /// swaps it in or runs the game's code again from where the player is, the card on the window until it's on
     /// screen. Not waiting for the agent to look: a step whose modules don't parse is left alone until the next save,
     /// and one that compiles but fails as it runs opens the page again from the snapshot, as a change at the turn's end
     /// would. What can't go into the open page at all waits for the turn's end, as before.
@@ -10756,17 +10794,17 @@ final class Store: ObservableObject {
             owner?.reloadWhy = PageLive.shared.reason(project)
             awaitReload(project, owner: owner)
             owner?.outcomes.append(.held)
-            // It waits for Reload or a pause in the game: nothing is going in now, so the smoke goes.
+            // It waits for Reload or a pause in the game: nothing is going in now, so the card goes.
             if !waitingToShow.keys.contains(project.id) { AppTransition.end(project) }
         case .unchanged, .went:
             // A swap is on screen at once; a page that runs its code again, or opens again, says when it's showing the
-            // change (`shown`, `pageShown`), and the smoke stays over the window until then.
+            // change (`shown`, `pageShown`), and the card stays on the window until then.
             // Only the game runtime says `shown`: a screen, a web app or a game running its own loop opens again with its
-            // own page, and the smoke goes as before (`install`).
+            // own page, and the card goes as before (`install`).
             let saysShown = GameKit.isGame(project) && GameKit.engine(project) == .web && !GameKit.ownsLoop(project)
             // On screen when the page says so: a wait that ran out lets the turn go on, but nothing was seen to show.
             var drew = true
-            // Nothing of the page changed (the agent saved its notes, credits or tools): the smoke begun for this
+            // Nothing of the page changed (the agent saved its notes, credits or tools): the card put up for this
             // build goes, or it was renewed until the turn ended over a game that never changed. One still waiting
             // for an earlier change to show stays until that's on screen.
             if outcome == .unchanged, !waitingToShow.keys.contains(project.id) { AppTransition.end(project) }
@@ -11059,13 +11097,13 @@ final class Store: ObservableObject {
         markLog(project)
         let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload, early: early, saysReady: saysReady, onDevice: onDevice, quiet: quiet)
         // Whatever didn't put the change into the open app (it waits for Reload, was kept open, reopened, failed)
-        // lets the glow go; a reopened copy gets the light once its window is up (`AppTransition.landWhenShown`). A game's
+        // lets the card go; a reopened copy gets "Updated" once its window is up (`AppTransition.landWhenShown`). A game's
         // page still putting the change in keeps it until it's on screen (`pageShown`).
         if !waitingToShow.keys.contains(project.id) { AppTransition.end(project) }
         return crash
     }
 
-    /// Games whose page is putting a change in by running its code again or opening again, with the smoke held over
+    /// Games whose page is putting a change in by running its code again or opening again, with the card held on
     /// their window until the page says the change is on screen; a page that never says lets it go after a while.
     private var waitingToShow: [String: Task<Void, Never>] = [:]
     /// Whoever waits for the change to be on screen (`untilShown`), let go by `shown` or by the wait running out.
@@ -11094,7 +11132,7 @@ final class Store: ObservableObject {
         for waiter in shownWaiters.removeValue(forKey: id) ?? [] { waiter.resume(returning: shown) }
     }
 
-    /// The page shows the change it was putting in: the light crosses the window, and the smoke goes.
+    /// The page shows the change it was putting in: the card says "Updated", then goes.
     func pageShown(_ project: LampProject) {
         guard let waiting = waitingToShow.removeValue(forKey: project.id) else { shownEarly[project.id] = Date(); return }
         waiting.cancel()

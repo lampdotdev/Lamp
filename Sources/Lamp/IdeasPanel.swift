@@ -7,7 +7,10 @@ import SwiftUI
 /// minutes, and the desk says quietly how many are new; nothing goes in the chat until the person picks one. The panel
 /// shows them in the desk's window in place of its list, newest first: Build It asks the wish's chat for it, saying
 /// where it came from; It's In lets it go, and the site writes to whoever asked to hear back (Lamp never sees where);
-/// Dismiss lets it go quietly.
+/// Dismiss lets it go quietly. A note written on its line goes with either, or alone (Send Note), to the sender, on the
+/// link's page and by email if they gave an address (at most the site's `IDEA_LIMITS.note`). They can answer that
+/// email: their answer puts the idea back on the list, marked, with what's been said, until the maker sends something
+/// more or presses Done.
 enum WishIdeas {
     /// The highest numbered idea seen of each wish's link, kept between launches: numbers only go up on one link, and a
     /// link made again (after one taken down) counts from one, so it's kept by the link as well as the wish.
@@ -36,8 +39,24 @@ enum WishIdeas {
     }
 
     /// What Build It asks the chat for: the idea in the sender's own words, marked as theirs.
-    static func request(_ idea: WishLink.Idea, for project: LampProject) -> String {
-        "Someone playing \(project.name) sent this idea from its link:\n\n\(idea.text)"
+    static func request(_ idea: WishLink.Idea, for project: LampProject, withPicture: Bool = false) -> String {
+        let picture = withPicture ? ", with a picture of the app as they saw it" : ""
+        return "Someone playing \(project.name) sent this idea from its link\(picture):\n\n\(idea.text)"
+    }
+
+    /// The bytes written into a `data:` address (the gallery's made-up ideas, and the site's own when it runs locally).
+    static func inlineData(_ address: String) -> Data? {
+        guard address.hasPrefix("data:"), let comma = address.firstIndex(of: ",") else { return nil }
+        return Data(base64Encoded: String(address[address.index(after: comma)...]))
+    }
+
+    /// The idea's picture as bytes: from the site's store, or written into its address.
+    static func pictureData(_ address: String) async -> Data? {
+        if address.hasPrefix("data:") { return inlineData(address) }
+        guard let url = URL(string: address), url.scheme == "https" else { return nil }
+        guard let (data, response) = try? await URLSession.shared.data(from: url),
+              (response as? HTTPURLResponse)?.statusCode == 200, NSImage(data: data) != nil else { return nil }
+        return data
     }
 
 }
@@ -65,14 +84,19 @@ extension Store {
         }
     }
 
-    /// Wishes with ideas sent, most new first.
+    /// Every wish with a link, whose ideas the panel shows (and those seen to, under Earlier, even with none waiting):
+    /// most new first, then those with ideas waiting.
     var wishesWithIdeas: [LampProject] {
-        projects.filter { !(ideas[$0.id] ?? []).isEmpty }.sorted { newIdeas($0) > newIdeas($1) }
+        projects.filter { !$0.isPart && WishLink.kept(for: $0) != nil }.sorted {
+            let one = (newIdeas($0), ideas[$0.id]?.count ?? 0), other = (newIdeas($1), ideas[$1.id]?.count ?? 0)
+            return one != other ? one > other : $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
     }
 
+    /// Ideas not seen yet, and those whose sender has answered since: each waits on the maker.
     func newIdeas(_ project: LampProject) -> Int {
         let seen = WishIdeas.seen(project)
-        return (ideas[project.id] ?? []).filter { $0.n > seen }.count
+        return (ideas[project.id] ?? []).filter { $0.n > seen || $0.waiting == true }.count
     }
 
     var newIdeasInAll: Int { projects.reduce(0) { $0 + newIdeas($1) } }
@@ -84,20 +108,56 @@ extension Store {
         objectWillChange.send()
     }
 
-    /// Build It: the wish's chat opens and is asked for the idea, as the person's own request.
+    /// Build It: the wish's chat opens and is asked for the idea, as the person's own request, with the app's picture
+    /// the sender kept in, attached as a picture of the person's own would be.
     func buildIdea(_ idea: WishLink.Idea, in project: LampProject) {
         showChat(project.id)
-        send(WishIdeas.request(idea, for: project), to: project)
+        guard let address = idea.picture else { return send(WishIdeas.request(idea, for: project), to: project) }
+        Task {
+            var attached: [URL] = []
+            if let data = await WishIdeas.pictureData(address) {
+                // A folder of its own: another wish's idea of the same number, built before this one goes, keeps its own.
+                let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+                let file = folder.appendingPathComponent("Idea \(idea.n).jpg")
+                if (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil,
+                   (try? data.write(to: file)) != nil { attached = [file] }
+            }
+            send(WishIdeas.request(idea, for: project, withPicture: !attached.isEmpty), attachments: attached, to: project)
+        }
     }
 
-    /// It's In, or Dismiss: the idea goes from the link (built, the site first tells whoever asked), and from the panel
-    /// once the site says so.
-    func finishIdea(_ idea: WishLink.Idea, built: Bool, in project: LampProject) async -> Bool {
+    /// It's In, or Dismiss: the idea goes from the link (built, the site first tells whoever asked), with the maker's
+    /// note to its sender if they wrote one, and from the panel once the site says so.
+    func finishIdea(_ idea: WishLink.Idea, built: Bool, note: String? = nil, in project: LampProject) async -> Bool {
         guard let shared = WishLink.kept(for: project) else { return false }
-        do { try await WishLink.removeIdea(idea.n, built: built, for: shared) } catch { return false }
-        ideas[project.id]?.removeAll { $0.n == idea.n }
-        if ideas[project.id]?.isEmpty == true { ideas[project.id] = nil }
+        do { try await WishLink.removeIdea(idea.n, built: built, note: note, for: shared) } catch { return false }
+        dropIdea(idea.n, of: project)
         return true
+    }
+
+    /// Send, or Done: something more said to the idea's sender (emailed, if they gave an address), or their answer
+    /// seen to without a word. One with its outcome leaves the list, one still open stays with its thread.
+    func answerIdea(_ idea: WishLink.Idea, note: String?, in project: LampProject) async -> Bool {
+        guard let shared = WishLink.kept(for: project) else { return false }
+        do { try await WishLink.replyIdea(idea.n, note: note, for: shared) } catch { return false }
+        if idea.status != nil { dropIdea(idea.n, of: project); return true }
+        guard let index = ideas[project.id]?.firstIndex(where: { $0.n == idea.n }) else { return true }
+        ideas[project.id]?[index].waiting = nil
+        if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+            ideas[project.id]?[index].thread = (idea.thread ?? []) + [.init(by: "maker", text: note, at: ISO8601DateFormatter().string(from: Date()))]
+        }
+        return true
+    }
+
+    /// Those seen to, for the panel's Earlier: nil when lamp.dev can't be reached.
+    func earlierIdeas(_ project: LampProject) async -> [WishLink.Idea]? {
+        guard let shared = WishLink.kept(for: project) else { return [] }
+        return try? await WishLink.ideas(for: shared, earlier: true)
+    }
+
+    private func dropIdea(_ number: Int, of project: LampProject) {
+        ideas[project.id]?.removeAll { $0.n == number }
+        if ideas[project.id]?.isEmpty == true { ideas[project.id] = nil }
     }
 }
 
@@ -109,6 +169,10 @@ struct IdeasPanel: View {
     let back: () -> Void
     /// The gallery's made-up app and ideas, in place of the store's.
     var preview: (project: LampProject, ideas: [WishLink.Idea], new: Set<Int>)? = nil
+    /// The gallery's made-up ideas seen to, under Earlier.
+    var previewEarlier: [WishLink.Idea]? = nil
+    /// The gallery's made-up address for the maker's own emails.
+    var previewMaker = WishLink.Maker(email: nil, confirmed: false)
 
     /// Those new when the panel opened, which stay marked while it's open.
     @State private var newHere: Set<Int> = []
@@ -116,6 +180,14 @@ struct IdeasPanel: View {
     @State private var built: Set<Int> = []
     @State private var finishing: Set<Int> = []
     @State private var failed: Int?
+    /// Notes to the senders, by number, as they're written: each goes with its idea's It's In or Dismiss.
+    @State private var notes: [Int: String] = [:]
+    /// Ideas seen to, under Earlier once it's opened (asked of lamp.dev then), and whether that failed.
+    @State private var showingEarlier = false
+    @State private var earlier: [WishLink.Idea]?
+    @State private var earlierFailed = false
+    /// Conversations shown whole, by number: a long one shows its last messages until asked.
+    @State private var opened: Set<Int> = []
 
     private var project: LampProject? { preview?.project ?? store.projects.first { $0.id == wish } }
     private var shown: [WishLink.Idea] { (preview?.ideas ?? store.ideas[wish] ?? []).sorted { $0.n > $1.n } }
@@ -124,24 +196,27 @@ struct IdeasPanel: View {
         VStack(spacing: 0) {
             header
             Divider().overlay(Paper.rule)
-            if shown.isEmpty {
-                Spacer()
-                Text("No ideas here right now.").foregroundStyle(Paper.muted)
-                Spacer()
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        ForEach(shown) { line($0) }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if shown.isEmpty {
+                        Text("No ideas here right now.").foregroundStyle(Paper.muted)
+                            .frame(maxWidth: .infinity).padding(.vertical, 40)
                     }
-                    .padding(18)
-                    .frame(maxWidth: 720, alignment: .leading)
-                    .frame(maxWidth: .infinity)
+                    ForEach(shown) { line($0) }
+                    earlierSection
                 }
+                .padding(18)
+                .frame(maxWidth: 720, alignment: .leading)
+                .frame(maxWidth: .infinity)
             }
         }
         .background(Paper.panel)
         .onAppear {
-            if let preview { newHere = preview.new; return }
+            if let preview {
+                newHere = preview.new
+                if previewEarlier != nil { showingEarlier = true; loadEarlier() }
+                return
+            }
             guard let project else { return }
             let seen = WishIdeas.seen(project)
             newHere = Set(shown.filter { $0.n > seen }.map(\.n))
@@ -167,54 +242,141 @@ struct IdeasPanel: View {
             }
             .menuStyle(.borderlessButton).fixedSize()
             Text("\(shown.count) \(shown.count == 1 ? "idea" : "ideas") from people playing it")
-                .font(.system(size: 13)).foregroundStyle(Paper.muted)
+                .font(.system(size: 13)).foregroundStyle(Paper.muted).lineLimit(1)
             Spacer()
+            if let project { IdeasByEmail(project: project, preview: preview == nil ? nil : previewMaker) }
         }
         .padding(.horizontal, 18).padding(.vertical, 12)
     }
 
+    /// Earlier: the ideas seen to, the latest word first, each with its conversation, to look back on or answer again.
+    @ViewBuilder private var earlierSection: some View {
+        Button {
+            showingEarlier.toggle()
+            if showingEarlier { loadEarlier() }
+        } label: {
+            Label("Earlier", systemImage: showingEarlier ? "chevron.down" : "chevron.right")
+                .font(.system(size: 13, weight: .semibold)).foregroundStyle(Paper.muted)
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 8)
+        if showingEarlier {
+            if let earlier, !earlier.isEmpty {
+                ForEach(earlier) { line($0) }
+            } else if earlierFailed {
+                Text("Couldn't reach lamp.dev. Try again.").font(.system(size: 12.5)).foregroundStyle(Paper.muted)
+            } else if earlier != nil {
+                Text("Nothing seen to yet.").font(.system(size: 12.5)).foregroundStyle(Paper.muted)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+        }
+    }
+
+    private func loadEarlier() {
+        if let previewEarlier { earlier = previewEarlier; return }
+        guard let project else { return }
+        earlierFailed = false
+        Task {
+            let found = await store.earlierIdeas(project)
+            earlierFailed = found == nil
+            earlier = found ?? earlier
+        }
+    }
+
     private func finish(_ idea: WishLink.Idea, built: Bool) {
+        settle(idea) { project in
+            guard await store.finishIdea(idea, built: built, note: notes[idea.n], in: project) else { return false }
+            // It's under Earlier now.
+            if showingEarlier { loadEarlier() }
+            return true
+        }
+    }
+
+    /// Send (with what's written) or Done (without).
+    private func answer(_ idea: WishLink.Idea, saying: Bool) {
+        let note = saying ? notes[idea.n]?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+        settle(idea) { project in
+            guard await store.answerIdea(idea, note: note, in: project) else { return false }
+            // Seen to, it's under Earlier now: one answered from there shows what was said, one from the list goes there.
+            if showingEarlier { loadEarlier() }
+            return true
+        }
+    }
+
+    private func settle(_ idea: WishLink.Idea, _ work: @escaping (LampProject) async -> Bool) {
         guard preview == nil, let project, !finishing.contains(idea.n) else { return }
         finishing.insert(idea.n)
         failed = nil
         Task {
-            if !(await store.finishIdea(idea, built: built, in: project)) { failed = idea.n }
+            if await work(project) { notes[idea.n] = nil } else { failed = idea.n }
             finishing.remove(idea.n)
         }
     }
 
+    private func tag(_ words: String) -> some View {
+        Text(words).font(.system(size: 10, weight: .bold)).tracking(0.8).foregroundStyle(Paper.ink)
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(Paper.ink.opacity(0.08), in: RoundedRectangle(cornerRadius: 4))
+    }
+
     private func line(_ idea: WishLink.Idea) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let written = !(notes[idea.n] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let outcome = idea.status == "in" ? "It's in" : idea.status == "dismissed" ? "Dismissed" : nil
+        return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                if newHere.contains(idea.n) {
-                    Text("NEW").font(.system(size: 10, weight: .bold)).tracking(0.8).foregroundStyle(Paper.ink)
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Paper.ink.opacity(0.08), in: RoundedRectangle(cornerRadius: 4))
-                }
-                Text(verbatim: [WishIdeas.when(idea.at), idea.wantsNews == true ? "wants to hear when it's in" : nil].compactMap { $0 }.joined(separator: " · "))
+                if idea.waiting == true { tag("ANSWERED") } else if newHere.contains(idea.n) { tag("NEW") }
+                Text(verbatim: [WishIdeas.when(idea.at), outcome, idea.wantsNews == true && idea.status == nil ? "wants to hear back" : nil].compactMap { $0 }.joined(separator: " · "))
                     .font(.system(size: 11.5)).foregroundStyle(Paper.muted).lineLimit(1).truncationMode(.middle)
             }
             Text(verbatim: idea.text).font(.system(size: 14)).foregroundStyle(Paper.ink).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
+            if let picture = idea.picture { IdeaPicture(address: picture) }
+            if let thread = idea.thread, !thread.isEmpty { conversation(thread, of: idea.n) }
+            TextField(idea.status == nil ? "Note to them (optional)" : "Reply to them", text: Binding(get: { notes[idea.n] ?? "" }, set: { notes[idea.n] = String($0.prefix(2000)) }), axis: .vertical)
+                .textFieldStyle(.roundedBorder).font(.system(size: 13)).lineLimit(1...6)
+                .frame(maxWidth: 480, alignment: .leading)
+                .disabled(finishing.contains(idea.n))
             HStack(spacing: 8) {
-                if built.contains(idea.n) {
-                    Label("Asked in the chat", systemImage: "checkmark").font(.system(size: 12.5)).foregroundStyle(Paper.muted)
-                } else {
-                    Button("Build It") {
-                        guard preview == nil, let project else { return }
-                        built.insert(idea.n)
-                        store.buildIdea(idea, in: project)
+                if idea.status == nil {
+                    if built.contains(idea.n) {
+                        Label("Asked in the chat", systemImage: "checkmark").font(.system(size: 12.5)).foregroundStyle(Paper.muted)
+                    } else {
+                        Button("Build It") {
+                            guard preview == nil, let project else { return }
+                            built.insert(idea.n)
+                            store.buildIdea(idea, in: project)
+                        }
+                        .buttonStyle(PaperButtonStyle(.ink, height: 28))
                     }
-                    .buttonStyle(PaperButtonStyle(.ink, height: 28))
+                    Button("It's In") { finish(idea, built: true) }
+                        .buttonStyle(PaperButtonStyle(.outline, height: 28))
+                        .disabled(finishing.contains(idea.n))
+                        .help(idea.wantsNews == true ? "Takes it off the list, emails them that it's in, and tells them on the link's page, with your note if you wrote one" : "Takes it off the list, and tells them on the link's page, with your note if you wrote one")
+                    Button("Dismiss") { finish(idea, built: false) }
+                        .buttonStyle(PaperButtonStyle(.outline, height: 28))
+                        .disabled(finishing.contains(idea.n))
+                        .help("Takes it off the list. They see your note on the link's page, if you wrote one.")
+                    if written {
+                        Button("Send Note") { answer(idea, saying: true) }
+                            .buttonStyle(PaperButtonStyle(.outline, height: 28))
+                            .disabled(finishing.contains(idea.n))
+                            .help(idea.wantsNews == true ? "Emails them your note and keeps the idea here. They can answer by email." : "Shows them your note on the link's page and keeps the idea here")
+                    }
+                } else {
+                    if written {
+                        Button("Send") { answer(idea, saying: true) }
+                            .buttonStyle(PaperButtonStyle(.ink, height: 28))
+                            .disabled(finishing.contains(idea.n))
+                            .help(idea.wantsNews == true ? "Emails them your reply. They can answer again." : "Shows them your reply on the link's page")
+                    }
+                    if idea.waiting == true {
+                        Button("Done") { answer(idea, saying: false) }
+                            .buttonStyle(PaperButtonStyle(.outline, height: 28))
+                            .disabled(finishing.contains(idea.n))
+                            .help("Takes it off the list without a reply")
+                    }
                 }
-                Button("It's In") { finish(idea, built: true) }
-                    .buttonStyle(PaperButtonStyle(.outline, height: 28))
-                    .disabled(finishing.contains(idea.n))
-                    .help(idea.wantsNews == true ? "Takes it off the list, emails them that it's in, and tells them on the link's page" : "Takes it off the list, and tells them on the link's page")
-                Button("Dismiss") { finish(idea, built: false) }
-                    .buttonStyle(PaperButtonStyle(.outline, height: 28))
-                    .disabled(finishing.contains(idea.n))
-                    .help("Takes it off the list. They aren't told.")
                 if failed == idea.n {
                     Text("Couldn't reach lamp.dev. Try again.").font(.system(size: 12)).foregroundStyle(Paper.muted)
                 }
@@ -225,6 +387,143 @@ struct IdeasPanel: View {
         .background(Paper.card, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Paper.rule))
     }
+
+    /// What's been said about the idea since it came, each way, under a rule: the last two of a longer one, with the
+    /// rest a click away.
+    private func conversation(_ thread: [WishLink.Idea.Said], of number: Int) -> some View {
+        let hidden = opened.contains(number) ? 0 : max(0, thread.count - 2)
+        return VStack(alignment: .leading, spacing: 8) {
+            if hidden > 0 {
+                Button("Show \(hidden) earlier") { opened.insert(number) }
+                    .buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundStyle(Paper.muted)
+            }
+            ForEach(Array(thread.enumerated().dropFirst(hidden)), id: \.offset) { _, said in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: [said.by == "maker" ? "You" : "They", WishIdeas.when(said.at)].compactMap { $0 }.joined(separator: " · "))
+                        .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Paper.muted)
+                    Text(verbatim: said.text).font(.system(size: 13)).foregroundStyle(Paper.ink).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(.leading, 10)
+        .overlay(alignment: .leading) { Rectangle().fill(Paper.rule).frame(width: 2) }
+        .frame(maxWidth: 560, alignment: .leading)
+    }
+}
+
+/// Email Me: the maker's own address for the link's ideas and replies, so they come by email too and can be answered
+/// from there. lamp.dev emails the address a link to confirm it first; the button says which it's waiting for.
+private struct IdeasByEmail: View {
+    let project: LampProject
+    /// The gallery's, in place of asking lamp.dev.
+    var preview: WishLink.Maker?
+
+    /// The address last given for any link, offered for the next.
+    private static let lastKey = "LampIdeasEmail"
+    @State private var maker: WishLink.Maker?
+    @State private var open = false
+    @State private var typed = ""
+    @State private var working = false
+    @State private var problem: String?
+
+    private var label: String {
+        guard maker?.email != nil else { return "Email Me" }
+        return maker?.confirmed == true ? "Emails On" : "Confirm Email"
+    }
+
+    var body: some View {
+        Button {
+            typed = maker?.email ?? UserDefaults.standard.string(forKey: Self.lastKey) ?? ""
+            problem = nil
+            open = true
+        } label: {
+            Label(label, systemImage: maker?.confirmed == true ? "envelope.fill" : "envelope")
+        }
+        .buttonStyle(PaperButtonStyle(.outline, height: 28))
+        .fixedSize()
+        .help(maker?.email.map { maker?.confirmed == true ? "New ideas and their replies go to \($0)" : "Waiting for \($0) to be confirmed" }
+              ?? "New ideas and their replies by email, answered from there")
+        .popover(isPresented: $open, arrowEdge: .bottom) { form.padding(16).frame(width: 320) }
+        .task(id: project.id) {
+            if let preview { maker = preview; return }
+            maker = nil
+            guard let shared = WishLink.kept(for: project) else { return }
+            maker = try? await WishLink.maker(for: shared)
+        }
+    }
+
+    private var form: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Get new ideas and their replies by email, and answer them from there.")
+                .font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
+            TextField("you@example.com", text: $typed).textFieldStyle(.roundedBorder).onSubmit { save(typed) }
+            if let email = maker?.email, maker?.confirmed == false, maker?.sent != false, typed.trimmed == email {
+                Text("Check \(email) for a link to confirm it.").font(.system(size: 12)).foregroundStyle(Paper.muted)
+            }
+            if let problem { Text(problem).font(.system(size: 12)).foregroundStyle(Paper.muted) }
+            HStack {
+                if maker?.email != nil { Button("Stop Emails") { save("") }.disabled(working) }
+                Spacer()
+                Button(typed.trimmed == maker?.email && maker?.confirmed == false ? "Send Again" : "Save") { save(typed) }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(working || typed.trimmed.isEmpty)
+            }
+        }
+    }
+
+    private func save(_ email: String) {
+        let email = email.trimmed
+        if !email.isEmpty, email == maker?.email, maker?.confirmed == true { open = false; return }
+        guard preview == nil, let shared = WishLink.kept(for: project) else { return }
+        working = true
+        problem = nil
+        Task {
+            defer { working = false }
+            do {
+                maker = try await WishLink.maker(for: shared, email: email)
+                if !email.isEmpty { UserDefaults.standard.set(email, forKey: Self.lastKey) }
+                if maker?.sent == false { problem = "Couldn't send the email to confirm it. Try again in a minute." }
+                if email.isEmpty { open = false }
+            } catch let failure as WishLink.Failure where failure.message.contains("couldn't take") {
+                problem = "Check the address and try again."
+            } catch let failure as WishLink.Failure where failure.message.contains("Too many") {
+                problem = "Wait a minute, then try again."
+            } catch { problem = "Couldn't reach lamp.dev. Try again." }
+        }
+    }
+}
+
+/// The app as the sender saw it when they opened the box, small under their idea; a click shows it full size.
+private struct IdeaPicture: View {
+    let address: String
+    @State private var image: NSImage?
+    @State private var large = false
+
+    init(address: String) {
+        self.address = address
+        // One written into its address is there at once, the gallery's drawn without waiting.
+        _image = State(initialValue: WishIdeas.inlineData(address).flatMap(NSImage.init(data:)))
+    }
+
+    var body: some View {
+        Group {
+            if let image {
+                Button { large = true } label: {
+                    Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: 240, maxHeight: 150, alignment: .leading)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Paper.rule))
+                }
+                .buttonStyle(.plain)
+                .help("The app as they saw it")
+                .popover(isPresented: $large) {
+                    Image(nsImage: image).resizable().aspectRatio(contentMode: .fit).frame(maxWidth: 900, maxHeight: 600)
+                }
+            }
+        }
+        .task(id: address) { if image == nil { image = await WishIdeas.pictureData(address).flatMap(NSImage.init(data:)) } }
+    }
 }
 
 extension Gallery {
@@ -233,22 +532,56 @@ extension Gallery {
         ideas("Ideas from people playing it"),
         ideas("Ideas, the narrowest window", width: 540),
         ideas("No ideas left", ideas: []),
+        ideas("An idea they answered", only: 1),
+        ideas("Earlier, opened", only: 3, earlier: true),
+        ideas("Ideas by email", only: 3, maker: WishLink.Maker(email: "maker@example.com", confirmed: true), width: 640),
     ]
 
-    private static func ideas(_ name: String, ideas: [WishLink.Idea]? = nil, width: CGFloat = 940) -> Entry {
+    private static func ideas(_ name: String, ideas: [WishLink.Idea]? = nil, only: Int? = nil, earlier: Bool = false,
+                              maker: WishLink.Maker = .init(email: nil, confirmed: false), width: CGFloat = 940) -> Entry {
         Entry(group: "Sent to you", name: name) {
             let project = LampProject(id: "gallery-harbor-racer", name: "Harbor Racer", exe: "HarborRacer", dir: URL(fileURLWithPath: "/nonexistent"))
             let now = Date()
             let at = { (hours: Double) in ISO8601DateFormatter().string(from: now.addingTimeInterval(-hours * 3600)) }
             let made = ideas ?? [
-                WishLink.Idea(n: 3, text: "Rain that makes the roads slippery", wantsNews: true, at: at(0.3)),
+                WishLink.Idea(n: 3, text: "Rain that makes the roads slippery", wantsNews: true, at: at(0.3), picture: madeUpPicture()),
                 WishLink.Idea(n: 2, text: "Let me paint my car any color I want, with stripes and a number on the doors like a real race car.", wantsNews: nil, at: at(5)),
-                WishLink.Idea(n: 1, text: "More boats in the harbor", wantsNews: nil, at: at(30)),
+                WishLink.Idea(n: 1, text: "More boats in the harbor", wantsNews: true, at: at(30), status: "in", waiting: true, thread: [
+                    .init(by: "maker", text: "Added a ferry and some sailboats. Try the docks at night!", at: at(26)),
+                    .init(by: "sender", text: "Love the ferry! Could it honk when you get close?", at: at(1)),
+                ]),
             ]
-            return AnyView(IdeasPanel(wish: project.id, back: {}, preview: (project, made, [3]))
+            let seenTo = !earlier ? nil : [
+                WishLink.Idea(n: 0, text: "A night mode with streetlights", wantsNews: true, at: at(200), status: "in", thread: [
+                    .init(by: "maker", text: "Night mode is in! Press N to switch.", at: at(150)),
+                    .init(by: "sender", text: "So good. Can the headlights light up the road too?", at: at(140)),
+                    .init(by: "maker", text: "Good idea, I'll try it.", at: at(120)),
+                    .init(by: "sender", text: "Thanks!", at: at(118)),
+                    .init(by: "maker", text: "Headlights are in now too.", at: at(20)),
+                ]),
+            ]
+            return AnyView(IdeasPanel(wish: project.id, back: {}, preview: (project, made.filter { only == nil || $0.n == only }, [3]), previewEarlier: seenTo, previewMaker: maker)
                 .frame(width: width, height: 600)
                 .background(Paper.page)
                 .environmentObject(Store.shared))
         }
+    }
+
+    /// A made-up picture of a game, as a `data:` address: a dusk sky over a harbor road.
+    private static func madeUpPicture() -> String? {
+        let image = NSImage(size: NSSize(width: 480, height: 300), flipped: false) { rect in
+            NSGradient(starting: NSColor(red: 0.98, green: 0.62, blue: 0.36, alpha: 1), ending: NSColor(red: 0.22, green: 0.27, blue: 0.52, alpha: 1))?
+                .draw(in: rect, angle: 90)
+            NSColor(red: 0.12, green: 0.30, blue: 0.42, alpha: 1).setFill()
+            NSBezierPath(rect: NSRect(x: 0, y: 0, width: rect.width, height: 110)).fill()
+            NSColor(white: 0.18, alpha: 1).setFill()
+            NSBezierPath(rect: NSRect(x: 0, y: 40, width: rect.width, height: 40)).fill()
+            NSColor(red: 0.95, green: 0.78, blue: 0.20, alpha: 1).setFill()
+            NSBezierPath(roundedRect: NSRect(x: 190, y: 52, width: 90, height: 28), xRadius: 8, yRadius: 8).fill()
+            return true
+        }
+        guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
+              let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else { return nil }
+        return "data:image/jpeg;base64,\(jpeg.base64EncodedString())"
     }
 }

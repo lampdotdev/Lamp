@@ -661,9 +661,9 @@ Reload takes both in, once; older and imported games adopt this that way, on the
 always goes in. After each run the page tells Lamp what came through (`cameThrough`, a state of its own with the words in
 `why`, kept as `PageLive.report`), which the agent's next look carries (`GameKit.openGameNote`). While the code runs again, the last frame and
 the old HUD stay on screen, still, and fade once the new code has drawn; the page then says `shown`, which is when
-Lamp's light crosses the window (`Store.pageShown`): the smoke built over the window stays through the run, rather than
-going as the page first answers. A swap gets the light at once; a page that opens again says `shown` at its first frame;
-one that never says lets the smoke go after 20 s. Where running again can't be done (the import map or a script
+the card on the window says "Updated" (`Store.pageShown`): its "Updating" stays through the run, rather than
+going as the page first answers. A swap gets "Updated" at once; a page that opens again says `shown` at its first frame;
+one that never says lets the card go after 20 s. Where running again can't be done (the import map or a script
 that isn't a module changed, a circle of imports, Lamp's own files) the change waits for the person's Reload
 (`reopenOrHold`, "held"), never opening the page under them; Reload opens it again from the snapshot. New code that
 fails before init is done or in its first second opens the page again at once (`swapGuard`). The game's
@@ -945,7 +945,13 @@ tree LampSupport reads stops at a web view's edge, so the page lists its own thi
 (`LampPageReader` in LampPage.swift, behind LampSupport's `LampPageItems`): the same script the preview reads a page
 with (`PageScreen`, written in by `GameKit.page`), each box turned into pixels of the window's picture, read again
 before each picture and after each action; clicks, keys and typing reach the page at those points as the person's do,
-and a remote's back, OK and enter are sent as Escape and Return. No preview opens then.
+and a remote's back, OK and enter are sent as Escape and Return. No preview opens then. A click is answered by the page
+(`PageScreen.click`, written in by `GameKit.page` and run by the preview too), never reported as done before it has, and
+`use_app` waits for that answer (at most a few seconds) before its next action: it names what WebKit's hit test put
+under the point, a thing named by `target` is the very one the screen read listed (`ref`, its place in that list) and
+is clicked only if it's still where it was read and not dimmed, and where another layer of the page lies over its middle it's clicked at a part that
+shows, with the answer naming what covers the middle, or not at all ("missed", with what's on top) when none shows. A
+page's own stacking bug is reported, not patched: Lamp never rewrites a page's CSS to make a click land.
 
 The preview on the Mac (`TVPreview`, `openDevicePreview`) is for the rest: a page that nothing on this Mac shows (only on
 a TV or the Xbox, with no Mac place, or one whose Mac copy is closed while Try On points elsewhere), and any other shape.

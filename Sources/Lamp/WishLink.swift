@@ -58,9 +58,8 @@ enum WishLink {
         var words: String
         /// The changes Lamp suggests for it, the page's to offer. Nil in links from before.
         var ideas: [String]? = nil
-        /// The questions the page's box asks in turn, written by Lamp and the person's to change (`WishAsks`). Nil in
-        /// links from before, which Lamp writes some for; empty when the person cleared them, which stays so, and the page
-        /// asks its own.
+        /// The questions the page's box asks in turn, the person's to change (`WishAsks`). Nil in links from before, whose
+        /// card offers the plain ones; empty when the person cleared them, which stays so, and the page asks its own.
         var asks: [String]? = nil
         /// The shape its page plays in (`Publish.pageShape`): "fill", or its width over its height. Nil for a wish with no
         /// page, and in links from before.
@@ -291,28 +290,69 @@ enum WishLink {
     }
 
     /// An idea someone playing the wish sent from its link's page, for its maker (`/api/wish-ideas` on the site): their
-    /// words, when it came, and whether they asked to hear when it's in (the site keeps their address and writes to them;
-    /// Lamp never has it). Theirs, shown as theirs, never the agent's.
+    /// words, when it came, whether they asked to hear back (the site keeps their address and writes to them;
+    /// Lamp never has it), and the picture of the app the page took as they opened the box, if they kept it in (its
+    /// address, until the idea has its outcome). Theirs, shown as theirs, never the agent's.
     struct Idea: Codable, Equatable, Identifiable, Sendable {
         var n: Int
         var text: String
         var wantsNews: Bool?
         var at: String
+        var picture: String? = nil
+        /// "in" or "dismissed" once it has its outcome: it's on the list again only while its sender's answer waits.
+        var status: String? = nil
+        /// Its sender has answered (by email) since the maker last said something or saw to it.
+        var waiting: Bool? = nil
+        /// What's been said about it since, each way, oldest first.
+        var thread: [Said]? = nil
         var id: Int { n }
+
+        struct Said: Codable, Equatable, Sendable {
+            /// "maker" or "sender".
+            var by: String
+            var text: String
+            var at: String
+        }
     }
 
-    /// The ideas sent to the link so far, oldest first. Only the link's secret reads them.
-    static func ideas(for shared: Shared) async throws -> [Idea] {
-        let done = try await ask("linkIdeas", secret(shared))
+    /// The ideas sent to the link still open or answered since, oldest first; with `earlier`, those seen to, the latest
+    /// word first. Only the link's secret reads them.
+    static func ideas(for shared: Shared, earlier: Bool = false) async throws -> [Idea] {
+        let done = try await ask("linkIdeas", earlier ? secret(shared).merging(["earlier": true]) { $1 } : secret(shared))
         let data = try JSONSerialization.data(withJSONObject: done["ideas"] as? [Any] ?? [])
         return try JSONDecoder().decode([Idea].self, from: data)
     }
 
     /// Lets an idea go from the link. `built`: it's in, and the site first writes to whoever asked to hear back; answers
-    /// whether it did.
+    /// whether it did. `note`, if the maker wrote one, goes to the sender: in that email, and on the link's page.
     @discardableResult
-    static func removeIdea(_ number: Int, built: Bool, for shared: Shared) async throws -> Bool {
-        try await ask("linkRemoveIdea", secret(shared).merging(["n": number, "built": built]) { $1 })["notified"] as? Bool ?? false
+    static func removeIdea(_ number: Int, built: Bool, note: String? = nil, for shared: Shared) async throws -> Bool {
+        var given: [String: Any] = ["n": number, "built": built]
+        if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty { given["note"] = note }
+        return try await ask("linkRemoveIdea", secret(shared).merging(given) { $1 })["notified"] as? Bool ?? false
+    }
+
+    /// Says something more about an idea, emailed to its sender if they gave an address; answers whether it was. With
+    /// no note, only that the maker has seen to their answer.
+    @discardableResult
+    static func replyIdea(_ number: Int, note: String?, for shared: Shared) async throws -> Bool {
+        var given: [String: Any] = ["n": number]
+        if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty { given["note"] = note }
+        return try await ask("linkReplyIdea", secret(shared).merging(given) { $1 })["notified"] as? Bool ?? false
+    }
+
+    /// The maker's own address for the link's ideas and replies, which lamp.dev writes to once it's confirmed.
+    struct Maker: Equatable, Sendable {
+        var email: String?
+        var confirmed: Bool
+        /// Given just now: whether lamp.dev sent the email to confirm it.
+        var sent: Bool? = nil
+    }
+
+    /// The maker's address as it is; with `email`, given (lamp.dev emails it a link to confirm first), or taken away ("").
+    static func maker(for shared: Shared, email: String? = nil) async throws -> Maker {
+        let said = try await ask("linkMaker", email.map { secret(shared).merging(["email": $0]) { $1 } } ?? secret(shared))
+        return Maker(email: said["email"] as? String, confirmed: said["confirmed"] as? Bool ?? false, sent: said["sent"] as? Bool)
     }
 
     /// Takes the link down: the page says the wish isn't shared any more. A link the site no longer has is down already.
@@ -356,8 +396,6 @@ enum WishLink {
         var released = false
         /// Lamp is writing what's new for the release (`WishReleases.write`).
         var writingNotes = false
-        /// Lamp is writing the questions the page's box asks (`WishAsks.write`).
-        var writingAsks = false
         /// The app's repository on GitHub, which a release goes to too while its box is ticked (`GitHubRelease`), or why
         /// it can't from here.
         var gitHub: GitHubRelease.Target?
@@ -417,7 +455,13 @@ enum WishLink {
 
     /// Opens the card in its own window, or brings that window forward.
     func open(_ project: LampProject) {
-        defer { WishLinkWindows.shared.show(project) }
+        prepare(project)
+        WishLinkWindows.shared.show(project)
+    }
+
+    /// Fills the card as it opens, with no window: what the link said last, Lamp's questions and what's new, and where
+    /// the release goes on GitHub. The window shows this card; lamp's command line shares from it (`share_link`).
+    func prepare(_ project: LampProject) {
         guard cards[project.id] == nil else { return }
         let shared = WishLink.kept(for: project)
         let picture = WishLink.picture(of: project)
@@ -436,17 +480,9 @@ enum WishLink {
         card.picture = picture
         // A link that's out is released again: Lamp writes what's new since the last release, for the person to change.
         card.writingNotes = shared != nil
-        // A link without questions yet gets Lamp's, for the person to change.
-        card.writingAsks = shared?.shown.asks == nil
+        // A link without questions yet asks the page's plain ones, shown on the card for the person to change.
+        if shared?.shown.asks == nil, card.values.asks.trimmed.isEmpty { card.values.asks = WishAsks.fallback.joined(separator: "\n") }
         cards[project.id] = card
-        if card.writingAsks {
-            Task {
-                let lines = await WishAsks.write(for: project)
-                guard cards[project.id]?.writingAsks == true else { return }
-                cards[project.id]?.writingAsks = false
-                if cards[project.id]?.values.asks.trimmed.isEmpty == true { cards[project.id]?.values.asks = lines.joined(separator: "\n") }
-            }
-        }
         Task {
             let icon = await Sharing.sharedIcon(of: project)
             cards[project.id]?.icon = icon
@@ -599,6 +635,13 @@ enum WishLink {
         if values.putOnGitHub, !before.putOnGitHub, cards[project.id]?.firstPush?.staged == nil { checkFirstPush(project) }
         cards[project.id]?.copied = false
         if case .failed = cards[project.id]?.stage { cards[project.id]?.stage = .editing }
+    }
+
+    /// Whether what the card writes and finds as it opens is in (`prepare`): the questions, what's new, and GitHub.
+    func settled(_ project: LampProject) -> Bool {
+        guard let card = cards[project.id] else { return true }
+        return !card.writingNotes && card.gitHubFinding == nil
+            && (!card.values.putOnGitHub || card.firstPush?.stage != .preparing)
     }
 
     func close(_ project: LampProject) {

@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { isIP } from "node:net";
 import { inflateRawSync } from "node:zlib";
 import { redis, reserve } from "./quota.js";
@@ -240,6 +240,8 @@ export function cloudStore(env, fetcher = fetch) {
   const scope = env.VERCEL_ENV === "production" ? "production" : "preview";
   const key = (id) => `lamp:shared-wish:{${scope}}:${id}`;
   const ideasKey = (id) => `lamp:shared-wish:{${scope}}:ideas:${id}`;
+  const mailKey = (box) => `lamp:shared-wish:{${scope}}:idea-mail:${box}`;
+  const makerKey = (id) => `lamp:shared-wish:{${scope}}:maker:${id}`;
   const command = async (args) => {
     const response = await fetcher(db.url, {
       method: "POST", redirect: "error", signal: AbortSignal.timeout(3000),
@@ -271,7 +273,22 @@ export function cloudStore(env, fetcher = fetch) {
       return (await command(["EVAL", "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('SET', KEYS[1], ARGV[2]) end return false",
         "1", key(after.id), JSON.stringify(before), JSON.stringify(after)])) === "OK";
     },
-    async remove(id) { await command(["DEL", key(id), ideasKey(id)]); },
+    async remove(id) { await command(["DEL", key(id), ideasKey(id), makerKey(id)]); },
+    /** The maker's own address for a link's ideas, as `{ email, confirmed, key }`, or null. */
+    async maker(id) { const text = await command(["GET", makerKey(id)]); return typeof text === "string" ? JSON.parse(text) : null; },
+    async setMaker(id, value) { await command(value ? ["SET", makerKey(id), JSON.stringify(value)] : ["DEL", makerKey(id)]); },
+    /** Confirms ("confirm") or lets go ("stop") the maker's address in one step, only while `key` is still its key. */
+    async makerStep(id, key, step) {
+      await command(["EVAL", `local text = redis.call('GET', KEYS[1])
+        if not text then return 0 end
+        local maker = cjson.decode(text)
+        if maker.key ~= ARGV[1] then return 0 end
+        if ARGV[2] == "confirm" then
+          maker.confirmed = true
+          redis.call('SET', KEYS[1], cjson.encode(maker))
+        else redis.call('DEL', KEYS[1]) end
+        return 1`, "1", makerKey(id), key, step]);
+    },
     /** Keeps an idea for the link, numbered in the order they came: null when the link already holds `IDEA_LIMITS.kept`. */
     async addIdea(id, idea) {
       // Its number is its field, given as it's kept, so two at once never share one. The cap counts those still open
@@ -293,22 +310,91 @@ export function cloudStore(env, fetcher = fetch) {
     /** True when this call took it away: two at once never both do. */
     async removeIdea(id, n) { return (await command(["HDEL", ideasKey(id), String(n)])) === 1; },
     /**
-     * Gives idea `n` its outcome ("in" or "dismissed"), in one step, and answers it as it was, its address included, to
-     * whichever call gave it: null when it's gone or already has one, so it's told once. The address goes with this step.
+     * Gives idea `n` its outcome ("in" or "dismissed"), with the maker's note to its sender as the first of its thread
+     * if they wrote one, in one step, and answers it as it was, its address included, to whichever call gave it: null
+     * when it's gone or already has one, so it's told once. The picture goes with this step, and the address too when
+     * it's dismissed with nothing said, since nothing more will be written to it.
      */
-    async finishIdea(id, n, status, at) {
+    async finishIdea(id, n, status, at, message) {
       const text = await command(["EVAL", `local text = redis.call('HGET', KEYS[1], ARGV[1])
         if not text then return false end
         local idea = cjson.decode(text)
         if idea.status then return false end
         idea.status = ARGV[2]
         idea.done = ARGV[3]
-        idea.email = nil
+        idea.last = ARGV[3]
+        idea.picture = nil
+        idea.waiting = nil
+        if ARGV[4] ~= "" then
+          local thread = idea.thread or {}
+          table.insert(thread, cjson.decode(ARGV[4]))
+          idea.thread = thread
+        end
+        if ARGV[2] == "dismissed" and not idea.thread then idea.email = nil end
         redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(idea))
         redis.call('HINCRBY', KEYS[1], 'open', -1)
-        return text`, "1", ideasKey(id), String(n), status, at]);
+        return text`, "1", ideasKey(id), String(n), status, at, message ? JSON.stringify(message) : ""]);
       return typeof text === "string" ? { ...JSON.parse(text), n } : null;
     },
+    /**
+     * One step in an idea's conversation, answering the idea as it was before it, or null when it's gone or the step
+     * doesn't apply: "say" adds a message to its thread (one of a message id already there, or past
+     * `IDEA_LIMITS.thread`, doesn't), and an answer from its sender leaves it waiting on the maker; "settle" says the
+     * maker has seen to it; "box" gives it its mailbox and the subject of the first email, unless another call gave it
+     * one first (whose is in what's answered), and "makerbox" the same for its maker's mailbox; "stop", with its mailbox,
+     * lets its address go.
+     */
+    async talk(id, n, op, value = "", extra = "") {
+      const text = await command(["EVAL", `local text = redis.call('HGET', KEYS[1], ARGV[1])
+        if not text then return false end
+        local idea = cjson.decode(text)
+        local op = ARGV[2]
+        if op == "say" then
+          local said = cjson.decode(ARGV[3])
+          -- A note given before ideas had threads starts its thread.
+          if idea.note and not idea.thread then
+            idea.thread = {{by = "maker", text = idea.note, at = idea.done or idea.at}}
+            idea.note = nil
+          end
+          local thread = idea.thread or {}
+          if #thread >= tonumber(ARGV[4]) then return false end
+          for _, one in ipairs(thread) do
+            if (said.mid and one.mid == said.mid) or (said.via and one.via == said.via) then return false end
+          end
+          table.insert(thread, said)
+          idea.thread = thread
+          idea.last = said.at
+          if said.by == "sender" then idea.waiting = true else idea.waiting = nil end
+        elseif op == "settle" then idea.waiting = nil
+        elseif op == "box" then
+          if idea.mailbox then return text end
+          idea.mailbox = ARGV[3]; idea.subject = ARGV[4]
+        elseif op == "makerbox" then
+          if idea.makerBox then return text end
+          idea.makerBox = ARGV[3]
+        elseif op == "stop" then
+          if idea.mailbox ~= ARGV[3] then return false end
+          idea.email = nil
+        else return false end
+        redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(idea))
+        return text`, "1", ideasKey(id), String(n), op, typeof value === "string" ? value : JSON.stringify(value), String(extra || IDEA_LIMITS.thread)]);
+      return typeof text === "string" ? { ...JSON.parse(text), n } : null;
+    },
+    /**
+     * An idea's mailbox: the address replies to its emails come to, kept a while past the last of them. Each idea has
+     * one for its sender's replies and, once its maker has emails of their own, one for the maker's (`side` "maker").
+     */
+    async openMailbox(id, n, side = "sender") {
+      const box = randomBytes(10).toString("hex");
+      await command(["SET", mailKey(box), `${id}:${n}${side === "maker" ? ":maker" : ""}`, "EX", String(MAILBOX_SECONDS)]);
+      return box;
+    },
+    async mailbox(box) {
+      const found = await command(["GETEX", mailKey(box), "EX", String(MAILBOX_SECONDS)]);
+      const [id, n, side] = typeof found === "string" ? found.split(":") : [];
+      return isID(id) && /^\d+$/.test(n ?? "") ? { id, n: Number(n), side: side === "maker" ? "maker" : "sender" } : null;
+    },
+    async closeMailbox(box) { await command(["DEL", mailKey(box)]); },
     async putImage(id, name, image) {
       const { put } = await import("@vercel/blob");
       const blob = await put(`${scope}/w/${id}/${name}.${image.extension}`, image.bytes, {
@@ -342,24 +428,50 @@ export function cloudStore(env, fetcher = fetch) {
       return blob.url;
     },
     async readFile(url) {
-      const address = new URL(url);
-      if (address.protocol !== "https:" || !address.hostname.endsWith(".public.blob.vercel-storage.com")) throw new Error("Not the store's");
-      const response = await fetcher(url, { redirect: "error", signal: AbortSignal.timeout(10000) });
-      if (!response.ok) throw new Error("Part unavailable");
-      return Buffer.from(await response.arrayBuffer());
+      const { body } = await this.openFile(url);
+      return Buffer.from(await new Response(body).arrayBuffer());
     },
     // A page's file as it comes, passed on without being held whole: a big one (a game's map data, tens of MB) is more
     // than a function's answer may hold at once, and more than it can read in the time a whole read is given.
+    // A small one is kept in the instance after its first read (`remembered`): a page's files never change, and a game
+    // asks for some many times over (a worker's script, under an address of its own each time), which the CDN can't
+    // keep. The store turns this function's reads away for a while when they come in bursts (403), and asking again
+    // soon only keeps that going: a refused read is asked once more, a second later, and said with what the store
+    // gave as its reason.
     async openFile(url) {
       const address = new URL(url);
       if (address.protocol !== "https:" || !address.hostname.endsWith(".public.blob.vercel-storage.com")) throw new Error("Not the store's");
-      const waiting = new AbortController();
-      const timer = setTimeout(() => waiting.abort(), 10000);
-      try {
-        const response = await fetcher(url, { redirect: "error", signal: waiting.signal });
-        if (!response.ok || !response.body) throw new Error(`Part unavailable (${response.status})`);
-        return { body: response.body, length: response.headers.get("content-length") };
-      } finally { clearTimeout(timer); }
+      const kept = remembered.get(url);
+      if (kept) { remembered.delete(url); remembered.set(url, kept); return { body: kept, length: String(kept.length) }; }
+      let said = null;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        if (attempt > 1) await new Promise((done) => setTimeout(done, 1000 + Math.random() * 500));
+        // The time limit is for the store to start answering: a big file's body may take longer to pass on.
+        const waiting = new AbortController();
+        const timer = setTimeout(() => waiting.abort(), 10000);
+        let response;
+        try { response = await fetcher(url, { redirect: "error", signal: waiting.signal }); }
+        catch (error) { said = error?.message ?? String(error); continue; }
+        finally { clearTimeout(timer); }
+        const length = response.headers.get("content-length");
+        if (response.ok && response.body) {
+          if (length === null || Number(length) > REMEMBERED_FILE) return { body: response.body, length };
+          const bytes = Buffer.from(await response.arrayBuffer());
+          remember(url, bytes);
+          return { body: bytes, length: String(bytes.length) };
+        }
+        // The start of the store's words, read for a moment at most: a body that stalls never holds up the next try.
+        let words = "";
+        const reader = response.body?.getReader();
+        if (reader) {
+          const first = await Promise.race([reader.read().catch(() => null), new Promise((done) => setTimeout(done, 1000, null))]);
+          if (first?.value) words = Buffer.from(first.value).subarray(0, 100).toString("utf8").replace(/\s+/g, " ");
+          reader.cancel().catch(() => {});
+        }
+        said = [response.status, response.headers.get("x-vercel-error"), response.headers.get("x-vercel-mitigated") && `mitigated ${response.headers.get("x-vercel-mitigated")}`, words && `"${words}"`].filter(Boolean).join(" ");
+        if (!(response.status === 403 || response.status === 429 || response.status >= 500)) break;
+      }
+      throw new Error(`Part unavailable (${said})`);
     },
     // The page and its card are cached by Vercel's CDN, tagged with the wish (see `cacheTags`): a change or a removal
     // takes them out at once rather than when they'd have run out.
@@ -372,9 +484,27 @@ export function cloudStore(env, fetcher = fetch) {
   };
 }
 
+// A page's small files, as read from the store by this instance, the most recently served last: at most REMEMBERED in
+// all, the least recently served going first.
+const REMEMBERED = 96 * 1024 * 1024, REMEMBERED_FILE = 2 * 1024 * 1024;
+const remembered = new Map();
+let rememberedBytes = 0;
+function remember(url, bytes) {
+  // Reads of one file at once each arrive here: the one already kept is counted out before its copy is counted in.
+  rememberedBytes -= remembered.get(url)?.length ?? 0;
+  remembered.delete(url);
+  remembered.set(url, bytes);
+  rememberedBytes += bytes.length;
+  for (const [oldest, kept] of remembered) {
+    if (rememberedBytes <= REMEMBERED) break;
+    remembered.delete(oldest);
+    rememberedBytes -= kept.length;
+  }
+}
+
 /** Kept in memory, for `npm run dev` and the tests: pictures as data: URLs, so nothing else needs serving. */
 export function memoryStore() {
-  const records = new Map(), pages = new Map(), ideas = new Map();
+  const records = new Map(), pages = new Map(), ideas = new Map(), mailboxes = new Map(), makers = new Map();
   return {
     limiter: null,
     records,
@@ -386,7 +516,14 @@ export function memoryStore() {
       records.set(after.id, structuredClone(after));
       return true;
     },
-    async remove(id) { records.delete(id); ideas.delete(id); },
+    async remove(id) { records.delete(id); ideas.delete(id); makers.delete(id); },
+    async maker(id) { return makers.has(id) ? structuredClone(makers.get(id)) : null; },
+    async setMaker(id, value) { if (value) makers.set(id, structuredClone(value)); else makers.delete(id); },
+    async makerStep(id, key, step) {
+      const maker = makers.get(id);
+      if (maker?.key !== key) return;
+      if (step === "confirm") maker.confirmed = true; else makers.delete(id);
+    },
     async addIdea(id, idea) {
       const kept = ideas.get(id) ?? { next: 0, all: new Map() };
       if ([...kept.all.values()].filter((one) => !one.status).length >= IDEA_LIMITS.kept) return null;
@@ -397,14 +534,38 @@ export function memoryStore() {
     },
     async ideas(id) { return [...(ideas.get(id)?.all.values() ?? [])].map((idea) => structuredClone(idea)).sort((a, b) => a.n - b.n); },
     async removeIdea(id, n) { return ideas.get(id)?.all.delete(n) ?? false; },
-    async finishIdea(id, n, status, at) {
+    async finishIdea(id, n, status, at, message) {
       const idea = ideas.get(id)?.all.get(n);
       if (!idea || idea.status) return null;
       const before = structuredClone(idea);
-      Object.assign(idea, { status, done: at });
-      delete idea.email;
+      Object.assign(idea, { status, done: at, last: at });
+      delete idea.waiting;
+      if (message) idea.thread = [...(idea.thread ?? []), message];
+      if (status === "dismissed" && !idea.thread) delete idea.email;
+      delete idea.picture;
       return before;
     },
+    async talk(id, n, op, value = "", extra = "") {
+      const idea = ideas.get(id)?.all.get(n);
+      if (!idea) return null;
+      const before = structuredClone(idea);
+      if (op === "say") {
+        if (idea.note && !idea.thread) { idea.thread = [{ by: "maker", text: idea.note, at: idea.done ?? idea.at }]; delete idea.note; }
+        const thread = idea.thread ?? [];
+        if (thread.length >= IDEA_LIMITS.thread || thread.some((one) => (value.mid && one.mid === value.mid) || (value.via && one.via === value.via))) return null;
+        idea.thread = [...thread, value];
+        idea.last = value.at;
+        if (value.by === "sender") idea.waiting = true; else delete idea.waiting;
+      } else if (op === "settle") delete idea.waiting;
+      else if (op === "box") { if (!idea.mailbox) Object.assign(idea, { mailbox: value, subject: extra }); }
+      else if (op === "makerbox") { if (!idea.makerBox) idea.makerBox = value; }
+      else if (op === "stop" && idea.mailbox === value) delete idea.email;
+      else return null;
+      return before;
+    },
+    async openMailbox(id, n, side = "sender") { const box = randomBytes(10).toString("hex"); mailboxes.set(box, { id, n, side }); return box; },
+    async mailbox(box) { return mailboxes.get(box) ?? null; },
+    async closeMailbox(box) { mailboxes.delete(box); },
     async putImage(_id, _name, image) { return `data:${image.type};base64,${image.bytes.toString("base64")}`; },
     async removeImages() {},
     async putFile(_id, _name, bytes) { return `data:application/octet-stream;base64,${bytes.toString("base64")}`; },
@@ -494,8 +655,9 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       if (method !== "POST" && (!earlier || !secretMatches(bearer(request), earlier.secret))) return reply(404, { error: "not_found" });
       const oldImages = [earlier?.picture?.url, earlier?.icon?.url].filter(Boolean);
       if (method === "DELETE") {
+        const ideaShots = ideaPictures(await kept.ideas(id).catch(() => []));
         await kept.remove(id);
-        await kept.removeImages(blobsOf(earlier));
+        await kept.removeImages([...blobsOf(earlier), ...ideaShots]);
         await kept.forget(id);
         return reply(204);
       }
@@ -533,64 +695,184 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
 // MARK: Ideas for the maker
 
 /** What someone playing a shared wish may send its maker: their idea, and an address to hear back at if they want. */
-export const IDEA_LIMITS = { text: 1000, email: 200, kept: 500, asked: 20, keptDone: 90 * 86400_000 };
+export const IDEA_LIMITS = { text: 1000, note: 2000, thread: 60, earlier: 100, email: 200, picture: 400_000, kept: 500, asked: 20, keptDone: 90 * 86400_000 };
 // A visitor sends a handful an hour; a link takes a few hundred a day; overall, a ceiling on a flood.
 export const IDEA_QUOTAS = [
   { name: "idea-ip", perIP: true, limit: 12, seconds: 3600 },
   { name: "idea-ip-day", perIP: true, limit: 40, seconds: 86400 },
   { name: "idea-day", limit: 5000, seconds: 86400 },
 ];
+// Confirmations to a maker's address: one a minute per link, and a few an hour from one place, a ceiling overall.
+export const MAKER_QUOTAS = [
+  { name: "maker-ip", perIP: true, limit: 6, seconds: 3600 },
+  { name: "maker-day", limit: 1000, seconds: 86400 },
+];
+const MAKER_RESEND_MS = 60_000;
 const EMAIL = /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[^\s@<>()",;:]+$/;
+// An idea's mailbox outlives its last message by a little more than the idea itself does (`IDEA_LIMITS.keptDone`).
+const MAILBOX_SECONDS = 100 * 86400;
+
+/** The domain of the address the site's emails come from (`LAMP_IDEAS_FROM`), for the message ids it gives them. */
+const mailDomain = (env) => /@([^\s>]+)>?\s*$/.exec(env.LAMP_IDEAS_FROM ?? "")?.[1] ?? "lamp.dev";
+/** A new message id for something the maker says, which the email carrying it goes out with. */
+const newMessageID = (env) => `<idea.${randomBytes(12).toString("hex")}@${mailDomain(env)}>`;
 
 /**
- * Writes to someone who asked to hear back that their idea is in, through Resend (`RESEND_API_KEY`, from
- * `LAMP_IDEAS_FROM`, an address on a domain Resend has verified). False, and nothing sent, without them or when Resend
- * refuses: the idea still goes. Their address is used for this one email and goes with the idea.
+ * Writes to an idea's sender through Resend (`RESEND_API_KEY`, from `LAMP_IDEAS_FROM`, an address on a domain Resend
+ * has verified): `kind` "in" when it's in (with the maker's note, if any), "reply" for something the maker says after.
+ * The first email gives the idea a mailbox: with `LAMP_IDEAS_REPLY_DOMAIN` set, a reply to any of them goes to
+ * `idea-<mailbox>@` it, and comes back to the idea's thread (`createIdeaMailHandler`); each also has a link to stop
+ * them. Every one after the first answers the one before, so they read as one conversation. False, and nothing
+ * sent, without an address or Resend, or when Resend refuses.
  */
-export async function tellItsIn(idea, record, link, { env = process.env, fetcher = fetch, once } = {}) {
+export async function writeToSender(kept, wishID, idea, record, link, { env = process.env, fetcher = fetch, kind = "in", said, origin, once } = {}) {
   const key = env.RESEND_API_KEY, from = env.LAMP_IDEAS_FROM;
   if (!key || !from || !idea.email) return false;
-  const maker = record.by?.trim() || "Whoever made it";
-  const text = `${maker} added your idea to ${record.name}:\n\n${idea.text}\n\nPlay it: ${link}\n\n` +
-    "You asked to hear when it's in, so this is the only email about it.";
+  let subject = idea.subject || (kind === "in" ? `Your idea is in ${record.name}` : `About your idea for ${record.name}`);
+  let box = idea.mailbox;
+  if (!box) {
+    // Two first emails at once each open one, and both go with whichever the idea kept.
+    box = await kept.openMailbox(wishID, idea.n);
+    const before = await kept.talk(wishID, idea.n, "box", box, subject);
+    if (before?.mailbox) {
+      try { await kept.closeMailbox(box); } catch {}
+      box = before.mailbox;
+      subject = before.subject || subject;
+    }
+  }
+  const by = record.by?.trim();
+  const maker = by || "Whoever made it";
+  const stop = `${origin}/api/wish-ideas?id=${wishID}&n=${idea.n}&stop=${box}`;
+  const replies = env.LAMP_IDEAS_REPLY_DOMAIN ? `idea-${box}@${env.LAMP_IDEAS_REPLY_DOMAIN}` : null;
+  const note = said?.text;
+  const text = (kind === "in"
+    ? `${maker} added your idea to ${record.name}:\n\n${idea.text}\n\n` + (note ? `${by ? `${by} wrote` : "Their note"}:\n\n${note}\n\n` : "")
+    : `${by ? `${by} wrote` : "A note"} about your idea for ${record.name}:\n\n${note}\n\nYour idea: ${idea.text}\n\n`) +
+    `Play it: ${link}\n\n` + (replies ? `Reply to this email to answer ${by || "them"}.\n` : "") +
+    `No more emails about this idea: ${stop}`;
+  // The thread so far, the emails each way, for mail apps to keep them together.
+  const ids = (idea.thread ?? []).map((one) => one.mid).filter((mid) => typeof mid === "string" && /^<[^<>\s]+>$/.test(mid));
+  const headers = {
+    ...(said?.mid ? { "Message-ID": said.mid } : {}),
+    ...(ids.length ? { "In-Reply-To": ids.at(-1), References: ids.slice(-20).join(" ") } : {}),
+    "List-Unsubscribe": `<${stop}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+  };
   try {
     const response = await fetcher("https://api.resend.com/emails", {
       method: "POST", redirect: "error", signal: AbortSignal.timeout(5000),
       // Resend sends one email for a key however often it's asked within a day.
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...(once ? { "Idempotency-Key": once } : {}) },
-      body: JSON.stringify({ from, to: [idea.email], subject: `Your idea is in ${record.name}`, text }),
+      body: JSON.stringify({
+        from, to: [idea.email], subject: idea.mailbox ? `Re: ${subject}` : subject, text, headers,
+        ...(replies ? { reply_to: [replies] } : {}),
+      }),
     });
     return response.ok;
   } catch { return false; }
 }
 
-/** An idea as sent from a link's page, or null: its words, and an address to hear back at only if it looks like one. */
+/** Sends one email through Resend; false, and nothing sent, without Resend or when it refuses. */
+async function sendMail(env, fetcher, message, once) {
+  if (!env.RESEND_API_KEY || !env.LAMP_IDEAS_FROM) return false;
+  try {
+    const response = await fetcher("https://api.resend.com/emails", {
+      method: "POST", redirect: "error", signal: AbortSignal.timeout(5000),
+      headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json", ...(once ? { "Idempotency-Key": once } : {}) },
+      body: JSON.stringify({ from: env.LAMP_IDEAS_FROM, ...message }),
+    });
+    return response.ok;
+  } catch { return false; }
+}
+
+/**
+ * Writes to a link's maker at their own address (`maker`, once they've confirmed it): `kind` "idea" for a new idea,
+ * "reply" for its sender's answer. The first gives the idea a mailbox of the maker's, and a reply to any of them comes
+ * back as the maker's own word on its thread, sent on to the sender (`createIdeaMailHandler`). Each idea's emails to
+ * the maker are one conversation of their own, and each has a link to stop them for the whole link.
+ */
+export async function writeToMaker(kept, wishID, idea, record, link, { env = process.env, fetcher = fetch, kind = "idea", said, origin, maker, once } = {}) {
+  if (!env.RESEND_API_KEY || !env.LAMP_IDEAS_FROM || !maker?.confirmed || !maker.email) return false;
+  let box = idea.makerBox;
+  if (!box) {
+    box = await kept.openMailbox(wishID, idea.n, "maker");
+    const before = await kept.talk(wishID, idea.n, "makerbox", box);
+    if (before?.makerBox) {
+      try { await kept.closeMailbox(box); } catch {}
+      box = before.makerBox;
+    }
+  }
+  const replies = env.LAMP_IDEAS_REPLY_DOMAIN ? `idea-${box}@${env.LAMP_IDEAS_REPLY_DOMAIN}` : null;
+  const stop = `${origin}/api/wish-ideas?id=${wishID}&stopmaker=${maker.key}`;
+  const flat = idea.text.replace(/\s+/g, " ");
+  const subject = `Idea for ${record.name}: ${[...flat].length > 60 ? `${[...flat].slice(0, 60).join("").trimEnd()}…` : flat}`;
+  const root = `<idea-${box}@${mailDomain(env)}>`;
+  const text = (kind === "idea"
+    ? `Someone playing ${record.name} sent an idea:\n\n${idea.text}\n\n` +
+      (typeof idea.picture === "string" && idea.picture.startsWith("https://") ? `The app as they saw it: ${idea.picture}\n\n` : "") +
+      (idea.email ? "They'd like to hear back.\n\n" : "They left no address, so what you say shows on the link's page.\n\n")
+    : `They answered about their idea for ${record.name}:\n\n${said.text}\n\nTheir idea: ${idea.text}\n\n`) +
+    (replies ? "Reply to this email to answer them. It's in Lamp too.\n" : "Answer them in Lamp.\n") +
+    `Play it: ${link}\n\nNo more emails about ideas for ${record.name}: ${stop}`;
+  return sendMail(env, fetcher, {
+    to: [maker.email], subject: kind === "idea" ? subject : `Re: ${subject}`, text,
+    headers: {
+      ...(kind === "idea" ? { "Message-ID": root } : { "In-Reply-To": root, References: root }),
+      "List-Unsubscribe": `<${stop}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    },
+    ...(replies ? { reply_to: [replies] } : {}),
+  }, once);
+}
+
+/**
+ * An idea as sent from a link's page, or null: its words, an address to hear back at only if it looks like one, and
+ * the picture of the app the page took when the sender opened the box, if they kept it in (a PNG or JPEG, base64).
+ */
 export function readIdea(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
   const text = tidy(body.text, IDEA_LIMITS.text, { lines: true });
   if (!text) return null;
-  if (body.email == null || body.email === "") return { text };
+  const shot = picture(body.picture, IDEA_LIMITS.picture);
+  if (!shot) return null;
+  const idea = shot.bytes ? { text, picture: shot } : { text };
+  if (body.email == null || body.email === "") return idea;
   const email = tidy(body.email, IDEA_LIMITS.email);
-  return email && EMAIL.test(email) ? { text, email } : null;
+  return email && EMAIL.test(email) ? { ...idea, email } : null;
 }
+
+/** The pictures a link's ideas carry, to go with them. */
+const ideaPictures = (ideas) => ideas.map((one) => one.picture).filter((url) => typeof url === "string" && url.startsWith("https://"));
 
 /**
  * Ideas for a link's maker (`/api/wish-ideas?id=`). POST, from the link's page once the sender confirms it, keeps one:
- * what someone using it would change, and an address to hear when it's in, if they gave one. GET, with the link's secret, answers them for Lamp to show the maker: never the keys or the addresses, only
- * whether someone wants to hear back. DELETE ?n= with the secret lets one go: with `built=1` it's in, and the site writes
- * to whoever asked (`tellItsIn`); without, it's dismissed. Either way it's kept a while with its outcome, for the
+ * what someone using it would change, an address to hear back at, if they gave one, and the picture of the app the
+ * page took as they opened the box, if they kept it in (in the store, until the idea has its outcome). GET, with the
+ * link's secret, answers for Lamp to show the maker those still open and those whose sender has answered since
+ * (`waiting`), or with `earlier=1` those seen to, each with its picture's address and its thread: never the keys or the addresses, only whether someone
+ * wants to hear back. DELETE ?n= with the secret lets one go: with `built=1` it's in, and the site writes to whoever
+ * asked (`writeToSender`); without, it's dismissed. Its JSON body may carry the maker's `note`, the first of the idea's
+ * thread. PATCH ?n= with the secret and a `note` says something more, written to the sender if they gave an address;
+ * without one it only says the maker has seen to their answer. Every idea is kept a while past its last word, for the
  * sender's own browser, which kept the number and a token the POST answered, to ask after it on a later visit (GET
- * `?id=&mine=<n>.<token>,…`, answering only those). Never logged, never on the page for anyone else, gone with the link.
+ * `?id=&mine=<n>.<token>,…`, answering only those, with the maker's last word), and for the sender's replies by email.
+ * A link in each email (`?stop=<mailbox>`, GET or a mail app's one-click POST) lets the address go. Never logged,
+ * never on the page for anyone else, gone with the link.
  */
 export function createIdeasHandler({ env = process.env, fetcher = fetch, store, limited = true, now = () => new Date() } = {}) {
   return async (request) => {
     const method = request.method;
-    if (!["GET", "POST", "DELETE"].includes(method)) return reply(405, { error: "method_not_allowed" }, { Allow: "GET, POST, DELETE" });
+    if (!["GET", "POST", "PUT", "PATCH", "DELETE"].includes(method)) return reply(405, { error: "method_not_allowed" }, { Allow: "GET, POST, PUT, PATCH, DELETE" });
     const url = new URL(request.url);
-    const origin = request.headers.get("origin");
-    if (origin && origin !== url.origin) return reply(403, { error: "origin_not_allowed" });
     const id = url.searchParams.get("id");
     if (!isID(id)) return reply(404, { error: "not_found" });
+    const stop = url.searchParams.get("stop");
+    if (stop != null && (method === "GET" || method === "POST")) return stopEmails(id, Number(url.searchParams.get("n")), stop);
+    // The links in the maker's own emails: confirming their address, and stopping them.
+    for (const step of ["confirm", "stopmaker"]) {
+      const given = url.searchParams.get(step);
+      if (given != null && (method === "GET" || method === "POST")) return makerLink(id, step, given);
+    }
+    const origin = request.headers.get("origin");
+    if (origin && origin !== url.origin) return reply(403, { error: "origin_not_allowed" });
 
     let idea = null;
     if (method === "POST") {
@@ -599,16 +881,38 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
       catch (error) { return reply(error instanceof RangeError ? 413 : 400, { error: "invalid_idea" }); }
       if (!idea) return reply(400, { error: "invalid_idea" });
     }
-    const n = method === "DELETE" ? Number(url.searchParams.get("n")) : null;
+    // The maker's own address for the link's ideas (PUT ?maker=1 with the secret): checked here, kept once the secret is.
+    let makerEmail;
+    if (method === "PUT") {
+      if (url.searchParams.get("maker") !== "1") return reply(405, { error: "method_not_allowed" });
+      let given;
+      try { given = JSON.parse((await readBody(request)) || "{}")?.email; }
+      catch (error) { return reply(error instanceof RangeError ? 413 : 400, { error: "invalid_email" }); }
+      makerEmail = given == null || given === "" ? "" : tidy(given, IDEA_LIMITS.email);
+      if (makerEmail === null || (makerEmail && !EMAIL.test(makerEmail))) return reply(400, { error: "invalid_email" });
+    }
+    const n = method === "DELETE" || method === "PATCH" ? Number(url.searchParams.get("n")) : null;
     if (n !== null && (!Number.isInteger(n) || n < 1)) return reply(400, { error: "invalid_idea" });
+    // The maker's note to the sender, if they wrote one: a body with nothing in it, or none, is no note.
+    let note = null;
+    if (n !== null && /^application\/json/i.test(request.headers.get("content-type") || "")) {
+      let given;
+      try { given = JSON.parse((await readBody(request)) || "{}")?.note; }
+      catch (error) { return reply(error instanceof RangeError ? 413 : 400, { error: "invalid_idea" }); }
+      if (given != null && given !== "") {
+        note = tidy(given, IDEA_LIMITS.note, { lines: true });
+        if (!note) return reply(400, { error: "invalid_idea" });
+      }
+    }
 
     let kept;
     try { kept = store ?? cloudStore(env, fetcher); } catch { return reply(503, { error: "service_unavailable" }); }
-    if (limited && method === "POST") {
+    // A new idea, or a confirmation to a maker's address: each an email or more, so each is counted.
+    if (limited && (method === "POST" || (method === "PUT" && makerEmail))) {
       const ip = (request.headers.get("x-vercel-forwarded-for") || request.headers.get("x-forwarded-for") || "").trim();
       if (!isIP(ip) || !kept.limiter) return reply(503, { error: "service_unavailable" });
       let retry;
-      try { retry = await reserve(kept.limiter, ip, IDEA_QUOTAS, fetcher); }
+      try { retry = await reserve(kept.limiter, ip, method === "POST" ? IDEA_QUOTAS : MAKER_QUOTAS, fetcher); }
       catch { return reply(503, { error: "service_unavailable" }); }
       if (retry > 0) return reply(429, { error: "rate_limited" }, { "Retry-After": String(retry) });
     }
@@ -618,34 +922,238 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
       if (!record) return reply(404, { error: "not_found" });
       if (method === "POST") {
         const token = randomBytes(12).toString("base64url");
-        const number = await kept.addIdea(id, { ...idea, token, at: now().toISOString() });
-        return number ? reply(201, { n: number, token }) : reply(429, { error: "full" });
+        // The picture goes to the store first, at an address with a random part, and goes again if the idea can't.
+        const { picture: shot, ...words } = idea;
+        const at = shot ? await kept.putImage(id, "idea", shot) : null;
+        let number = null;
+        const added = { ...words, ...(at ? { picture: at } : {}), token, at: now().toISOString() };
+        try { number = await kept.addIdea(id, added); }
+        finally { if (!number && at) { try { await kept.removeImages([at]); } catch {} } }
+        if (!number) return reply(429, { error: "full" });
+        // To the maker's own address too, if they gave one: the idea is kept whether or not that goes.
+        try {
+          const maker = await kept.maker(id);
+          if (maker?.confirmed) await writeToMaker(kept, id, { ...added, n: number }, record, linkFor(url.origin, id, record.name), { env, fetcher, origin: url.origin, maker, once: `maker-${id}-${number}` });
+        } catch {}
+        return reply(201, { n: number, token });
       }
-      // The sender's own ideas, asked by number and token from their browser: what became of each, nothing else.
+      // The sender's own ideas, asked by number and token from their browser: what became of each, and the maker's
+      // last word to them, nothing else.
       const mine = method === "GET" ? url.searchParams.get("mine") : null;
       if (mine != null) {
         const asked = new Map(mine.split(",").slice(0, IDEA_LIMITS.asked).map((one) => one.split("."))
           .filter(([n, token]) => /^\d{1,6}$/.test(n ?? "") && /^[A-Za-z0-9_-]{16}$/.test(token ?? "")).map(([n, token]) => [Number(n), token]));
         const all = await kept.ideas(id);
-        return reply(200, { ideas: all.filter((one) => one.token && asked.get(one.n) === one.token)
-          .map((one) => ({ n: one.n, status: one.status ?? "open", ...(one.done ? { done: one.done } : {}) })) });
+        return reply(200, { ideas: all.filter((one) => one.token && asked.get(one.n) === one.token).map((one) => {
+          // A note given before ideas had threads was kept on its own.
+          const last = (one.thread ?? []).filter((said) => said.by === "maker").at(-1)?.text ?? one.note;
+          return { n: one.n, status: one.status ?? "open", ...(one.done ? { done: one.done } : {}), ...(last ? { note: last } : {}) };
+        }) });
       }
       if (!secretMatches(bearer(request), record.secret)) return reply(404, { error: "not_found" });
-      // The maker sees the ideas still open, and whether someone wants to hear back, never their address: the site
-      // writes to them. Those with an outcome are kept a while for their senders, then go.
+      if (url.searchParams.get("maker") === "1" && (method === "GET" || method === "PUT")) return setMaker(kept, record, id, url.origin, method === "PUT" ? makerEmail : undefined);
+      // The maker sees the ideas still open, and those answered since, and whether someone wants to hear back, never
+      // their address: the site writes to them. Those settled are kept a while past their last word, then go.
       if (method === "GET") {
         const all = await kept.ideas(id);
-        const old = all.filter((one) => one.done && now() - new Date(one.done) > IDEA_LIMITS.keptDone);
-        for (const one of old) await kept.removeIdea(id, one.n);
-        return reply(200, { ideas: all.filter((one) => !one.status).map(({ email, token: _token, ...shown }) => ({ ...shown, ...(email ? { wantsNews: true } : {}) })) });
+        const old = all.filter((one) => one.done && now() - new Date(one.last ?? one.done) > IDEA_LIMITS.keptDone);
+        for (const one of old) {
+          await kept.removeIdea(id, one.n);
+          for (const box of [one.mailbox, one.makerBox]) if (box) { try { await kept.closeMailbox(box); } catch {} }
+        }
+        try { await kept.removeImages(ideaPictures(old)); } catch {}
+        // `earlier=1`: those seen to, the latest word first, for the maker to look back on or answer again.
+        if (url.searchParams.get("earlier") === "1") {
+          const settled = all.filter((one) => one.status && !one.waiting && !old.includes(one))
+            .sort((a, b) => String(b.last ?? b.done).localeCompare(String(a.last ?? a.done)));
+          return reply(200, { ideas: settled.slice(0, IDEA_LIMITS.earlier).map(shownToMaker) });
+        }
+        return reply(200, { ideas: all.filter((one) => !one.status || one.waiting).map(shownToMaker) });
+      }
+      const link = linkFor(url.origin, id, record.name);
+      const write = (to, kind, said, once) => writeToSender(kept, id, to, record, link, { env, fetcher, kind, said, origin: url.origin, once });
+      const said = note ? { by: "maker", text: note, at: now().toISOString(), mid: newMessageID(env) } : null;
+      if (method === "PATCH") {
+        if (!said) return (await kept.talk(id, n, "settle")) ? reply(200, { notified: false }) : reply(404, { error: "not_found" });
+        const was = await kept.talk(id, n, "say", said);
+        if (!was) return (await kept.ideas(id)).some((one) => one.n === n) ? reply(429, { error: "full" }) : reply(404, { error: "not_found" });
+        return reply(200, { notified: await write(was, "reply", said, `idea-${id}-${n}-${said.mid}`) });
       }
       // An outcome, given once: only the call that gave it writes to the sender, so two at once, or one tried again,
       // send one email.
       const built = url.searchParams.get("built") === "1";
-      const was = await kept.finishIdea(id, n, built ? "in" : "dismissed", now().toISOString());
-      const notified = built && was?.email ? await tellItsIn(was, record, linkFor(url.origin, id, record.name), { env, fetcher, once: `idea-${id}-${n}` }) : false;
+      // Its picture was for the maker, who has seen to it: it goes first, so a store that turns that away leaves the
+      // idea open, with its picture, to be let go again, rather than the picture left with nothing pointing to it.
+      const open = (await kept.ideas(id)).find((one) => one.n === n && !one.status);
+      if (open) await kept.removeImages(ideaPictures([open]));
+      const was = await kept.finishIdea(id, n, built ? "in" : "dismissed", now().toISOString(), said);
+      const notified = built && was?.email ? await write(was, "in", said, `idea-${id}-${n}`) : false;
       return reply(200, { notified });
     } catch { return reply(503, { error: "service_unavailable" }); }
+  };
+
+  /**
+   * The maker's own address: as it is (`email` undefined), or given (asked to confirm it first, by an email with a
+   * link in it, unless it's the one they confirmed already) or taken away (""). Never anyone else's to see.
+   */
+  async function setMaker(kept, record, id, origin, email) {
+    let maker = await kept.maker(id);
+    let sent = false;
+    if (email === "") { await kept.setMaker(id, null); maker = null; }
+    else if (email !== undefined && !(maker?.confirmed && maker.email.toLowerCase() === email.toLowerCase())) {
+      // Send Again, or another address, at most once a minute for a link.
+      const since = now() - new Date(maker?.asked ?? 0);
+      if (since < MAKER_RESEND_MS) return reply(429, { error: "rate_limited" }, { "Retry-After": String(Math.ceil((MAKER_RESEND_MS - since) / 1000)) });
+      maker = { email, confirmed: false, key: randomBytes(10).toString("hex"), asked: now().toISOString() };
+      await kept.setMaker(id, maker);
+      sent = await sendMail(env, fetcher, {
+        to: [email], subject: `Get ideas for ${record.name} by email`,
+        text: `To get the ideas people send for ${record.name}, and their replies, at this address, confirm it here:\n\n` +
+          `${origin}/api/wish-ideas?id=${id}&confirm=${maker.key}\n\nIf you didn't ask for this, you can ignore this email.`,
+      });
+    }
+    return reply(200, { email: maker?.email ?? null, confirmed: maker?.confirmed === true, ...(email && !maker?.confirmed ? { sent } : {}) });
+  }
+
+  /** A link from the maker's emails: their address confirmed, or let go, if the key is theirs. */
+  async function makerLink(id, step, key) {
+    if (!/^[0-9a-f]{20}$/.test(key)) return reply(404, { error: "not_found" });
+    try {
+      const kept = store ?? cloudStore(env, fetcher);
+      await kept.makerStep(id, key, step === "confirm" ? "confirm" : "stop");
+    } catch { return reply(503, { error: "service_unavailable" }); }
+    const words = step === "confirm" ? "Ideas for this link, and replies to them, will come to your email." : "You won't get any more emails about this link's ideas.";
+    return new Response(`${words}\n`, { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
+  }
+
+  /** A link from one of the emails: the idea's address goes, if the mailbox is the idea's own. */
+  async function stopEmails(id, n, box) {
+    if (!Number.isInteger(n) || n < 1 || !/^[0-9a-f]{20}$/.test(box)) return reply(404, { error: "not_found" });
+    try {
+      const kept = store ?? cloudStore(env, fetcher);
+      await kept.talk(id, n, "stop", box);
+    } catch { return reply(503, { error: "service_unavailable" }); }
+    // The same words whether or not it was theirs, so the link says nothing about an idea to anyone else.
+    return new Response("You won't get any more emails about this idea.\n", { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
+  }
+}
+
+/**
+ * An idea as its maker sees it: never its sender's address, its token or its mailbox, only whether they want to hear.
+ * A note given before ideas had threads is shown as the start of one.
+ */
+const shownToMaker = ({ email, token: _token, mailbox: _mailbox, makerBox: _makerBox, subject: _subject, note, ...given }) => {
+  const shown = note && !given.thread ? { ...given, thread: [{ by: "maker", text: note, at: given.done ?? given.at }] } : given;
+  return {
+  ...shown,
+  ...(shown.thread ? { thread: shown.thread.map(({ by, text, at }) => ({ by, text, at })) } : {}),
+  ...(email ? { wantsNews: true } : {}),
+  };
+};
+
+/** The address in a From line, in lower case: `Someone <a@b.c>` or `a@b.c`. */
+const addressIn = (from) => (/<([^<>\s]+@[^<>\s]+)>/.exec(from ?? "")?.[1] ?? String(from ?? "").trim()).toLowerCase();
+
+/**
+ * A reply's own words: what's above the earlier email it quotes (a line "On … wrote:", a "-----Original Message-----"
+ * or a "From:" line after a blank one), without lines quoted with ">", tidied and cut to `IDEA_LIMITS.note`.
+ */
+export function replyWords(text) {
+  const lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const kept = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const two = `${line} ${lines[i + 1] ?? ""}`;
+    if (/^\s*-{2,}\s*Original Message\s*-{2,}/i.test(line) || /^\s*_{10,}\s*$/.test(line)) break;
+    if (/^\s*On\b.{0,300}\bwrote:\s*$/i.test(line) || (/^\s*On\b/i.test(line) && /^\s*On\b.{0,300}\bwrote:\s*$/i.test(two))) break;
+    if (/^\s*From:\s/i.test(line) && kept.length && kept.at(-1).trim() === "") break;
+    if (/^\s*>/.test(line)) continue;
+    kept.push(line);
+  }
+  const words = kept.join("\n").trim();
+  return tidy([...words].slice(0, IDEA_LIMITS.note).join(""), IDEA_LIMITS.note, { lines: true });
+}
+
+/**
+ * Whether a webhook from Resend is its own (`RESEND_WEBHOOK_SECRET`, `whsec_` and base64): Svix's signature, an
+ * HMAC-SHA256 of `<id>.<timestamp>.<body>`, sent no more than five minutes ago.
+ */
+export function signedByResend(headers, body, secret, now = Date.now()) {
+  const id = headers.get("svix-id"), at = headers.get("svix-timestamp"), signatures = headers.get("svix-signature");
+  if (!secret || !id || !at || !signatures || !/^\d+$/.test(at) || Math.abs(now / 1000 - Number(at)) > 300) return false;
+  const key = Buffer.from(secret.replace(/^whsec_/, ""), "base64");
+  const expected = createHmac("sha256", key).update(`${id}.${at}.${body}`).digest();
+  return signatures.split(" ").some((one) => {
+    const [version, signature] = one.split(",");
+    if (version !== "v1" || !signature) return false;
+    const given = Buffer.from(signature, "base64");
+    return given.length === expected.length && timingSafeEqual(given, expected);
+  });
+}
+
+/**
+ * Replies to an idea's emails (`/api/idea-mail`, Resend's `email.received` webhook, for mail to
+ * `LAMP_IDEAS_REPLY_DOMAIN`). Each to `idea-<mailbox>@` it goes on that idea's thread, its own words only: from the
+ * sender's mailbox, only from the address the idea was sent with, leaving it waiting on the maker and sent on to the
+ * maker's own address if they gave one; from the maker's, only from their confirmed address, as their word, sent on to
+ * the sender. Anything else is let go. Answers 200 to
+ * whatever Resend signed, so it isn't sent again, and 401 to anything else.
+ */
+export function createIdeaMailHandler({ env = process.env, fetcher = fetch, store, now = () => new Date() } = {}) {
+  return async (request) => {
+    if (request.method !== "POST") return reply(405, { error: "method_not_allowed" }, { Allow: "POST" });
+    let body;
+    try { body = await readBody(request); } catch { return reply(413, { error: "too_large" }); }
+    if (!signedByResend(request.headers, body, env.RESEND_WEBHOOK_SECRET, now().getTime())) return reply(401, { error: "unsigned" });
+    let event;
+    try { event = JSON.parse(body); } catch { return reply(200, {}); }
+    const mail = event?.data;
+    const domain = (env.LAMP_IDEAS_REPLY_DOMAIN ?? "").toLowerCase();
+    if (event?.type !== "email.received" || !domain || typeof mail?.email_id !== "string") return reply(200, {});
+    const boxes = [...new Set([...(mail.to ?? []), ...(mail.received_for ?? [])].map(addressIn)
+      .map((to) => new RegExp(`^idea-([0-9a-f]{20})@${domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`).exec(to)?.[1]).filter(Boolean))];
+    if (!boxes.length) return reply(200, {});
+    const origin = new URL(request.url).origin;
+    try {
+      const kept = store ?? cloudStore(env, fetcher);
+      for (const box of boxes.slice(0, 3)) {
+        const found = await kept.mailbox(box);
+        if (!found) continue;
+        const idea = (await kept.ideas(found.id)).find((one) => one.n === found.n);
+        if (!idea) continue;
+        const maker = await kept.maker(found.id);
+        // Only from the address the idea's emails went to on that side, and only while it's kept.
+        const from = addressIn(mail.from);
+        const fromMaker = found.side === "maker";
+        if (fromMaker ? !(maker?.confirmed && idea.makerBox === box && from === maker.email.toLowerCase())
+          : !(idea.email && idea.mailbox === box && from === idea.email.toLowerCase())) continue;
+        const response = await fetcher(`https://api.resend.com/emails/receiving/${encodeURIComponent(mail.email_id)}`, {
+          redirect: "error", signal: AbortSignal.timeout(5000), headers: { Authorization: `Bearer ${env.RESEND_API_KEY}` },
+        });
+        if (!response.ok) return reply(503, { error: "service_unavailable" });
+        const got = await response.json();
+        const words = replyWords(got.text ?? String(got.html ?? "").replace(/<br\s*\/?>|<\/p>|<\/div>/gi, "\n").replace(/<[^>]*>/g, "")
+          .replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&"));
+        if (!words) continue;
+        const mid = typeof mail.message_id === "string" && /^<[^<>\s]+>$/.test(mail.message_id) ? mail.message_id : undefined;
+        const record = await kept.get(found.id);
+        if (!record) continue;
+        const link = linkFor(origin, found.id, record.name);
+        // The email as Resend received it, which a webhook sent again names the same, keeps it from going on twice.
+        const via = `resend:${mail.email_id}`;
+        if (fromMaker) {
+          // The maker's own word, as if said in Lamp: on the thread, and on to the sender, with a message id of its own.
+          const said = { by: "maker", text: words, at: now().toISOString(), mid: newMessageID(env), via };
+          const was = await kept.talk(found.id, found.n, "say", said);
+          if (was?.email) await writeToSender(kept, found.id, was, record, link, { env, fetcher, kind: "reply", said, origin, once: `idea-${found.id}-${found.n}-${said.mid}` });
+        } else {
+          const said = { by: "sender", text: words, at: now().toISOString(), via, ...(mid ? { mid } : {}) };
+          const was = await kept.talk(found.id, found.n, "say", said);
+          if (was && maker?.confirmed) await writeToMaker(kept, found.id, was, record, link, { env, fetcher, kind: "reply", said, origin, maker, once: `maker-${found.id}-${found.n}-${mail.email_id}` });
+        }
+      }
+    } catch { return reply(503, { error: "service_unavailable" }); }
+    return reply(200, {});
   };
 }
 
@@ -662,8 +1170,9 @@ export async function takeDown(id, { env = process.env, fetcher = fetch } = {}) 
   const kept = cloudStore(env, fetcher);
   const record = await kept.get(id);
   if (!record) return false;
+  const ideaShots = ideaPictures(await kept.ideas(id).catch(() => []));
   await kept.remove(id);
-  await kept.removeImages(blobsOf(record));
+  await kept.removeImages([...blobsOf(record), ...ideaShots]);
   await kept.forget(id);
   return true;
 }
@@ -752,16 +1261,40 @@ export function playOrigin(base, id) {
  */
 /**
  * A page's file this big or bigger is played straight from the store instead of through the play host: the CDN keeps
- * nothing over 20 MB from a function, so every visit would pass it through again. Only for a page kept with each
+ * nothing over 10 MB from a function, so every visit would pass it through again. Only for a page kept with each
  * file's own type (`page.sizes`), since a browser won't run a script the store calls anything else. Never a page's
  * HTML, which the store hands out as a download.
  */
-export const DIRECT_FILE = 16_000_000;
+export const DIRECT_FILE = 9_000_000;
+/**
+ * A file of data a game reads with fetch (map tiles, models, sound, JSON) is played straight from the store, whatever
+ * its size: the store's CDN serves it to any page (CORS for all), keeps it whatever the site deploys, and the play host
+ * reads nothing for it. A game may have hundreds of small ones (a map's tiles), all asked for again after each deploy.
+ * From 1 byte, so only for a page kept with each file's size and type (`page.sizes`). The play host reading a game's hundreds of files from the store in bursts is what the store
+ * turned away (403) until the game didn't load. Not a script or a style sheet, whose own imports would then resolve
+ * at the store, nor a picture, which a game may draw from without asking for it cross-origin. Only when the page
+ * fetched it (`Sec-Fetch-Mode: cors`): a video or sound an element of the page loads (no-cors), drawn into WebGL or
+ * played through Web Audio, works only from the page's own origin.
+ */
+export const DIRECT_DATA = 1;
+const DATA_FILE = /\.(bin|gz|br|zst|json|geojson|csv|txt|glb|gltf|ktx2|basis|drc|wasm|mp3|ogg|m4a|wav|aac|flac|opus|mp4|webm|mov)$/i;
 
 /** How long a link's record is remembered for serving its page's files, and how many links at once. */
 export const PLAY_MEMORY = { ms: 60_000, links: 200 };
 
-export function createPlayHandler({ env = process.env, fetcher = fetch, store, anyHost = false, direct = DIRECT_FILE, now = () => Date.now() } = {}) {
+/**
+ * What a page played on its link is given at the top of its HTML: when the link's page asks for a picture of the app
+ * (as someone opens the box to send its maker an idea), the app's biggest canvas, drawn after the app has drawn its
+ * next frame (a 3D scene's picture is gone once the frame is shown), scaled to at most 1280 wide, as a JPEG small enough to go with an idea. Only the
+ * site's own page may ask, and only it is answered. Nothing for an app without a canvas, or one that can't be read.
+ */
+export function pictureScript(site) {
+  // The most a picture may be as a data: URL to go with an idea (`IDEA_LIMITS.picture` bytes, as base64).
+  const limit = 23 + Math.floor(IDEA_LIMITS.picture / 3) * 4;
+  return `<script>(()=>{const site=${JSON.stringify(site)};addEventListener("message",e=>{if(e.origin!==site||e.source!==parent||!e.data||e.data.lamp!=="picture")return;const n=e.data.n;requestAnimationFrame(()=>{let picture=null;try{const all=[...document.querySelectorAll("canvas")].filter(c=>c.width&&c.height&&c.getClientRects().length);const c=all.sort((a,b)=>b.clientWidth*b.clientHeight-a.clientWidth*a.clientHeight)[0];if(c){const k=Math.min(1,1280/c.width),o=document.createElement("canvas");o.width=Math.round(c.width*k);o.height=Math.round(c.height*k);o.getContext("2d").drawImage(c,0,0,o.width,o.height);for(const q of [0.8,0.6,0.4]){picture=o.toDataURL("image/jpeg",q);if(picture.length<=${limit})break;picture=null}}}catch(_){}parent.postMessage({lamp:"picture",n,picture},site)})})})()</script>`;
+}
+
+export function createPlayHandler({ env = process.env, fetcher = fetch, store, anyHost = false, direct = DIRECT_FILE, directData = DIRECT_DATA, now = () => Date.now() } = {}) {
   // A link's record, remembered a minute per instance: a game asks for hundreds of files as it's played, and reading
   // the store for each used up its allowance of requests in a day, which took every link down. A version the memory
   // doesn't have (a release since) is read afresh; a link taken down plays on here for that minute at most.
@@ -821,18 +1354,23 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
     // Not for a worker's own script, which a browser only takes from the page's own origin, nor from a store a browser
     // can't reach (the dev server's memory). Kept apart by what asked (`Vary`), so a worker never gets the redirect.
     const worker = /worker$/i.test(request.headers.get("sec-fetch-dest") ?? "");
-    if (!rebased && !worker && at.startsWith("https://") && !/\.html?$/i.test(name) && (served.sizes?.[name] ?? 0) >= direct) {
-      return new Response(null, { status: 302, headers: { Location: at, Vary: "Sec-Fetch-Dest", "Cache-Control": "public, max-age=300, s-maxage=31536000", ...cacheTags(id) } });
+    const size = served.sizes?.[name] ?? 0;
+    if (!rebased && !worker && at.startsWith("https://") && !/\.html?$/i.test(name) && (size >= direct || (DATA_FILE.test(name) && size >= directData && request.headers.get("sec-fetch-mode") === "cors"))) {
+      return new Response(null, { status: 302, headers: { Location: at, Vary: "Sec-Fetch-Dest, Sec-Fetch-Mode", "Cache-Control": "public, max-age=300, s-maxage=31536000", ...cacheTags(id) } });
     }
-    // Passed on as it comes from the store; only a folder's index.html given its base is read whole, to change it.
+    // Passed on as it comes from the store; only a page's HTML is read whole, to be given what the link's page asks of
+    // it (`pictureScript`), and a folder's index.html its base.
     const kept = store ?? cloudStore(env, fetcher);
+    const site = env.LAMP_SITE_ORIGIN || (anyHost ? url.origin : "https://lamp.dev");
     let bytes, length;
     try {
-      if (rebased) {
-        const base = `<base href="/w/${id}/play/${version}/${folder.split("/").map(encodeURIComponent).join("/")}/">`;
+      if (/\.html?$/i.test(name) && request.method !== "HEAD") {
+        const base = rebased ? `<base href="/w/${id}/play/${version}/${folder.split("/").map(encodeURIComponent).join("/")}/">` : "";
+        const added = base + pictureScript(site);
         const html = (await kept.readFile(at)).toString("utf8");
-        const head = html.search(/<head[^>]*>/i);
-        bytes = Buffer.from(head < 0 ? base + html : html.replace(/<head[^>]*>/i, (tag) => tag + base));
+        // In its head, or after its doctype where it has no head of its own: before a doctype, a page is drawn in quirks mode.
+        const head = /<head[^>]*>/i.exec(html) ?? /^(?:\s|<!--[\s\S]*?-->)*<!doctype[^>]*>/i.exec(html);
+        bytes = Buffer.from(head ? html.slice(0, head.index + head[0].length) + added + html.slice(head.index + head[0].length) : added + html);
       } else if (request.method !== "HEAD") {
         ({ body: bytes, length } = await kept.openFile(at));
       }
@@ -840,7 +1378,6 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
       console.error("wish play: a file couldn't be read:", error?.name, error?.message);
       return new Response(null, { status: 503 });
     }
-    const site = env.LAMP_SITE_ORIGIN || (anyHost ? url.origin : "https://lamp.dev");
     return new Response(request.method === "HEAD" ? null : bytes, {
       headers: {
         "Content-Type": pageType(name), "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",

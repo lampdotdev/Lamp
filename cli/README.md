@@ -19,7 +19,7 @@ Mac app, `projectOf`), or any folder with an `index.html`; without one, the fold
 | `lamp init [--update]` | Puts Lamp's game runtime beside a page that's already there, changing none of the page's own files. |
 | `lamp unpack <file.lampapp> [folder]` | Unpacks a Lamp app file into a new folder beside it, named for it. A file carries none of Lamp's own files: a page gets them beside it as it's unpacked (the runtime for a game, lamp.js, the libraries its import map names), and a Mac app gets Package.swift, build.sh and LampSupport.swift from Lamp's starting files as it's first built (`writeMacStarter`), where it has none. One with a widget, a share extension or a 3D scene is left to Lamp's app, which writes the files they're built with. |
 | `lamp export [--to file] [--anyway]` | Makes the app's Lamp app file as Lamp's Share… does (`Sharing.export`, followed by `cli/lampapp.mjs`): its own files as its kind travels, Assets/, APP.md, what it declares, its credits with the app added to the chain, the licenses they name, its icon's design and lamp-app.json, never Lamp's own files. Refused when a license its credits name is gone or something in it is shaped like a key; `--anyway` sends work its credits give no license for. |
-| `lamp dev [--open] [--lan] [--port N]` | Runs the page and says how each change went. Each save goes into every open copy of it. `--open` opens a window for it; `--lan` lets other devices on the network open it. |
+| `lamp dev [--open] [--lan] [--port N]` | Runs the page and says how each change went. Each save goes into every open copy of it, with the card Lamp's app puts on an app taking a change (`page.js`, left out of lamp's pictures; `lamp changing "<words>"` says on it what's changing). `--open` opens a window for it; `--lan` lets other devices on the network open it. |
 | `lamp open` | Shows the page in a window, running it in the background if it isn't running, and returns at once. |
 | `lamp open --in-lamp` | Gives a Mac app to Lamp's app (`cli/outside.mjs`), over the socket the person's own coding agent uses (`OutsideServer`, `OutsideWork`): `open_project` takes the folder on, with Lamp's review the first time, and from then on `look`, `reload` and `dev` call `apply_change`, so a change goes into the open app as Lamp's app puts it there (`LiveReload`) and its outcome is said: live, held, reopened, not_built, crashed. `use` calls `use_app`, in plain sight in the app Lamp's app has open, and `stop` calls `close_app`. A folder Lamp's app no longer has (its refusal says `taken_on: false`) is lamp's own again, said once. `lamp open --here` has lamp run its own copy again. `LAMP_APP` names another Lamp by its bundle id (a Lamp Dev instance). A Mac app `lamp new --mac` makes has the `lamp-app.json` Lamp's app takes a folder on by. |
 | `lamp look [--reopen] [--wait s] [--json]` | How the changes since the last look went, a picture of the page, its screen as text, new errors and the log. `--reopen` opens the page again from its beginning first. |
@@ -27,13 +27,14 @@ Mac app, `projectOf`), or any folder with an `index.html`; without one, the fold
 | `lamp reload [--fresh]` | Opens the page again from its files, a game from where the player is, or with `--fresh` from its beginning (`window.lampFreshStart`). |
 | `lamp stop` | Stops running it. |
 | `lamp share --words "…"` | Puts the page on lamp.dev: anyone with the link plays it there and can send an idea. Again, it sends the page as it is now to the same link. |
-| `lamp ideas [in <n> \| dismiss <n>]` | The ideas people playing the link have sent, and saying what became of one. |
+| `lamp share` (an app of Lamp's) | For a folder in Lamp's own (or a link to one), shared by Lamp's app over its socket (`share_link`, `OutsideWork`): its Share Link card filled as it fills itself (`WishLinkCards.prepare`: the link's last words, the questions and what's new Lamp writes, the app's file, the GitHub release) and shared without its window, with `--line`, `--by`, `--asks`, `--notes`, `--no-file`, `--no-github`, `--put-on-github` in place of the card's own, and `--preview` to see it first. The link's secret stays in Lamp. Which Lamp is the one whose folder it is (`lampOwning`), or the one it was given to (`lamp open --in-lamp`, `givenTo`); any other folder is lamp's to share, whatever Lamp is running, and so is a given folder when its Lamp is too old to share for lamp. |
+| `lamp ideas [in <n> \| dismiss <n> \| reply <n> \| done <n> \| email <address\|off>] [note]` | The ideas people playing the link have sent and what's been said since, saying what became of one, and answering whoever sent it. |
 | `lamp unshare` | Takes the link down. |
 | `lamp play <code>`, `lamp play --rejoin <room>` | Pairs with a shared game's page on lamp.dev (`/change?w=<id>`) by the code it shows, so the page can ask the person's own Claude Code to change a copy of the game on this computer; each change that works goes back into the page as a new version (`cli/play.mjs`; `site/RELAY.md` says how it's confined and what lamp.dev keeps). Static games only. `--rejoin` takes up a room this computer paired with before. `LAMP_RELAY` names another site (a dev server). |
 | `lamp devices [add \| forget <name>]` | The person's devices lamp puts a page on: an Xbox in Developer Mode (those set up and those found on the network), and Android (lamp's emulators, and the phones, tablets and TVs plugged in with USB debugging on). `add` sets one up, a step at a time; `add android` downloads Android's tools. |
 | `lamp open --on xbox` | Packages the page, installs it on the device and opens it there. `lamp look --on xbox` is the device's screen and the app's log there, `lamp stop --on xbox` ends it, and `lamp remove --on xbox` takes it off. |
 | `lamp open --on android [--hidden]` | Builds Lamp's Android app around the page and opens it in lamp's Android emulator (`--on android-tv`: its TV emulator; a device of the person's by its name), with `look`, `stop` and `remove` as on any device, and `lamp use --on android` to tap, type and press there. `--hidden` starts the emulator with no window. |
-| `lamp setup [--remove]` | Teaches Claude Code and Codex on this computer to work this way: a skill for each. |
+| `lamp setup [--remove]` | Teaches Claude Code and Codex on this computer to work this way: a skill for each. Says so when the computer has no browser lamp can drive, which web apps and games are looked at and played in; it's advice, never a failure. |
 | `lamp guide` | What that skill says, for any other agent. |
 | `lamp blocks [Name]` | Lamp's building blocks for a Mac app, each with what it's for, or one in full: read from the app's own `Sources/LampSupport.swift`, whose comments say how each is used. |
 | `lamp skills [word]`, `lamp skill <name>` | Lamp's skills (`Resources/skills`), the one place that says which building blocks to use and how: all of them or those about a word, and one in full, put together from its sections as Lamp's app does (`cli/skills.mjs` follows `Skills.assembled`). |
@@ -73,7 +74,8 @@ names its launcher, so the agent always runs the lamp of the Lamp that's install
 
 ## How a change goes in
 
-Files are watched; a save is handed to every open page a moment later.
+Files are watched; a save is handed to every open page a moment later. `APP.md` at the page's top is the app's
+notes, never part of the page, so saving it hands nothing over; any other Markdown may be content the page loads, and is a change.
 
 - **A game made with Lamp's runtime** (`lamp-game.js` beside the page) takes it the way it does inside Lamp. The
   runtime is handed the change exactly as Lamp's app around the page hands it over (`window.__lampLive`), so nothing
@@ -126,7 +128,10 @@ What it looks at:
 1. **The window `lamp open` or `lamp dev --open` opened**, when there is one: what the person sees, where they are in it.
 2. **A copy of the page with no window**, which lamp starts for itself otherwise and closes ten minutes after it was
    last looked at. It starts where the page starts.
-3. With no browser lamp can drive on the computer, **a page open in any browser** says what's on it, without a picture.
+3. With no browser lamp can drive on the computer, **a page open in any browser** says what's on it, without a picture,
+   and `lamp use` can't act in it. A look with no page open yet waits for one, as long as it's given to wait. `open`,
+   `look`, `use` and `setup` each say that Chrome, Edge, Brave or Chromium is what's missing (`noBrowser` in
+   `cli/browser.mjs`).
 
 The window and the copy are a Chromium-family browser already on the computer (Chrome, Edge, Brave, Chromium;
 `LAMP_BROWSER` names another), started with files of its own, never the person's own browser profile, and spoken to

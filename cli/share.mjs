@@ -9,10 +9,10 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { deflateRawSync } from "node:zlib";
-import { Problem, stateOf } from "./state.mjs";
+import { NOTES_FILE, Problem, stateOf } from "./state.mjs";
 import { ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS, LIBRARIES } from "./dev.mjs";
 import { LIMITS, FILE_LIMITS, PAGE_LIMITS } from "../site/lib/shared-wishes.js";
-import { ideasOf, publishLink, removeFile, removeIdea, removeLink, sendFile, siteOrigin } from "./link.mjs";
+import { ideasOf, makerOf, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile, siteOrigin } from "./link.mjs";
 import { exportApp } from "./lampapp.mjs";
 
 export { siteOrigin };
@@ -83,7 +83,7 @@ export function pageFiles(layout, { device = ANY_BROWSER } = {}) {
   const walk = (dir, prefix) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const path = prefix + entry.name;
-      if (entry.name.startsWith(".") || entry.name === "node_modules" || path === "APP.md") continue;
+      if (entry.name.startsWith(".") || entry.name === "node_modules" || path === NOTES_FILE) continue;
       if (entry.isDirectory()) walk(join(dir, entry.name), path + "/");
       else if (entry.isFile()) files.set(path, readFileSync(join(dir, entry.name)));
     }
@@ -177,17 +177,31 @@ export async function unshare(folder) {
 }
 
 /** The ideas people playing the link have sent its maker and that are still open: each with its number. */
-export async function ideas(folder) {
+export async function ideas(folder, { earlier = false } = {}) {
   const link = readLink(folder);
   if (!link) throw new Problem("this folder has no link: lamp share makes one");
-  return { url: link.url, ideas: await ideasOf({ site: link.site, link }) };
+  return { url: link.url, ideas: await ideasOf({ site: link.site, link, earlier }) };
 }
 
 /** Says what became of an idea: it's in (the site writes to whoever asked to hear), or it's let go. */
-export async function finishIdea(folder, n, built) {
+export async function finishIdea(folder, n, built, note) {
   const link = readLink(folder);
   if (!link) throw new Problem("this folder has no link");
-  return removeIdea({ site: link.site, link, n, built });
+  return removeIdea({ site: link.site, link, n, built, note });
+}
+
+/** Says something more about an idea to whoever sent it; with no note, that their answer is seen to. */
+export async function answerIdea(folder, n, note) {
+  const link = readLink(folder);
+  if (!link) throw new Problem("this folder has no link");
+  return replyIdea({ site: link.site, link, n, note });
+}
+
+/** The maker's own address for the link's ideas, or, with `email`, given ("" takes it away). */
+export async function makerEmail(folder, email) {
+  const link = readLink(folder);
+  if (!link) throw new Problem("this folder has no link: lamp share makes one");
+  return makerOf({ site: link.site, link, email });
 }
 
 /** The page's name where nothing gave one: its title, or its folder's name. */

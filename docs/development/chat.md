@@ -172,5 +172,7 @@ intro (`SidebarIntro`, `ChatLook.Intro`: its icon, its name to change, what to d
 box), and Apple's tools installing, or needing repair, shows above every chat (`SidebarBanner`). So does work Lamp couldn't save (a chat's
 file, what's typed in its box, a file sent with a message), on the desk too, never only in the chat it belongs to: it
 stays in memory, the notice tells a full disk apart from other failures, and it goes only once Try Again's writes have
-landed (`Store.saveTrouble`, `retrySaving`). A sidebar built by an earlier Lamp reads
+landed (`Store.saveTrouble`, `retrySaving`). A copy of part of a suggested change kept with Keep Editing ends its chat,
+while idle, with Review Changes… (`SidebarServer.reviewChangesLine`), worked out from the copy's job on every push rather
+than logged, and Lamp can ask either chat's box to take the keyboard (`SidebarState.focusBox`). A sidebar built by an earlier Lamp reads
 an older shape of the state, and Lamp sends it what it can read (`Connection.push`, by the version it says in `hello`).

@@ -91,6 +91,19 @@ enum OutsideWork {
             ["name": "publish_link",
              "description": "Opens Lamp's Share Link card for the app, where the person shares it on lamp.dev, or releases what's new on a link it has, and waits for them. Only once the app is built from the folder as it is (apply first); nothing is applied until the card is done. Answers the link, or that the person closed the card, or what failed: a link can exist while its app file didn't finish going up, and the answer says so. Changing or taking a link down stays on the card.",
              "inputSchema": ["type": "object", "properties": ["path": path], "required": ["path"]]],
+            ["name": "share_link",
+             "description": "Shares the app on lamp.dev, or releases what's new on the link it has, as Lamp's Share Link card does, without the card: the same fields, filled as the card fills them (what the link said last, the questions Lamp writes for its page, what's new since the last release, the app's file, and the app's repository on GitHub), with any you give in their place. Only when the person asks: a link is public. With preview, nothing is shared: it answers what the card would send. Works for any of Lamp's apps, by its folder, not only one taken on with open_project. Answers the link, and what went to GitHub.",
+             "inputSchema": ["type": "object", "properties": [
+                "path": path,
+                "preview": ["type": "boolean", "description": "Answer what would be sent, and send nothing."],
+                "by": ["type": "string", "description": "Who it's by, under its name on the page; empty for nobody."],
+                "line": ["type": "string", "description": "What it is, in a line."],
+                "asks": ["type": "array", "items": ["type": "string"], "description": "The questions the box under the app asks in turn; [] for the page's own."],
+                "notes": ["type": "array", "items": ["type": "string"], "description": "What's new in this release, a line each; [] for none. Only for a link that's out."],
+                "file": ["type": "boolean", "description": "The app's file goes with the link, for anyone with Lamp to open."],
+                "github": ["type": "boolean", "description": "The release goes to the app's repository on GitHub too, when it's there."],
+                "put_on_github": ["type": "boolean", "description": "Put the app on GitHub the first time with this release, as a repository of the person's (public by default)."],
+             ], "required": ["path"]]],
             useApp,
             ["name": "close_app",
              "description": "Quits the open app, as Lamp's own Stop does: asked, so an app asking about unsaved work stays open until the person answers. apply_change opens it again.",
@@ -687,6 +700,7 @@ extension Store {
             case "close_app": return await outsideClose(path)
             case "export_app": return await outsideExport(path)
             case "publish_link": return await outsidePublish(path)
+            case "share_link": return await outsideShareLink(path, payload)
             default: return .refused("Lamp has no tool \(name).")
             }
         }
@@ -1095,6 +1109,102 @@ extension Store {
 
     /// The Share Link card, for the person: the agent's call waits while it's open, holding the app so nothing is
     /// applied under it. Lamp keeps the link's secret, as for any link, so changing it or taking it down stays there.
+    /// share_link: Lamp's Share Link card, filled as it fills itself, with what lamp gave in place of its own, and shared
+    /// without its window; or with `preview`, what it would send. For any of Lamp's apps by its folder (a desk app's own,
+    /// through a link to it too), as well as a folder taken on.
+    private func outsideShareLink(_ path: String, _ payload: OutsideWork.Payload) async -> OutsideWork.Answer {
+        let real = OutsideWork.identity(of: path)?.real
+        // A folder taken on is shared only as last applied, as publish_link and export_app share it: never a workspace
+        // a step behind the folder, or one an apply that didn't go in left files in.
+        if outsideFolder(path) != nil, await outsideSnapshot(path) == nil { return notSnapshot(path) }
+        guard let project = outsideFolder(path)?.1
+                ?? projects.first(where: { real != nil && $0.dir.resolvingSymlinksInPath().path == real }) else {
+            var answer = OutsideWork.Answer.refused("\(path) isn't an app of \(Edition.name)'s: no app on its desk keeps its files there, and it hasn't taken the folder on.")
+            answer.facts["taken_on"] = false
+            return answer
+        }
+        let cards = WishLinkCards.shared
+        guard cards.card(for: project) == nil else {
+            return .refused("\(project.name)'s Share Link card is open in \(Edition.name): share from it, or close it first.")
+        }
+        guard begin(project) != nil else { return .refused("\(Edition.name) is busy with \(project.name). Try again in a moment.") }
+        defer {
+            if cards.card(for: project)?.stage != .sending { cards.close(project) }
+            finish(current(project) ?? project)
+        }
+        // Filled as the card fills itself as it opens, which writes the questions and what's new, and finds GitHub.
+        cards.prepare(project)
+        let began = Date()
+        while !cards.settled(project), Date().timeIntervalSince(began) < 120, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(300)) }
+        guard var values = cards.card(for: project)?.values else { return .refused("The card couldn't be filled.") }
+        // What lamp gave in place of the card's own; the name is the app's, as on the card.
+        if let by = payload.values["by"] as? String { values.by = by.trimmed }
+        if let line = payload.values["line"] as? String { values.line = line.trimmed; values.words = line.trimmed }
+        if let asks = payload.values["asks"] as? [String] { values.asks = asks.joined(separator: "\n") }
+        if let notes = payload.values["notes"] as? [String] { values.notes = notes.joined(separator: "\n") }
+        if let file = payload.values["file"] as? Bool { values.includeFile = file && WishLinkCards.canIncludeFile(project) }
+        if let github = payload.values["github"] as? Bool { values.alsoGitHub = github }
+        if let first = payload.values["put_on_github"] as? Bool { values.putOnGitHub = first }
+        cards.update(project, values: values)
+        while !cards.settled(project), Date().timeIntervalSince(began) < 180, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(300)) }
+        guard let card = cards.card(for: project) else { return .refused("The card couldn't be filled.") }
+        let shown = card.values
+        let gitHub: String = if shown.alsoGitHub, let target = card.gitHub { "to \(target.repo) on GitHub too" }
+            else if shown.putOnGitHub, let push = card.firstPush { push.stage == .ready ? "put on GitHub the first time, as \(push.repo ?? project.name)" : "not to GitHub: putting it there isn't ready" }
+            else if let behind = card.gitHubBehind { "not to GitHub: \(behind.repo) has changes \(project.name) doesn't have yet" }
+            else { card.gitHubNote.map { "not to GitHub (\($0))" } ?? "not to GitHub" }
+        var facts: [String: Any] = ["name": shown.name, "by": shown.by, "line": shown.line, "asks": WishAsks.lines(from: shown.asks),
+                                    "notes": WishReleases.lines(from: shown.notes), "file": shown.includeFile, "github": gitHub]
+        if let link = card.shared?.url.absoluteString { facts["link"] = link }
+        let asked = WishAsks.lines(from: shown.asks)
+        let news = WishReleases.lines(from: shown.notes)
+        var lines: [String] = []
+        let link = card.shared.map { "The link \($0.url.absoluteString)" } ?? "A new link"
+        let by = shown.by.isEmpty ? "" : " by \(shown.by)"
+        lines.append("\(link) for \"\(shown.name)\"\(by): \(shown.line)")
+        lines.append("Questions its page asks: " + (asked.isEmpty ? "the page's own" : asked.joined(separator: " · ")))
+        if card.shared != nil { lines.append("What's new: " + (news.isEmpty ? "nothing said" : news.joined(separator: " · "))) }
+        lines.append("The app's file: " + (shown.includeFile ? "goes with it" : "doesn't go"))
+        lines.append("GitHub: " + gitHub)
+        let summary = lines.joined(separator: "\n")
+        if payload.bool("preview") { return OutsideWork.Answer(outcome: "preview", text: "Nothing was shared. This is what would go:\n" + summary, facts: facts) }
+        guard card.canShare, !card.writingNotes else {
+            return .refused("It can't be shared as it is: it needs a name and a line, and what Lamp writes for it in.\n" + summary)
+        }
+        // Stopped before it went: nothing is public.
+        if Task.isCancelled { return OutsideWork.Answer(outcome: "cancelled", text: "Cancelled before anything was shared.") }
+        cards.share(project)
+        // The link, then GitHub, as the card goes through them: once it's going, the app is held until it's done, the
+        // caller still waiting or not.
+        // Waited out in a task of its own, which a cancelled call doesn't cancel: its sleeps would end at once, and the
+        // wait would spin.
+        await Task { @MainActor in
+            while cards.card(for: project)?.stage == .sending, Date().timeIntervalSince(began) < 20 * 60 { try? await Task.sleep(for: .milliseconds(500)) }
+            while case .working? = cards.card(for: project)?.gitHubStage, Date().timeIntervalSince(began) < 25 * 60 { try? await Task.sleep(for: .milliseconds(500)) }
+        }.value
+        guard let after = cards.card(for: project) else { return .refused("The card closed before it was done.") }
+        if let link = after.shared?.url.absoluteString { facts["link"] = link }
+        facts["plays"] = after.shared?.plays == true
+        // `released` is set only once the link and its file are up: a link there from before, or one made on the way to a
+        // file that didn't go, isn't this release.
+        let released = after.released
+        var text = released ? after.shared.map { "Shared: \($0.url.absoluteString)" } ?? "Shared."
+            : after.shared.map { "This release didn't go up: \($0.url.absoluteString) shows what it showed before, or only part of it." } ?? "Not shared."
+        if case .failed(let why) = after.stage { text += "\n" + why }
+        switch after.gitHubStage {
+        case .done(let tag)?: text += "\nGitHub: released as \(tag)."
+        case .put(let repo, let tag)?: text += "\nGitHub: put up as \(repo), released as \(tag)."
+        case .failed(let why)?: text += "\nGitHub: \(why)"
+        case .working(let step)?: text += "\nGitHub: still going (\(step))."
+        case nil: break
+        }
+        // A page that couldn't go up beside a release that did is said, not failed: the link works, with its earlier page.
+        let outcome = released ? "shared" : after.shared == nil ? "failed" : "partial"
+        var answer = OutsideWork.Answer(outcome: outcome, text: text + "\n" + summary, isError: !released, facts: facts)
+        answer.facts["released"] = released
+        return answer
+    }
+
     private func outsidePublish(_ path: String) async -> OutsideWork.Answer {
         guard let (_, project, snapshot) = await outsideSnapshot(path) else { return notSnapshot(path) }
         guard begin(project) != nil else { return .refused("Lamp is busy with this app. Try again in a moment.") }
