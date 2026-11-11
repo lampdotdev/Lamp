@@ -92,6 +92,9 @@ Mac app Lamp made in Swift, built and run on this Mac.
   lamp reload [folder] [--fresh]
       Open the page again from its files, a game from where the player is, or with --fresh from its beginning.
       A Mac app is quit and opened again.
+  lamp changing [folder] <words>
+      Say what you're about to change, in a few words from the person's request ("Rain on the roads"): the open
+      page shows it on the card it puts up as the change goes in, for the next few minutes of changes.
   lamp stop [folder] [--on <device>]
       Stop running it. A Mac app is quit. --on ends it on a device instead (and closes an emulator lamp started
       with no window).
@@ -1001,6 +1004,19 @@ async function main() {
   }
 
   if (command === "devices") return await devices(args);
+
+  if (command === "changing") {
+    // What the next change is, in the person's words, for the card the page shows as it goes in.
+    const named = args.length > 1 && existsSync(args[0]) && statSync(args[0]).isDirectory();
+    const folder = named ? args[0] : ".";
+    const words = (named ? args.slice(1) : args).join(" ").trim();
+    if (!words) throw new Problem('changing takes what you\'re about to change, in a few words: lamp changing "Rain on the roads"');
+    const live = await running(projectOf(folder).folder);
+    if (!live) { console.log("lamp dev isn't running for this folder: nothing shows it."); return; }
+    await ask(live, "changing", { words });
+    console.log("The page says so as the change goes in.");
+    return;
+  }
 
   if (command === "reload" || command === "stop") {
     const { options, rest } = parse(args, ["on"]);

@@ -20,170 +20,120 @@
   };
   const said = message => post('said', message, true);
 
-  // MARK: The light on a change
-  // The same light Lamp's app puts on an open app as a change goes in (`LampTransition.Look`, TransitionLook.swift, which
-  // says how it looks: keep the two in step), drawn over the page: a faint glow round the edge and smoke in Lamp's stripe
-  // colors rising from the bottom once a change comes, and Lamp's stripes rolling up on the slant as it goes in. While the
-  // game stands still taking it in (running its code again, or opening again), the stripes roll up every few seconds
-  // until its new code draws. The stripes and the smoke's puffs move by the browser's compositor, so they keep moving
-  // while the page is busy with the new code. Never in a picture lamp takes (`__lampLightHidden`), and only the glow,
-  // still, where less motion is asked for.
+  // MARK: The card on a change
+  // The same card Lamp's app puts on an open app as a change goes in (`LampTransition.Look`, TransitionLook.swift, which
+  // says how it looks: keep the two in step), at the foot of the page: Lamp's mark turning, "Updating" and what's
+  // changing (the words the coding agent gave with `lamp changing`, if it did), then "Updated" for a moment once the
+  // change is on screen, so every change is seen to land. It covers nothing but itself and lets every click through.
+  // The mark turns by the browser's compositor, so it keeps turning while the page is busy with the new code. Never in
+  // a picture lamp takes (`__lampLightHidden`), and still where less motion is asked for.
   const light = (() => {
     const HUES = ['#1f8a4a', '#7cbf3a', '#f6b81c', '#f08a1c', '#e2402a', '#d23778'];
-    const SLANT = Math.PI / 6, ROLL = 1.1, TURN_EVERY = 3.2, STEPS = 60;
+    // As in the Look: the card stays at least this long, "Updated" this long, and the mark turns once in this long.
+    const SHOWN_AT_LEAST = 1.2, HELD_AFTER = 1.4, SPIN_EVERY = 1.4;
     const still = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } };
-    let root = null, glowEl = null, stripesEl = null, smoke = null, turning = null, rolls = [], gone = null, wisps = 0;
+    let root = null, card = null, bands = null, title = null, detail = null, spinning = null, shownAt = 0, gone = null, hidden = false, safety = null;
+    // The card's way out ("Updated" fading, or a fade), which a change coming meanwhile stops.
+    let outgoing = null;
     const make = () => {
       if (root && root.isConnected) return;
       root = document.createElement('div');
       root.setAttribute('aria-hidden', 'true');
       root.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647;overflow:hidden;contain:strict';
-      glowEl = document.createElement('div');
-      glowEl.style.cssText = 'position:absolute;inset:0;opacity:0';
-      stripesEl = document.createElement('div');
-      stripesEl.style.cssText = 'position:absolute;opacity:0';
-      smoke = document.createElement('div');
-      smoke.style.cssText = 'position:absolute;inset:0;opacity:0';
-      root.append(glowEl, smoke, stripesEl);
+      card = document.createElement('div');
+      card.style.cssText = 'position:absolute;left:50%;bottom:min(20px,6vh);transform:translateX(-50%);display:flex;align-items:center;gap:8px;' +
+        'height:36px;box-sizing:border-box;padding:0 16px 0 12px;max-width:min(460px,calc(100vw - 32px));border-radius:18px;' +
+        'background:rgba(20,20,20,.86);border:1px solid rgba(255,255,255,.12);box-shadow:0 3px 12px rgba(0,0,0,.3);' +
+        'font:13px/17px -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;color:#fff;white-space:nowrap;opacity:0';
+      // Lamp's mark: its stripes on their slant, in a disc, which turns while the change is under way.
+      const mark = document.createElement('div');
+      mark.style.cssText = 'flex:none;width:18px;height:18px;border-radius:50%;overflow:hidden;position:relative';
+      bands = document.createElement('div');
+      bands.style.cssText = `position:absolute;left:-5.4px;top:-5.4px;width:28.8px;height:28.8px;transform:rotate(${-30}deg);` +
+        `background:linear-gradient(to bottom, ${HUES.map((hue, i) => `${hue} ${i * 100 / 6}% ${(i + 1) * 100 / 6}%`).join(', ')})`;
+      mark.appendChild(bands);
+      title = document.createElement('span');
+      title.style.cssText = 'flex:none;font-weight:600';
+      detail = document.createElement('span');
+      detail.style.cssText = 'min-width:0;overflow:hidden;text-overflow:ellipsis;opacity:.72';
+      card.append(mark, title, detail);
+      root.appendChild(card);
       // Beside the body rather than in it: a game running its code again clears what its body held.
       document.documentElement.appendChild(root);
       if (hidden) root.style.visibility = 'hidden';
     };
-    // Where a stripe's edges are at a point of the roll, as in `LampTransition.Look.edges`.
-    const edges = (index, roll, across) => {
-      const share = Math.PI / HUES.length, height = a => (1 - Math.cos(Math.min(Math.max(a, 0), Math.PI))) / 2 * across;
-      return [height(roll - (index + 1) * share), height(roll - index * share)];
-    };
-    const lay = () => {
-      const w = innerWidth, h = innerHeight;
-      const along = w * Math.cos(SLANT) + h * Math.sin(SLANT), across = w * Math.sin(SLANT) + h * Math.cos(SLANT);
-      stripesEl.style.cssText = `position:absolute;left:${(w - along) / 2}px;top:${(h - across) / 2}px;width:${along}px;height:${across}px;transform:rotate(${-SLANT}rad);opacity:${stripesEl.style.opacity || 0}`;
-      stripesEl.textContent = '';
-      for (const hue of HUES) {
-        const stripe = document.createElement('div');
-        stripe.style.cssText = `position:absolute;left:0;bottom:0;width:100%;height:${across}px;background:${hue};transform-origin:50% 100%;transform:scaleY(0);will-change:transform`;
-        stripesEl.appendChild(stripe);
-      }
-      return across;
-    };
-    // The stripes roll up from now, `turns` times, a turn coming round `every` seconds, the page clear between rolls.
-    const roll = (turns, every, delay = 0) => {
-      rolls.forEach(a => a.cancel());
-      const across = lay();
-      stripesEl.style.opacity = 1;
-      const share = ROLL / Math.max(every, ROLL);
-      rolls = [...stripesEl.children].map((stripe, index) => {
-        const frames = [];
-        for (let n = 0; n <= STEPS; n++) {
-          const [bottom, top] = edges(index, 2 * Math.PI * n / STEPS, across);
-          const tall = top > bottom ? top - bottom + 1 : 0;
-          frames.push({ offset: share * n / STEPS, transform: `translateY(${-bottom}px) scaleY(${tall / across})` });
-        }
-        if (share < 1) frames.push({ offset: 1, transform: 'scaleY(0)' });
-        return stripe.animate(frames, { duration: every * 1000, iterations: turns, delay: delay * 1000, fill: 'backwards' });
-      });
-    };
-    // A puff of smoke rising from below the bottom edge, about a third of the way up, as `wisps` in the Look.
-    const puff = (fast) => {
-      if (!smoke || !wisps) return;
-      const w = innerWidth, h = innerHeight, hue = HUES[Math.floor(Math.random() * HUES.length)];
-      const size = 128 * (0.8 + (Math.random() - 0.5) * 0.7), life = 6 + (Math.random() - 0.5) * 3;
-      const rise = h * 0.1 * (1 + (Math.random() - 0.5) * 0.9) * life * (fast ? 3.5 : 1);
-      const x = (Math.random() * 1.1 - 0.05) * w, drift = (Math.random() - 0.5) * 2 * Math.tan(0.55) * rise;
-      const el = document.createElement('div');
-      el.style.cssText = `position:absolute;left:${x - size / 2}px;top:${h + 24 - size / 2}px;width:${size}px;height:${size}px;border-radius:50%;background:radial-gradient(circle, ${hue}e6 0%, ${hue}73 45%, ${hue}00 70%);opacity:0.42;will-change:transform,opacity`;
-      smoke.appendChild(el);
-      el.animate([{ transform: 'translate(0,0) scale(1)', opacity: 0.42 }, { transform: `translate(${drift}px,${-rise}px) scale(${1 + 0.16 * life})`, opacity: 0 }],
-        { duration: life * 1000, easing: 'linear' }).onfinish = () => el.remove();
-    };
-    let breathing = null;
-    const breathe = () => {
-      unevery(breathing);
-      // As the Look's birth rate: a puff in each color for every 66 points of the page's width, each second.
-      const gap = 1000 / Math.max(1, innerWidth / 66 * HUES.length / 3);
-      breathing = every(() => puff(false), gap);
-    };
-    const fadeTo = (el, to, ms, delay = 0) => {
-      const from = getComputedStyle(el).opacity;
-      el.animate([{ opacity: from }, { opacity: to }], { duration: ms, delay, fill: 'forwards', easing: 'ease-out' });
-    };
     const goAfter = seconds => {
       unlater(gone);
-      gone = later(() => { unevery(breathing); wisps = 0; rolls.forEach(a => a.cancel()); rolls = []; turning = null; root && root.remove(); root = null; }, seconds * 1000);
+      gone = later(() => { spinning = null; root && root.remove(); root = null; shownAt = 0; }, seconds * 1000);
     };
-    let hidden = false, safety = null;
+    const show = () => {
+      make();
+      unlater(gone);
+      if (outgoing) { outgoing.cancel(); outgoing = null; }
+      if (shownAt) return;
+      shownAt = performance.now();
+      card.animate([{ opacity: 0, transform: still() ? 'translateX(-50%)' : 'translate(-50%, 10px)' }, { opacity: 1, transform: 'translateX(-50%)' }],
+        { duration: 250, easing: 'ease-out', fill: 'forwards' });
+    };
+    const spin = () => {
+      if (still() || spinning) return;
+      spinning = bands.animate([{ transform: 'rotate(-30deg)' }, { transform: 'rotate(330deg)' }], { duration: SPIN_EVERY * 1000, iterations: Infinity });
+    };
     // Never left over a page that doesn't say its change is on screen (a game stopped by an error): it goes after a
-    // minute, as the light in Lamp's app goes when Lamp stops renewing it.
+    // minute, as the card in Lamp's app goes when Lamp stops renewing it.
     const watch = () => { unlater(safety); safety = later(() => api.fade(), 60000); };
+    let words = '';
     const api = {
-      // A change came: the glow and the smoke come up.
-      glow() {
-        make();
-        unlater(gone);
+      // A change came: the card comes up with "Updating", what's changing, and the mark turning.
+      glow(given) {
+        if (typeof given === 'string') words = given;
+        show();
         watch();
-        glowEl.style.boxShadow = `inset 0 0 54px 6px ${HUES[0]}cc, inset 0 0 24px 2px ${HUES[0]}`;
-        glowEl.animate(HUES.concat(HUES[0]).map(hue => ({ boxShadow: `inset 0 0 54px 6px ${hue}cc, inset 0 0 24px 2px ${hue}` })), { duration: 5000, iterations: Infinity });
-        fadeTo(glowEl, 0.22, 600);
-        if (still()) return;
-        if (!wisps) { wisps = 1; fadeTo(smoke, 1, 1200); breathe(); }
+        title.textContent = 'Updating';
+        detail.textContent = words;
+        spin();
       },
-      // The game stands still taking it in: the stripes roll up every few seconds until `reveal`.
-      turn() {
-        make();
-        unlater(gone);
-        watch();
-        if (still() || turning) return;
-        turning = performance.now();
-        roll(Infinity, TURN_EVERY);
-      },
-      // The change is on screen: the smoke surges and the stripes roll up once (or the turn under way finishes), and it all goes.
+      // The game stands still taking it in: the card stays as it is until `reveal`.
+      turn() { api.glow(); },
+      // The change is on screen: "Updated" for a moment, then the card goes.
       reveal() {
         if (!root) return;
         unlater(safety);
-        unevery(breathing);
-        if (still()) { fadeTo(glowEl, 0, 600); fadeTo(smoke, 0, 600); wisps = 0; return goAfter(0.8); }
-        let left;
-        if (turning !== null) {
-          const into = (performance.now() - turning) / 1000 % TURN_EVERY;
-          turning = null;
-          if (into < ROLL) { rolls.forEach(a => a.effect.updateTiming({ iterations: Math.floor((performance.now() - (a.startTime || 0)) / (TURN_EVERY * 1000)) + 1 })); left = ROLL - into; }
-          else { roll(1, ROLL); left = ROLL; }
-        } else {
-          for (let n = 0; n < 24 && wisps; n++) puff(true);
-          roll(1, ROLL, 0.3);
-          left = 0.3 + ROLL;
-        }
-        wisps = 0;
-        fadeTo(smoke, 0, 600, 400);
-        fadeTo(glowEl, 0, 600, 300);
-        goAfter(Math.max(left, 0.6) + 0.3);
+        title.textContent = 'Updated';
+        if (spinning) { spinning.cancel(); spinning = null; }
+        if (!still()) bands.parentNode.animate([{ transform: 'scale(1.25)' }, { transform: 'scale(1)' }], { duration: 300, easing: 'ease-out' });
+        const wait = Math.max(HELD_AFTER, SHOWN_AT_LEAST - (performance.now() - shownAt) / 1000);
+        if (outgoing) outgoing.cancel();
+        outgoing = card.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, delay: wait * 1000, fill: 'forwards', easing: 'ease-in-out' });
+        words = '';
+        goAfter(wait + 0.35);
       },
-      // The change didn't go in now (held for a pause or a Reload): the glow and the smoke go.
+      // The change didn't go in now (held for a pause or a Reload): the card goes.
       fade() {
         unlater(safety);
         if (!root) return;
-        unevery(breathing);
-        wisps = 0;
-        turning = null;
-        fadeTo(glowEl, 0, 500);
-        fadeTo(smoke, 0, 1000);
-        goAfter(1.1);
+        if (outgoing) outgoing.cancel();
+        outgoing = card.animate([{ opacity: getComputedStyle(card).opacity }, { opacity: 0 }], { duration: 250, fill: 'forwards' });
+        words = '';
+        goAfter(0.3);
       },
       hide(on) { hidden = !!on; if (root) root.style.visibility = on ? 'hidden' : ''; },
+      get words() { return words; },
     };
     return api;
   })();
   // Left out of the pictures lamp takes of the page.
   window.__lampLightHidden = on => light.hide(on);
-  // A page opening again for a change goes on turning until its new code draws, as it was when it went.
-  const TURNING = 'lamp.dev.turning';
-  const turnAcross = () => { try { sessionStorage.setItem(TURNING, String(Date.now())); } catch (e) {} };
+  // A page opening again for a change goes on saying so until its new code draws, with the same words.
+  const TURNING = 'lamp.dev.turning', WORDS = 'lamp.dev.words';
+  const turnAcross = () => { try { sessionStorage.setItem(TURNING, String(Date.now())); sessionStorage.setItem(WORDS, light.words); } catch (e) {} };
   try {
-    const since = Number(sessionStorage.getItem(TURNING));
+    const since = Number(sessionStorage.getItem(TURNING)), carried = sessionStorage.getItem(WORDS) || '';
     sessionStorage.removeItem(TURNING);
-    if (since && Date.now() - since < 30000) light.turn();
+    sessionStorage.removeItem(WORDS);
+    if (since && Date.now() - since < 30000) light.glow(carried);
   } catch (e) {}
-  // How the game said a change went, read for the light: it goes in now, stands still taking it in, waits, or is on screen.
+  // How the game said a change went, read for the card: it goes in now, stands still taking it in, waits, or is on screen.
   const lit = message => {
     const state = message && message.state;
     if (state === 'swapped') light.reveal();
@@ -239,7 +189,7 @@
   events.addEventListener('hello', e => { if (e.data !== LAMP.run) location.reload(); });
   events.addEventListener('change', e => {
     const change = JSON.parse(e.data);
-    light.glow();
+    light.glow(typeof change.words === 'string' ? change.words : '');
     // A game takes the change and keeps the player's place; any other page opens again.
     let taken = false;
     try { taken = !!(window.__lampLive && window.__lampLive(change)); } catch (e) {}

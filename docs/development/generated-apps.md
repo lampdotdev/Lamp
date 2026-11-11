@@ -185,18 +185,19 @@ keep what the person was looking at in `@SceneStorage`, so it comes back as they
 runtime folder (`LampMagic.leavePlace`), and the new copy opens its first window in the same place (`putBack`). Lamp
 puts no picture of the window in its place meanwhile: a copy that opens no window (a menu bar app) left one standing
 until it timed out.
-While Lamp builds a change for a Mac app that's open, smoke in Lamp's stripe colors curls up from the bottom of the app's
-windows, with a faint glow round their edges, and as the change goes in the stripes roll up across them on the slant, covering the window at the middle of the roll (`AppTransition`, drawn by
+While Lamp builds a change for a Mac app that's open, a small card at the foot of the app's windows shows Lamp's mark
+turning, "Updating" and what's changing, in the person's words (the request the turn took last, `Store.changeWords`,
+signed apart from the request so an app that doesn't read it still takes it); as the change goes in it says "Updated" for
+a moment and goes, staying at least a little over a second so a change that lands at once is still seen (`AppTransition`, drawn by
 `LampTransition` in LampSupport.swift). A web game stands still while it takes a change by running its code again or
 opening its page again; from the page's word that it's doing so (`rerun`, `reloading`, in `PageLive`) until its new code
-draws (`shown`), the stripes roll up its window every few seconds, the window clear between rolls (`AppTransition.turn`, the `turn` phase), and the turn
-under way then finishes as the change lands, so the frame held there never reads as a game that hung. It starts in `Store.build`,
+draws (`shown`), the card stays (`AppTransition.turn`, the `turn` phase), so the frame held there never reads as a game that hung. It starts in `Store.build`,
 lands in `reloadInPlace` (or, after a reopen, once the new copy's window is on screen, `landWhenShown`), and fades after `install` otherwise (held for Reload,
 kept open, failed); Lamp renews it while the turn goes on and the app lets it go after 90 seconds unrenewed. The app
 draws it in clear child windows that let clicks through and are left out of its pictures (`windowsOnScreen`), so the
 builder never sees it; requests are signed with the app's token, with their time and an id, and taken once. An app
 built before it has no `lampTransitionSignature` in its binary and is sent nothing: its next change reopens it with
-the new building blocks. How it looks is `LampTransition.Look` (TransitionLook.swift), compiled into Lamp too and copied into the template by `scripts/sync-transition-look.sh` (`TransitionLookTests` fails while they differ): change it there and try it in the gallery's Transition entries, over made-up app windows or on an open app. lamp dev draws the same light over the pages it serves (`light` in cli/page.js: the glow and smoke when a change comes, the stripes rolling while a game runs its code again or opens again, until its new code draws), so a change to how it looks goes there too.
+the new building blocks. How it looks is `LampTransition.Look` (TransitionLook.swift), compiled into Lamp too and copied into the template by `scripts/sync-transition-look.sh` (`TransitionLookTests` fails while they differ): change it there and try it in the gallery's Transition entries (Updating and Updated show it at once), over made-up app windows or on an open app. lamp dev draws the same card over the pages it serves (`light` in cli/page.js, from a change coming until its new code draws, with the words the coding agent gave with `lamp changing`), so a change to how it looks goes there too.
 
 Where the chat goes (`LampSidebar.show`): always a panel of its own beside the window, never inside it (a column there
 took more room from the app than it gave the chat). It's a borderless `NSPanel` attached as the window's child

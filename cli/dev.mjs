@@ -145,12 +145,17 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
   };
   const tell = (page, event, data, id) => page.response.write(`${id === undefined ? "" : `id: ${id}\n`}event: ${event}\ndata: ${data}\n\n`);
 
+  // What the coding agent said it's changing (`lamp changing`), for the card each page shows as a change goes in: the
+  // changes saved in the few minutes after say it, then it's let go.
+  let changing = null;
+  const changingWords = () => (changing && Date.now() - changing.at < 180_000 ? { words: changing.words } : {});
+
   function broadcast(changed, removed) {
     gen += 1;
     const change = { gen, changed, removed, said: new Map(), line: logCount };
     changes.push(change);
     if (changes.length > 40) changes.shift();
-    const data = JSON.stringify({ gen, changed, removed, now: false, pill: true });
+    const data = JSON.stringify({ gen, changed, removed, now: false, pill: true, ...changingWords() });
     for (const page of pages.values()) { page.told = Date.now(); tell(page, "change", data, gen); }
     if (!pages.size) print(`${named(change)}: no page is open; it's in the next one opened`);
   }
@@ -616,6 +621,11 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
         if (what === "use") return json(200, await inTurn(() => use(asked)));
         if (what === "card") return json(200, await inTurn(() => card(asked)));
         if (what === "open") return json(200, { opened: await openWindow(), url: address });
+        if (what === "changing") {
+          const words = String(asked.words ?? "").replace(/\s+/g, " ").trim();
+          changing = words ? { words: words.length > 120 ? `${words.slice(0, 119).trimEnd()}…` : words, at: Date.now() } : null;
+          return json(200, { pages: pages.size });
+        }
         if (what === "reload") { for (const page of pages.values()) tell(page, "reload", asked.fresh ? "fresh" : "now"); return json(200, { pages: pages.size }); }
         if (what === "stop") { json(200, { stopped: true }); setTimeout(() => close().then(() => process.exit(0)), 50); return; }
         return json(404, { problem: `lamp dev doesn't know "${what}"` });
@@ -644,7 +654,7 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
           for (const path of change.changed) { changed.add(path); removed.delete(path); }
           for (const path of change.removed) { removed.add(path); changed.delete(path); }
         }
-        tell(page, "change", JSON.stringify({ gen, changed: [...changed], removed: [...removed], now: false, pill: true }), gen);
+        tell(page, "change", JSON.stringify({ gen, changed: [...changed], removed: [...removed], now: false, pill: true, ...changingWords() }), gen);
       } else if (missed.length) {
         // More was saved than is remembered: the page opens again from the files as they are.
         tell(page, "reload", "now");
