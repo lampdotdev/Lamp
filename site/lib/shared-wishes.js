@@ -353,13 +353,23 @@ export function cloudStore(env, fetcher = fetch) {
     async openFile(url) {
       const address = new URL(url);
       if (address.protocol !== "https:" || !address.hostname.endsWith(".public.blob.vercel-storage.com")) throw new Error("Not the store's");
-      const waiting = new AbortController();
-      const timer = setTimeout(() => waiting.abort(), 10000);
-      try {
-        const response = await fetcher(url, { redirect: "error", signal: waiting.signal });
-        if (!response.ok || !response.body) throw new Error(`Part unavailable (${response.status})`);
-        return { body: response.body, length: response.headers.get("content-length") };
-      } finally { clearTimeout(timer); }
+      // A game asks for many of its files at once, and the store turns some reads away for a moment (403, 429 or a
+      // 5xx) when one is read many times close together: each is tried again a few times, a little later, rather than
+      // answered as missing, which the game takes as part of it not loading.
+      for (let attempt = 1; ; attempt++) {
+        const waiting = new AbortController();
+        const timer = setTimeout(() => waiting.abort(), 10000);
+        try {
+          const response = await fetcher(url, { redirect: "error", signal: waiting.signal });
+          if (response.ok && response.body) return { body: response.body, length: response.headers.get("content-length") };
+          try { await response.body?.cancel(); } catch {}
+          const passing = response.status === 403 || response.status === 429 || response.status >= 500;
+          if (!passing || attempt >= 4) throw new Error(`Part unavailable (${response.status})`);
+        } catch (error) {
+          if (attempt >= 4 || String(error?.message).startsWith("Part unavailable")) throw error;
+        } finally { clearTimeout(timer); }
+        await new Promise((done) => setTimeout(done, 150 * 3 ** (attempt - 1) + Math.random() * 100));
+      }
     },
     // The page and its card are cached by Vercel's CDN, tagged with the wish (see `cacheTags`): a change or a removal
     // takes them out at once rather than when they'd have run out.
