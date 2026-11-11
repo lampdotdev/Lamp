@@ -3052,7 +3052,8 @@ final class Store: ObservableObject {
     func initRepo(_ project: LampProject, message: String) async -> Bool {
         // A game or a screen is made before Apple's tools, git among them, are on the Mac: it has no versions until then.
         guard Versions.hasGit else { return true }
-        guard await Versions.git("git init -q", cwd: project.dir) == 0 else { return false }
+        // On `main` whatever the person's git says, as the repositories Lamp starts for GitHub are.
+        guard await Versions.git("git init -q -b main", cwd: project.dir) == 0 else { return false }
         guard await Versions.commitAll("-qm \"$LAMP_MESSAGE\"", in: project.dir, env: ["LAMP_MESSAGE": message]) == .saved else { return false }
         versionsRevision += 1
         return true
