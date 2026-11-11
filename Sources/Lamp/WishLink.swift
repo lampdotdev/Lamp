@@ -681,8 +681,10 @@ enum WishLink {
                 }.value
                 var pageProblem: String?
                 let release = WishReleases.Release(version: await Versions.head(project) ?? "", date: Date(), lines: notes)
-                // Its repository, when it's on GitHub already and public: one put there by this release is linked from the next.
-                let github = GitHubRepo.kept(for: project).flatMap { $0.isPublic == true ? $0.repo : nil }
+                // Its repository, when it's on GitHub already and anyone can read it now (asked of GitHub as anyone, so one
+                // made private or taken down since is left out): one put there by this release is linked from the next.
+                var github: String?
+                if let repo = GitHubRepo.kept(for: project)?.repo, await GitHubRepo.readableByAnyone(repo) { github = repo }
                 var shared = try await WishLink.publish(words, picture: picture, icon: icon,
                                                         releases: WishReleases.shown([release] + WishReleases.load(project)),
                                                         github: github, replacing: card.shared)

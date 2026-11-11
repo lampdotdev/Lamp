@@ -62,6 +62,18 @@ enum GitHubRepo {
 
     static func url(_ repo: String) -> String { "https://github.com/\(repo)" }
 
+    /// Whether anyone can read the repository now: GitHub asked with no sign-in, so a private one, or one gone, isn't.
+    /// False when GitHub can't be reached in time, so nothing is linked that might not be.
+    static func readableByAnyone(_ repo: String) async -> Bool {
+        guard let address = URL(string: "https://api.github.com/repos/\(repo)") else { return false }
+        var request = URLRequest(url: address, timeoutInterval: 6)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
+        return object["private"] as? Bool == false
+    }
+
     /// The repository a remix of this wish starts from (`RemixLink.Origin`): only one anyone can read, since Lamp fetches
     /// it without a sign-in, and only while it holds the wish as it is now, so a remix never starts from an older version
     /// than the page or app it was asked from. Nil otherwise, and the remix goes by the Share Link or the request.
