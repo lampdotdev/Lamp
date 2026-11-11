@@ -848,14 +848,16 @@ async function main() {
     // An app of Lamp's, with no link of lamp's own: shared by Lamp's app, as its Share Link card shares it, filled as the
     // card fills itself (its last words, the questions and what's new Lamp writes, its file, its GitHub), with what's
     // given here in their place. Its link's secret stays in Lamp.
-    // By its folder alone: Lamp's app shares kinds lamp doesn't run itself (an iPhone app, a wish of several).
+    // By its folder alone: Lamp's app shares kinds lamp doesn't run itself (an iPhone app, a wish of several). Only a
+    // folder that's a Lamp's: one in its own folder, or one given to it (`lamp open --in-lamp`). Any other folder is
+    // lamp's to share, whatever Lamp is running.
     const project = { folder: (() => { const given = resolve(rest[0] ?? "."); try { return realpathSync(given); } catch { return given; } })() };
-    if (!readLink(project.folder) && !options["new-link"]) {
-      const owner = lampOwning(project.folder);
-      const lamp = await reachLamp(owner ? [owner] : undefined);
+    const owner = lampOwning(project.folder), given = owner ? null : givenTo(project.folder);
+    if (!readLink(project.folder) && !options["new-link"] && (owner || given)) {
+      const lamp = await reachLamp([owner ?? given]);
       if (lamp) {
         const list = (text) => String(text).split("|").map((item) => item.trim()).filter(Boolean);
-        const given = {
+        const values = {
           path: project.folder, ...(options.preview ? { preview: true } : {}),
           ...(options.by !== undefined ? { by: String(options.by) } : {}),
           ...(options.line ?? options.words) !== undefined ? { line: String(options.line ?? options.words) } : {},
@@ -866,8 +868,13 @@ async function main() {
         console.log(options.preview ? `This is an app of ${lamp.name}'s: it shares it, to the link it has, as its Share Link card would.`
           : `Sharing through ${lamp.name}, as its Share Link does…`);
         let answer;
-        try { answer = await lamp.call("share_link", given); } finally { lamp.close(); }
-        if (answer.facts?.taken_on !== false) {
+        try { answer = await lamp.call("share_link", values); } finally { lamp.close(); }
+        // A Lamp from before it shared for lamp: an app of its own waits for it to be updated, since a link of lamp's
+        // would be a second one; a folder only given to it is lamp's to share.
+        const older = /has no tool share_link\b/.test(answer.words ?? "");
+        if (older && owner) throw new Problem(`${lamp.name} is older than this lamp and can't share for it: update ${lamp.name}, then run this again (or --new-link to make lamp a link of its own).`);
+        if (older) console.log(`${lamp.name} can't share for lamp yet, so lamp shares it with a link of its own.`);
+        else if (answer.facts?.taken_on !== false) {
           console.log(answer.words);
           if (answer.failed) process.exitCode = 1;
           return;
