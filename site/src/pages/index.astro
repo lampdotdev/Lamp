@@ -2,6 +2,7 @@
 import { Image } from "astro:assets";
 import Base from "../layouts/Base.astro";
 import RemixDialog from "../components/RemixDialog.astro";
+import ChatGPTDialog from "../components/ChatGPTDialog.astro";
 import Footer from "../components/Footer.astro";
 import { together } from "../lib/text";
 import { DOWNLOAD_URL } from "../lib/download";
@@ -103,6 +104,8 @@ const lit = (hue: number) => `linear-gradient(${hsb(hue, 0.45, 1)}, ${hsb(hue, 0
       <section class="pb-10">
         <h1 class="max-w-[16ch] text-[clamp(2.5rem,6vw,4rem)] leading-[1] font-black tracking-[-0.04em] text-balance">{headline}</h1>
         <p class="mt-5 flex max-w-[46ch] flex-col gap-1 text-xl leading-normal">{pitch.map((line) => <span>{together(line)}</span>)}</p>
+        <!-- In sight from the start, before the demo adds the download: ChatGPT's Mac app sets lamp up from a prompt. -->
+        <div class="mt-6"><ChatGPTDialog /></div>
       </section>
 
       <!-- Lamp's chat, drawn as Lamp draws the chat beside an app. It
