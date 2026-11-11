@@ -11,36 +11,43 @@ import Base from "../layouts/Base.astro";
   in this tab (sessionStorage on lamp.dev), never in an address and never where the game's frame could read them.
 -->
 <Base title="Change this game · Lamp" description="Change a game with your own coding agent." bare>
-  <div class="flex h-dvh flex-col bg-paper text-tape">
-    <header class="flex h-14 items-center justify-between gap-4 border-b border-tape/15 px-4 sm:px-6">
+  <!--
+    The game gets as much of the window as the page can give it, as tall as the window under the header: on a wide
+    screen the controls sit in a column beside it that scrolls on its own, and on a narrow one below it, the page
+    scrolling down to them. A game laid out for its window's height is cut off in a frame much shorter than that.
+  -->
+  <div class="flex min-h-dvh flex-col bg-paper text-tape lg:h-dvh">
+    <header class="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-tape/15 px-4 sm:px-6">
       <h1 class="text-[17px] font-extrabold tracking-[-0.02em]">Change this game</h1>
       <a href="/" class="font-mono text-[13px] text-muted-ink hover:text-tape">Made with Lamp</a>
     </header>
-    <main class="relative min-h-0 flex-1 bg-black">
-      <iframe data-game title="The game" class="block size-full border-0" sandbox="allow-scripts allow-same-origin allow-pointer-lock" hidden></iframe>
-    </main>
-    <footer class="space-y-2 border-t border-tape/15 px-4 py-3 sm:px-6">
-      <div data-pair hidden class="flex flex-wrap items-center gap-3 text-sm">
-        <span>On your Mac, run</span>
-        <code data-command class="rounded-md border border-tape/20 bg-white px-2 py-0.5 font-mono text-lg font-semibold"></code>
-        <span data-expires class="text-muted-ink"></span>
-        <button type="button" data-new-code hidden class="ink-button">New code</button>
-      </div>
-      <div data-direct hidden class="space-y-2 text-sm">
-        <p>Paste this into ChatGPT, Codex or Claude on your computer, then ask it for a game or a change.</p>
-        <textarea data-words readonly rows="5" class="w-full resize-none rounded-md border border-tape/20 bg-white p-2 font-mono text-xs"></textarea>
-        <div class="flex gap-2">
-          <button type="button" data-copy class="ink-button px-4">Copy</button>
-          <button type="button" data-new-key class="rounded-md border border-tape px-4">New key</button>
+    <div class="flex flex-col lg:min-h-0 lg:flex-1 lg:flex-row">
+      <main class="flex flex-col bg-black lg:min-w-0 lg:flex-1">
+        <iframe data-game title="The game" class="block h-[calc(100dvh-3.5rem)] w-full border-0 lg:h-auto lg:flex-1" sandbox="allow-scripts allow-same-origin allow-pointer-lock" hidden></iframe>
+      </main>
+      <aside class="space-y-2 border-t border-tape/15 px-4 py-3 sm:px-6 lg:w-[360px] lg:shrink-0 lg:overflow-y-auto lg:border-t-0 lg:border-l lg:px-6 lg:py-4">
+        <div data-pair hidden class="flex flex-wrap items-center gap-3 text-sm">
+          <span>On your Mac, run</span>
+          <code data-command class="rounded-md border border-tape/20 bg-white px-2 py-0.5 font-mono text-lg font-semibold"></code>
+          <span data-expires class="text-muted-ink"></span>
+          <button type="button" data-new-code hidden class="ink-button">New code</button>
         </div>
-      </div>
-      <form data-ask hidden class="flex gap-2">
-        <input data-prompt autocomplete="off" maxlength="1000" placeholder="What should change?" class="min-w-0 flex-1 rounded-md border border-tape/30 bg-white px-3 py-2" />
-        <button type="submit" class="ink-button px-4">Send</button>
-      </form>
-      <p data-status role="status" class="text-sm text-muted-ink">Opening…</p>
-      <ol data-requests class="max-h-20 list-decimal overflow-auto pl-5 text-xs text-muted-ink"></ol>
-    </footer>
+        <div data-direct hidden class="space-y-2 text-sm">
+          <p>Paste this into ChatGPT, Codex or Claude on your computer, then ask it for a game or a change.</p>
+          <textarea data-words readonly rows="8" class="w-full resize-none rounded-md border border-tape/20 bg-white p-2 font-mono text-xs"></textarea>
+          <div class="flex gap-2">
+            <button type="button" data-copy class="ink-button px-4">Copy</button>
+            <button type="button" data-new-key class="rounded-md border border-tape px-4">New key</button>
+          </div>
+        </div>
+        <form data-ask hidden class="flex gap-2">
+          <input data-prompt autocomplete="off" maxlength="1000" placeholder="What should change?" class="min-w-0 flex-1 rounded-md border border-tape/30 bg-white px-3 py-2" />
+          <button type="submit" class="ink-button px-4">Send</button>
+        </form>
+        <p data-status role="status" class="text-sm text-muted-ink">Opening…</p>
+        <ol data-requests class="max-h-20 list-decimal overflow-auto pl-5 text-xs text-muted-ink lg:max-h-none lg:overflow-visible"></ol>
+      </aside>
+    </div>
   </div>
 </Base>
 
@@ -61,6 +68,7 @@ import Base from "../layouts/Base.astro";
     const address = `${location.origin}/r/${room}/game`;
     return [
       "Make or change a browser game for me. It must be ONE self-contained HTML file (CSS and JavaScript inside it, no other files), under 4 MB.",
+      "It plays in a frame of any size, which can change while it plays: lay it out for the frame's own viewport and keep it fitting when that resizes, never for one fixed window height.",
       `First read the game I'm playing: curl -sS -D headers.txt -o game.html ${address} -H "Authorization: Bearer ${postKey}"`,
       "Change game.html as I ask (or replace it with a new game), then send it, with the ETag from headers.txt as If-Match:",
       `curl -sS -X POST ${address} -H "Authorization: Bearer ${postKey}" -H 'If-Match: "<ETag>"' -H "Content-Type: text/html; charset=utf-8" --data-binary @game.html`,

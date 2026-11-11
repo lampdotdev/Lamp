@@ -72,7 +72,8 @@ export const AGENTS = {
 
 const SYSTEM = "You are changing a static web game: the files in the current folder, which a browser plays as they are. " +
   "Change only files in this folder. There is no build step, nothing to install and nothing to run: write plain HTML, CSS " +
-  "and JavaScript the browser takes as is. Make the change asked for and nothing else.";
+  "and JavaScript the browser takes as is. Make the change asked for and nothing else. The game plays in a frame of any size, which can change while it plays: " +
+  "keep what you change laid out for the frame's own viewport and fitting when that resizes, never for one fixed window height.";
 
 // MARK: The copy
 
