@@ -354,10 +354,16 @@ export function cloudStore(env, fetcher = fetch) {
       const address = new URL(url);
       if (address.protocol !== "https:" || !address.hostname.endsWith(".public.blob.vercel-storage.com")) throw new Error("Not the store's");
       let said = null;
+      const headersInTime = async (ask) => {
+        const waiting = new AbortController();
+        const timer = setTimeout(() => waiting.abort(), 10000);
+        try { return await ask(waiting.signal); } finally { clearTimeout(timer); }
+      };
       for (let attempt = 1; attempt <= 3; attempt++) {
         if (attempt > 1) await new Promise((done) => setTimeout(done, 200 * 3 ** (attempt - 2) + Math.random() * 100));
         try {
-          const response = await fetcher(url, { redirect: "error", signal: AbortSignal.timeout(10000) });
+          // The time limit is for the store to start answering: a big file's body may take longer to pass on.
+          const response = await headersInTime((signal) => fetcher(url, { redirect: "error", signal }));
           if (response.ok && response.body) return { body: response.body, length: response.headers.get("content-length") };
           try { await response.body?.cancel(); } catch {}
           said = `${response.status}${response.headers.get("x-vercel-error") ? ` ${response.headers.get("x-vercel-error")}` : ""}`;
@@ -366,7 +372,7 @@ export function cloudStore(env, fetcher = fetch) {
         } catch (error) { said = error?.message ?? String(error); }
         try {
           const { get } = await import("@vercel/blob");
-          const blob = await get(url, { access: "public", abortSignal: AbortSignal.timeout(10000), ...auth });
+          const blob = await headersInTime((abortSignal) => get(url, { access: "public", abortSignal, ...auth }));
           if (blob?.stream) return { body: blob.stream, length: blob.headers.get("content-length") };
           if (blob === null) { said = "404"; break; }
         } catch (error) { said = `${said}; signed in: ${error?.message ?? error}`; }
