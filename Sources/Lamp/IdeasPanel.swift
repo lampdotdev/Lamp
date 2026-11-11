@@ -84,9 +84,13 @@ extension Store {
         }
     }
 
-    /// Wishes with ideas sent, most new first.
+    /// Every wish with a link, whose ideas the panel shows (and those seen to, under Earlier, even with none waiting):
+    /// most new first, then those with ideas waiting.
     var wishesWithIdeas: [LampProject] {
-        projects.filter { !(ideas[$0.id] ?? []).isEmpty }.sorted { newIdeas($0) > newIdeas($1) }
+        projects.filter { !$0.isPart && WishLink.kept(for: $0) != nil }.sorted {
+            let one = (newIdeas($0), ideas[$0.id]?.count ?? 0), other = (newIdeas($1), ideas[$1.id]?.count ?? 0)
+            return one != other ? one > other : $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
     }
 
     /// Ideas not seen yet, and those whose sender has answered since: each waits on the maker.

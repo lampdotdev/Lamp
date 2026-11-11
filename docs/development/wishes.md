@@ -400,7 +400,7 @@ to hear back at. The dialog also shows a picture of the app as it was when it op
 outcome, the panel shows it under the idea, and Build It attaches it to what it asks the chat for. Only the link's
 secret reads them; they go with the link, and nothing of them is logged. Lamp asks for them for every wish with a link
 at launch and every five minutes (`WishIdeas`, `Store.checkIdeas`); the desk shows them on a line of their own
-under its changes ("Ideas", with how many are new, and a line under the app's row while some are new; seen ones are
+under its changes ("Ideas", there while any wish has a link, with how many are new, and a line under the app's row while some are new; seen ones are
 counted by the link, since a link made again counts from one), and the person goes to them in `IdeasPanel`, which takes the list's place
 with Back: Build It asks the wish's chat for one, in the sender's words, marked as theirs (`WishIdeas.request`); It's In
 lets it go and has the site write to whoever asked to hear back, through Resend (`writeToSender`: `RESEND_API_KEY` and
