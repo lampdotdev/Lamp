@@ -282,7 +282,12 @@ struct IdeasPanel: View {
     }
 
     private func finish(_ idea: WishLink.Idea, built: Bool) {
-        settle(idea) { await store.finishIdea(idea, built: built, note: notes[idea.n], in: $0) }
+        settle(idea) { project in
+            guard await store.finishIdea(idea, built: built, note: notes[idea.n], in: project) else { return false }
+            // It's under Earlier now.
+            if showingEarlier { loadEarlier() }
+            return true
+        }
     }
 
     /// Send (with what's written) or Done (without).
