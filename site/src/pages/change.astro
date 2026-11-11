@@ -85,7 +85,7 @@ import { CHATGPT_APP_URL, CLAUDE_CODE_URL } from "../lib/change-words";
 
   const $ = <T extends HTMLElement>(name: string) => document.querySelector(`[data-${name}]`) as T;
   type Request = { id: string; prompt: string; state: string; message: string | null; version: number | null };
-  type Room = { mode: "helper" | "post"; posted: number | null; rev: string; room: string; version: number; play: string | null; seeding: { copied: number; total: number; failed: string | null } | null; paired: boolean; helper: boolean; code: string | null; codeEnds: number | null; requests: Request[]; same?: boolean };
+  type Room = { name: string | null; mode: "helper" | "post"; posted: number | null; rev: string; room: string; version: number; play: string | null; seeding: { copied: number; total: number; failed: string | null } | null; paired: boolean; helper: boolean; code: string | null; codeEnds: number | null; requests: Request[]; same?: boolean };
 
   const query = new URLSearchParams(location.search);
   const wish = query.get("w") ?? "";
@@ -104,7 +104,10 @@ import { CHATGPT_APP_URL, CLAUDE_CODE_URL } from "../lib/change-words";
   try { idea = sessionStorage.getItem("lamp.change.idea") ?? ""; } catch {}
 
   // The words for the player's AI app (lib/change-words.ts): Copy copies them and the app's link carries them.
-  const words = (room: string) => changeWords(`${location.origin}/r/${room}/game`, postKey!, { app, idea });
+  const words = (room: Room) => changeWords({
+    guide: `${location.origin}/change-guide.md`, address: `${location.origin}/r/${room.room}/game`, key: postKey!,
+    page: `${location.origin}${location.pathname}${location.search}`, name: room.name, app, idea,
+  });
   let room: Room | null = null;
   let shown = 0;
   let quiet = 0;
@@ -137,8 +140,8 @@ import { CHATGPT_APP_URL, CLAUDE_CODE_URL } from "../lib/change-words";
       $("requests").hidden = true;
       if (next.seeding) { $("direct").hidden = true; say(next.seeding.failed ?? `Getting the game ready… ${next.seeding.copied} of ${next.seeding.total} files`); return; }
       $("direct").hidden = !postKey;
-      $<HTMLTextAreaElement>("words").value = postKey ? words(next.room) : "";
-      $<HTMLAnchorElement>("app-link").href = postKey ? appLink(app, words(next.room)) : "#";
+      $<HTMLTextAreaElement>("words").value = postKey ? words(next) : "";
+      $<HTMLAnchorElement>("app-link").href = postKey ? appLink(app, words(next)) : "#";
       say(next.posted
         ? `Version ${next.version} came in from your AI app at ${new Date(next.posted).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
         : "Waiting for your AI app to send a game.");

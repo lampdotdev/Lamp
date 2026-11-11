@@ -224,3 +224,19 @@ test("a room for an AI app isn't opened on a game of several files", async () =>
   assert.equal(opened.body.error, "not_one_file");
   assert.equal((await relay.call("open", { origin: SITE, body: { wish: WISH } })).status, 200, "the helper still takes it");
 });
+
+// The page's words name the game, so the room keeps the link's name and every answer about the room gives it alike.
+test("a room keeps its game's name and gives it with the room", async () => {
+  const relay = await started();
+  const ONE = "bcdefghijk";
+  const at = await relay.wishes.putPageFile(ONE, "t", "index.html", Buffer.from("<p>pong</p>"));
+  relay.wishes.records.set(ONE, { id: ONE, name: " Pong ", page: { version: 1, files: { "index.html": at } } });
+  const first = await relay.call("open", { origin: SITE, body: { wish: ONE, mode: "post" } });
+  let room = first.body;
+  while (room.seeding) room = (await relay.call("seed", { origin: SITE, token: room.token })).body ?? room;
+  assert.equal(room.name, "Pong");
+  const token = (await relay.call("open", { origin: SITE, body: { wish: ONE, mode: "post" } })).body.token;
+  assert.equal((await relay.call("state", { method: "GET", origin: SITE, token })).body.name, "Pong");
+  assert.equal((await relay.call("postkey", { origin: SITE, token })).body.name, "Pong");
+  assert.equal((await relay.call("open", { origin: SITE, body: { mode: "post" } })).body.name, null, "an empty room has none");
+});

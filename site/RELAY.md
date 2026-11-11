@@ -50,11 +50,18 @@ stops working at once. The page says when a version came in from the app.
 "Use another AI app". The button is a `codex://new?prompt=` link carrying those words (`src/lib/change-words.ts`
 holds them for both), which opens a new chat in ChatGPT's desktop app on the Mac with them in the message box, unsent.
 The link carries the key on purpose, as the words do when pasted; it's kept out of PostHog's autocapture, and "New
-key" rebuilds it. The link can't choose Codex, so the words say to switch to it when commands can't run. The words
-make a new empty folder (`mktemp -d`) and name it in full in every command, so `game.html` and `headers.txt` never
-land in the player's home folder or wherever the app starts. They read the game, ask what to change (or confirm the
-idea brought along) and wait, then change and send it, and their curl stops on an HTTP error (`--fail-with-body`) so a
-refused send is never taken for a sent one.
+key" rebuilds it. The link can't choose Codex, so the words say to switch to it when commands can't run.
+
+The words are short. How to read, change and send the game, and what to do with each answer the relay can give, are in
+a guide the site serves, `/change-guide.md` (`public/change-guide.md`): text the app fetches with `curl -fsS`, so a
+missing guide stops the run, not a skill it installs. The words themselves carry what can't wait for it: that the
+game's page is where the game goes and shows each version by itself, so the game is sent only to the room's address,
+with no site-publishing skill, local server or separate preview (an app's own habits otherwise take over); then "read
+the guide first"; the room's address and key; the game's name and the page; and the request. With a request, the app
+goes ahead without asking; without one, it asks. The room keeps the link's name as it opens, and every answer about
+the room (`op=open`, `state`, `postkey`) gives it as `name` (null for an empty room, or one opened before rooms kept
+it, which the words call "the game"). The guide has the app work in a new folder of its own (`mktemp -d`), say it's
+ready only after a send is taken, in one plain line, and remove only that folder and what it started.
 
 `&app=claude` makes "Change with Claude Code" the main control instead: a `claude-cli://open?q=` link with the same
 words (without the line about Codex), which opens Claude Code in a terminal with them typed in, unsent. Claude Code

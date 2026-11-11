@@ -140,7 +140,8 @@ export function createRelayHandler({ env = process.env, db, blobs, wishes, now =
   };
 
   const summary = ({ room, rev }) => ({
-    rev, room: room.id, wish: room.wish, version: room.current, play: room.current ? playOf(room.id, room.current) : null, ends: room.ends,
+    // The game's name, for the words the page hands an AI app; a room opened before rooms kept it has none.
+    rev, room: room.id, wish: room.wish, name: room.name ?? null, version: room.current, play: room.current ? playOf(room.id, room.current) : null, ends: room.ends,
     seeding: room.seeding ?? null, mode: room.mode ?? "helper", posted: room.postedAt ?? null,
     paired: !!room.helperHash, helper: !!room.helperSeen && now() - room.helperSeen < limits.helperMs,
     code: room.helperHash ? null : room.codeEnds > now() ? room.code : null, codeEnds: room.helperHash ? null : room.codeEnds,
@@ -263,7 +264,7 @@ export function createRelayHandler({ env = process.env, db, blobs, wishes, now =
     if (wait) return reply(429, { error: "slow_down" }, { "Retry-After": String(wait) });
     const id = randomBytes(8).toString("hex"), secret = randomBytes(32).toString("base64url"), postSecret = randomBytes(32).toString("base64url");
     const room = {
-      id, wish, mode, created: now(), active: now(), ends: now() + limits.lifeMs, pageHash: hashOf(secret), helperHash: null, helperSeen: 0,
+      id, wish, name: typeof record?.name === "string" && record.name.trim() ? record.name.trim().slice(0, 80) : null, mode, created: now(), active: now(), ends: now() + limits.lifeMs, pageHash: hashOf(secret), helperHash: null, helperSeen: 0,
       postHash: mode === "post" ? hashOf(postSecret) : null, posted: {}, postTimes: [], postedAt: null, stored: 0,
       code: null, codeEnds: 0, current: 0, previous: null, builds: {}, running: null, count: 0, requests: [], pending: null,
       seeding: { copied: 0, total: paths.length, failed: null },

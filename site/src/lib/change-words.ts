@@ -1,33 +1,40 @@
-// The words the change page (`/change?with=app`) hands to the player's AI app: the room's game address, its key, and
-// how to read the game and send a new one whole. One copy for the Copy button and the app's link, so both always carry
-// the same words.
-//
-// The order matters: the app reads the game first, then checks with the player (asks what to change, or confirms the
-// idea they brought from the game's page) and waits, so nothing is sent before the player has said yes. The files go in
-// a new empty folder of their own, named in full in every command, so game.html and headers.txt never land in the
-// player's home folder or wherever the app happens to start; an app's shell needn't keep a `cd` between commands.
-// `--fail-with-body` makes curl stop on an HTTP error (a stale version, a closed room, a game too big) and still show
-// the relay's answer, instead of saving an error page as game.html or reporting success.
+// The words the change page (`/change?with=app`) hands to the player's AI app: short, since how to change and send the
+// game is in the guide the site serves (`public/change-guide.md`, fetched text, not a skill the app installs). What
+// can't wait for the guide is here: that the game's page is the destination and the room's address the only place to
+// send it (an app's own habits, a site-publishing skill or a local preview, otherwise take over), the address and key,
+// what the game is, and the request. `curl -fsS` stops on a guide that isn't there rather than reading an error page.
+// One copy for the Copy button and the app's link, so both always carry the same words.
 
 /** The AI apps the change page opens with its words. */
 export type ChangeApp = "chatgpt" | "claude";
 
 export const isChangeApp = (app: unknown): app is ChangeApp => app === "chatgpt" || app === "claude";
 
-export function changeWords(address: string, key: string, { app = "chatgpt", idea = "" }: { app?: ChangeApp; idea?: string } = {}): string {
+export type ChangeHandoff = {
+  /** The guide's address on the site the page is on. */
+  guide: string;
+  /** The room's game address (`/r/<room>/game`) and its key. */
+  address: string;
+  key: string;
+  /** The change page the person is on, and the game's name when the room knows it. */
+  page: string;
+  name?: string | null;
+  app?: ChangeApp;
+  /** What the person asked for on the game's page, if anything: then the app goes ahead without asking. */
+  idea?: string;
+};
+
+export function changeWords({ guide, address, key, page, name, app = "chatgpt", idea = "" }: ChangeHandoff): string {
   const wish = idea.trim().replace(/\s+/g, " ");
+  const game = name?.trim() ? `"${name.trim()}"` : "the game";
   return [
-    app === "chatgpt"
-      ? "Help me change the browser game I'm playing. You need to run commands on this computer for it: if you can't, tell me to switch to Codex in the ChatGPT app, and stop."
-      : "Help me change the browser game I'm playing. You'll run a few commands on this computer for it.",
-    "1. Make a new empty folder for this with `mktemp -d`, and use the full path it prints as <folder> in every command below.",
-    `2. Read the game: curl -sS --fail-with-body -D "<folder>/headers.txt" -o "<folder>/game.html" ${address} -H "Authorization: Bearer ${key}"`,
-    wish
-      ? `3. Here's what I'd like to change: "${wish}". Tell me in a line or two how you'll do it, and wait for my OK.`
-      : "3. Ask me what I'd like to change, and wait for my answer.",
-    "4. Change game.html as I asked (or replace it with a new game). It must stay ONE self-contained HTML file (CSS and JavaScript inside it, no other files), under 4 MB. It plays in a frame of any size, which can change while it plays: lay it out for the frame's own viewport and keep it fitting when that resizes, never for one fixed window height.",
-    `5. Send it, with the ETag from headers.txt as If-Match: curl -sS --fail-with-body -X POST ${address} -H "Authorization: Bearer ${key}" -H 'If-Match: "<ETag>"' -H "Content-Type: text/html; charset=utf-8" --data-binary @"<folder>/game.html"`,
-    "Tell me what it answers. For every later change, start again from step 2 in the same folder.",
+    `Change ${game}, the existing browser game on my Lamp page (${page}). That page is where it goes: it shows each new version by itself. Send the game only to the game address below; no site-publishing skill, no local server, no separate preview.`,
+    ...(app === "chatgpt" ? ["You need to run commands on this computer for it: if you can't, tell me to switch to Codex in the ChatGPT app, and stop."] : []),
+    `Read the guide first, and follow it: curl -fsS ${guide}`,
+    "If you can't read the guide, stop and tell me.",
+    `Game address: ${address}`,
+    `Key: ${key}`,
+    wish ? `My request: ${wish}` : "My request: none yet. Ask me what to change.",
   ].join("\n");
 }
 
