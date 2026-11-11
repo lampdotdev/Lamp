@@ -30,7 +30,9 @@ export function complete({ system, prompt, schema, seconds = 60, which = engine(
   const folder = mkdtempSync(join(tmpdir(), "lamp-ai-"));
   let args;
   if (which === "claude") {
-    args = ["-p", prompt, "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--strict-mcp-config",
+    // Sealed as Lamp's app seals it (`AppAI.viaEngine`): none of the person's settings or hooks (--restricted), no MCP,
+    // no tools.
+    args = ["-p", prompt, "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--restricted", "--strict-mcp-config",
       "--disable-slash-commands", "--tools", "", "--system-prompt", system || "You are a helpful assistant inside an app."];
     if (process.env.LAMP_AI_MODEL) args.push("--model", process.env.LAMP_AI_MODEL);
     if (schema) args.push("--json-schema", JSON.stringify(schema));
@@ -38,7 +40,9 @@ export function complete({ system, prompt, schema, seconds = 60, which = engine(
     const instructions = (system || "You are a helpful assistant inside an app.") + "\n\nAnswer directly. Don't run commands or change files.";
     args = ["exec", "--json", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check", "--ephemeral", "-s", "read-only",
       "-c", "hooks={}", "-c", 'model_reasoning_effort="low"', "-c", 'approval_policy="never"', "-c", "features.shell_tool=false",
-      "-c", 'web_search="disabled"', "-c", `developer_instructions=${JSON.stringify(instructions)}`];
+      "-c", 'web_search="disabled"', "-c", "features.unified_exec=false", "-c", "features.apps=false", "-c", "features.multi_agent=false",
+      // Nor its own way to look at a picture on this Mac, which would read files outside this run's empty folder.
+      "-c", "tools.view_image=false", "-c", `developer_instructions=${JSON.stringify(instructions)}`];
     if (process.env.LAMP_AI_MODEL) args.push("-m", process.env.LAMP_AI_MODEL);
     if (schema) { writeFileSync(join(folder, "schema.json"), JSON.stringify(schema)); args.push("--output-schema", "schema.json"); }
     args.push("--", prompt);
