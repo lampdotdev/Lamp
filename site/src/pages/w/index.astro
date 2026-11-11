@@ -27,6 +27,10 @@ import { DOWNLOAD_URL } from "../../lib/download";
         <button type="button" data-news hidden popovertarget="news" class="news-button shrink-0 cursor-pointer rounded-md px-1.5 py-0.5 -my-0.5 text-sm whitespace-nowrap text-muted-ink hover:bg-tape/5 hover:text-tape focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tape/50">
           <svg data-news-new hidden aria-hidden="true" viewBox="0 0 16 16" class="news-sparkle"><path d="M8 0.8l1.6 4.2 4.2 1.6-4.2 1.6L8 12.4 6.4 8.2 2.2 6.6 6.4 5zM13 10.5l0.7 1.8 1.8 0.7-1.8 0.7L13 15.5l-0.7-1.8-1.8-0.7 1.8-0.7z" /></svg><span data-news-label></span>
         </button>
+        <!-- The app's code on GitHub, when its maker put it there and it's public: after when it was updated. -->
+        <a data-github hidden target="_blank" rel="noopener" class="github-link" aria-label="Its code on GitHub">
+          <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" /></svg>
+        </a>
       </div>
       <div class="flex shrink-0 items-center gap-4 text-sm">
         <a href="/" class="rounded-md font-mono text-[13px] text-muted-ink hover:text-tape focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tape/50">Made with Lamp</a>
@@ -82,12 +86,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
          and the header away together (remembered in this browser), leaving only the wish, and from the same place
          brings both back. -->
     <div data-bar data-remix-band class="bar bar-bottom">
-    <aside class="remix-band relative h-16 border-t border-tape/15 bg-paper" aria-label="Make a change">
+    <aside class="remix-band h-16 border-t border-tape/15 bg-paper" aria-label="Make a change">
       <form data-prompt class="mx-auto flex h-full max-w-[44rem] items-center gap-3 py-3 pr-14 pl-3 sm:pl-6 lg:px-6">
-        <!-- The app's code on GitHub, when its maker put it there and it's public: at the band's left, or first in it where it's narrow. -->
-        <a data-github hidden target="_blank" rel="noopener" class="github-link" aria-label="Its code on GitHub">
-          <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" /></svg>
-        </a>
         <!-- The box's questions and its button say what it's for; its label is for screen readers. -->
         <label for="change" class="sr-only">How would you make this better?</label>
         <div class="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-tape/15 bg-paper py-1 pr-1 pl-3 shadow-xs transition focus-within:border-tape/50 focus-within:ring-3 focus-within:ring-tape/10">
@@ -247,13 +247,11 @@ import { DOWNLOAD_URL } from "../../lib/download";
   }
   .shared-button-outline:hover { background: color-mix(in srgb, var(--color-tape) 6%, transparent); }
   .shared-button[hidden] { display: none; }
-  /* The app's code on GitHub, beside the box: quiet, as the band is. */
-  .github-link { flex: none; display: inline-flex; align-items: center; gap: 0.375rem; height: 2rem; width: 2rem; justify-content: center; border-radius: 0.375rem; color: var(--color-muted-ink); font-size: 0.875rem; font-weight: 500; transition: color 0.15s; }
+  /* The app's code on GitHub, after when it was updated: as quiet as the date. */
+  .github-link { flex: none; align-self: center; display: inline-flex; align-items: center; justify-content: center; height: 1.75rem; width: 1.75rem; border-radius: 0.375rem; color: var(--color-muted-ink); transition: color 0.15s; }
   .github-link:hover { color: var(--color-ink); }
   .github-link[hidden] { display: none; }
-  .github-link svg { width: 1.125rem; height: 1.125rem; fill: currentColor; }
-  /* Where the band has room either side of its box, at its left edge. */
-  @media (min-width: 64rem) { .github-link { position: absolute; left: 1.25rem; top: 50%; translate: 0 -50%; } }
+  .github-link svg { width: 1rem; height: 1rem; fill: currentColor; }
 
   /* An idea that's in: a dark bar over the top of the app, closed with its ×. */
   .idea-in {
