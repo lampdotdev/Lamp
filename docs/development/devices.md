@@ -661,9 +661,9 @@ Reload takes both in, once; older and imported games adopt this that way, on the
 always goes in. After each run the page tells Lamp what came through (`cameThrough`, a state of its own with the words in
 `why`, kept as `PageLive.report`), which the agent's next look carries (`GameKit.openGameNote`). While the code runs again, the last frame and
 the old HUD stay on screen, still, and fade once the new code has drawn; the page then says `shown`, which is when
-Lamp's light crosses the window (`Store.pageShown`): the smoke built over the window stays through the run, rather than
-going as the page first answers. A swap gets the light at once; a page that opens again says `shown` at its first frame;
-one that never says lets the smoke go after 20 s. Where running again can't be done (the import map or a script
+the card on the window says "Updated" (`Store.pageShown`): its "Updating" stays through the run, rather than
+going as the page first answers. A swap gets "Updated" at once; a page that opens again says `shown` at its first frame;
+one that never says lets the card go after 20 s. Where running again can't be done (the import map or a script
 that isn't a module changed, a circle of imports, Lamp's own files) the change waits for the person's Reload
 (`reopenOrHold`, "held"), never opening the page under them; Reload opens it again from the snapshot. New code that
 fails before init is done or in its first second opens the page again at once (`swapGuard`). The game's

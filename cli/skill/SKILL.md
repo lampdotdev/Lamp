@@ -98,7 +98,8 @@ here: keep its license file, its copyright headers and its author's credit on sc
 
 1. **Show the person the app** once, when you start, unless they don't want to watch: `{{lamp}} open`. It opens a
    window they can use and play in while you work, and returns at once.
-2. **Change the files.**
+2. **Change the files.** While the person watches a page you opened, first say what you're changing, in a few words
+   of theirs: `{{lamp}} changing "Rain on the roads"`. The page shows it on the card it puts up as the change goes in.
 3. **Look**: `{{lamp}} look`. It waits for the change to go in, then answers how it went, a picture of the page (a
    file: read it; the last forty are kept), the screen as text, and the errors and the log since your last look. Look
    after every change, and read the errors and the picture before saying it works. `{{lamp}} look --reopen` opens the
