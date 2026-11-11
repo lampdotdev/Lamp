@@ -84,7 +84,7 @@ enum GitHubRelease {
             target = Target(repo: own.repo, gh: gh, login: login, openedAt: own.commit, behind: own.behind)
         }
         do {
-            target.authors = try await GitHubRepo.authors(releasingTo: target.repo, withPage: Publish.hasPage(project), gh: gh, login: login)
+            target.authors = try await GitHubRepo.authors(releasingTo: target.repo, withPage: false, gh: gh, login: login)
         } catch {
             return .note(error.localizedDescription)
         }
