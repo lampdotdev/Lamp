@@ -191,7 +191,10 @@ enum GitHubRepo {
         let site = parts.isEmpty && ScreenKit.isSite(root)
         let runtime = site && StaticSite.loadsRuntime(root.dir.appendingPathComponent(TVTemplate.webFolder))
         for (app, folder) in [(root, "")] + parts.map { ($0, $0.dir.lastPathComponent + "/") } {
-            for path in ownedPaths(in: app) where !site || (runtime && path == TVTemplate.supportFile) {
+            // Never Lamp's Swift for a page's app, which it keeps beside what it builds (`GameKit.lampSwiftFolder`): the
+            // repository holds the page and the app's own Swift, and the Lamp that opens it writes the rest.
+            for path in ownedPaths(in: app) where (!site || (runtime && path == TVTemplate.supportFile))
+                && !(GameKit.hostsPage(app) && GameKit.location(path) != path) {
                 let to = tree.appendingPathComponent(folder + path)
                 guard !fm.fileExists(atPath: to.path) else { continue }
                 try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -301,6 +304,9 @@ enum GitHubRepo {
                      Template.widgetFolder + "/" + Template.widgetSupportFile, Template.shareFolder + "/" + Template.shareSupportFile] + Template.watchSupportPaths
         let lowered = relative.lowercased()
         if owned.contains(where: { lowered == $0.lowercased() }) { return true }
+        // A page's app keeps Lamp's Swift beside what it builds (`GameKit.lampSwiftFolder`); where an earlier Lamp kept it,
+        // in Sources/, it's still Lamp's: never the sender's code, in a repository or a shared file.
+        if GameKit.hostsPage(project), GameKit.location(relative) != relative { return true }
         if project.platform.target.recipe.language == .kotlin, Template.isAndroidSupport(relative) { return true }
         return DeviceSupport.isSupport(relative, in: project)
     }

@@ -103,11 +103,12 @@ enum ScreenKit {
         let page = page(for: project.platform)
         guard let host = host(for: project) else { throw Failure(message: "This copy of Lamp is missing its web app kit.") }
         try TVTemplate.writeOwnedFiles(for: project)
-        try Template.write(host, to: page.swift, for: project)
+        GameKit.moveLampSwift(of: project)
+        try Template.write(host, to: GameKit.location(page.swift), for: project)
         try GameKit.writePage(for: project)
         // On Android: Lamp's Android app around the page, as a game's.
         if project.openPlaces.contains(.android) { try GameAndroid.write(for: project) }
-        try Template.put(Template.lampSupportSwift(for: project), at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
+        try Template.put(Template.lampSupportSwift(for: project), at: project.dir.appendingPathComponent(GameKit.location("Sources/LampSupport.swift")), for: project)
         // What the player's copy is told it is: the kind's address, and the fixed canvas a page made at one has.
         let played = GameKit.playerPlist(game: false, scheme: page.scheme, canvas: fillsAnyShape(project) ? nil : (1920, 1080))
         try Template.write(buildSh.replacingOccurrences(of: "{{PLAYER_PLIST}}", with: played), to: "build.sh", for: project, executable: true)
@@ -137,7 +138,8 @@ enum ScreenKit {
     /// Every path Lamp owns in a screen or a web app.
     static func paths(for project: LampProject) -> [String] {
         let page = page(for: project.platform)
-        return [TVTemplate.supportFile, page.swift, "Sources/LampPage.swift", "Sources/LampControllerKit.swift", "Sources/LampSupport.swift", "build.sh", "Package.swift", page.marker]
+        return [TVTemplate.supportFile] + [page.swift, "Sources/LampPage.swift", "Sources/LampControllerKit.swift", "Sources/LampSupport.swift"].map(GameKit.location)
+            + ["build.sh", "Package.swift", page.marker]
             + GameAndroid.paths(for: project)
     }
 
@@ -212,7 +214,8 @@ enum ScreenKit {
     let package = Package(
         name: "{{EXE}}",
         platforms: [.macOS(.v14), .iOS(.v17)],
-        targets: [.executableTarget(name: "{{EXE}}", path: "Sources")]
+        // The app's own Swift in Sources/, and Lamp's beside what it builds (`GameKit.lampSwiftFolder`).
+        targets: [.executableTarget(name: "{{EXE}}", path: ".", sources: ["Sources", "build/lamp-swift"])]
     )
 
     """
