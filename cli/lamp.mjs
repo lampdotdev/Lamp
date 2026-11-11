@@ -936,8 +936,12 @@ async function main() {
   }
 
   if (command === "ideas") {
-    const { rest } = parse(args, []);
     const outcomes = ["in", "dismiss"];
+    // Everything after the outcome's number is a note to whoever sent it, word for word: never read as options, so
+    // "--fullscreen" or "--help" in it stays in it.
+    const at = args.findIndex((arg) => outcomes.includes(arg));
+    const { rest } = parse(at < 0 ? args : args.slice(0, at + 2), []);
+    const noted = at < 0 ? [] : args.slice(at + 2);
     const folder = rest.length && !outcomes.includes(rest[0]) ? rest.shift() : ".";
     const lamps = lampsLink(folder);
     if (lamps) throw new Problem(`${lamps} keeps this app's link, and the ideas people send to it: they're on its Share Link card in ${lamps}.`);
@@ -945,8 +949,8 @@ async function main() {
     if (rest.length) {
       const n = Number(rest[1]);
       if (!outcomes.includes(rest[0]) || !Number.isInteger(n) || n < 1) throw new Problem("ideas takes in <number> or dismiss <number>: lamp ideas lists them with their numbers");
-      // Anything after the number is a note to whoever sent it, on the link's page and in the email if they asked for one.
-      const note = rest.slice(2).join(" ").trim() || undefined;
+      // On the link's page, and in the email if they asked for one.
+      const note = [...rest.slice(2), ...noted].join(" ").trim() || undefined;
       const answer = await finishIdea(layout.folder, n, rest[0] === "in", note);
       console.log(rest[0] === "in" ? `Idea ${n} is in.${answer.notified ? " Whoever sent it asked to hear, and has been written to." : ""}` : `Idea ${n} is let go.${note ? " Your note is on the link's page for them." : ""}`);
       return;
