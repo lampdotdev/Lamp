@@ -679,8 +679,9 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
         // The picture goes to the store first, at an address with a random part, and goes again if the idea can't.
         const { picture: shot, ...words } = idea;
         const at = shot ? await kept.putImage(id, "idea", shot) : null;
-        const number = await kept.addIdea(id, { ...words, ...(at ? { picture: at } : {}), token, at: now().toISOString() });
-        if (!number && at) { try { await kept.removeImages([at]); } catch {} }
+        let number = null;
+        try { number = await kept.addIdea(id, { ...words, ...(at ? { picture: at } : {}), token, at: now().toISOString() }); }
+        finally { if (!number && at) { try { await kept.removeImages([at]); } catch {} } }
         return number ? reply(201, { n: number, token }) : reply(429, { error: "full" });
       }
       // The sender's own ideas, asked by number and token from their browser: what became of each, nothing else.
@@ -705,9 +706,11 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
       // An outcome, given once: only the call that gave it writes to the sender, so two at once, or one tried again,
       // send one email.
       const built = url.searchParams.get("built") === "1";
+      // Its picture was for the maker, who has seen to it: it goes first, so a store that turns that away leaves the
+      // idea open, with its picture, to be let go again, rather than the picture left with nothing pointing to it.
+      const open = (await kept.ideas(id)).find((one) => one.n === n && !one.status);
+      if (open) await kept.removeImages(ideaPictures([open]));
       const was = await kept.finishIdea(id, n, built ? "in" : "dismissed", now().toISOString());
-      // Its picture was for the maker, who has seen to it: it goes now, while the outcome stays a while for the sender.
-      if (was) { try { await kept.removeImages(ideaPictures([was])); } catch {} }
       const notified = built && was?.email ? await tellItsIn(was, record, linkFor(url.origin, id, record.name), { env, fetcher, once: `idea-${id}-${n}` }) : false;
       return reply(200, { notified });
     } catch { return reply(503, { error: "service_unavailable" }); }
@@ -924,8 +927,9 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
         const base = rebased ? `<base href="/w/${id}/play/${version}/${folder.split("/").map(encodeURIComponent).join("/")}/">` : "";
         const added = base + pictureScript(site);
         const html = (await kept.readFile(at)).toString("utf8");
-        const head = html.search(/<head[^>]*>/i);
-        bytes = Buffer.from(head < 0 ? added + html : html.replace(/<head[^>]*>/i, (tag) => tag + added));
+        // In its head, or after its doctype where it has no head of its own: before a doctype, a page is drawn in quirks mode.
+        const head = /<head[^>]*>/i.exec(html) ?? /^\s*<!doctype[^>]*>/i.exec(html);
+        bytes = Buffer.from(head ? html.slice(0, head.index + head[0].length) + added + html.slice(head.index + head[0].length) : added + html);
       } else if (request.method !== "HEAD") {
         ({ body: bytes, length } = await kept.openFile(at));
       }

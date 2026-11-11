@@ -346,7 +346,7 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   assert.match(served.headers.get("content-type"), /^text\/html/);
   assert.equal(served.headers.get("content-security-policy"), "frame-ancestors https://lamp.dev");
   // The page as it was, after what lets the link's page ask it for a picture of it, which only the site may ask.
-  assert.equal(await served.text(), pictureScript("https://lamp.dev") + html.toString());
+  assert.equal(await served.text(), html.toString().replace("<!doctype html>", "<!doctype html>" + pictureScript("https://lamp.dev")), "after its doctype, so it isn't drawn in quirks mode");
   assert.equal((await play(new Request(`https://lamp.dev/api/wish-play?id=${id}&v=1&path=index.html`))).status, 404, "never on the site's own host");
   assert.equal((await play(new Request(`https://play.lamp.dev/api/wish-play?id=${id}&v=1&path=index.html`))).status, 404, "only on the link's own host");
   const gone = await play(new Request(`https://${own}/api/wish-play?id=${id}&v=2&path=index.html`));

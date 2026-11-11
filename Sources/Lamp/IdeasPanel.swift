@@ -108,8 +108,11 @@ extension Store {
         Task {
             var attached: [URL] = []
             if let data = await WishIdeas.pictureData(address) {
-                let file = FileManager.default.temporaryDirectory.appendingPathComponent("Idea \(idea.n).jpg")
-                if (try? data.write(to: file)) != nil { attached = [file] }
+                // A folder of its own: another wish's idea of the same number, built before this one goes, keeps its own.
+                let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+                let file = folder.appendingPathComponent("Idea \(idea.n).jpg")
+                if (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil,
+                   (try? data.write(to: file)) != nil { attached = [file] }
             }
             send(WishIdeas.request(idea, for: project, withPicture: !attached.isEmpty), attachments: attached, to: project)
         }
