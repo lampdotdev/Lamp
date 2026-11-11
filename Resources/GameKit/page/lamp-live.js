@@ -14,8 +14,8 @@
 //   nothing at its top level happens twice) and put on the running class, so every object made from it runs the new
 //   code from its next call.
 // Anything else waits for Reload, and Lamp is told what and why: the page, a script that isn't a module, a constructor,
-// a field, a new method or class, code outside a class, a method that uses `super`, `import.meta`, a private member
-// (#name) or anything at its module's top level (its own copy, which the running game holds, would be another), two
+// a field, a new method or class, code outside a class, a method that uses `super`, `import()` or `import.meta` (each read
+// from where the code is), a private member (#name) or anything at its module's top level (its own copy, which the running game holds, would be another), two
 // methods changed at once, and any file the game read or names. A file the game never read and nothing it runs names
 // is no part of the change: the app around the page says with each change every file it served the page (`read`).
 //
@@ -132,10 +132,17 @@
     let runtime = null;               // lamp-game.js's own, once it takes over
     const pending = [];               // changes handed here and not yet put in, in order
     let held = null;                  // what waits for Reload: { gen, changed, removed, why }
+    let active = null;                // the change being put in now, until it's in or held
     let queue = Promise.resolve(), pill = null;
+    // Thrown out of a change being put in once the runtime has taken over, which is handed that change instead: from
+    // there nothing more of it is put in here, nor said.
+    const HANDED = new Error('handed to the game runtime');
+    const stillMine = () => { if (runtime) throw HANDED; };
 
     const take = change => {
         if (runtime) return runtime(change);
+        // The person's Reload goes in at once, whatever waits: nothing queued here is worth keeping over it.
+        if (change.now) { reopen(change, 'Reload'); return true; }
         if (!sourcesRead) for (const path of [...(change.changed || []), ...(change.removed || [])]) unsure.add(clean(path));
         pending.push(change);
         // Not started yet: it goes in once the game is, by itself.
@@ -152,10 +159,14 @@
             if (given === take || typeof given !== 'function') return;
             runtime = given;
             hidePill();
+            // What waits for Reload, then the change being put in (it stops at its next step: `stillMine`), then those
+            // not begun, each with its own generation.
             const handed = [];
             if (held) handed.push({ gen: held.gen, changed: [...held.changed], removed: [...held.removed], now: false, pill: held.pill });
+            if (active) handed.push(active);
             handed.push(...pending.splice(0));
             held = null;
+            active = null;
             for (const change of handed) { try { runtime(change); } catch (e) { log(`Lamp: ${e && e.message || e}`); } }
         },
     });
@@ -164,13 +175,13 @@
         queue = queue.then(async () => {
             while (pending.length && !runtime) {
                 const change = pending[0];
-                if (change.now) return reopen(change, 'Reload');
                 if (broken) return reopen(change, `the game stopped with an error as it started (${broken})`);
                 if (!ready) return;
-                pending.shift();
-                await put(change);
+                active = pending.shift();
+                await put(active);
+                active = null;
             }
-        }).catch(e => log(`Lamp: ${e && e.message || e}`));
+        }).catch(e => { if (e !== HANDED) log(`Lamp: ${e && e.message || e}`); });
     }
 
     function reopen(change, why) {
@@ -188,15 +199,20 @@
                 if (path === pagePath()) hold(path, `${path} is the page itself`);
                 else if (graph.has(url)) {
                     const r = await swapModule(url, path);
+                    stillMine();
                     if (typeof r === 'string') hold(path, r);
                     else if (r) went.push(r.went);
                 } else if (/\.css$/i.test(path) && linksTo(path).length) {
                     await swapStyle(path, gen);
+                    stillMine();
                     went.push(path);
                 } else if (!unused(path, change.read)) {
                     hold(path, /\.m?js$/i.test(path) ? `${path} is code the game runs that isn't one of its modules` : `the game uses ${path}`);
                 }
-            } catch (e) { hold(path, `${path} couldn't be put in (${e && e.message || e})`); }
+            } catch (e) {
+                if (e === HANDED) throw e;
+                hold(path, `${path} couldn't be put in (${e && e.message || e})`);
+            }
         }
         for (const raw of change.removed || []) {
             const path = clean(raw);
@@ -259,6 +275,9 @@
     // MARK: A method made again
 
     const source = f => Function.prototype.toString.call(f);
+    // A method put in here, by its source as its module writes it: its own reads `lampMethod() {…}` (below).
+    const written = new WeakMap();
+    const sourceOf = f => written.get(f) ?? source(f);
     const isClass = v => typeof v === 'function' && /^class\b/.test(source(v));
 
     // Every method, accessor and static method of a class, by where it's kept.
@@ -281,9 +300,11 @@
         const old = texts.get(url);
         if (old == null) return `${path} couldn't be read as the game started`;
         const now = await readText(url);
+        stillMine();
         if (now === old) return null;
         // The module the game runs: the same one every import of it has, so it doesn't run again.
         const ns = await import(url);
+        stillMine();
         let a = 0;
         while (a < old.length && a < now.length && old[a] === now[a]) a++;
         let b = 0;
@@ -292,10 +313,10 @@
         let found = null;
         for (const C of new Set(Object.values(ns).filter(isClass))) {
             for (const m of methodsOf(C)) {
-                const text = source(m.fn), at = old.indexOf(text);
+                const text = sourceOf(m.fn), at = old.indexOf(text);
                 if (at < 0) continue;
-                const body = bodyStart(text);
-                if (body < 0 || from < at + body + 1 || to > at + text.length - 1) continue;
+                const head = header(tokens(text));
+                if (!head || from < at + head.body + 1 || to > at + text.length - 1) continue;
                 if (old.indexOf(text, at + 1) >= 0) return `${path} has more than one method written as ${C.name}.${String(m.key)} is`;
                 found = { ...m, at, text };
             }
@@ -304,12 +325,16 @@
         const name = `${found.C.name}.${String(found.key)}`;
         const fresh = now.slice(found.at, found.at + found.text.length + now.length - old.length);
         // Read as code, so a color in a string ('#ffffff') isn't taken for one.
-        const scan = tokens(fresh);
-        if (scan.some(t => t.t === 'priv')) return `${name} uses a private member (#name), which only a fresh start can give a new method`;
+        const scan = tokens(fresh), head = header(scan);
+        if (!head) return `${name} can't be read as a method`;
+        const body = scan.filter(t => t.at > head.body);
+        if (body.some(t => t.t === 'priv')) return `${name} uses a private member (#name), which only a fresh start can give a new method`;
         if (scan.some(t => t.v === 'super')) return `${name} uses super`;
-        if (/\bimport\s*\.\s*meta\b/.test(fresh)) return `${name} uses import.meta`;
+        // Both are read from where the code is: the new method's would be read from somewhere other than its module.
+        const importAt = scan.findIndex((t, i) => t.v === 'import' && scan[i + 1] && (scan[i + 1].v === '(' || scan[i + 1].v === '.'));
+        if (importAt >= 0) return `${name} uses ${scan[importAt + 1].v === '(' ? 'import()' : 'import.meta'}, which a new method would read from somewhere other than ${path}`;
         const top = topLevel(now);
-        const { free, declared } = freeNames(scan);
+        const { free, declared } = freeNames(scan, head.params);
         const both = [...declared].filter(n => top.declared.has(n) || top.imports.has(n));
         if (both.length) return `${name} declares ${both.join(', ')}, a name its module has too, so which one it means can't be told`;
         const kept = free.filter(n => top.declared.has(n) && !top.constants.has(n));
@@ -324,32 +349,53 @@
             lines.push(`${i.clause.length ? `import ${i.clause} from` : 'import'} ${JSON.stringify(target)};`);
         }
         for (const [n, text] of top.constants) if (free.includes(n)) lines.push(text);
-        lines.push(`export default ({\n${fresh}\n});`);
+        // Under a name of its own: its key, unchanged (the change is inside its body), is never worked out again, so a
+        // computed key's expression doesn't run a second time. It keeps the name the running one has.
+        const unnamed = fresh.slice(0, head.key) + 'lampMethod' + fresh.slice(head.keyEnd);
+        lines.push(`export default ({\n${unnamed}\n});`);
         const blob = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/javascript' }));
         let made;
         try { made = (await import(blob)).default; }
-        catch (e) { return `the new ${name} doesn't run (${e && e.message || e})`; }
+        catch (e) { stillMine(); return `the new ${name} doesn't run (${e && e.message || e})`; }
         finally { URL.revokeObjectURL(blob); }
-        const keys = Reflect.ownKeys(made);
-        if (keys.length !== 1 || keys[0] !== found.key) return `${name} is named differently now`;
-        const d = Object.getOwnPropertyDescriptor(made, found.key), was = Object.getOwnPropertyDescriptor(found.target, found.key);
-        if (typeof d[found.kind] !== 'function') return `${name} is another kind of member now`;
+        stillMine();
+        const d = Object.getOwnPropertyDescriptor(made, 'lampMethod'), was = Object.getOwnPropertyDescriptor(found.target, found.key);
+        if (!d || typeof d[found.kind] !== 'function') return `${name} is another kind of member now`;
+        try { Object.defineProperty(d[found.kind], 'name', { value: found.fn.name, configurable: true }); } catch (e) {}
+        written.set(d[found.kind], fresh);
         Object.defineProperty(found.target, found.key, { ...was, [found.kind]: d[found.kind] });
         texts.set(url, now);
         return { went: `${path} (${name})` };
     }
 
-    // Where a method's body opens: the first brace after its parameters.
-    function bodyStart(text) {
-        const scan = tokens(text);
-        const open = scan.findIndex(t => t.v === '(');
-        if (open < 0) return -1;
-        let depth = 0;
-        for (let i = open; i < scan.length; i++) {
-            if (scan[i].v === '(') depth++;
-            else if (scan[i].v === ')' && --depth === 0) { const brace = scan.slice(i + 1).find(t => t.v === '{'); return brace ? brace.at : -1; }
+    // A method as its source reads (`async *[key](…) {`, `get name() {`): where its key starts and ends in the text, the
+    // token its parameters open with, and where its body opens. Its modifiers are those words only when a key follows
+    // them (`get() {}` is a method named get). Null for anything else.
+    function header(scan) {
+        let i = 0;
+        const keyNext = j => scan[j] && scan[j].v !== '(';
+        while (scan[i] && ((scan[i].t === 'id' && ['async', 'get', 'set'].includes(scan[i].v)) || scan[i].v === '*') && keyNext(i + 1)) i++;
+        const key = scan[i];
+        if (!key) return null;
+        let end = i;
+        if (key.v === '[') {
+            let depth = 0;
+            for (; end < scan.length; end++) {
+                if (['(', '[', '{'].includes(scan[end].v)) depth++;
+                else if ([')', ']', '}'].includes(scan[end].v) && --depth === 0) break;
+            }
         }
-        return -1;
+        const params = end + 1;
+        if (!scan[params] || scan[params].v !== '(') return null;
+        let depth = 0;
+        for (let j = params; j < scan.length; j++) {
+            if (scan[j].v === '(') depth++;
+            else if (scan[j].v === ')' && --depth === 0) {
+                if (!scan[j + 1] || scan[j + 1].v !== '{') return null;
+                return { key: key.at, keyEnd: scan[params].at, params, body: scan[j + 1].at };
+            }
+        }
+        return null;
     }
 
     // MARK: Reading code
@@ -359,9 +405,11 @@
     const KEYWORDS_BEFORE_REGEX = new Set(['return', 'typeof', 'case', 'do', 'else', 'in', 'of', 'new', 'delete', 'void', 'throw', 'yield', 'await', 'instanceof']);
     function tokens(text) {
         const out = [], braces = [];
-        let i = 0;
+        let i = 0, nl = false;
         const n = text.length;
-        const push = (t, v, at) => out.push({ t, v, at });
+        // `nl`: a line ends between this token and the one before, which some words' meaning turns on (`async` before
+        // a line break is a name).
+        const push = (t, v, at) => { out.push({ t, v, at, nl }); nl = false; };
         const template = () => {
             const at = i;
             while (i < n) {
@@ -375,9 +423,14 @@
         };
         while (i < n) {
             const c = text[i];
-            if (/\s/.test(c)) { i++; continue; }
+            if (/\s/.test(c)) { if (c === '\n' || c === '\r') nl = true; i++; continue; }
             if (c === '/' && text[i + 1] === '/') { const e = text.indexOf('\n', i); i = e < 0 ? n : e; continue; }
-            if (c === '/' && text[i + 1] === '*') { const e = text.indexOf('*/', i + 2); i = e < 0 ? n : e + 2; continue; }
+            if (c === '/' && text[i + 1] === '*') {
+                const e = text.indexOf('*/', i + 2), end = e < 0 ? n : e + 2;
+                if (/[\n\r]/.test(text.slice(i, end))) nl = true;
+                i = end;
+                continue;
+            }
             const at = i;
             if (c === '"' || c === "'") {
                 i++;
@@ -438,17 +491,48 @@
         return out;
     }
 
-    const RESERVED = new Set(['this', 'arguments', 'new', 'return', 'if', 'else', 'for', 'while', 'do', 'switch', 'case', 'default',
-        'break', 'continue', 'typeof', 'instanceof', 'in', 'of', 'void', 'delete', 'throw', 'try', 'catch', 'finally', 'let', 'const',
-        'var', 'function', 'class', 'extends', 'super', 'yield', 'await', 'async', 'true', 'false', 'null', 'undefined', 'NaN',
-        'Infinity', 'get', 'set', 'static', 'import', 'export', 'debugger', 'with', 'target', 'meta']);
+    // The words that are never a name in a module's code, which is strict: the language's reserved words. A word that's
+    // a keyword only somewhere (`async`, `get`, `set`, `of`, `target` in `new.target`) is told by where it stands
+    // (`freeNames`), and `undefined`, `NaN` and `Infinity` are names like any other, which a module can declare.
+    const RESERVED = new Set(['await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default', 'delete', 'do',
+        'else', 'enum', 'export', 'extends', 'false', 'finally', 'for', 'function', 'if', 'implements', 'import', 'in', 'instanceof',
+        'interface', 'let', 'new', 'null', 'package', 'private', 'protected', 'public', 'return', 'static', 'super', 'switch', 'this',
+        'throw', 'true', 'try', 'typeof', 'var', 'void', 'while', 'with', 'yield']);
 
     // The names a method reads that it doesn't declare (`free`), and those it declares (`declared`): what it needs from
     // around it. Read from its parameters on, so its own name isn't one. Not scoped: a name declared anywhere in the
     // method counts as declared throughout, which is why one that's also a name of its module's holds the change.
-    function freeNames(scan) {
-        const start = scan.findIndex(t => t.v === '(');
+    function freeNames(scan, start) {
         const declared = new Set(), used = new Set();
+        // Where each bracket closes, by where it opens.
+        const closes = new Map(), open = [];
+        scan.forEach((t, i) => {
+            if (['(', '[', '{'].includes(t.v)) open.push(i);
+            else if ([')', ']', '}'].includes(t.v) && open.length) closes.set(open.pop(), i);
+        });
+        // `of` is a keyword only in a for loop's head, after what it declares: `for (const v of list)`.
+        const ofKeyword = new Set();
+        scan.forEach((t, i) => {
+            if (t.v !== 'for') return;
+            const at = scan[i + 1] && scan[i + 1].v === 'await' ? i + 2 : i + 1;
+            if (!scan[at] || scan[at].v !== '(') return;
+            let depth = 0;
+            for (let j = at; j < (closes.get(at) ?? scan.length); j++) {
+                if (['(', '[', '{'].includes(scan[j].v)) depth++;
+                else if ([')', ']', '}'].includes(scan[j].v)) depth--;
+                else if (depth === 1 && scan[j].v === 'of' && scan[j - 1] && (scan[j - 1].t === 'id' || [']', '}'].includes(scan[j - 1].v))) ofKeyword.add(j);
+            }
+        });
+        const arrowAfter = i => scan[i] && scan[i].v === '(' && scan[(closes.get(i) ?? -2) + 1] && scan[closes.get(i) + 1].v === '=>';
+        // A word that says what follows it, rather than naming anything: `async` before a function, an arrow or a
+        // method's key on its line; `get` and `set` before an accessor's key in an object or class.
+        const modifier = i => {
+            const t = scan[i], next = scan[i + 1], prev = scan[i - 1];
+            if (!next || next.nl) return false;
+            if (t.v === 'async') return next.v === 'function' || next.t === 'id' || next.v === '*' || next.v === '[' || arrowAfter(i + 1);
+            if (t.v === 'get' || t.v === 'set') return (next.t === 'id' || next.t === 'lit' || next.t === 'priv' || next.v === '[') && (!prev || ['{', ',', ';', '}'].includes(prev.v));
+            return false;
+        };
         // Parameters: of the method, of a function, of an arrow, of a catch.
         const group = open => {
             let depth = 0;
@@ -480,7 +564,9 @@
             if (prev && (prev.v === '.' || prev.v === '?.')) continue;
             // A key in an object, or a label.
             if (next && next.v === ':' && prev && ['{', ',', ';'].includes(prev.v)) continue;
-            if (RESERVED.has(t.v)) continue;
+            if (RESERVED.has(t.v) || ofKeyword.has(i) || modifier(i)) continue;
+            // Bound in every function that isn't an arrow, and the method is one.
+            if (t.v === 'arguments') continue;
             used.add(t.v);
         }
         // Destructured declarations: `const { a, b: c } = …`, `let [x, y] = …`.

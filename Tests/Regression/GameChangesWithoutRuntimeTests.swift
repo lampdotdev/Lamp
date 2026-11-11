@@ -10,9 +10,20 @@ final class GameChangesWithoutRuntimeTests: XCTestCase {
     private final class Files: NSObject, WKURLSchemeHandler {
         var text: [String: String] = [:]
         var asked: Set<String> = []
+        /// Files answered only after this many seconds, for what happens while one is on its way.
+        var slow: [String: Double] = [:]
         func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
             let path = String(task.request.url!.path.dropFirst())
             asked.insert(path)
+            if let seconds = slow[path] {
+                let body = text[path]
+                DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+                    task.didReceive(HTTPURLResponse(url: task.request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "text/javascript"])!)
+                    task.didReceive(Data((body ?? "").utf8))
+                    task.didFinish()
+                }
+                return
+            }
             let type = path.hasSuffix("html") ? "text/html" : path.hasSuffix("css") ? "text/css" : path.hasSuffix("json") ? "application/json" : "text/javascript"
             guard let body = text[path] else {
                 task.didReceive(HTTPURLResponse(url: task.request.url!, statusCode: 404, httpVersion: nil, headerFields: nil)!)
@@ -156,6 +167,96 @@ final class GameChangesWithoutRuntimeTests: XCTestCase {
         XCTAssertEqual(said["state"] as? String, "swapped", "\(said)")
         let got = try await value("ball.step()") as? String
         XCTAssertEqual(got, "#ffffff5")
+    }
+
+    func testAWordThatIsAKeywordOnlySomewhereIsANameWhereItStandsAsOne() async throws {
+        try await open()
+        try await ready()
+        // Where they are keywords, the method goes in and runs.
+        files.text["ball.js"] = Self.ball(step: "let total = 0; for (const v of [1, 2]) total += v; const f = async () => total; return total + this.x;")
+        let said = try await change(1, ["ball.js"])
+        XCTAssertEqual(said["state"] as? String, "swapped", "\(said)")
+        let got = try await number("ball.step()")
+        XCTAssertEqual(got, 8)
+        // Each is a name here, declared nowhere: the new method would fail as it ran, so it waits.
+        var gen = 1
+        for (code, word) in [("return target + this.x;", "target"), ("const t = get; return t;", "get"), ("return of;", "of"),
+                             ("return async;", "async"), ("return meta;", "meta"), ("const s = set\n(1); return s;", "set")] {
+            gen += 1
+            files.text["ball.js"] = Self.ball(step: code)
+            let said = try await change(gen, ["ball.js"])
+            XCTAssertEqual(said["state"] as? String, "held", "\(code): \(said)")
+            XCTAssertTrue((said["why"] as? String ?? "").contains(word), "\(code): \(said)")
+        }
+        // None of them went in: the method is the one before.
+        let still = try await number("ball.step()")
+        XCTAssertEqual(still, 8)
+    }
+
+    func testAGlobalsNameTheModuleDeclaresIsTheModules() async throws {
+        // A module may declare Infinity, NaN or undefined for itself: the new method reads the module's.
+        let constant = Self.ball().replacingOccurrences(of: "const SPEED = 2;", with: "const SPEED = 2;\nconst Infinity = 7;")
+        try await open(also: ["ball.js": constant])
+        try await ready()
+        files.text["ball.js"] = constant.replacingOccurrences(of: "this.x = clamp(this.x + SPEED, 0, 100); return this.x;", with: "return Infinity;")
+        let first = try await change(1, ["ball.js"])
+        XCTAssertEqual(first["state"] as? String, "swapped", "\(first)")
+        let got = try await number("ball.step()")
+        XCTAssertEqual(got, 7)
+        // One it may change as it runs is its own state: that waits.
+        let variable = Self.ball().replacingOccurrences(of: "let hits = 0;", with: "let hits = 0;\nlet NaN = 3;")
+        files.text["ball.js"] = variable.replacingOccurrences(of: "this.x = clamp(this.x + SPEED, 0, 100); return this.x;", with: "return NaN;")
+        let said = try await change(2, ["ball.js"])
+        XCTAssertEqual(said["state"] as? String, "held", "\(said)")
+    }
+
+    func testAMethodThatImportsWaits() async throws {
+        try await open()
+        try await ready()
+        files.text["ball.js"] = Self.ball(step: "return import('./util.js').then(m => m.clamp(this.x, 0, 1));")
+        let said = try await change(1, ["ball.js"])
+        XCTAssertEqual(said["state"] as? String, "held", "\(said)")
+        XCTAssertTrue((said["why"] as? String ?? "").contains("import()"), "\(said)")
+    }
+
+    func testAComputedKeyIsNotWorkedOutAgain() async throws {
+        let spin = Self.ball(extra: "[(window.keyRuns = (window.keyRuns || 0) + 1, 'spin')]() { return 1; }")
+        try await open(also: ["ball.js": spin])
+        try await ready()
+        files.text["ball.js"] = spin.replacingOccurrences(of: "'spin')]() { return 1; }", with: "'spin')]() { return 2; }")
+        let said = try await change(1, ["ball.js"])
+        XCTAssertEqual(said["state"] as? String, "swapped", "\(said)")
+        let spun = try await number("ball.spin()"), runs = try await number("window.keyRuns"), name = try await value("ball.spin.name") as? String
+        XCTAssertEqual(spun, 2)
+        XCTAssertEqual(runs, 1)
+        XCTAssertEqual(name, "spin")
+    }
+
+    func testReloadGoesInAtOnceWhileTheGameIsStarting() async throws {
+        try await open(head: "<script>lampLive.waitForReady(); window.opens = 1 + Number(sessionStorage.opens || 0); sessionStorage.opens = window.opens;</script>")
+        try await ready()
+        _ = try await value(#"window.__lampLive({ gen: 1, changed: ['ball.js'], removed: [], now: false })"#)
+        try await until("the change waits for the game") { self.live.told.contains { $0["gen"] as? Int == 1 && $0["pause"] as? Bool == true } }
+        _ = try await value(#"window.__lampLive({ gen: 2, changed: [], removed: [], now: true })"#)
+        try await until("the page opens again for Reload") { self.live.told.contains { $0["gen"] as? Int == 2 && $0["state"] as? String == "reloading" } }
+        try await until("the page opened again") { try await self.number("window.opens || 0") == 2 }
+    }
+
+    func testTheRuntimeIsHandedAChangeBeingPutIn() async throws {
+        try await open()
+        try await ready()
+        files.text["ball.js"] = Self.ball(step: "return 99;")
+        files.slow["ball.js"] = 1
+        _ = try await value(#"window.__lampLive({ gen: 7, changed: ['ball.js'], removed: [], now: false })"#)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        // The runtime arrives while the change's file is still on its way.
+        _ = try await value("window.got = []; window.__lampLive = change => { window.got.push(change.gen); return true; }; 0")
+        try await Task.sleep(nanoseconds: 1_500_000_000)
+        let got = try await value("window.got") as? [Int]
+        XCTAssertEqual(got, [7])
+        XCTAssertFalse(live.told.contains { $0["gen"] as? Int == 7 && ["swapped", "held"].contains($0["state"] as? String) && $0["pause"] == nil }, "\(live.told)")
+        let step = try await number("ball.step()")
+        XCTAssertEqual(step, 7, "the helper put it in after the runtime took over")
     }
 
     func testWhatCouldRunTheModuleAgainOrReachItsStateWaitsForReload() async throws {
