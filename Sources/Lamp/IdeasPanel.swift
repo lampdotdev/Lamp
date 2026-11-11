@@ -36,8 +36,24 @@ enum WishIdeas {
     }
 
     /// What Build It asks the chat for: the idea in the sender's own words, marked as theirs.
-    static func request(_ idea: WishLink.Idea, for project: LampProject) -> String {
-        "Someone playing \(project.name) sent this idea from its link:\n\n\(idea.text)"
+    static func request(_ idea: WishLink.Idea, for project: LampProject, withPicture: Bool = false) -> String {
+        let picture = withPicture ? ", with a picture of the app as they saw it" : ""
+        return "Someone playing \(project.name) sent this idea from its link\(picture):\n\n\(idea.text)"
+    }
+
+    /// The bytes written into a `data:` address (the gallery's made-up ideas, and the site's own when it runs locally).
+    static func inlineData(_ address: String) -> Data? {
+        guard address.hasPrefix("data:"), let comma = address.firstIndex(of: ",") else { return nil }
+        return Data(base64Encoded: String(address[address.index(after: comma)...]))
+    }
+
+    /// The idea's picture as bytes: from the site's store, or written into its address.
+    static func pictureData(_ address: String) async -> Data? {
+        if address.hasPrefix("data:") { return inlineData(address) }
+        guard let url = URL(string: address), url.scheme == "https" else { return nil }
+        guard let (data, response) = try? await URLSession.shared.data(from: url),
+              (response as? HTTPURLResponse)?.statusCode == 200, NSImage(data: data) != nil else { return nil }
+        return data
     }
 
 }
@@ -84,10 +100,22 @@ extension Store {
         objectWillChange.send()
     }
 
-    /// Build It: the wish's chat opens and is asked for the idea, as the person's own request.
+    /// Build It: the wish's chat opens and is asked for the idea, as the person's own request, with the app's picture
+    /// the sender kept in, attached as a picture of the person's own would be.
     func buildIdea(_ idea: WishLink.Idea, in project: LampProject) {
         showChat(project.id)
-        send(WishIdeas.request(idea, for: project), to: project)
+        guard let address = idea.picture else { return send(WishIdeas.request(idea, for: project), to: project) }
+        Task {
+            var attached: [URL] = []
+            if let data = await WishIdeas.pictureData(address) {
+                // A folder of its own: another wish's idea of the same number, built before this one goes, keeps its own.
+                let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+                let file = folder.appendingPathComponent("Idea \(idea.n).jpg")
+                if (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil,
+                   (try? data.write(to: file)) != nil { attached = [file] }
+            }
+            send(WishIdeas.request(idea, for: project, withPicture: !attached.isEmpty), attachments: attached, to: project)
+        }
     }
 
     /// It's In, or Dismiss: the idea goes from the link (built, the site first tells whoever asked), and from the panel
@@ -196,6 +224,7 @@ struct IdeasPanel: View {
             }
             Text(verbatim: idea.text).font(.system(size: 14)).foregroundStyle(Paper.ink).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
+            if let picture = idea.picture { IdeaPicture(address: picture) }
             HStack(spacing: 8) {
                 if built.contains(idea.n) {
                     Label("Asked in the chat", systemImage: "checkmark").font(.system(size: 12.5)).foregroundStyle(Paper.muted)
@@ -227,6 +256,38 @@ struct IdeasPanel: View {
     }
 }
 
+/// The app as the sender saw it when they opened the box, small under their idea; a click shows it full size.
+private struct IdeaPicture: View {
+    let address: String
+    @State private var image: NSImage?
+    @State private var large = false
+
+    init(address: String) {
+        self.address = address
+        // One written into its address is there at once, the gallery's drawn without waiting.
+        _image = State(initialValue: WishIdeas.inlineData(address).flatMap(NSImage.init(data:)))
+    }
+
+    var body: some View {
+        Group {
+            if let image {
+                Button { large = true } label: {
+                    Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: 240, maxHeight: 150, alignment: .leading)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Paper.rule))
+                }
+                .buttonStyle(.plain)
+                .help("The app as they saw it")
+                .popover(isPresented: $large) {
+                    Image(nsImage: image).resizable().aspectRatio(contentMode: .fit).frame(maxWidth: 900, maxHeight: 600)
+                }
+            }
+        }
+        .task(id: address) { if image == nil { image = await WishIdeas.pictureData(address).flatMap(NSImage.init(data:)) } }
+    }
+}
+
 extension Gallery {
     /// The desk's panel of ideas sent from a link, from made-up ideas to a made-up app.
     static let ideaEntries: [Entry] = [
@@ -241,7 +302,7 @@ extension Gallery {
             let now = Date()
             let at = { (hours: Double) in ISO8601DateFormatter().string(from: now.addingTimeInterval(-hours * 3600)) }
             let made = ideas ?? [
-                WishLink.Idea(n: 3, text: "Rain that makes the roads slippery", wantsNews: true, at: at(0.3)),
+                WishLink.Idea(n: 3, text: "Rain that makes the roads slippery", wantsNews: true, at: at(0.3), picture: madeUpPicture()),
                 WishLink.Idea(n: 2, text: "Let me paint my car any color I want, with stripes and a number on the doors like a real race car.", wantsNews: nil, at: at(5)),
                 WishLink.Idea(n: 1, text: "More boats in the harbor", wantsNews: nil, at: at(30)),
             ]
@@ -250,5 +311,23 @@ extension Gallery {
                 .background(Paper.page)
                 .environmentObject(Store.shared))
         }
+    }
+
+    /// A made-up picture of a game, as a `data:` address: a dusk sky over a harbor road.
+    private static func madeUpPicture() -> String? {
+        let image = NSImage(size: NSSize(width: 480, height: 300), flipped: false) { rect in
+            NSGradient(starting: NSColor(red: 0.98, green: 0.62, blue: 0.36, alpha: 1), ending: NSColor(red: 0.22, green: 0.27, blue: 0.52, alpha: 1))?
+                .draw(in: rect, angle: 90)
+            NSColor(red: 0.12, green: 0.30, blue: 0.42, alpha: 1).setFill()
+            NSBezierPath(rect: NSRect(x: 0, y: 0, width: rect.width, height: 110)).fill()
+            NSColor(white: 0.18, alpha: 1).setFill()
+            NSBezierPath(rect: NSRect(x: 0, y: 40, width: rect.width, height: 40)).fill()
+            NSColor(red: 0.95, green: 0.78, blue: 0.20, alpha: 1).setFill()
+            NSBezierPath(roundedRect: NSRect(x: 190, y: 52, width: 90, height: 28), xRadius: 8, yRadius: 8).fill()
+            return true
+        }
+        guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
+              let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else { return nil }
+        return "data:image/jpeg;base64,\(jpeg.base64EncodedString())"
     }
 }

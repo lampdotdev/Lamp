@@ -395,7 +395,9 @@ can change under Ask for Ideas), else "Found a bug?", "What's missing?" and "Wha
 who reads it ("Send to Alex", the full name where there's room), and it sends what's written, never a question, to the
 wish's maker first (`/api/wish-ideas`, `createIdeasHandler`): the site keeps it with the link, numbered, until the maker lets it go,
 sent only once the sender confirms it in the dialog the box opens, where they can still change it and give an address
-to hear back at. Only the link's
+to hear back at. The dialog also shows a picture of the app as it was when it opened (asked of the playing page,
+`pictureScript`), which goes with the idea unless they leave it out; the site keeps it in Blob until the idea has its
+outcome, the panel shows it under the idea, and Build It attaches it to what it asks the chat for. Only the link's
 secret reads them; they go with the link, and nothing of them is logged. Lamp asks for them for every wish with a link
 at launch and every five minutes (`WishIdeas`, `Store.checkIdeas`); the desk shows them on a line of their own
 under its changes ("Ideas", with how many are new, and a line under the app's row while some are new; seen ones are

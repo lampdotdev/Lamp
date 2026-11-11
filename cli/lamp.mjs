@@ -116,7 +116,8 @@ Mac app Lamp made in Swift, built and run on this Mac.
       stays Lamp's; --new-link has lamp make one of its own instead.
   lamp unshare [folder]   Take the link down.
   lamp ideas [folder] [in <n> | dismiss <n>]
-      The ideas people playing the link have sent. "in" says one is in the game now (whoever asked to hear is
+      The ideas people playing the link have sent, with a picture of the app as they saw it when they kept one
+      in. "in" says one is in the game now (whoever asked to hear is
       written to); "dismiss" lets one go.
   lamp setup [--remove]   Teach Claude Code and Codex on this computer to work this way (a skill for each).
   lamp guide              What that skill says, for any other agent.
@@ -943,6 +944,8 @@ async function main() {
     console.log(`Ideas sent to ${sent.url}`);
     for (const idea of sent.ideas) {
       console.log(`  ${idea.n}. ${String(idea.text).split("\n").join("\n     ")}${idea.wantsNews ? "  (wants to hear when it's in)" : ""}`);
+      // The app as they saw it when they opened the box, if they kept it in: there until the idea has its outcome.
+      if (typeof idea.picture === "string" && idea.picture.startsWith("https://")) console.log(`     picture: ${idea.picture}`);
     }
     console.log("Say what became of one with: lamp ideas in <number>, or lamp ideas dismiss <number>.");
     return;

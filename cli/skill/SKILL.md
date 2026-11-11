@@ -189,7 +189,8 @@ Only when the person asks: a link is public, and anyone who has it can play the 
   people, and `--by "Their Name"` who it's by: only a name the person gave you to show. A page that's logging errors
   isn't shared until they're put right. Again, after changes, it sends the page as it is now to the same link, with the
   same words unless you give new ones.
-- `{{lamp}} ideas` lists what people playing it have sent. Once one is in the game and the game shared again,
+- `{{lamp}} ideas` lists what people playing it have sent, each with the address of a picture of the app as they saw
+  it when they kept one in: look at it before building the idea. Once one is in the game and the game shared again,
   `{{lamp}} ideas in <number>` says so, and whoever asked to hear is written to; `{{lamp}} ideas dismiss <number>` lets
   one go.
 - `{{lamp}} unshare` takes the link down.

@@ -294,7 +294,7 @@ export function cloudStore(env, fetcher = fetch) {
     async removeIdea(id, n) { return (await command(["HDEL", ideasKey(id), String(n)])) === 1; },
     /**
      * Gives idea `n` its outcome ("in" or "dismissed"), in one step, and answers it as it was, its address included, to
-     * whichever call gave it: null when it's gone or already has one, so it's told once. The address goes with this step.
+     * whichever call gave it: null when it's gone or already has one, so it's told once. The address and the picture go with this step.
      */
     async finishIdea(id, n, status, at) {
       const text = await command(["EVAL", `local text = redis.call('HGET', KEYS[1], ARGV[1])
@@ -304,6 +304,7 @@ export function cloudStore(env, fetcher = fetch) {
         idea.status = ARGV[2]
         idea.done = ARGV[3]
         idea.email = nil
+        idea.picture = nil
         redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(idea))
         redis.call('HINCRBY', KEYS[1], 'open', -1)
         return text`, "1", ideasKey(id), String(n), status, at]);
@@ -447,6 +448,7 @@ export function memoryStore() {
       const before = structuredClone(idea);
       Object.assign(idea, { status, done: at });
       delete idea.email;
+      delete idea.picture;
       return before;
     },
     async putImage(_id, _name, image) { return `data:${image.type};base64,${image.bytes.toString("base64")}`; },
@@ -538,8 +540,9 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       if (method !== "POST" && (!earlier || !secretMatches(bearer(request), earlier.secret))) return reply(404, { error: "not_found" });
       const oldImages = [earlier?.picture?.url, earlier?.icon?.url].filter(Boolean);
       if (method === "DELETE") {
+        const ideaShots = ideaPictures(await kept.ideas(id).catch(() => []));
         await kept.remove(id);
-        await kept.removeImages(blobsOf(earlier));
+        await kept.removeImages([...blobsOf(earlier), ...ideaShots]);
         await kept.forget(id);
         return reply(204);
       }
@@ -577,7 +580,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
 // MARK: Ideas for the maker
 
 /** What someone playing a shared wish may send its maker: their idea, and an address to hear back at if they want. */
-export const IDEA_LIMITS = { text: 1000, email: 200, kept: 500, asked: 20, keptDone: 90 * 86400_000 };
+export const IDEA_LIMITS = { text: 1000, email: 200, picture: 400_000, kept: 500, asked: 20, keptDone: 90 * 86400_000 };
 // A visitor sends a handful an hour; a link takes a few hundred a day; overall, a ceiling on a flood.
 export const IDEA_QUOTAS = [
   { name: "idea-ip", perIP: true, limit: 12, seconds: 3600 },
@@ -608,20 +611,31 @@ export async function tellItsIn(idea, record, link, { env = process.env, fetcher
   } catch { return false; }
 }
 
-/** An idea as sent from a link's page, or null: its words, and an address to hear back at only if it looks like one. */
+/**
+ * An idea as sent from a link's page, or null: its words, an address to hear back at only if it looks like one, and
+ * the picture of the app the page took when the sender opened the box, if they kept it in (a PNG or JPEG, base64).
+ */
 export function readIdea(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
   const text = tidy(body.text, IDEA_LIMITS.text, { lines: true });
   if (!text) return null;
-  if (body.email == null || body.email === "") return { text };
+  const shot = picture(body.picture, IDEA_LIMITS.picture);
+  if (!shot) return null;
+  const idea = shot.bytes ? { text, picture: shot } : { text };
+  if (body.email == null || body.email === "") return idea;
   const email = tidy(body.email, IDEA_LIMITS.email);
-  return email && EMAIL.test(email) ? { text, email } : null;
+  return email && EMAIL.test(email) ? { ...idea, email } : null;
 }
+
+/** The pictures a link's ideas carry, to go with them. */
+const ideaPictures = (ideas) => ideas.map((one) => one.picture).filter((url) => typeof url === "string" && url.startsWith("https://"));
 
 /**
  * Ideas for a link's maker (`/api/wish-ideas?id=`). POST, from the link's page once the sender confirms it, keeps one:
- * what someone using it would change, and an address to hear when it's in, if they gave one. GET, with the link's secret, answers them for Lamp to show the maker: never the keys or the addresses, only
- * whether someone wants to hear back. DELETE ?n= with the secret lets one go: with `built=1` it's in, and the site writes
+ * what someone using it would change, an address to hear when it's in, if they gave one, and the picture of the app
+ * the page took as they opened the box, if they kept it in (in the store, until the idea has its outcome). GET, with
+ * the link's secret, answers them for Lamp to show the maker, with each picture's address: never the keys or the
+ * addresses, only whether someone wants to hear back. DELETE ?n= with the secret lets one go: with `built=1` it's in, and the site writes
  * to whoever asked (`tellItsIn`); without, it's dismissed. Either way it's kept a while with its outcome, for the
  * sender's own browser, which kept the number and a token the POST answered, to ask after it on a later visit (GET
  * `?id=&mine=<n>.<token>,…`, answering only those). Never logged, never on the page for anyone else, gone with the link.
@@ -662,7 +676,12 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
       if (!record) return reply(404, { error: "not_found" });
       if (method === "POST") {
         const token = randomBytes(12).toString("base64url");
-        const number = await kept.addIdea(id, { ...idea, token, at: now().toISOString() });
+        // The picture goes to the store first, at an address with a random part, and goes again if the idea can't.
+        const { picture: shot, ...words } = idea;
+        const at = shot ? await kept.putImage(id, "idea", shot) : null;
+        let number = null;
+        try { number = await kept.addIdea(id, { ...words, ...(at ? { picture: at } : {}), token, at: now().toISOString() }); }
+        finally { if (!number && at) { try { await kept.removeImages([at]); } catch {} } }
         return number ? reply(201, { n: number, token }) : reply(429, { error: "full" });
       }
       // The sender's own ideas, asked by number and token from their browser: what became of each, nothing else.
@@ -681,11 +700,16 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
         const all = await kept.ideas(id);
         const old = all.filter((one) => one.done && now() - new Date(one.done) > IDEA_LIMITS.keptDone);
         for (const one of old) await kept.removeIdea(id, one.n);
+        try { await kept.removeImages(ideaPictures(old)); } catch {}
         return reply(200, { ideas: all.filter((one) => !one.status).map(({ email, token: _token, ...shown }) => ({ ...shown, ...(email ? { wantsNews: true } : {}) })) });
       }
       // An outcome, given once: only the call that gave it writes to the sender, so two at once, or one tried again,
       // send one email.
       const built = url.searchParams.get("built") === "1";
+      // Its picture was for the maker, who has seen to it: it goes first, so a store that turns that away leaves the
+      // idea open, with its picture, to be let go again, rather than the picture left with nothing pointing to it.
+      const open = (await kept.ideas(id)).find((one) => one.n === n && !one.status);
+      if (open) await kept.removeImages(ideaPictures([open]));
       const was = await kept.finishIdea(id, n, built ? "in" : "dismissed", now().toISOString());
       const notified = built && was?.email ? await tellItsIn(was, record, linkFor(url.origin, id, record.name), { env, fetcher, once: `idea-${id}-${n}` }) : false;
       return reply(200, { notified });
@@ -706,8 +730,9 @@ export async function takeDown(id, { env = process.env, fetcher = fetch } = {}) 
   const kept = cloudStore(env, fetcher);
   const record = await kept.get(id);
   if (!record) return false;
+  const ideaShots = ideaPictures(await kept.ideas(id).catch(() => []));
   await kept.remove(id);
-  await kept.removeImages(blobsOf(record));
+  await kept.removeImages([...blobsOf(record), ...ideaShots]);
   await kept.forget(id);
   return true;
 }
@@ -817,6 +842,18 @@ const DATA_FILE = /\.(bin|gz|br|zst|json|geojson|csv|txt|glb|gltf|ktx2|basis|drc
 /** How long a link's record is remembered for serving its page's files, and how many links at once. */
 export const PLAY_MEMORY = { ms: 60_000, links: 200 };
 
+/**
+ * What a page played on its link is given at the top of its HTML: when the link's page asks for a picture of the app
+ * (as someone opens the box to send its maker an idea), the app's biggest canvas, drawn after the app has drawn its
+ * next frame (a 3D scene's picture is gone once the frame is shown), scaled to at most 1280 wide, as a JPEG small enough to go with an idea. Only the
+ * site's own page may ask, and only it is answered. Nothing for an app without a canvas, or one that can't be read.
+ */
+export function pictureScript(site) {
+  // The most a picture may be as a data: URL to go with an idea (`IDEA_LIMITS.picture` bytes, as base64).
+  const limit = 23 + Math.floor(IDEA_LIMITS.picture / 3) * 4;
+  return `<script>(()=>{const site=${JSON.stringify(site)};addEventListener("message",e=>{if(e.origin!==site||e.source!==parent||!e.data||e.data.lamp!=="picture")return;const n=e.data.n;requestAnimationFrame(()=>{let picture=null;try{const all=[...document.querySelectorAll("canvas")].filter(c=>c.width&&c.height&&c.getClientRects().length);const c=all.sort((a,b)=>b.clientWidth*b.clientHeight-a.clientWidth*a.clientHeight)[0];if(c){const k=Math.min(1,1280/c.width),o=document.createElement("canvas");o.width=Math.round(c.width*k);o.height=Math.round(c.height*k);o.getContext("2d").drawImage(c,0,0,o.width,o.height);for(const q of [0.8,0.6,0.4]){picture=o.toDataURL("image/jpeg",q);if(picture.length<=${limit})break;picture=null}}}catch(_){}parent.postMessage({lamp:"picture",n,picture},site)})})})()</script>`;
+}
+
 export function createPlayHandler({ env = process.env, fetcher = fetch, store, anyHost = false, direct = DIRECT_FILE, directData = DIRECT_DATA, now = () => Date.now() } = {}) {
   // A link's record, remembered a minute per instance: a game asks for hundreds of files as it's played, and reading
   // the store for each used up its allowance of requests in a day, which took every link down. A version the memory
@@ -881,15 +918,19 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
     if (!rebased && !worker && at.startsWith("https://") && !/\.html?$/i.test(name) && (size >= direct || (DATA_FILE.test(name) && size >= directData && request.headers.get("sec-fetch-mode") === "cors"))) {
       return new Response(null, { status: 302, headers: { Location: at, Vary: "Sec-Fetch-Dest, Sec-Fetch-Mode", "Cache-Control": "public, max-age=300, s-maxage=31536000", ...cacheTags(id) } });
     }
-    // Passed on as it comes from the store; only a folder's index.html given its base is read whole, to change it.
+    // Passed on as it comes from the store; only a page's HTML is read whole, to be given what the link's page asks of
+    // it (`pictureScript`), and a folder's index.html its base.
     const kept = store ?? cloudStore(env, fetcher);
+    const site = env.LAMP_SITE_ORIGIN || (anyHost ? url.origin : "https://lamp.dev");
     let bytes, length;
     try {
-      if (rebased) {
-        const base = `<base href="/w/${id}/play/${version}/${folder.split("/").map(encodeURIComponent).join("/")}/">`;
+      if (/\.html?$/i.test(name) && request.method !== "HEAD") {
+        const base = rebased ? `<base href="/w/${id}/play/${version}/${folder.split("/").map(encodeURIComponent).join("/")}/">` : "";
+        const added = base + pictureScript(site);
         const html = (await kept.readFile(at)).toString("utf8");
-        const head = html.search(/<head[^>]*>/i);
-        bytes = Buffer.from(head < 0 ? base + html : html.replace(/<head[^>]*>/i, (tag) => tag + base));
+        // In its head, or after its doctype where it has no head of its own: before a doctype, a page is drawn in quirks mode.
+        const head = /<head[^>]*>/i.exec(html) ?? /^(?:\s|<!--[\s\S]*?-->)*<!doctype[^>]*>/i.exec(html);
+        bytes = Buffer.from(head ? html.slice(0, head.index + head[0].length) + added + html.slice(head.index + head[0].length) : added + html);
       } else if (request.method !== "HEAD") {
         ({ body: bytes, length } = await kept.openFile(at));
       }
@@ -897,7 +938,6 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
       console.error("wish play: a file couldn't be read:", error?.name, error?.message);
       return new Response(null, { status: 503 });
     }
-    const site = env.LAMP_SITE_ORIGIN || (anyHost ? url.origin : "https://lamp.dev");
     return new Response(request.method === "HEAD" ? null : bytes, {
       headers: {
         "Content-Type": pageType(name), "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",

@@ -118,6 +118,11 @@ import { DOWNLOAD_URL } from "../../lib/download";
       <form data-confirm class="remix-popup-confirm">
         <label for="idea-text" class="sr-only">Your idea</label>
         <textarea id="idea-text" data-remix-to class="remix-popup-to remix-popup-edit" rows="3" maxlength="1000" required></textarea>
+        <!-- The app as it was when the box was opened, sent with the idea unless it's left out. -->
+        <div data-shot hidden class="remix-popup-shot">
+          <img data-shot-picture alt="The app as it is now" />
+          <label><input type="checkbox" data-shot-keep checked /> Include this picture</label>
+        </div>
         <label for="notify-email" class="remix-popup-label">Email me once when it's in <span class="remix-popup-optional">(optional)</span></label>
         <input id="notify-email" data-notify-email class="remix-popup-input" type="email" autocomplete="email" placeholder="Your email" />
         <div class="remix-popup-rows"><button type="submit" data-confirm-send class="shared-button">Send</button></div>
@@ -290,6 +295,11 @@ import { DOWNLOAD_URL } from "../../lib/download";
     border: 1px solid color-mix(in srgb, var(--color-tape) 15%, transparent); background: var(--color-paper); color: inherit;
   }
   .remix-popup-input:focus { outline: 2px solid color-mix(in srgb, var(--color-tape) 30%, transparent); outline-offset: 0; }
+  /* The app's picture, small under the idea, with whether it goes. */
+  .remix-popup-shot { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.75rem; font-size: 0.875rem; }
+  .remix-popup-shot[hidden] { display: none; }
+  .remix-popup-shot img { width: 6rem; aspect-ratio: 16 / 10; object-fit: cover; border-radius: 0.25rem; border: 1px solid color-mix(in srgb, var(--color-tape) 15%, transparent); background: #000; }
+  .remix-popup-shot label { display: flex; align-items: center; gap: 0.375rem; cursor: pointer; }
   /* Making one's own: a line over its two buttons, set apart from the idea. */
   .remix-popup-lead {
     margin: 1.25rem 0 0; padding-top: 1rem; border-top: 1px solid color-mix(in srgb, var(--color-tape) 12%, transparent);
@@ -368,6 +378,9 @@ import { DOWNLOAD_URL } from "../../lib/download";
     // the start, so here the frame takes focus when it loads and again after the page's own buttons, unless the person
     // is typing in the box.
     let focusPlay = () => {};
+    // A picture of the app as it is, from the page playing it (`pictureScript`), or null when it has none or doesn't
+    // answer in a moment.
+    let askPicture = async (): Promise<string | null> => null;
 
     if (wish.play) {
       // The page plays from the link's own host (`playOrigin`), so it can't reach the site or another wish's storage.
@@ -384,8 +397,22 @@ import { DOWNLOAD_URL } from "../../lib/download";
       frame.addEventListener("load", focusPlay);
       // A game whose version was replaced while it was open asks for the page again, which plays the newest
       // (lamp-game.js's `loadProblem`). Only from this frame, and it only reloads.
+      const pictures = new Map<number, (picture: string | null) => void>();
+      let pictureAsked = 0;
       window.addEventListener("message", (event) => {
-        if (event.source === frame.contentWindow && event.data?.lamp === "reload-page") location.reload();
+        if (event.source !== frame.contentWindow) return;
+        if (event.data?.lamp === "reload-page") location.reload();
+        if (event.data?.lamp === "picture") {
+          const picture = event.data.picture;
+          pictures.get(event.data.n)?.(typeof picture === "string" && picture.startsWith("data:image/jpeg;base64,") ? picture : null);
+        }
+      });
+      askPicture = () => new Promise((done) => {
+        const n = ++pictureAsked;
+        const timer = setTimeout(() => answer(null), 1500);
+        const answer = (picture: string | null) => { clearTimeout(timer); pictures.delete(n); done(picture); };
+        pictures.set(n, answer);
+        try { frame.contentWindow?.postMessage({ lamp: "picture", n }, new URL(wish.play!).origin); } catch { answer(null); }
       });
       frame.src = wish.play;
       // The same button takes the wish out of full screen, and shows which way it goes.
@@ -519,11 +546,27 @@ import { DOWNLOAD_URL } from "../../lib/download";
     // Each time the bar opens the dialog is a draft of its own: an answer to one sent earlier never changes a later one.
     let draft = 0;
     let fromBar = "";
+    // The app's picture for the idea being written, taken as the dialog opens.
+    const shotBox = $<HTMLElement>("[data-shot]");
+    const shotPicture = $<HTMLImageElement>("[data-shot-picture]");
+    const shotKeep = $<HTMLInputElement>("[data-shot-keep]");
+    let shot: string | null = null;
     // The bar's send opens the dialog with the idea, to confirm before it goes; nothing is sent until then.
     $<HTMLFormElement>("[data-prompt]").addEventListener("submit", (event) => {
       event.preventDefault();
       const ask = asked();
       if (!ask) return change.focus();
+      // The app as it is now, asked for before the dialog covers it.
+      shot = null;
+      shotBox.hidden = true;
+      shotKeep.checked = true;
+      const forDraft = draft + 1;
+      askPicture().then((picture) => {
+        if (!picture || forDraft !== draft) return;
+        shot = picture;
+        shotPicture.src = picture;
+        shotBox.hidden = false;
+      });
       // That one was written, never what it says.
       track("idea_own_change", { idea: wish.name, place: "shared" });
       draft += 1;
@@ -589,7 +632,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
       let sent = false;
       try {
         const response = await fetch(`/api/wish-ideas?id=${encodeURIComponent(wish.id)}`, {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(email ? { text: idea, email } : { text: idea }),
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: idea, ...(email ? { email } : {}), ...(shot && shotKeep.checked ? { picture: shot.slice(shot.indexOf(",") + 1) } : {}) }),
           signal: AbortSignal.timeout(8000),
         });
         sent = response.status === 201;
