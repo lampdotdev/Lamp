@@ -58,9 +58,8 @@ enum WishLink {
         var words: String
         /// The changes Lamp suggests for it, the page's to offer. Nil in links from before.
         var ideas: [String]? = nil
-        /// The questions the page's box asks in turn, written by Lamp and the person's to change (`WishAsks`). Nil in
-        /// links from before, which Lamp writes some for; empty when the person cleared them, which stays so, and the page
-        /// asks its own.
+        /// The questions the page's box asks in turn, the person's to change (`WishAsks`). Nil in links from before, whose
+        /// card offers the plain ones; empty when the person cleared them, which stays so, and the page asks its own.
         var asks: [String]? = nil
         /// The shape its page plays in (`Publish.pageShape`): "fill", or its width over its height. Nil for a wish with no
         /// page, and in links from before.
@@ -397,8 +396,6 @@ enum WishLink {
         var released = false
         /// Lamp is writing what's new for the release (`WishReleases.write`).
         var writingNotes = false
-        /// Lamp is writing the questions the page's box asks (`WishAsks.write`).
-        var writingAsks = false
         /// The app's repository on GitHub, which a release goes to too while its box is ticked (`GitHubRelease`), or why
         /// it can't from here.
         var gitHub: GitHubRelease.Target?
@@ -483,17 +480,9 @@ enum WishLink {
         card.picture = picture
         // A link that's out is released again: Lamp writes what's new since the last release, for the person to change.
         card.writingNotes = shared != nil
-        // A link without questions yet gets Lamp's, for the person to change.
-        card.writingAsks = shared?.shown.asks == nil
+        // A link without questions yet asks the page's plain ones, shown on the card for the person to change.
+        if shared?.shown.asks == nil, card.values.asks.trimmed.isEmpty { card.values.asks = WishAsks.fallback.joined(separator: "\n") }
         cards[project.id] = card
-        if card.writingAsks {
-            Task {
-                let lines = await WishAsks.write(for: project)
-                guard cards[project.id]?.writingAsks == true else { return }
-                cards[project.id]?.writingAsks = false
-                if cards[project.id]?.values.asks.trimmed.isEmpty == true { cards[project.id]?.values.asks = lines.joined(separator: "\n") }
-            }
-        }
         Task {
             let icon = await Sharing.sharedIcon(of: project)
             cards[project.id]?.icon = icon
@@ -651,7 +640,7 @@ enum WishLink {
     /// Whether what the card writes and finds as it opens is in (`prepare`): the questions, what's new, and GitHub.
     func settled(_ project: LampProject) -> Bool {
         guard let card = cards[project.id] else { return true }
-        return !card.writingNotes && !card.writingAsks && card.gitHubFinding == nil
+        return !card.writingNotes && card.gitHubFinding == nil
             && (!card.values.putOnGitHub || card.firstPush?.stage != .preparing)
     }
 

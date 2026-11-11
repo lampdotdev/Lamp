@@ -18,8 +18,8 @@ public struct WishLinkCard: View {
         /// What's new in this release, a line each, for the link's page and the app's What's New: written by Lamp, the
         /// person's to change or clear. Only for a link that's out.
         public var notes: String
-        /// The questions the box under the app on its page asks in turn ("Found a bug?"), a line each: written by Lamp,
-        /// the person's to change or clear.
+        /// The questions the box under the app on its page asks in turn ("Found a bug?"), a line each: the plain ones
+        /// at first, the person's to change or clear.
         public var asks: String
         /// The release goes to the app's repository on GitHub too, with the same version and what's new: ticked unless
         /// the person unticks it, and only for an app that's on GitHub.
@@ -188,7 +188,6 @@ public struct WishLinkCard: View {
     /// Lamp is writing what's new for the release.
     let writingNotes: Bool
     /// Lamp is writing the questions the page's box asks.
-    let writingAsks: Bool
     /// The app's repository ("owner/name") when it's on GitHub and can be updated from here: the card offers to release
     /// there too. Nil otherwise.
     let gitHub: String?
@@ -219,14 +218,13 @@ public struct WishLinkCard: View {
 
     public init(icon: NSImage?, picture: NSImage?, values: Binding<Values>, limits: Limits, link: String?, changed: Bool,
                 stage: Stage, copied: Bool, retake: (() -> Void)?, retaking: Bool, canIncludeFile: Bool = false, noLicense: String? = nil,
-                writingNotes: Bool = false, writingAsks: Bool = false, gitHub: String? = nil, gitHubNote: String? = nil, gitHubStage: GitHubStage? = nil,
+                writingNotes: Bool = false, gitHub: String? = nil, gitHubNote: String? = nil, gitHubStage: GitHubStage? = nil,
                 checkingGitHub: Bool = false, retryGitHub: (() -> Void)? = nil, gitHubBehind: String? = nil, bringIn: (() -> Void)? = nil,
                 gitHubSetup: GitHubSetup? = nil, setUpGitHub: GitHubSetupActions = .none,
                 share: @escaping () -> Void, copy: @escaping () -> Void, stop: @escaping () -> Void, close: @escaping () -> Void,
                 width: CGFloat? = 480) {
         self.noLicense = noLicense
         self.writingNotes = writingNotes
-        self.writingAsks = writingAsks
         self.gitHub = gitHub
         self.gitHubNote = gitHubNote
         self.gitHubStage = gitHubStage
@@ -549,13 +547,12 @@ public struct WishLinkCard: View {
 
     private var asksField: some View {
         field("Ask for ideas") {
-            TextField("Ask for ideas", text: asksBinding, prompt: Text(writingAsks ? "Writing questions…" : "A question a line, like Found a bug?"), axis: .vertical)
+            TextField("Ask for ideas", text: asksBinding, prompt: Text("A question a line, like Found a bug?"), axis: .vertical)
                 .lineLimit(3, reservesSpace: true)
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 8).padding(.vertical, 6)
                 .background(Paper.card, in: RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
-                .overlay(alignment: .topTrailing) { if writingAsks { ProgressView().controlSize(.small).padding(6) } }
                 .help("Asked in turn in the box under the app on its page, where people send you ideas")
         }
     }

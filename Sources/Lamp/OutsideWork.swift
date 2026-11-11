@@ -1168,7 +1168,7 @@ extension Store {
         lines.append("GitHub: " + gitHub)
         let summary = lines.joined(separator: "\n")
         if payload.bool("preview") { return OutsideWork.Answer(outcome: "preview", text: "Nothing was shared. This is what would go:\n" + summary, facts: facts) }
-        guard card.canShare, !card.writingNotes, !card.writingAsks else {
+        guard card.canShare, !card.writingNotes else {
             return .refused("It can't be shared as it is: it needs a name and a line, and what Lamp writes for it in.\n" + summary)
         }
         // Stopped before it went: nothing is public.

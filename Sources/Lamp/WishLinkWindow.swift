@@ -86,7 +86,7 @@ private struct WishLinkWindowContent: View {
                          retake: cards.canRetake(project) ? { cards.retake(project) } : nil, retaking: card.retaking,
                          canIncludeFile: card.values.includeFile || (card.gitHub != nil && card.values.alsoGitHub)
                             || (card.values.putOnGitHub && card.firstPush?.isPublic == true), noLicense: noLicense,
-                         writingNotes: card.writingNotes, writingAsks: card.writingAsks, gitHub: card.gitHub?.repo, gitHubNote: card.gitHubNote, gitHubStage: card.gitHubStage,
+                         writingNotes: card.writingNotes, gitHub: card.gitHub?.repo, gitHubNote: card.gitHubNote, gitHubStage: card.gitHubStage,
                          checkingGitHub: card.gitHubFinding != nil, retryGitHub: card.gitHubRetry == nil ? nil : { cards.retryGitHub(project) },
                          gitHubBehind: card.gitHubBehind?.repo, bringIn: { cards.bringIn(project) },
                          gitHubSetup: card.firstPush.map { GitHubRelease.setup($0, of: project) },
