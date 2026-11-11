@@ -927,7 +927,7 @@ async function main() {
     const sent = await share({ layout, words, shape, picture: card.picture ? Buffer.from(card.picture, "base64") : null, said: (line) => console.log(line),
       file: !options["no-file"], anyway: !!options.anyway });
     console.log(`${before ? "Sent again to its link" : "Shared"}: ${sent.url}`);
-    console.log(`"${words.name}"${words.by ? ` by ${words.by}` : ""}: ${sent.files} files, ${(sent.bytes / 1_000_000).toFixed(1)} MB packed, ${shape === "fill" ? "filling the window" : "on its own stage"}${sent.picture ? ", with a picture of it" : ", with no picture"}${sent.file ? ", and its app file, for anyone to open in Lamp" : ""}.`);
+    console.log(`"${words.name}"${words.by ? ` by ${words.by}` : ""}: ${sent.files} files, ${(sent.bytes / 1_000_000).toFixed(1)} MB packed, ${shape === "fill" ? "filling the window" : "on its own stage"}${sent.picture ? ", with a picture of it" : ", with no picture"}${sent.file ? ", and its app file, for anyone to open in Lamp" : ""}${sent.github ? `, with a link to its code on GitHub (${sent.github})` : ""}.`);
     console.log("Anyone with the link can play it and send an idea: lamp ideas shows them. lamp unshare takes it down.");
     return;
   }

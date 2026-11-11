@@ -138,9 +138,10 @@ function release(value) {
 
 /** What a share sends, checked. Null when anything is off. `releases` is undefined when the share didn't say (a Lamp
  *  from before them), so a change keeps the ones the link has. */
+const GITHUB_REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/(?!\.\.?$)[A-Za-z0-9._-]{1,100}$/;
 export function readShare(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
-  const known = ["name", "by", "line", "words", "ideas", "asks", "shape", "releases", "picture", "icon"];
+  const known = ["name", "by", "line", "words", "ideas", "asks", "shape", "releases", "picture", "icon", "github"];
   if (Object.keys(body).some((key) => !known.includes(key))) return null;
   const name = tidy(body.name, LIMITS.name);
   const words = tidy(body.words, LIMITS.words, { lines: true });
@@ -156,15 +157,17 @@ export function readShare(body) {
     ? body.releases.map(release) : [null];
   const shot = picture(body.picture, LIMITS.picture);
   const icon = picture(body.icon, LIMITS.icon, { square: true });
-  if (!name || !words || line == null || by == null || ideas.includes(null) || asks.includes(null) || shape === undefined || releases?.includes(null) || !shot || !icon) return null;
+  // The app's public repository on GitHub, as "owner/name", which the page links to: nothing else is taken.
+  const github = body.github == null || body.github === "" ? null : GITHUB_REPO.test(body.github) ? body.github : undefined;
+  if (!name || !words || line == null || by == null || ideas.includes(null) || asks.includes(null) || shape === undefined || releases?.includes(null) || !shot || !icon || github === undefined) return null;
   return { name, by, line, words, ideas, asks, shape, releases: releases?.sort((a, b) => b.date.localeCompare(a.date)),
-    picture: shot.bytes ? shot : null, icon: icon.bytes ? icon : null };
+    picture: shot.bytes ? shot : null, icon: icon.bytes ? icon : null, github };
 }
 
 /** What anyone may see of a shared wish: never its secret. */
 export const shown = (record) => record && ({
   id: record.id, name: record.name, by: record.by ?? "", line: record.line, words: record.words, ideas: record.ideas ?? [], asks: record.asks ?? [], shape: record.shape ?? null,
-  releases: record.releases ?? [], picture: record.picture, icon: record.icon, file: record.file ?? null, updated: record.updated,
+  releases: record.releases ?? [], picture: record.picture, icon: record.icon, file: record.file ?? null, updated: record.updated, github: record.github ?? null,
   page: record.page ? { version: record.page.version } : null,
 });
 
@@ -670,7 +673,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       const picture = share.picture && { url: await put("picture", share.picture), width: share.picture.width, height: share.picture.height };
       const icon = share.icon && { url: await put("icon", share.icon) };
       const time = now().toISOString();
-      const words = { name: share.name, by: share.by, line: share.line, words: share.words, ideas: share.ideas, asks: share.asks, shape: share.shape,
+      const words = { name: share.name, by: share.by, line: share.line, words: share.words, ideas: share.ideas, asks: share.asks, shape: share.shape, github: share.github,
         ...(share.releases ? { releases: share.releases } : {}), picture: picture || null, icon: icon || null };
       if (method === "PUT") {
         await kept.replace({ ...earlier, ...words, updated: time });

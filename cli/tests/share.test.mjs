@@ -14,7 +14,7 @@ import { createShareHandler, createFileHandler, createIdeasHandler, createPlayHa
 const home = mkdtempSync(join(tmpdir(), "lamp-share-test-"));
 process.env.LAMP_DEV_HOME = join(home, "state");
 process.env.LAMP_BROWSER = "";
-const { share, unshare, ideas, finishIdea, readLink } = await import("../share.mjs");
+const { share, unshare, ideas, finishIdea, readLink, githubRepoOf } = await import("../share.mjs");
 const { layoutOf } = await import("../state.mjs");
 
 const store = memoryStore();
@@ -60,9 +60,12 @@ after(async () => {
 });
 
 test("a shared game plays from its link whole, and its secret stays out of its folder", async () => {
-  const sent = await share({ layout, words, shape: 1.7778 });
+  const sent = await share({ layout, words, shape: 1.7778, github: "someone/harbor-racer" });
   const link = readLink(layout.folder);
   assert.equal(sent.version, 1);
+  assert.equal(store.records.get(link.id).github, "someone/harbor-racer", "the page links to the folder's public repository");
+  assert.deepEqual(["git@github.com:someone/harbor-racer.git", "https://github.com/someone/harbor-racer", "https://gitlab.com/someone/harbor-racer"].map(githubRepoOf),
+    ["someone/harbor-racer", "someone/harbor-racer", null]);
   assert.match(sent.url, /\/w\/[A-Za-z0-9]{10}-harbor-racer$/);
   const record = store.records.get(link.id);
   assert.deepEqual([record.name, record.by, record.asks, record.shape], [words.name, words.by, words.asks, 1.7778]);

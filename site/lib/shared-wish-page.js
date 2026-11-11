@@ -73,6 +73,7 @@ export function wishPage(template, wish, { origin, playOrigin = null }) {
     id: wish.id, name: wish.name, by: wish.by ?? "", about: wish.line, wish: wish.words, ideas: wish.ideas ?? [], asks: wish.asks ?? [],
     releases: wish.releases ?? [], picture: wish.picture?.url ?? "", icon: wish.icon?.url ?? "",
     ...(wish.file?.url ? { file: wish.file.url, fileSize: wish.file.size, shared: wish.id } : {}),
+    ...(wish.github ? { github: wish.github } : {}),
     ...(plays ? { play: `${playOrigin}/w/${wish.id}/play/${wish.page.version}/`, ...(wish.shape ? { shape: wish.shape } : {}) } : {}),
   }).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   return head
