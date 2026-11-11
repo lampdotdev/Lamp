@@ -796,16 +796,25 @@ export function playOrigin(base, id) {
  */
 /**
  * A page's file this big or bigger is played straight from the store instead of through the play host: the CDN keeps
- * nothing over 20 MB from a function, so every visit would pass it through again. Only for a page kept with each
+ * nothing over 10 MB from a function, so every visit would pass it through again. Only for a page kept with each
  * file's own type (`page.sizes`), since a browser won't run a script the store calls anything else. Never a page's
  * HTML, which the store hands out as a download.
  */
-export const DIRECT_FILE = 16_000_000;
+export const DIRECT_FILE = 9_000_000;
+/**
+ * A file of data a game reads with fetch (map tiles, models, sound, JSON) is played straight from the store from this
+ * size: the store's CDN serves it to any page (CORS for all), keeps it whatever the site deploys, and the play host
+ * reads nothing for it. The play host reading a game's hundreds of files from the store in bursts is what the store
+ * turned away (403) until the game didn't load. Not a script or a style sheet, whose own imports would then resolve
+ * at the store, nor a picture, which a game may draw from without asking for it cross-origin.
+ */
+export const DIRECT_DATA = 64_000;
+const DATA_FILE = /\.(bin|gz|br|zst|json|geojson|csv|txt|glb|gltf|ktx2|basis|drc|wasm|mp3|ogg|m4a|wav|aac|flac|opus|mp4|webm|mov)$/i;
 
 /** How long a link's record is remembered for serving its page's files, and how many links at once. */
 export const PLAY_MEMORY = { ms: 60_000, links: 200 };
 
-export function createPlayHandler({ env = process.env, fetcher = fetch, store, anyHost = false, direct = DIRECT_FILE, now = () => Date.now() } = {}) {
+export function createPlayHandler({ env = process.env, fetcher = fetch, store, anyHost = false, direct = DIRECT_FILE, directData = DIRECT_DATA, now = () => Date.now() } = {}) {
   // A link's record, remembered a minute per instance: a game asks for hundreds of files as it's played, and reading
   // the store for each used up its allowance of requests in a day, which took every link down. A version the memory
   // doesn't have (a release since) is read afresh; a link taken down plays on here for that minute at most.
@@ -865,7 +874,8 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
     // Not for a worker's own script, which a browser only takes from the page's own origin, nor from a store a browser
     // can't reach (the dev server's memory). Kept apart by what asked (`Vary`), so a worker never gets the redirect.
     const worker = /worker$/i.test(request.headers.get("sec-fetch-dest") ?? "");
-    if (!rebased && !worker && at.startsWith("https://") && !/\.html?$/i.test(name) && (served.sizes?.[name] ?? 0) >= direct) {
+    const size = served.sizes?.[name] ?? 0;
+    if (!rebased && !worker && at.startsWith("https://") && !/\.html?$/i.test(name) && (size >= direct || (DATA_FILE.test(name) && size >= directData))) {
       return new Response(null, { status: 302, headers: { Location: at, Vary: "Sec-Fetch-Dest", "Cache-Control": "public, max-age=300, s-maxage=31536000", ...cacheTags(id) } });
     }
     // Passed on as it comes from the store; only a folder's index.html given its base is read whole, to change it.
