@@ -131,6 +131,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
           <img data-shot-picture alt="The app as it is now" />
           <label><input type="checkbox" data-shot-keep checked /> Include this picture</label>
         </div>
+        <label for="idea-name" class="remix-popup-label">Your name <span class="remix-popup-optional">(optional)</span></label>
+        <input id="idea-name" data-idea-name class="remix-popup-input" type="text" autocomplete="name" maxlength="60" placeholder="Your name" />
         <label for="notify-email" class="remix-popup-label">Email me about it <span class="remix-popup-optional">(optional)</span></label>
         <input id="notify-email" data-notify-email class="remix-popup-input" type="email" autocomplete="email" placeholder="Your email" />
         <div class="remix-popup-rows"><button type="submit" data-confirm-send class="shared-button">Send</button></div>
@@ -662,11 +664,20 @@ import { DOWNLOAD_URL } from "../../lib/download";
       track("idea_in_seen", { idea: wish.name, place: "shared" });
     })();
 
-    // Confirmed: the idea goes to the maker (`/api/wish-ideas`), who sees it in Lamp, with the address if one was given.
+    // Who they said they are last time, in this browser alone: their name and address are there for their next idea.
+    const ME = "lamp.shared.me";
+    try {
+      const me = JSON.parse(localStorage.getItem(ME) ?? "{}");
+      if (typeof me.name === "string") $<HTMLInputElement>("[data-idea-name]").value = me.name;
+      if (typeof me.email === "string") $<HTMLInputElement>("[data-notify-email]").value = me.email;
+    } catch {}
+    // Confirmed: the idea goes to the maker (`/api/wish-ideas`), who sees it in Lamp with the name if one was given,
+    // and the address kept by the site.
     confirm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const idea = ideaText.value.trim();
       const email = $<HTMLInputElement>("[data-notify-email]").value.trim();
+      const name = $<HTMLInputElement>("[data-idea-name]").value.trim();
       if (!idea || confirmSend.disabled) return ideaText.focus();
       const mine = draft, written = fromBar;
       confirmSend.disabled = true;
@@ -674,11 +685,15 @@ import { DOWNLOAD_URL } from "../../lib/download";
       try {
         const response = await fetch(`/api/wish-ideas?id=${encodeURIComponent(wish.id)}`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: idea, ...(email ? { email } : {}), ...(shot && shotKeep.checked ? { picture: shot.slice(shot.indexOf(",") + 1) } : {}) }),
+          body: JSON.stringify({ text: idea, ...(name ? { name } : {}), ...(email ? { email } : {}), ...(shot && shotKeep.checked ? { picture: shot.slice(shot.indexOf(",") + 1) } : {}) }),
           signal: AbortSignal.timeout(8000),
         });
         sent = response.status === 201;
-        if (sent) remember((await response.json()) as { n: number; token: string }, idea);
+        if (sent) {
+          remember((await response.json()) as { n: number; token: string }, idea);
+          // Kept in this browser for their next idea, and nowhere else.
+          try { localStorage.setItem(ME, JSON.stringify({ name, email })); } catch {}
+        }
         if (!sent && response.status === 400 && email && mine === draft) { notifyNote.textContent = "Check the email address."; confirmSend.disabled = false; return; }
       } catch {}
       if (sent) {

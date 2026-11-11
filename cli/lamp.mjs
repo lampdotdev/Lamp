@@ -982,10 +982,11 @@ async function main() {
     console.log(options.earlier ? `Ideas seen to on ${sent.url}, the latest first` : `Ideas sent to ${sent.url}`);
     for (const idea of sent.ideas) {
       const state = options.earlier ? `  (${idea.status === "in" ? "in" : "dismissed"})` : idea.waiting ? `  (${idea.status === "in" ? "in" : idea.status === "dismissed" ? "dismissed" : "open"}, they answered)` : idea.wantsNews ? "  (wants to hear back)" : "";
-      console.log(`  ${idea.n}. ${String(idea.text).split("\n").join("\n     ")}${state}`);
+      const from = typeof idea.name === "string" && idea.name ? idea.name : null;
+      console.log(`  ${idea.n}. ${from ? `${from}: ` : ""}${String(idea.text).split("\n").join("\n     ")}${state}`);
       // What's been said since, each way.
       for (const said of Array.isArray(idea.thread) ? idea.thread : [])
-        console.log(`     ${said.by === "maker" ? "You" : "They"}: ${String(said.text).split("\n").join("\n       ")}`);
+        console.log(`     ${said.by === "maker" ? "You" : from ?? "They"}: ${String(said.text).split("\n").join("\n       ")}`);
       // The app as they saw it when they opened the box, if they kept it in: there until the idea has its outcome.
       if (typeof idea.picture === "string" && idea.picture.startsWith("https://")) console.log(`     picture: ${idea.picture}`);
     }

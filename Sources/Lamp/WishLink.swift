@@ -298,6 +298,8 @@ enum WishLink {
     struct Idea: Codable, Equatable, Identifiable, Sendable {
         var n: Int
         var text: String
+        /// The name they gave, if any: the maker sees it, never their address.
+        var name: String? = nil
         var wantsNews: Bool?
         var at: String
         var picture: String? = nil
