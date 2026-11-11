@@ -372,7 +372,7 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   const big = await ask("lamp.js", "script");
   assert.equal(big.status, 302);
   assert.equal(big.headers.get("location"), "https://store.example/lamp.js");
-  assert.equal(big.headers.get("vary"), "Sec-Fetch-Dest");
+  assert.equal(big.headers.get("vary"), "Sec-Fetch-Dest, Sec-Fetch-Mode");
   assert.notEqual((await ask("lamp.js", "worker")).status, 302, "a worker's script stays on the page's origin");
   assert.equal((await ask("index.html")).status, 200, "never a page's HTML");
   // A game's data goes to the store from a much smaller size; its scripts don't.
@@ -380,8 +380,9 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   const pageNow = store.records.get(id).page;
   pageNow.files["map.bin"] = "https://store.example/map.bin";
   pageNow.sizes = { ...pageNow.sizes, "map.bin": 10, "lamp.js": 10 };
-  const asked = (path) => data(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=${path}`));
+  const asked = (path, mode = "cors") => data(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=${path}`, { headers: { "sec-fetch-mode": mode } }));
   assert.equal((await asked("map.bin")).headers.get("location"), "https://store.example/map.bin");
+  assert.notEqual((await asked("map.bin", "no-cors")).status, 302, "an element's load stays on the page's origin");
   assert.notEqual((await asked("lamp.js")).status, 302, "a script stays where its imports resolve");
   delete pageNow.files["map.bin"];
   stored["lamp.js"] = kept;

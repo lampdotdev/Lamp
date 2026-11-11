@@ -806,7 +806,9 @@ export const DIRECT_FILE = 9_000_000;
  * size: the store's CDN serves it to any page (CORS for all), keeps it whatever the site deploys, and the play host
  * reads nothing for it. The play host reading a game's hundreds of files from the store in bursts is what the store
  * turned away (403) until the game didn't load. Not a script or a style sheet, whose own imports would then resolve
- * at the store, nor a picture, which a game may draw from without asking for it cross-origin.
+ * at the store, nor a picture, which a game may draw from without asking for it cross-origin. Only when the page
+ * fetched it (`Sec-Fetch-Mode: cors`): a video or sound an element of the page loads (no-cors), drawn into WebGL or
+ * played through Web Audio, works only from the page's own origin.
  */
 export const DIRECT_DATA = 64_000;
 const DATA_FILE = /\.(bin|gz|br|zst|json|geojson|csv|txt|glb|gltf|ktx2|basis|drc|wasm|mp3|ogg|m4a|wav|aac|flac|opus|mp4|webm|mov)$/i;
@@ -875,8 +877,8 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
     // can't reach (the dev server's memory). Kept apart by what asked (`Vary`), so a worker never gets the redirect.
     const worker = /worker$/i.test(request.headers.get("sec-fetch-dest") ?? "");
     const size = served.sizes?.[name] ?? 0;
-    if (!rebased && !worker && at.startsWith("https://") && !/\.html?$/i.test(name) && (size >= direct || (DATA_FILE.test(name) && size >= directData))) {
-      return new Response(null, { status: 302, headers: { Location: at, Vary: "Sec-Fetch-Dest", "Cache-Control": "public, max-age=300, s-maxage=31536000", ...cacheTags(id) } });
+    if (!rebased && !worker && at.startsWith("https://") && !/\.html?$/i.test(name) && (size >= direct || (DATA_FILE.test(name) && size >= directData && request.headers.get("sec-fetch-mode") === "cors"))) {
+      return new Response(null, { status: 302, headers: { Location: at, Vary: "Sec-Fetch-Dest, Sec-Fetch-Mode", "Cache-Control": "public, max-age=300, s-maxage=31536000", ...cacheTags(id) } });
     }
     // Passed on as it comes from the store; only a folder's index.html given its base is read whole, to change it.
     const kept = store ?? cloudStore(env, fetcher);
