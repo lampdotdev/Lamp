@@ -178,9 +178,10 @@ export const CALLS = {
     return { ideas: await ideasOf({ site: siteOf(given), link: linkOf(given) }) };
   },
 
-  /** Lets an idea go; with `built` it's in, and the site writes to whoever asked to hear. */
+  /** Lets an idea go; with `built` it's in, and the site writes to whoever asked to hear, with `note` if there is one. */
   async linkRemoveIdea(given) {
-    return removeIdea({ site: siteOf(given), link: linkOf(given), n: Number(given.n), built: given.built === true });
+    const note = typeof given.note === "string" && given.note.trim() ? given.note.trim() : undefined;
+    return removeIdea({ site: siteOf(given), link: linkOf(given), n: Number(given.n), built: given.built === true, note });
   },
 
   /** Takes the link down. */

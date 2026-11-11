@@ -473,12 +473,12 @@ test("ideas reach the link's maker, and only the maker reads them", async () => 
   const mails = [];
   const fetcher = async (url, init) => { mails.push([url, JSON.parse(init.body)]); return new Response("{}", { status: 200 }); };
   const built = createIdeasHandler({ store, limited: false, fetcher, env: { RESEND_API_KEY: "re_test", LAMP_IDEAS_FROM: "Lamp <ideas@lamp.dev>" } });
-  const answer = await (await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=2&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }))).json();
+  const answer = await (await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=2&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" }, body: JSON.stringify({ note: "Thanks, the waves are huge now" }) }))).json();
   assert.equal(answer.notified, true);
   assert.equal(mails.length, 1);
   assert.equal(mails[0][0], "https://api.resend.com/emails");
   assert.deepEqual(mails[0][1].to, ["someone@example.com"]);
-  assert.match(mails[0][1].text, /Bigger waves[\s\S]*https:\/\/lamp\.dev\/w\//);
+  assert.match(mails[0][1].text, /Bigger waves[\s\S]*Thanks, the waves are huge now[\s\S]*https:\/\/lamp\.dev\/w\//);
   assert.deepEqual((await (await list()).json()).ideas.map((idea) => idea.n), [3]);
   assert.equal(mails.length, 1);
   // Two at once for one idea: one email.
@@ -495,8 +495,10 @@ test("ideas reach the link's maker, and only the maker reads them", async () => 
   assert.deepEqual(await mine(`${kept1.n}.${kept1.token},${kept2.n}.${kept2.token}`), [{ n: kept1.n, status: "open" }, { n: kept2.n, status: "open" }]);
   assert.deepEqual(await mine(`${kept1.n}.${"x".repeat(16)}`), [], "only with its token");
   await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${kept1.n}&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
-  await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${kept2.n}`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
-  assert.deepEqual((await mine(`${kept1.n}.${kept1.token},${kept2.n}.${kept2.token}`)).map((one) => one.status), ["in", "dismissed"]);
+  const noted = (note) => built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${kept2.n}`, { method: "DELETE", headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" }, body: JSON.stringify({ note }) }));
+  assert.equal((await noted("x".repeat(IDEA_LIMITS.note + 1))).status, 400, "a note too long is turned away, the idea left open");
+  await noted("We have fog at night already");
+  assert.deepEqual((await mine(`${kept1.n}.${kept1.token},${kept2.n}.${kept2.token}`)).map((one) => [one.status, one.note]), [["in", undefined], ["dismissed", "We have fog at night already"]]);
   assert.ok(!(await (await list()).json()).ideas.some((one) => one.n === kept1.n || one.n === kept2.n), "the maker sees only those still open");
   // Dealing with ideas makes room for more: the cap counts those still open.
   const full = memoryStore();

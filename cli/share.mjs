@@ -184,10 +184,10 @@ export async function ideas(folder) {
 }
 
 /** Says what became of an idea: it's in (the site writes to whoever asked to hear), or it's let go. */
-export async function finishIdea(folder, n, built) {
+export async function finishIdea(folder, n, built, note) {
   const link = readLink(folder);
   if (!link) throw new Problem("this folder has no link");
-  return removeIdea({ site: link.site, link, n, built });
+  return removeIdea({ site: link.site, link, n, built, note });
 }
 
 /** The page's name where nothing gave one: its title, or its folder's name. */

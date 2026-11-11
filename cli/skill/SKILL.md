@@ -192,7 +192,8 @@ Only when the person asks: a link is public, and anyone who has it can play the 
 - `{{lamp}} ideas` lists what people playing it have sent, each with the address of a picture of the app as they saw
   it when they kept one in: look at it before building the idea. Once one is in the game and the game shared again,
   `{{lamp}} ideas in <number>` says so, and whoever asked to hear is written to; `{{lamp}} ideas dismiss <number>` lets
-  one go.
+  one go. Words after the number are a note to whoever sent it, shown on the link's page and put in that email: write
+  one only when the person asks you to answer them, in their words.
 - `{{lamp}} unshare` takes the link down.
 
 Tell the person the link, and that it's public.
