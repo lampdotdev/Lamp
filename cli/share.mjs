@@ -12,7 +12,7 @@ import { deflateRawSync } from "node:zlib";
 import { NOTES_FILE, Problem, stateOf } from "./state.mjs";
 import { ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS, LIBRARIES } from "./dev.mjs";
 import { LIMITS, FILE_LIMITS, PAGE_LIMITS } from "../site/lib/shared-wishes.js";
-import { ideasOf, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile, siteOrigin } from "./link.mjs";
+import { ideasOf, makerOf, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile, siteOrigin } from "./link.mjs";
 import { exportApp } from "./lampapp.mjs";
 
 export { siteOrigin };
@@ -195,6 +195,13 @@ export async function answerIdea(folder, n, note) {
   const link = readLink(folder);
   if (!link) throw new Problem("this folder has no link");
   return replyIdea({ site: link.site, link, n, note });
+}
+
+/** The maker's own address for the link's ideas, or, with `email`, given ("" takes it away). */
+export async function makerEmail(folder, email) {
+  const link = readLink(folder);
+  if (!link) throw new Problem("this folder has no link: lamp share makes one");
+  return makerOf({ site: link.site, link, email });
 }
 
 /** The page's name where nothing gave one: its title, or its folder's name. */

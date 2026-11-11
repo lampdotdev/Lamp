@@ -195,7 +195,9 @@ Only when the person asks: a link is public, and anyone who has it can play the 
   one go. Words after the number are a note to whoever sent it, shown on the link's page and put in that email: write
   one only when the person asks you to answer them, in their words. Senders can answer by email: `{{lamp}} ideas` shows
   what's been said under each idea, and those they've answered; `{{lamp}} ideas reply <number> <words>` answers again,
-  and `{{lamp}} ideas done <number>` leaves one without a word. `{{lamp}} ideas --earlier` lists those seen to.
+  and `{{lamp}} ideas done <number>` leaves one without a word. `{{lamp}} ideas --earlier` lists those seen to. `{{lamp}} ideas email <address>` sends new ideas and replies to the
+  person's own address too, once they confirm it from the email it sends (`off` stops them): only with an address
+  they gave you.
 - `{{lamp}} unshare` takes the link down.
 
 Tell the person the link, and that it's public.

@@ -342,6 +342,20 @@ enum WishLink {
         return try await ask("linkReplyIdea", secret(shared).merging(given) { $1 })["notified"] as? Bool ?? false
     }
 
+    /// The maker's own address for the link's ideas and replies, which lamp.dev writes to once it's confirmed.
+    struct Maker: Equatable, Sendable {
+        var email: String?
+        var confirmed: Bool
+        /// Given just now: whether lamp.dev sent the email to confirm it.
+        var sent: Bool? = nil
+    }
+
+    /// The maker's address as it is; with `email`, given (lamp.dev emails it a link to confirm first), or taken away ("").
+    static func maker(for shared: Shared, email: String? = nil) async throws -> Maker {
+        let said = try await ask("linkMaker", email.map { secret(shared).merging(["email": $0]) { $1 } } ?? secret(shared))
+        return Maker(email: said["email"] as? String, confirmed: said["confirmed"] as? Bool ?? false, sent: said["sent"] as? Bool)
+    }
+
     /// Takes the link down: the page says the wish isn't shared any more. A link the site no longer has is down already.
     static func remove(_ shared: Shared) async throws {
         _ = try await ask("linkRemove", secret(shared))
