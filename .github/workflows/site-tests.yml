@@ -43,15 +43,25 @@ jobs:
           cache-dependency-path: site/package-lock.json
 
       - name: Install Redis for the quota checks
-        # The test starts its own temporary server and skips itself if either binary is missing.
+        # The test starts its own temporary server from redis-server and redis-cli. They're copied out of Redis's own
+        # image, from Docker Hub, rather than installed from Ubuntu's mirror, which runners haven't always reached.
         run: |
-          sudo apt-get update
-          sudo apt-get install -y redis-server
-          redis-server --version
-          redis-cli --version
+          image=redis:7.4.11-bookworm
+          for try in 1 2 3; do docker pull -q "$image" && break; sleep 10; done
+          id=$(docker create "$image")
+          mkdir -p "$RUNNER_TEMP/redis"
+          docker cp -L "$id:/usr/local/bin/redis-server" "$RUNNER_TEMP/redis/"
+          docker cp -L "$id:/usr/local/bin/redis-cli" "$RUNNER_TEMP/redis/"
+          docker rm "$id" > /dev/null
+          echo "$RUNNER_TEMP/redis" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/redis/redis-server" --version
+          "$RUNNER_TEMP/redis/redis-cli" --version
 
       - name: Install dependencies
         run: npm ci
 
       - name: Website tests
         run: npm test
+        env:
+          # Here the Redis test runs or fails: it never skips itself for want of Redis.
+          LAMP_REQUIRE_REDIS: "1"
