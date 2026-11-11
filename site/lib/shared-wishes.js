@@ -928,7 +928,7 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
         const added = base + pictureScript(site);
         const html = (await kept.readFile(at)).toString("utf8");
         // In its head, or after its doctype where it has no head of its own: before a doctype, a page is drawn in quirks mode.
-        const head = /<head[^>]*>/i.exec(html) ?? /^\s*<!doctype[^>]*>/i.exec(html);
+        const head = /<head[^>]*>/i.exec(html) ?? /^(?:\s|<!--[\s\S]*?-->)*<!doctype[^>]*>/i.exec(html);
         bytes = Buffer.from(head ? html.slice(0, head.index + head[0].length) + added + html.slice(head.index + head[0].length) : added + html);
       } else if (request.method !== "HEAD") {
         ({ body: bytes, length } = await kept.openFile(at));
