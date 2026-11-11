@@ -871,8 +871,10 @@ async function main() {
         try { answer = await lamp.call("share_link", values); } finally { lamp.close(); }
         // A Lamp from before it shared for lamp: an app of its own waits for it to be updated, since a link of lamp's
         // would be a second one; a folder only given to it is lamp's to share.
+        // lamp shares only a page, so a Mac app given to it waits for Lamp too.
         const older = /has no tool share_link\b/.test(answer.words ?? "");
-        if (older && owner) throw new Problem(`${lamp.name} is older than this lamp and can't share for it: update ${lamp.name}, then run this again (or --new-link to make lamp a link of its own).`);
+        const hasPage = (() => { try { layoutOf(project.folder); return true; } catch { return false; } })();
+        if (older && (owner || !hasPage)) throw new Problem(`${lamp.name} is older than this lamp and can't share for it: update ${lamp.name}, then run this again${hasPage ? " (or --new-link to make lamp a link of its own)" : ""}.`);
         if (older) console.log(`${lamp.name} can't share for lamp yet, so lamp shares it with a link of its own.`);
         else if (answer.facts?.taken_on !== false) {
           console.log(answer.words);
