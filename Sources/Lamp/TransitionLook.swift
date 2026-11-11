@@ -5,7 +5,8 @@ import QuartzCore
 /// itself (`LampTransition` in LampSupport.swift), so the block between the markers is copied there word for word,
 /// and compiled here too so the gallery draws the very same layers over pictures of apps (Transition), without an
 /// app or a build. Change it here, then run `scripts/sync-transition-look.sh` to copy it into the template;
-/// `TransitionLookTests` fails while the two differ.
+/// `TransitionLookTests` fails while the two differ. lamp dev draws the same light over the pages it serves ("The light
+/// on a change" in cli/page.js), so a change to how it looks goes there too.
 enum LampTransition {
     // TransitionLook
     /// The effect's layers, filling the window they're laid over and cut to its rounding. Core Animation runs
