@@ -133,6 +133,22 @@ export async function removeIdea({ site = siteOrigin(), link, n, built = false, 
   } catch (error) { if (error.status === 404) return { notified: false }; throw error; }
 }
 
+/**
+ * Says something more about an idea, its sender emailed if they gave an address, and answers whether they were;
+ * without a note, only that the maker has seen to their answer.
+ */
+export async function replyIdea({ site = siteOrigin(), link, n, note }) {
+  try {
+    const { said } = await call("PATCH", `${site}/api/wish-ideas?id=${encodeURIComponent(link.id)}&n=${Number(n)}`,
+      { secret: link.secret, ...(note ? { json: { note } } : {}) });
+    return { notified: said.notified === true };
+  } catch (error) {
+    if (error.status === 404) throw new Problem(`there's no idea ${Number(n)} on this link`);
+    if (error.status === 429) throw new Problem(`idea ${Number(n)} has as many messages as it can keep`);
+    throw error;
+  }
+}
+
 /** Takes the link down, with its page and the ideas sent to it. A link the site no longer has is down already. */
 export async function removeLink({ site = siteOrigin(), link }) {
   try { await call("DELETE", `${site}/api/wishes?id=${encodeURIComponent(link.id)}`, { secret: link.secret }); }

@@ -126,7 +126,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
           <img data-shot-picture alt="The app as it is now" />
           <label><input type="checkbox" data-shot-keep checked /> Include this picture</label>
         </div>
-        <label for="notify-email" class="remix-popup-label">Email me once when it's in <span class="remix-popup-optional">(optional)</span></label>
+        <label for="notify-email" class="remix-popup-label">Email me about it <span class="remix-popup-optional">(optional)</span></label>
         <input id="notify-email" data-notify-email class="remix-popup-input" type="email" autocomplete="email" placeholder="Your email" />
         <div class="remix-popup-rows"><button type="submit" data-confirm-send class="shared-button">Send</button></div>
       </form>
@@ -672,7 +672,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
       sentText.textContent = idea;
       sentText.hidden = false;
       confirm.hidden = true;
-      notifyNote.textContent = email ? "We'll email you once when it's in." : "";
+      notifyNote.textContent = email ? "We'll email you when it's in, or with an answer." : "";
       $<HTMLElement>("[data-own-lead]").textContent = "Want it sooner? Lamp can make it for you now. It's free on your Mac and works with your ChatGPT or Claude plan.";
     });
     $<HTMLButtonElement>("[data-remix-close]").addEventListener("click", () => dialog.close());

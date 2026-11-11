@@ -291,7 +291,7 @@ enum WishLink {
     }
 
     /// An idea someone playing the wish sent from its link's page, for its maker (`/api/wish-ideas` on the site): their
-    /// words, when it came, whether they asked to hear when it's in (the site keeps their address and writes to them;
+    /// words, when it came, whether they asked to hear back (the site keeps their address and writes to them;
     /// Lamp never has it), and the picture of the app the page took as they opened the box, if they kept it in (its
     /// address, until the idea has its outcome). Theirs, shown as theirs, never the agent's.
     struct Idea: Codable, Equatable, Identifiable, Sendable {
@@ -300,7 +300,20 @@ enum WishLink {
         var wantsNews: Bool?
         var at: String
         var picture: String? = nil
+        /// "in" or "dismissed" once it has its outcome: it's on the list again only while its sender's answer waits.
+        var status: String? = nil
+        /// Its sender has answered (by email) since the maker last said something or saw to it.
+        var waiting: Bool? = nil
+        /// What's been said about it since, each way, oldest first.
+        var thread: [Said]? = nil
         var id: Int { n }
+
+        struct Said: Codable, Equatable, Sendable {
+            /// "maker" or "sender".
+            var by: String
+            var text: String
+            var at: String
+        }
     }
 
     /// The ideas sent to the link so far, oldest first. Only the link's secret reads them.
@@ -317,6 +330,15 @@ enum WishLink {
         var given: [String: Any] = ["n": number, "built": built]
         if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty { given["note"] = note }
         return try await ask("linkRemoveIdea", secret(shared).merging(given) { $1 })["notified"] as? Bool ?? false
+    }
+
+    /// Says something more about an idea, emailed to its sender if they gave an address; answers whether it was. With
+    /// no note, only that the maker has seen to their answer.
+    @discardableResult
+    static func replyIdea(_ number: Int, note: String?, for shared: Shared) async throws -> Bool {
+        var given: [String: Any] = ["n": number]
+        if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty { given["note"] = note }
+        return try await ask("linkReplyIdea", secret(shared).merging(given) { $1 })["notified"] as? Bool ?? false
     }
 
     /// Takes the link down: the page says the wish isn't shared any more. A link the site no longer has is down already.

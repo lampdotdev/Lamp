@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 import { Away, OffNetwork, Refused, Rejected, Runner, StillWorking, answersOn, bonjour, pinsAt, searchNetwork, send, ssdp } from "./devices.mjs";
 import { adbCommand, connectTo, deviceListing, deviceProperties, displaySizeOf, dumpIn, installApk, installTools, launchApp, makeEmulator, pairWith, processIn, processOf,
   rowsOf, saveState, screenItems, screenshotOf, tellApp, toolsThere, useLamps } from "./android.mjs";
-import { Unreachable, ideasOf, latestOf, publishLink, removeFile, removeIdea, removeLink, sendFile } from "./link.mjs";
+import { Unreachable, ideasOf, latestOf, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile } from "./link.mjs";
 import { defaultRoute, homeNetwork, neighbours, samsungAt, subnetOn, tvsIn } from "./network.mjs";
 import { PUBLISHER, identityName, keptSigner, namesOf, packageOf, versionAfter } from "./msix.mjs";
 import { tile } from "./png.mjs";
@@ -182,6 +182,12 @@ export const CALLS = {
   async linkRemoveIdea(given) {
     const note = typeof given.note === "string" && given.note.trim() ? given.note.trim() : undefined;
     return removeIdea({ site: siteOf(given), link: linkOf(given), n: Number(given.n), built: given.built === true, note });
+  },
+
+  /** Says something more about an idea, emailed to its sender if they gave an address; without `note`, it's seen to. */
+  async linkReplyIdea(given) {
+    const note = typeof given.note === "string" && given.note.trim() ? given.note.trim() : undefined;
+    return replyIdea({ site: siteOf(given), link: linkOf(given), n: Number(given.n), note });
   },
 
   /** Takes the link down. */

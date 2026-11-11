@@ -27,7 +27,7 @@ import { editionName, giveTo, givenTo, keepPictures, lampOwning, reachLamp, take
 import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS } from "./dev.mjs";
 import { findBrowser, noBrowser } from "./browser.mjs";
 import { allSkills } from "./skills.mjs";
-import { share, unshare, ideas, finishIdea, readLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
+import { share, unshare, ideas, finishIdea, answerIdea, readLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
 import { Runner, allKept, fields, forget, integrationOf, isReady, look as lookForDevices, takesPages } from "./devices.mjs";
 import { placeNamed } from "./place.mjs";
 import { androidAdvice, androidDevices, androidDone, emulatorNamed, emulators, forgetAndroid, installTools, knowsAndroid, toolsThere } from "./android.mjs";
@@ -115,11 +115,12 @@ Mac app Lamp made in Swift, built and run on this Mac.
       --no-github and --put-on-github in their place. --preview says what would go and sends nothing. Its link
       stays Lamp's; --new-link has lamp make one of its own instead.
   lamp unshare [folder]   Take the link down.
-  lamp ideas [folder] [in <n> | dismiss <n>] [note]
+  lamp ideas [folder] [in <n> | dismiss <n> | reply <n> | done <n>] [note]
       The ideas people playing the link have sent, with a picture of the app as they saw it when they kept one
-      in. "in" says one is in the game now (whoever asked to hear is
+      in, and what's been said about each since. "in" says one is in the game now (whoever asked to hear is
       written to); "dismiss" lets one go. Words after the number are a note to whoever sent it, on the link's
-      page and in that email.
+      page and in that email; they can answer it by email. "reply" says something more, and "done" leaves
+      their answer without one.
   lamp setup [--remove]   Teach Claude Code and Codex on this computer to work this way (a skill for each).
   lamp guide              What that skill says, for any other agent.
   lamp skills [word]      Lamp's guidance for each kind of work, those about a word; lamp skill <name> reads one.
@@ -936,7 +937,7 @@ async function main() {
   }
 
   if (command === "ideas") {
-    const outcomes = ["in", "dismiss"];
+    const outcomes = ["in", "dismiss", "reply", "done"];
     // Everything after the outcome's number is a note to whoever sent it, word for word: never read as options, so
     // "--fullscreen" or "--help" in it stays in it.
     const at = args.findIndex((arg) => outcomes.includes(arg));
@@ -948,9 +949,15 @@ async function main() {
     const layout = layoutOf(folder);
     if (rest.length) {
       const n = Number(rest[1]);
-      if (!outcomes.includes(rest[0]) || !Number.isInteger(n) || n < 1) throw new Problem("ideas takes in <number> or dismiss <number>: lamp ideas lists them with their numbers");
+      if (!outcomes.includes(rest[0]) || !Number.isInteger(n) || n < 1) throw new Problem("ideas takes in, dismiss, reply or done, and a number: lamp ideas lists them with their numbers");
       // On the link's page, and in the email if they asked for one.
       const note = [...rest.slice(2), ...noted].join(" ").trim() || undefined;
+      if (rest[0] === "reply" || rest[0] === "done") {
+        if (rest[0] === "reply" && !note) throw new Problem("reply takes what to say after the number: lamp ideas reply <number> <words>");
+        const answer = await answerIdea(layout.folder, n, rest[0] === "reply" ? note : undefined);
+        console.log(rest[0] === "done" ? `Idea ${n} is seen to.` : `Said to whoever sent idea ${n}${answer.notified ? ", by email too" : ", on the link's page"}.`);
+        return;
+      }
       const answer = await finishIdea(layout.folder, n, rest[0] === "in", note);
       console.log(rest[0] === "in" ? `Idea ${n} is in.${answer.notified ? " Whoever sent it asked to hear, and has been written to." : ""}` : `Idea ${n} is let go.${note ? " Your note is on the link's page for them." : ""}`);
       return;
@@ -959,11 +966,16 @@ async function main() {
     if (!sent.ideas.length) { console.log(`No ideas waiting for ${sent.url}`); return; }
     console.log(`Ideas sent to ${sent.url}`);
     for (const idea of sent.ideas) {
-      console.log(`  ${idea.n}. ${String(idea.text).split("\n").join("\n     ")}${idea.wantsNews ? "  (wants to hear when it's in)" : ""}`);
+      const state = idea.waiting ? `  (${idea.status === "in" ? "in" : idea.status === "dismissed" ? "dismissed" : "open"}, they answered)` : idea.wantsNews ? "  (wants to hear back)" : "";
+      console.log(`  ${idea.n}. ${String(idea.text).split("\n").join("\n     ")}${state}`);
+      // What's been said since, each way.
+      for (const said of Array.isArray(idea.thread) ? idea.thread : [])
+        console.log(`     ${said.by === "maker" ? "You" : "They"}: ${String(said.text).split("\n").join("\n       ")}`);
       // The app as they saw it when they opened the box, if they kept it in: there until the idea has its outcome.
       if (typeof idea.picture === "string" && idea.picture.startsWith("https://")) console.log(`     picture: ${idea.picture}`);
     }
     console.log("Say what became of one with: lamp ideas in <number>, or lamp ideas dismiss <number>, with a note to them after it if you like.");
+    if (sent.ideas.some((idea) => idea.waiting)) console.log("Answer one with: lamp ideas reply <number> <words>, or lamp ideas done <number> to leave it.");
     return;
   }
 

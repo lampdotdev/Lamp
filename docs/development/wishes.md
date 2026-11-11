@@ -403,13 +403,19 @@ at launch and every five minutes (`WishIdeas`, `Store.checkIdeas`); the desk sho
 under its changes ("Ideas", with how many are new, and a line under the app's row while some are new; seen ones are
 counted by the link, since a link made again counts from one), and the person goes to them in `IdeasPanel`, which takes the list's place
 with Back: Build It asks the wish's chat for one, in the sender's words, marked as theirs (`WishIdeas.request`); It's In
-lets it go and has the site write once to whoever asked to hear back, through Resend (`tellItsIn`: `RESEND_API_KEY` and
+lets it go and has the site write to whoever asked to hear back, through Resend (`writeToSender`: `RESEND_API_KEY` and
 `LAMP_IDEAS_FROM` in the site's environment); Dismiss lets it go quietly. Either can carry a note to the sender, written
-on the idea's line (the DELETE's JSON `note`): it goes in that email, and on the link's page. The maker sees only that someone wants to hear
-back, never their address. Either way the idea is kept with its outcome for 90 days (`finishIdea`, one step, so the
+on the idea's line (the DELETE's JSON `note`), and Send Note says one without an outcome (PATCH): each goes on the
+idea's thread, on the link's page, and by email to an address they gave. Every email has the idea's mailbox as its
+Reply-To when `LAMP_IDEAS_REPLY_DOMAIN` is set (`idea-<mailbox>@` it, receiving on in Resend with its MX record), and
+a link to stop them. A reply comes back through Resend's `email.received` webhook (`/api/idea-mail`,
+`createIdeaMailHandler`, signed with `RESEND_WEBHOOK_SECRET`): only from the address the idea came with, its own words
+(`replyWords`), onto the thread, which puts the idea back in the panel marked Answered, outcome or not, until the
+maker sends something more (in the same email thread) or presses Done. The maker sees only that someone wants to hear
+back, never their address. Either way the idea is kept with its outcome for 90 days past its last word (`finishIdea`, one step, so the
 email goes once): the sender's browser keeps each idea's number and a token the site answered, asks after them on its
-next visit (`?mine=`), and an idea that's in says so once in a bar over the app, with See What's New and the maker's note
-if there is one; one dismissed says nothing, unless the maker answered it with a note. Making one's own with Lamp stays in the
+next visit (`?mine=`), and an idea that's in says so once in a bar over the app, with See What's New and the maker's
+last note if there is one; one dismissed says nothing, unless the maker answered it with a note. Making one's own with Lamp stays in the
 dialog under the idea sent, and is all it offers when the idea couldn't go. A new page leaves the one before it playable
 (`previousPage` in lib/shared-wishes.js; the play handler remembers a link's record a minute per instance,
 `PLAY_MEMORY`, rather than reading the store for each of a game's hundreds of files), since a game open on it goes on loading files as it's played (a big city's map

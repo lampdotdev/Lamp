@@ -7,8 +7,10 @@ import SwiftUI
 /// minutes, and the desk says quietly how many are new; nothing goes in the chat until the person picks one. The panel
 /// shows them in the desk's window in place of its list, newest first: Build It asks the wish's chat for it, saying
 /// where it came from; It's In lets it go, and the site writes to whoever asked to hear back (Lamp never sees where);
-/// Dismiss lets it go quietly. A note written on its line goes with either, to the sender, on the link's page and in
-/// that email (at most the site's `IDEA_LIMITS.note`).
+/// Dismiss lets it go quietly. A note written on its line goes with either, or alone (Send Note), to the sender, on the
+/// link's page and by email if they gave an address (at most the site's `IDEA_LIMITS.note`). They can answer that
+/// email: their answer puts the idea back on the list, marked, with what's been said, until the maker sends something
+/// more or presses Done.
 enum WishIdeas {
     /// The highest numbered idea seen of each wish's link, kept between launches: numbers only go up on one link, and a
     /// link made again (after one taken down) counts from one, so it's kept by the link as well as the wish.
@@ -87,9 +89,10 @@ extension Store {
         projects.filter { !(ideas[$0.id] ?? []).isEmpty }.sorted { newIdeas($0) > newIdeas($1) }
     }
 
+    /// Ideas not seen yet, and those whose sender has answered since: each waits on the maker.
     func newIdeas(_ project: LampProject) -> Int {
         let seen = WishIdeas.seen(project)
-        return (ideas[project.id] ?? []).filter { $0.n > seen }.count
+        return (ideas[project.id] ?? []).filter { $0.n > seen || $0.waiting == true }.count
     }
 
     var newIdeasInAll: Int { projects.reduce(0) { $0 + newIdeas($1) } }
@@ -124,9 +127,27 @@ extension Store {
     func finishIdea(_ idea: WishLink.Idea, built: Bool, note: String? = nil, in project: LampProject) async -> Bool {
         guard let shared = WishLink.kept(for: project) else { return false }
         do { try await WishLink.removeIdea(idea.n, built: built, note: note, for: shared) } catch { return false }
-        ideas[project.id]?.removeAll { $0.n == idea.n }
-        if ideas[project.id]?.isEmpty == true { ideas[project.id] = nil }
+        dropIdea(idea.n, of: project)
         return true
+    }
+
+    /// Send, or Done: something more said to the idea's sender (emailed, if they gave an address), or their answer
+    /// seen to without a word. One with its outcome leaves the list, one still open stays with its thread.
+    func answerIdea(_ idea: WishLink.Idea, note: String?, in project: LampProject) async -> Bool {
+        guard let shared = WishLink.kept(for: project) else { return false }
+        do { try await WishLink.replyIdea(idea.n, note: note, for: shared) } catch { return false }
+        if idea.status != nil { dropIdea(idea.n, of: project); return true }
+        guard let index = ideas[project.id]?.firstIndex(where: { $0.n == idea.n }) else { return true }
+        ideas[project.id]?[index].waiting = nil
+        if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+            ideas[project.id]?[index].thread = (idea.thread ?? []) + [.init(by: "maker", text: note, at: ISO8601DateFormatter().string(from: Date()))]
+        }
+        return true
+    }
+
+    private func dropIdea(_ number: Int, of project: LampProject) {
+        ideas[project.id]?.removeAll { $0.n == number }
+        if ideas[project.id]?.isEmpty == true { ideas[project.id] = nil }
     }
 }
 
@@ -205,52 +226,85 @@ struct IdeasPanel: View {
     }
 
     private func finish(_ idea: WishLink.Idea, built: Bool) {
+        settle(idea) { await store.finishIdea(idea, built: built, note: notes[idea.n], in: $0) }
+    }
+
+    /// Send (with what's written) or Done (without).
+    private func answer(_ idea: WishLink.Idea, saying: Bool) {
+        settle(idea) { await store.answerIdea(idea, note: saying ? notes[idea.n] : nil, in: $0) }
+    }
+
+    private func settle(_ idea: WishLink.Idea, _ work: @escaping (LampProject) async -> Bool) {
         guard preview == nil, let project, !finishing.contains(idea.n) else { return }
         finishing.insert(idea.n)
         failed = nil
         Task {
-            if await store.finishIdea(idea, built: built, note: notes[idea.n], in: project) { notes[idea.n] = nil } else { failed = idea.n }
+            if await work(project) { notes[idea.n] = nil } else { failed = idea.n }
             finishing.remove(idea.n)
         }
     }
 
+    private func tag(_ words: String) -> some View {
+        Text(words).font(.system(size: 10, weight: .bold)).tracking(0.8).foregroundStyle(Paper.ink)
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(Paper.ink.opacity(0.08), in: RoundedRectangle(cornerRadius: 4))
+    }
+
     private func line(_ idea: WishLink.Idea) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let written = !(notes[idea.n] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let outcome = idea.status == "in" ? "It's in" : idea.status == "dismissed" ? "Dismissed" : nil
+        return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                if newHere.contains(idea.n) {
-                    Text("NEW").font(.system(size: 10, weight: .bold)).tracking(0.8).foregroundStyle(Paper.ink)
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Paper.ink.opacity(0.08), in: RoundedRectangle(cornerRadius: 4))
-                }
-                Text(verbatim: [WishIdeas.when(idea.at), idea.wantsNews == true ? "wants to hear when it's in" : nil].compactMap { $0 }.joined(separator: " · "))
+                if idea.waiting == true { tag("ANSWERED") } else if newHere.contains(idea.n) { tag("NEW") }
+                Text(verbatim: [WishIdeas.when(idea.at), outcome, idea.wantsNews == true && idea.status == nil ? "wants to hear back" : nil].compactMap { $0 }.joined(separator: " · "))
                     .font(.system(size: 11.5)).foregroundStyle(Paper.muted).lineLimit(1).truncationMode(.middle)
             }
             Text(verbatim: idea.text).font(.system(size: 14)).foregroundStyle(Paper.ink).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             if let picture = idea.picture { IdeaPicture(address: picture) }
-            TextField("Note to them (optional)", text: Binding(get: { notes[idea.n] ?? "" }, set: { notes[idea.n] = String($0.prefix(500)) }), axis: .vertical)
-                .textFieldStyle(.roundedBorder).font(.system(size: 13)).lineLimit(1...4)
+            if let thread = idea.thread, !thread.isEmpty { conversation(thread) }
+            TextField(idea.status == nil ? "Note to them (optional)" : "Reply to them", text: Binding(get: { notes[idea.n] ?? "" }, set: { notes[idea.n] = String($0.prefix(2000)) }), axis: .vertical)
+                .textFieldStyle(.roundedBorder).font(.system(size: 13)).lineLimit(1...6)
                 .frame(maxWidth: 480, alignment: .leading)
                 .disabled(finishing.contains(idea.n))
             HStack(spacing: 8) {
-                if built.contains(idea.n) {
-                    Label("Asked in the chat", systemImage: "checkmark").font(.system(size: 12.5)).foregroundStyle(Paper.muted)
-                } else {
-                    Button("Build It") {
-                        guard preview == nil, let project else { return }
-                        built.insert(idea.n)
-                        store.buildIdea(idea, in: project)
+                if idea.status == nil {
+                    if built.contains(idea.n) {
+                        Label("Asked in the chat", systemImage: "checkmark").font(.system(size: 12.5)).foregroundStyle(Paper.muted)
+                    } else {
+                        Button("Build It") {
+                            guard preview == nil, let project else { return }
+                            built.insert(idea.n)
+                            store.buildIdea(idea, in: project)
+                        }
+                        .buttonStyle(PaperButtonStyle(.ink, height: 28))
                     }
-                    .buttonStyle(PaperButtonStyle(.ink, height: 28))
+                    Button("It's In") { finish(idea, built: true) }
+                        .buttonStyle(PaperButtonStyle(.outline, height: 28))
+                        .disabled(finishing.contains(idea.n))
+                        .help(idea.wantsNews == true ? "Takes it off the list, emails them that it's in, and tells them on the link's page, with your note if you wrote one" : "Takes it off the list, and tells them on the link's page, with your note if you wrote one")
+                    Button("Dismiss") { finish(idea, built: false) }
+                        .buttonStyle(PaperButtonStyle(.outline, height: 28))
+                        .disabled(finishing.contains(idea.n))
+                        .help("Takes it off the list. They see your note on the link's page, if you wrote one.")
+                    if written {
+                        Button("Send Note") { answer(idea, saying: true) }
+                            .buttonStyle(PaperButtonStyle(.outline, height: 28))
+                            .disabled(finishing.contains(idea.n))
+                            .help(idea.wantsNews == true ? "Emails them your note and keeps the idea here. They can answer by email." : "Shows them your note on the link's page and keeps the idea here")
+                    }
+                } else {
+                    if written {
+                        Button("Send") { answer(idea, saying: true) }
+                            .buttonStyle(PaperButtonStyle(.ink, height: 28))
+                            .disabled(finishing.contains(idea.n))
+                            .help(idea.wantsNews == true ? "Emails them your reply. They can answer again." : "Shows them your reply on the link's page")
+                    }
+                    Button("Done") { answer(idea, saying: false) }
+                        .buttonStyle(PaperButtonStyle(.outline, height: 28))
+                        .disabled(finishing.contains(idea.n))
+                        .help("Takes it off the list without a reply")
                 }
-                Button("It's In") { finish(idea, built: true) }
-                    .buttonStyle(PaperButtonStyle(.outline, height: 28))
-                    .disabled(finishing.contains(idea.n))
-                    .help(idea.wantsNews == true ? "Takes it off the list, emails them that it's in, and tells them on the link's page, with your note if you wrote one" : "Takes it off the list, and tells them on the link's page, with your note if you wrote one")
-                Button("Dismiss") { finish(idea, built: false) }
-                    .buttonStyle(PaperButtonStyle(.outline, height: 28))
-                    .disabled(finishing.contains(idea.n))
-                    .help("Takes it off the list. They see your note on the link's page, if you wrote one.")
                 if failed == idea.n {
                     Text("Couldn't reach lamp.dev. Try again.").font(.system(size: 12)).foregroundStyle(Paper.muted)
                 }
@@ -260,6 +314,23 @@ struct IdeasPanel: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Paper.card, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Paper.rule))
+    }
+
+    /// What's been said about the idea since it came, each way, under a rule.
+    private func conversation(_ thread: [WishLink.Idea.Said]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(thread.enumerated()), id: \.offset) { _, said in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: [said.by == "maker" ? "You" : "They", WishIdeas.when(said.at)].compactMap { $0 }.joined(separator: " · "))
+                        .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Paper.muted)
+                    Text(verbatim: said.text).font(.system(size: 13)).foregroundStyle(Paper.ink).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(.leading, 10)
+        .overlay(alignment: .leading) { Rectangle().fill(Paper.rule).frame(width: 2) }
+        .frame(maxWidth: 560, alignment: .leading)
     }
 }
 
@@ -301,9 +372,10 @@ extension Gallery {
         ideas("Ideas from people playing it"),
         ideas("Ideas, the narrowest window", width: 540),
         ideas("No ideas left", ideas: []),
+        ideas("An idea they answered", only: 1),
     ]
 
-    private static func ideas(_ name: String, ideas: [WishLink.Idea]? = nil, width: CGFloat = 940) -> Entry {
+    private static func ideas(_ name: String, ideas: [WishLink.Idea]? = nil, only: Int? = nil, width: CGFloat = 940) -> Entry {
         Entry(group: "Sent to you", name: name) {
             let project = LampProject(id: "gallery-harbor-racer", name: "Harbor Racer", exe: "HarborRacer", dir: URL(fileURLWithPath: "/nonexistent"))
             let now = Date()
@@ -311,9 +383,12 @@ extension Gallery {
             let made = ideas ?? [
                 WishLink.Idea(n: 3, text: "Rain that makes the roads slippery", wantsNews: true, at: at(0.3), picture: madeUpPicture()),
                 WishLink.Idea(n: 2, text: "Let me paint my car any color I want, with stripes and a number on the doors like a real race car.", wantsNews: nil, at: at(5)),
-                WishLink.Idea(n: 1, text: "More boats in the harbor", wantsNews: nil, at: at(30)),
+                WishLink.Idea(n: 1, text: "More boats in the harbor", wantsNews: true, at: at(30), status: "in", waiting: true, thread: [
+                    .init(by: "maker", text: "Added a ferry and some sailboats. Try the docks at night!", at: at(26)),
+                    .init(by: "sender", text: "Love the ferry! Could it honk when you get close?", at: at(1)),
+                ]),
             ]
-            return AnyView(IdeasPanel(wish: project.id, back: {}, preview: (project, made, [3]))
+            return AnyView(IdeasPanel(wish: project.id, back: {}, preview: (project, made.filter { only == nil || $0.n == only }, [3]))
                 .frame(width: width, height: 600)
                 .background(Paper.page)
                 .environmentObject(Store.shared))

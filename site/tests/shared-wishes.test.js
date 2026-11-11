@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { deflateSync, crc32 } from "node:zlib";
-import { createShareHandler, createFileHandler, createIdeasHandler, IDEA_LIMITS, createPlayHandler, pictureScript, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, slugFor, wishIDFrom, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
+import { createShareHandler, createFileHandler, createIdeasHandler, createIdeaMailHandler, replyWords, IDEA_LIMITS, createPlayHandler, pictureScript, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, slugFor, wishIDFrom, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
 import { createPageHandler } from "../lib/shared-wish-page.js";
 import { createCardHandler } from "../lib/wish-card.js";
 
@@ -425,6 +425,63 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   assert.deepEqual([await plays(2), await plays(3)], [200, 200]);
   await again();
   assert.deepEqual([await plays(2), await plays(3), await plays(4)], [404, 200, 200]);
+});
+
+test("the maker and an idea's sender talk by email, the replies kept on the idea's thread", async () => {
+  const { createHmac } = await import("node:crypto");
+  const store = memoryStore();
+  const { id, secret } = await (await send(createShareHandler({ store, limited: false }), "POST", { ...share, by: "Alex" })).json();
+  const secretKey = Buffer.from("a webhook's own secret").toString("base64");
+  const env = { RESEND_API_KEY: "re_test", LAMP_IDEAS_FROM: "Lamp <ideas@lamp.dev>", LAMP_IDEAS_REPLY_DOMAIN: "reply.lamp.dev", RESEND_WEBHOOK_SECRET: `whsec_${secretKey}` };
+  const mails = [];
+  let received = "Yes please, and rain too!\n\nOn Tue, Nov 10, 2026 at 9:00 AM Lamp <ideas@lamp.dev> wrote:\n> Alex added your idea";
+  const fetcher = async (url, init) => {
+    if (String(url).includes("/emails/receiving/")) return Response.json({ text: received });
+    mails.push(JSON.parse(init.body));
+    return Response.json({});
+  };
+  const ideas = createIdeasHandler({ store, limited: false, fetcher, env });
+  const mailIn = createIdeaMailHandler({ store, fetcher, env });
+  const call = (method, query, body) => ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}${query}`, {
+    method, headers: { ...(method === "POST" ? {} : { authorization: `Bearer ${secret}` }), "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) }));
+  const { n } = await (await call("POST", "", { text: "Bigger waves", email: "Someone@Example.com" })).json();
+  await call("DELETE", `&n=${n}&built=1`, { note: "Done, try the harbor" });
+  const box = /^idea-([0-9a-f]{20})@reply\.lamp\.dev$/.exec(mails[0].reply_to[0])?.[1];
+  assert.ok(box, "replies go to the idea's own mailbox");
+  assert.match(mails[0].text, /Done, try the harbor[\s\S]*Reply to this email to answer Alex/);
+  assert.match(mails[0].headers["List-Unsubscribe"], new RegExp(`stop=${box}`));
+
+  const deliver = (from, at = Date.now(), key = secretKey, mid = "<reply-1@example.com>") => {
+    const body = JSON.stringify({ type: "email.received", data: { email_id: "e1", from, to: [`idea-${box}@reply.lamp.dev`], message_id: mid } });
+    const stamp = String(Math.floor(at / 1000));
+    const signature = createHmac("sha256", Buffer.from(key, "base64")).update(`msg_1.${stamp}.${body}`).digest("base64");
+    return mailIn(new Request("https://lamp.dev/api/idea-mail", { method: "POST", body, headers: { "svix-id": "msg_1", "svix-timestamp": stamp, "svix-signature": `v1,${signature}` } }));
+  };
+  const listed = async () => (await (await call("GET", "")).json()).ideas;
+  assert.equal((await deliver("someone@example.com", Date.now(), Buffer.from("another").toString("base64"))).status, 401, "only what Resend signed");
+  assert.equal((await deliver("someone@example.com", Date.now() - 600_000)).status, 401, "nor an old one sent again");
+  assert.equal((await deliver("Not Them <other@example.com>")).status, 200);
+  assert.deepEqual(await listed(), [], "nothing from another address");
+  assert.equal((await deliver("Someone <someone@example.com>")).status, 200);
+  assert.equal((await deliver("Someone <someone@example.com>")).status, 200);
+  const [waiting] = await listed();
+  assert.deepEqual([waiting.n, waiting.status, waiting.waiting, waiting.wantsNews], [n, "in", true, true]);
+  assert.deepEqual(waiting.thread.map((one) => [one.by, one.text]), [["maker", "Done, try the harbor"], ["sender", "Yes please, and rain too!"]], "their words, once, without the email they quote");
+  assert.ok(!JSON.stringify(waiting).includes(box) && !JSON.stringify(waiting).includes("example.com"), "never the mailbox or the address");
+
+  assert.equal((await (await call("PATCH", `&n=${n}`, { note: "Rain is next" })).json()).notified, true);
+  assert.equal(mails[1].subject, `Re: Your idea is in ${share.name}`);
+  assert.equal(mails[1].headers["In-Reply-To"], "<reply-1@example.com>");
+  assert.deepEqual(await listed(), [], "answered, it's off the list");
+  received = "One more thing";
+  await deliver("someone@example.com", Date.now(), secretKey, "<reply-2@example.com>");
+  assert.deepEqual((await listed())[0].thread.map((one) => one.text), ["Done, try the harbor", "Yes please, and rain too!", "Rain is next", "One more thing"]);
+  assert.equal((await call("PATCH", `&n=${n}`)).status, 200);
+  assert.deepEqual(await listed(), [], "seen to without a word");
+
+  assert.equal((await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${n}&stop=${box}`))).status, 200);
+  assert.equal((await (await call("PATCH", `&n=${n}`, { note: "Anyone there?" })).json()).notified, false, "no more emails once they stop them");
+  assert.equal(replyWords("Sure\n\n-----Original Message-----\nFrom: Lamp"), "Sure");
 });
 
 test("a link's questions go to its page, and only as questions within the limits", async () => {
