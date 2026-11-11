@@ -67,7 +67,12 @@ ready only after a send is taken, in one plain line, and remove only that folder
 words (without the line about Codex), which opens Claude Code in a terminal with them typed in, unsent. Claude Code
 takes at most 5,000 characters from it; the words with the longest idea stay under that (a test holds it). It answers
 the link only once it has registered its handler, after a message is sent in it, and not when that's turned off in its
-settings; the line under the button says so.
+settings; the line under the button says so. Without a folder, Claude Code opens in the home folder and asks whether to trust it, so
+the page asks once for the player's games folder (kept in the browser's localStorage) and the link always carries it
+as `cwd`: they trust that folder once, never their home folder. A page can't know a Mac's home path or make a folder,
+so the player gives the whole path and makes the folder. It's checked as Claude Code checks `cwd` (`gamesFolder`): a
+whole path from `/`, no `..`, nothing on the network, no control or invisible characters, at most 4,096 characters,
+and not `/` or a home folder itself. A missing or refused one is said in plain words, and the button makes no link.
 
 The link's page offers this beside sending an idea (SHARED_WISHES.md): "I want to make this change myself", then
 ChatGPT or Claude Code, opens `/change?with=app&w=<id>&app=<app>#idea=<the idea>` in a new tab. The idea goes in the

@@ -50,6 +50,19 @@ import { CHATGPT_APP_URL, CLAUDE_CODE_URL } from "../lib/change-words";
         <div data-direct hidden class="space-y-3 text-sm">
           <!-- ph-no-capture: the link holds the room's key, and PostHog's autocapture would record a clicked link's address. -->
           <div class="ph-no-capture">
+            <!-- Claude Code's games folder: asked once, kept in this browser, and where its link opens Claude Code, so the
+                 person trusts that folder and never their home folder. Out of autocapture with the rest: a path names
+                 the person's account. -->
+            <form data-folder-form hidden class="mb-3 space-y-1.5">
+              <label for="games-folder" class="block font-semibold">Your games folder</label>
+              <div class="flex gap-2">
+                <input id="games-folder" data-folder-input autocomplete="off" spellcheck="false" placeholder="/Users/you/Games" class="min-w-0 flex-1 rounded-md border border-tape/30 bg-white px-3 py-2 font-mono text-xs" />
+                <button type="submit" class="rounded-md border border-tape px-4">Save</button>
+              </div>
+              <p data-folder-problem role="alert" class="text-xs text-red-700 empty:hidden"></p>
+              <p class="text-xs text-muted-ink">Claude Code opens there, and asks once to trust it. Make the folder first.</p>
+            </form>
+            <p data-folder-shown hidden class="mb-3 text-xs text-muted-ink">Opens in <code data-folder-path class="font-mono text-tape"></code> · <button type="button" data-folder-change class="underline underline-offset-2 hover:text-tape">Change</button></p>
             <a data-app-link href="#" class="ink-button flex h-11 w-full items-center justify-center text-base">Change with ChatGPT</a>
             <p data-app-hint="chatgpt" class="mt-1.5 text-xs text-muted-ink">Opens the ChatGPT desktop app on a Mac. No app? <a href={CHATGPT_APP_URL} target="_blank" rel="noopener" class="underline underline-offset-2 hover:text-tape">Get it</a></p>
             <!-- Claude Code answers its link only once it has put its handler in place: after a message is sent in it, and not
@@ -81,7 +94,7 @@ import { CHATGPT_APP_URL, CLAUDE_CODE_URL } from "../lib/change-words";
 </Base>
 
 <script>
-  import { appLink, changeWords, isChangeApp } from "../lib/change-words";
+  import { appLink, changeWords, gamesFolder, isChangeApp } from "../lib/change-words";
 
   const $ = <T extends HTMLElement>(name: string) => document.querySelector(`[data-${name}]`) as T;
   type Request = { id: string; prompt: string; state: string; message: string | null; version: number | null };
@@ -99,6 +112,38 @@ import { CHATGPT_APP_URL, CLAUDE_CODE_URL } from "../lib/change-words";
   const app = isChangeApp(askedApp) ? askedApp : "chatgpt";
   $("app-link").textContent = app === "claude" ? "Change with Claude Code" : "Change with ChatGPT";
   for (const hint of document.querySelectorAll<HTMLElement>("[data-app-hint]")) hint.hidden = hint.dataset.appHint !== app;
+  // Claude Code's games folder (lib/change-words.ts `gamesFolder`), kept in this browser for every game after.
+  const FOLDER = "lamp.change.folder";
+  let folder = "";
+  try { const kept = gamesFolder(localStorage.getItem(FOLDER) ?? ""); if ("folder" in kept) folder = kept.folder; } catch {}
+  const showFolder = (editing = false) => {
+    const asking = app === "claude" && (editing || !folder);
+    $("folder-form").hidden = !asking;
+    $("folder-shown").hidden = app !== "claude" || asking;
+    $("folder-path").textContent = folder;
+    if (asking) $<HTMLInputElement>("folder-input").value = folder;
+    // Without a folder there's no link to follow: the button says what's missing instead.
+    $("app-link").classList.toggle("opacity-40", app === "claude" && !folder);
+    $("app-link").setAttribute("aria-disabled", String(app === "claude" && !folder));
+    if (room) show(room);
+  };
+  $<HTMLFormElement>("folder-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const checked = gamesFolder($<HTMLInputElement>("folder-input").value);
+    $("folder-problem").textContent = "problem" in checked ? checked.problem : "";
+    if ("problem" in checked) return;
+    folder = checked.folder;
+    try { localStorage.setItem(FOLDER, folder); } catch {}
+    showFolder();
+  });
+  $("folder-change").addEventListener("click", () => { showFolder(true); $<HTMLInputElement>("folder-input").focus(); });
+  $("app-link").addEventListener("click", (event) => {
+    if (app !== "claude" || folder) return;
+    event.preventDefault();
+    $("folder-problem").textContent = "Add your games folder first.";
+    $<HTMLInputElement>("folder-input").focus();
+  });
+
   // The idea brought from the game's page, if any (taken out of the address by the inline script above).
   let idea = "";
   try { idea = sessionStorage.getItem("lamp.change.idea") ?? ""; } catch {}
@@ -111,6 +156,7 @@ import { CHATGPT_APP_URL, CLAUDE_CODE_URL } from "../lib/change-words";
   let room: Room | null = null;
   let shown = 0;
   let quiet = 0;
+  showFolder();
 
   const say = (text: string) => { $("status").textContent = text; };
   const minutes = (ms: number) => { const n = Math.max(1, Math.round(ms / 60000)); return n === 1 ? "a minute" : `${n} minutes`; };
@@ -141,7 +187,7 @@ import { CHATGPT_APP_URL, CLAUDE_CODE_URL } from "../lib/change-words";
       if (next.seeding) { $("direct").hidden = true; say(next.seeding.failed ?? `Getting the game ready… ${next.seeding.copied} of ${next.seeding.total} files`); return; }
       $("direct").hidden = !postKey;
       $<HTMLTextAreaElement>("words").value = postKey ? words(next) : "";
-      $<HTMLAnchorElement>("app-link").href = postKey ? appLink(app, words(next)) : "#";
+      $<HTMLAnchorElement>("app-link").href = postKey && (app !== "claude" || folder) ? appLink(app, words(next), folder) : "#";
       say(next.posted
         ? `Version ${next.version} came in from your AI app at ${new Date(next.posted).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
         : "Waiting for your AI app to send a game.");

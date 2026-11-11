@@ -47,10 +47,40 @@ export const chatgptLink = (words: string) => `codex://new?prompt=${encodeURICom
 // CLAUDE_LINK_MAX characters of them; the words with the longest idea the game's page takes stay well under it (a test
 // holds that). The link only works once Claude Code has put its handler in place, which it does after a message is sent
 // in it, unless that's turned off in its settings: the page says so beside the button.
+//
+// `cwd` is the folder Claude Code opens in. Without it, it opens in the person's home folder and asks whether to trust
+// it, so the page asks once for a games folder of their own (`gamesFolder`) and always sends it: they trust that folder
+// once, never their home folder. A page can't know a Mac's home path nor make a folder, so it's the person's to give.
 export const CLAUDE_LINK_MAX = 5000;
-export const claudeLink = (words: string) => `claude-cli://open?q=${encodeURIComponent(words)}`;
+export const claudeLink = (words: string, folder: string) =>
+  `claude-cli://open?q=${encodeURIComponent(words)}&cwd=${encodeURIComponent(folder)}`;
 
-export const appLink = (app: ChangeApp, words: string) => (app === "claude" ? claudeLink(words) : chatgptLink(words));
+export const appLink = (app: ChangeApp, words: string, folder = "") => (app === "claude" ? claudeLink(words, folder) : chatgptLink(words));
+
+/** The longest folder Claude Code takes from its link. */
+export const CLAUDE_FOLDER_MAX = 4096;
+
+/**
+ * The games folder as the person typed or pasted it, checked as Claude Code checks its link's `cwd` (a whole path from
+ * "/", no "..", nothing on the network, no control or invisible characters, within its length), so a folder it would
+ * refuse is said here in plain words instead of making a link that does nothing. Quotes around it and a path dragged
+ * from Finder into Terminal (spaces written "\ ") are taken as the folder they name. Whether the folder exists can't
+ * be known from a page, which is why the page says to make it first.
+ */
+export function gamesFolder(typed: string): { folder: string } | { problem: string } {
+  let folder = typed.trim().replace(/^(["'])(.*)\1$/s, "$2").replace(/\\ /g, " ").trim();
+  if (folder.length > 1) folder = folder.replace(/\/+$/, "");
+  if (!folder) return { problem: "Write the path of your games folder." };
+  if (folder.startsWith("~")) return { problem: "Write the whole path, starting with /Users/, not ~." };
+  if (folder.startsWith("//")) return { problem: "Pick a folder on this Mac, not on the network." };
+  if (!folder.startsWith("/")) return { problem: "That isn't a whole path: it starts with /, like /Users/you/Games." };
+  if (folder.split("/").some((part) => part === "..")) return { problem: "Write the path without \"..\" in it." };
+  if (/[\u0000-\u001f\u007f]/.test(folder) || /(?![\u200C\u200D\uFE00-\uFE0F\u{E0100}-\u{E01EF}])[\p{Default_Ignorable_Code_Point}\u2028\u2029\u2800\uFFF9-\uFFFB]/u.test(folder))
+    return { problem: "That path has characters in it that Claude Code won't take." };
+  if (folder.length > CLAUDE_FOLDER_MAX) return { problem: "That path is too long." };
+  if (folder === "/" || /^\/Users\/?[^/]*$/.test(folder)) return { problem: "Pick a folder of its own for games, inside your home folder." };
+  return { folder };
+}
 
 // Where to get each app: OpenAI's page for the ChatGPT apps, the Mac's among them, and Claude Code's.
 export const CHATGPT_APP_URL = "https://chatgpt.com/download/";
