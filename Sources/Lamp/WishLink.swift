@@ -191,8 +191,10 @@ enum WishLink {
 
     /// Shares the wish, or changes what its link shows, and answers the link as it is now. `releases` is what's new in
     /// each version released, as `WishReleases.shown` gives it.
-    static func publish(_ words: Words, picture: Data?, icon: Data?, releases: [[String: Any]] = [], replacing earlier: Shared?) async throws -> Shared {
+    /// `github`, the app's repository there as "owner/name", only when anyone can read it: the page links to it.
+    static func publish(_ words: Words, picture: Data?, icon: Data?, releases: [[String: Any]] = [], github: String? = nil, replacing earlier: Shared?) async throws -> Shared {
         var body: [String: Any] = ["name": words.name.trimmed, "line": words.line.trimmed, "words": words.words.trimmed, "releases": releases]
+        if let github { body["github"] = github }
         if let by = words.by?.trimmed, !by.isEmpty { body["by"] = by }
         if let ideas = words.ideas, !ideas.isEmpty { body["ideas"] = ideas }
         if let asks = words.asks, !asks.isEmpty { body["asks"] = asks }
@@ -679,8 +681,11 @@ enum WishLink {
                 }.value
                 var pageProblem: String?
                 let release = WishReleases.Release(version: await Versions.head(project) ?? "", date: Date(), lines: notes)
+                // Its repository, when it's on GitHub already and public: one put there by this release is linked from the next.
+                let github = GitHubRepo.kept(for: project).flatMap { $0.isPublic == true ? $0.repo : nil }
                 var shared = try await WishLink.publish(words, picture: picture, icon: icon,
-                                                        releases: WishReleases.shown([release] + WishReleases.load(project)), replacing: card.shared)
+                                                        releases: WishReleases.shown([release] + WishReleases.load(project)),
+                                                        github: github, replacing: card.shared)
                 // Kept at once, with the file as the link had it so far: its secret is the only way to change it or take it
                 // down, so a file that fails after this leaves a link the card can still stop.
                 shared.shown.file = card.shared?.shown.file

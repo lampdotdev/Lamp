@@ -46,6 +46,9 @@ test("only a checked wish is taken: known fields, plain words within their limit
   assert.equal(readShare({ ...share, picture: null, icon: undefined }).picture, null);
   assert.equal(readShare({ ...share, name: "Plant\u0000\nPal" }).name, "Plant Pal");
   assert.equal(readShare({ ...share, extra: 1 }), null);
+  assert.equal(readShare({ ...share, github: "someone/plant-pal" }).github, "someone/plant-pal");
+  assert.equal(readShare(share).github, null);
+  for (const github of ["https://github.com/someone/plant-pal", "someone/..", "someone", "some one/plant"]) assert.equal(readShare({ ...share, github }), null, github);
   assert.equal(readShare({ ...share, name: "x".repeat(LIMITS.name + 1) }), null);
   assert.equal(readShare(share).by, "", "nobody named, with no byline");
   assert.equal(readShare({ ...share, by: "  A  Maker " }).by, "A Maker");
