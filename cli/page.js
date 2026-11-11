@@ -33,6 +33,8 @@
     const SHOWN_AT_LEAST = 1.2, HELD_AFTER = 1.4, SPIN_EVERY = 1.4;
     const still = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } };
     let root = null, card = null, bands = null, title = null, detail = null, spinning = null, shownAt = 0, gone = null, hidden = false, safety = null;
+    // The card's way out ("Updated" fading, or a fade), which a change coming meanwhile stops.
+    let outgoing = null;
     const make = () => {
       if (root && root.isConnected) return;
       root = document.createElement('div');
@@ -67,6 +69,7 @@
     const show = () => {
       make();
       unlater(gone);
+      if (outgoing) { outgoing.cancel(); outgoing = null; }
       if (shownAt) return;
       shownAt = performance.now();
       card.animate([{ opacity: 0, transform: still() ? 'translateX(-50%)' : 'translate(-50%, 10px)' }, { opacity: 1, transform: 'translateX(-50%)' }],
@@ -100,7 +103,8 @@
         if (spinning) { spinning.cancel(); spinning = null; }
         if (!still()) bands.parentNode.animate([{ transform: 'scale(1.25)' }, { transform: 'scale(1)' }], { duration: 300, easing: 'ease-out' });
         const wait = Math.max(HELD_AFTER, SHOWN_AT_LEAST - (performance.now() - shownAt) / 1000);
-        card.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, delay: wait * 1000, fill: 'forwards', easing: 'ease-in-out' });
+        if (outgoing) outgoing.cancel();
+        outgoing = card.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, delay: wait * 1000, fill: 'forwards', easing: 'ease-in-out' });
         words = '';
         goAfter(wait + 0.35);
       },
@@ -108,7 +112,8 @@
       fade() {
         unlater(safety);
         if (!root) return;
-        card.animate([{ opacity: getComputedStyle(card).opacity }, { opacity: 0 }], { duration: 250, fill: 'forwards' });
+        if (outgoing) outgoing.cancel();
+        outgoing = card.animate([{ opacity: getComputedStyle(card).opacity }, { opacity: 0 }], { duration: 250, fill: 'forwards' });
         words = '';
         goAfter(0.3);
       },

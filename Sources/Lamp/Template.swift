@@ -7968,6 +7968,8 @@ enum Template {
         @MainActor static func begin(words: String?) {
             renew()
             glasses.removeAll { $0.over == nil || $0.isLeaving }
+            // A request the person sent since says what's changing now, on the cards already up too.
+            if let words { for glass in glasses { glass.words = words } }
             for window in windows where !glasses.contains(where: { $0.over === window }) {
                 let glass = Glass(over: window)
                 glass.words = words
@@ -7994,7 +7996,10 @@ enum Template {
                     glasses.append(glass)
                 }
             }
-            for glass in glasses { glass.reveal(still: reduceMotion) }
+            for glass in glasses {
+                if let words { glass.words = words }
+                glass.reveal(still: reduceMotion)
+            }
             glasses.removeAll()
         }
 
