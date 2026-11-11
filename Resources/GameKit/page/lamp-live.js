@@ -526,11 +526,23 @@
         const arrowAfter = i => scan[i] && scan[i].v === '(' && scan[(closes.get(i) ?? -2) + 1] && scan[closes.get(i) + 1].v === '=>';
         // A word that says what follows it, rather than naming anything: `async` before a function, an arrow or a
         // method's key on its line; `get` and `set` before an accessor's key in an object or class.
+        // A method's definition from its key on: the key (a word, a string or number, `#name`, or `[…]`), its parameters,
+        // and the brace its body opens with. `async * 2` and `get[0]` are expressions, with no such thing after them.
+        const methodAt = j => {
+            const key = scan[j];
+            if (!key || !(key.t === 'id' || key.t === 'lit' || key.t === 'priv' || key.v === '[')) return false;
+            const params = key.v === '[' ? (closes.get(j) ?? -2) + 1 : j + 1;
+            if (!scan[params] || scan[params].v !== '(') return false;
+            const after = scan[(closes.get(params) ?? -2) + 1];
+            return !!after && after.v === '{';
+        };
         const modifier = i => {
             const t = scan[i], next = scan[i + 1], prev = scan[i - 1];
             if (!next || next.nl) return false;
-            if (t.v === 'async') return next.v === 'function' || next.t === 'id' || next.v === '*' || next.v === '[' || arrowAfter(i + 1);
-            if (t.v === 'get' || t.v === 'set') return (next.t === 'id' || next.t === 'lit' || next.t === 'priv' || next.v === '[') && (!prev || ['{', ',', ';', '}'].includes(prev.v));
+            if (t.v === 'async') return next.v === 'function' || arrowAfter(i + 1) || (next.v === '*' ? methodAt(i + 2) : methodAt(i + 1))
+                // `async x => …`: a word after it on its line is an arrow's parameter, as nothing else can be there.
+                || (next.t === 'id' && scan[i + 2] && scan[i + 2].v === '=>');
+            if (t.v === 'get' || t.v === 'set') return (!prev || ['{', ',', ';', '}'].includes(prev.v)) && methodAt(i + 1);
             return false;
         };
         // Parameters: of the method, of a function, of an arrow, of a catch.

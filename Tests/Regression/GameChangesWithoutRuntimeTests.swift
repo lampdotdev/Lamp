@@ -210,6 +210,33 @@ final class GameChangesWithoutRuntimeTests: XCTestCase {
         XCTAssertEqual(said["state"] as? String, "held", "\(said)")
     }
 
+    func testAModulesOwnAsyncUsedInAnExpressionIsItsOwn() async throws {
+        // `async * 2` and `async[0]` read a name: the module's own, which goes with the new method or holds it.
+        let constant = Self.ball().replacingOccurrences(of: "const SPEED = 2;", with: "const SPEED = 2;\nconst async = 3;")
+        try await open(also: ["ball.js": constant])
+        try await ready()
+        files.text["ball.js"] = constant.replacingOccurrences(of: "this.x = clamp(this.x + SPEED, 0, 100); return this.x;", with: "return async * 2;")
+        let first = try await change(1, ["ball.js"])
+        XCTAssertEqual(first["state"] as? String, "swapped", "\(first)")
+        let doubled = try await value("(() => { try { return ball.step(); } catch (e) { return String(e); } })()") as? NSNumber
+        XCTAssertEqual(doubled, 6)
+        files.text["ball.js"] = constant.replacingOccurrences(of: "this.x = clamp(this.x + SPEED, 0, 100); return this.x;", with: "return async[0] === undefined ? async + 1 : 0;")
+        let second = try await change(2, ["ball.js"])
+        XCTAssertEqual(second["state"] as? String, "swapped", "\(second)")
+        let indexed = try await value("(() => { try { return ball.step(); } catch (e) { return String(e); } })()") as? NSNumber
+        XCTAssertEqual(indexed, 4)
+    }
+
+    func testAModulesOwnAsyncStateHoldsTheChange() async throws {
+        let list = Self.ball().replacingOccurrences(of: "let hits = 0;", with: "let hits = 0;\nlet async = [5];")
+        try await open(also: ["ball.js": list])
+        try await ready()
+        files.text["ball.js"] = list.replacingOccurrences(of: "this.x = clamp(this.x + SPEED, 0, 100); return this.x;", with: "return async[0];")
+        let said = try await change(1, ["ball.js"])
+        XCTAssertEqual(said["state"] as? String, "held", "\(said)")
+        XCTAssertTrue((said["why"] as? String ?? "").contains("async"), "\(said)")
+    }
+
     func testAMethodThatImportsWaits() async throws {
         try await open()
         try await ready()
