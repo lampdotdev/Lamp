@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { deflateSync, crc32 } from "node:zlib";
-import { createShareHandler, createFileHandler, createIdeasHandler, IDEA_LIMITS, createPlayHandler, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, slugFor, wishIDFrom, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
+import { createShareHandler, createFileHandler, createIdeasHandler, IDEA_LIMITS, createPlayHandler, pictureScript, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, slugFor, wishIDFrom, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
 import { createPageHandler } from "../lib/shared-wish-page.js";
 import { createCardHandler } from "../lib/wish-card.js";
 
@@ -345,7 +345,8 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   assert.equal(served.status, 200);
   assert.match(served.headers.get("content-type"), /^text\/html/);
   assert.equal(served.headers.get("content-security-policy"), "frame-ancestors https://lamp.dev");
-  assert.deepEqual(Buffer.from(await served.arrayBuffer()), html);
+  // The page as it was, after what lets the link's page ask it for a picture of it, which only the site may ask.
+  assert.equal(await served.text(), pictureScript("https://lamp.dev") + html.toString());
   assert.equal((await play(new Request(`https://lamp.dev/api/wish-play?id=${id}&v=1&path=index.html`))).status, 404, "never on the site's own host");
   assert.equal((await play(new Request(`https://play.lamp.dev/api/wish-play?id=${id}&v=1&path=index.html`))).status, 404, "only on the link's own host");
   const gone = await play(new Request(`https://${own}/api/wish-play?id=${id}&v=2&path=index.html`));
@@ -461,6 +462,7 @@ test("ideas reach the link's maker, and only the maker reads them", async () => 
   assert.deepEqual(kept.map((idea) => [idea.n, idea.text, idea.wantsNews]), [[1, "Add a night mode", undefined], [2, "Bigger waves", true]]);
   assert.ok(kept.every((idea) => !("email" in idea) && typeof idea.at === "string"), "never the addresses");
 
+
   const done = await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
   assert.equal(done.status, 200);
   assert.deepEqual((await (await list()).json()).ideas.map((idea) => idea.n), [2]);
@@ -487,15 +489,15 @@ test("ideas reach the link's maker, and only the maker reads them", async () => 
   assert.equal(mails.length, 2);
   assert.equal(mails[1][1].to[0], "someone@example.com");
   // The sender's browser asks after its own ideas, by number and token, and hears only their outcome.
-  const pageNow = await (await post({ text: "A lighthouse on the point" })).json();
+  const kept1 = await (await post({ text: "A lighthouse on the point" })).json();
   const kept2 = await (await post({ text: "Fog in the mornings" })).json();
   const mine = async (pairs) => (await (await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&mine=${pairs}`))).json()).ideas;
-  assert.deepEqual(await mine(`${pageNow.n}.${pageNow.token},${kept2.n}.${kept2.token}`), [{ n: pageNow.n, status: "open" }, { n: kept2.n, status: "open" }]);
-  assert.deepEqual(await mine(`${pageNow.n}.${"x".repeat(16)}`), [], "only with its token");
-  await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${pageNow.n}&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
+  assert.deepEqual(await mine(`${kept1.n}.${kept1.token},${kept2.n}.${kept2.token}`), [{ n: kept1.n, status: "open" }, { n: kept2.n, status: "open" }]);
+  assert.deepEqual(await mine(`${kept1.n}.${"x".repeat(16)}`), [], "only with its token");
+  await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${kept1.n}&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
   await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${kept2.n}`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
-  assert.deepEqual((await mine(`${pageNow.n}.${pageNow.token},${kept2.n}.${kept2.token}`)).map((one) => one.status), ["in", "dismissed"]);
-  assert.ok(!(await (await list()).json()).ideas.some((one) => one.n === pageNow.n || one.n === kept2.n), "the maker sees only those still open");
+  assert.deepEqual((await mine(`${kept1.n}.${kept1.token},${kept2.n}.${kept2.token}`)).map((one) => one.status), ["in", "dismissed"]);
+  assert.ok(!(await (await list()).json()).ideas.some((one) => one.n === kept1.n || one.n === kept2.n), "the maker sees only those still open");
   // Dealing with ideas makes room for more: the cap counts those still open.
   const full = memoryStore();
   const { id: fullID, secret: fullSecret } = await (await send(createShareHandler({ store: full, limited: false }), "POST", share)).json();
@@ -508,4 +510,11 @@ test("ideas reach the link's maker, and only the maker reads them", async () => 
   const quiet = await (await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=3&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }))).json();
   assert.equal(quiet.notified, false, "nobody asked");
   assert.equal(mails.length, 2);
+  // A picture of the app goes with an idea when the sender keeps it in, and goes once the idea has its outcome.
+  const dot = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  assert.equal((await post({ text: "Look here", picture: "not a picture" })).status, 400);
+  const shot = await (await post({ text: "Look here", picture: dot })).json();
+  assert.equal((await (await list()).json()).ideas.find((one) => one.n === shot.n).picture, `data:image/png;base64,${dot}`);
+  await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${shot.n}`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
+  assert.equal((await store.ideas(id)).find((one) => one.n === shot.n).picture, undefined);
 });

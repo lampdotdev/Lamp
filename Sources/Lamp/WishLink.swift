@@ -291,13 +291,15 @@ enum WishLink {
     }
 
     /// An idea someone playing the wish sent from its link's page, for its maker (`/api/wish-ideas` on the site): their
-    /// words, when it came, and whether they asked to hear when it's in (the site keeps their address and writes to them;
-    /// Lamp never has it). Theirs, shown as theirs, never the agent's.
+    /// words, when it came, whether they asked to hear when it's in (the site keeps their address and writes to them;
+    /// Lamp never has it), and the picture of the app the page took as they opened the box, if they kept it in (its
+    /// address, until the idea has its outcome). Theirs, shown as theirs, never the agent's.
     struct Idea: Codable, Equatable, Identifiable, Sendable {
         var n: Int
         var text: String
         var wantsNews: Bool?
         var at: String
+        var picture: String? = nil
         var id: Int { n }
     }
 
