@@ -374,8 +374,14 @@ export function cloudStore(env, fetcher = fetch) {
           remember(url, bytes);
           return { body: bytes, length: String(bytes.length) };
         }
+        // The start of the store's words, read for a moment at most: a body that stalls never holds up the next try.
         let words = "";
-        try { words = (await response.text()).slice(0, 100).replace(/\s+/g, " "); } catch {}
+        const reader = response.body?.getReader();
+        if (reader) {
+          const first = await Promise.race([reader.read().catch(() => null), new Promise((done) => setTimeout(done, 1000, null))]);
+          if (first?.value) words = Buffer.from(first.value).subarray(0, 100).toString("utf8").replace(/\s+/g, " ");
+          reader.cancel().catch(() => {});
+        }
         said = [response.status, response.headers.get("x-vercel-error"), response.headers.get("x-vercel-mitigated") && `mitigated ${response.headers.get("x-vercel-mitigated")}`, words && `"${words}"`].filter(Boolean).join(" ");
         if (!(response.status === 403 || response.status === 429 || response.status >= 500)) break;
       }
@@ -398,6 +404,9 @@ const REMEMBERED = 96 * 1024 * 1024, REMEMBERED_FILE = 2 * 1024 * 1024;
 const remembered = new Map();
 let rememberedBytes = 0;
 function remember(url, bytes) {
+  // Reads of one file at once each arrive here: the one already kept is counted out before its copy is counted in.
+  rememberedBytes -= remembered.get(url)?.length ?? 0;
+  remembered.delete(url);
   remembered.set(url, bytes);
   rememberedBytes += bytes.length;
   for (const [oldest, kept] of remembered) {
