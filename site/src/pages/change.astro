@@ -1,5 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
+import { CHATGPT_APP_URL } from "../lib/change-words";
 ---
 
 <!--
@@ -8,7 +9,9 @@ import Base from "../layouts/Base.astro";
   for here goes to that helper, one change at a time, each new version put into the frame. With `with=app` (and `w` or
   not), it's for an AI app on the player's computer instead: the page gives words to paste into the app, with a key
   that lets it read the game and send a new one whole, and each one it sends comes in here. The page's credentials stay
-  in this tab (sessionStorage on lamp.dev), never in an address and never where the game's frame could read them.
+  in this tab (sessionStorage on lamp.dev), never in an address and never where the game's frame could read them. The one exception is on purpose: "Change with
+  ChatGPT" is a codex:// link carrying the room words, key and all, so they land in ChatGPT's message box, the same
+  words Copy puts on the clipboard for pasting there. It goes to the app on the player's computer, not to a server.
 -->
 <Base title="Change this game · Lamp" description="Change a game with your own coding agent." bare>
   <!--
@@ -33,7 +36,12 @@ import Base from "../layouts/Base.astro";
           <button type="button" data-new-code hidden class="ink-button">New code</button>
         </div>
         <div data-direct hidden class="space-y-2 text-sm">
-          <p>Paste this into ChatGPT, Codex or Claude on your computer, then ask it for a game or a change.</p>
+          <!-- ph-no-capture: the link holds the room's key, and PostHog's autocapture would record a clicked link's address. -->
+          <div class="ph-no-capture">
+            <a data-chatgpt href="#" class="ink-button inline-flex h-10 items-center px-5">Change with ChatGPT</a>
+            <p class="mt-1 text-xs text-muted-ink">Opens the ChatGPT desktop app on your Mac. No app? <a href={CHATGPT_APP_URL} target="_blank" rel="noopener" class="underline">Get it</a> or copy the words below.</p>
+          </div>
+          <p>Or paste this into ChatGPT, Codex or Claude on your computer, then ask it for a game or a change.</p>
           <textarea data-words readonly rows="8" class="w-full resize-none rounded-md border border-tape/20 bg-white p-2 font-mono text-xs"></textarea>
           <div class="flex gap-2">
             <button type="button" data-copy class="ink-button px-4">Copy</button>
@@ -52,6 +60,8 @@ import Base from "../layouts/Base.astro";
 </Base>
 
 <script>
+  import { changeWords, chatgptLink } from "../lib/change-words";
+
   const $ = <T extends HTMLElement>(name: string) => document.querySelector(`[data-${name}]`) as T;
   type Request = { id: string; prompt: string; state: string; message: string | null; version: number | null };
   type Room = { mode: "helper" | "post"; posted: number | null; rev: string; room: string; version: number; play: string | null; seeding: { copied: number; total: number; failed: string | null } | null; paired: boolean; helper: boolean; code: string | null; codeEnds: number | null; requests: Request[]; same?: boolean };
@@ -63,18 +73,8 @@ import Base from "../layouts/Base.astro";
   let token = sessionStorage.getItem(kept);
   let postKey = sessionStorage.getItem(`${kept}.key`);
 
-  // The words the player pastes into their AI app: the room's address, its key, and how to read and send the game.
-  function words(room: string) {
-    const address = `${location.origin}/r/${room}/game`;
-    return [
-      "Make or change a browser game for me. It must be ONE self-contained HTML file (CSS and JavaScript inside it, no other files), under 4 MB.",
-      "It plays in a frame of any size, which can change while it plays: lay it out for the frame's own viewport and keep it fitting when that resizes, never for one fixed window height.",
-      `First read the game I'm playing: curl -sS -D headers.txt -o game.html ${address} -H "Authorization: Bearer ${postKey}"`,
-      "Change game.html as I ask (or replace it with a new game), then send it, with the ETag from headers.txt as If-Match:",
-      `curl -sS -X POST ${address} -H "Authorization: Bearer ${postKey}" -H 'If-Match: "<ETag>"' -H "Content-Type: text/html; charset=utf-8" --data-binary @game.html`,
-      "Tell me what it answers. For every later change, read the game again first.",
-    ].join("\n");
-  }
+  // The words for the player's AI app (lib/change-words.ts): Copy copies them and the ChatGPT link carries them.
+  const words = (room: string) => changeWords(`${location.origin}/r/${room}/game`, postKey!);
   let room: Room | null = null;
   let shown = 0;
   let quiet = 0;
@@ -108,6 +108,7 @@ import Base from "../layouts/Base.astro";
       if (next.seeding) { $("direct").hidden = true; say(next.seeding.failed ?? `Getting the game ready… ${next.seeding.copied} of ${next.seeding.total} files`); return; }
       $("direct").hidden = !postKey;
       $<HTMLTextAreaElement>("words").value = postKey ? words(next.room) : "";
+      $<HTMLAnchorElement>("chatgpt").href = postKey ? chatgptLink(words(next.room)) : "#";
       say(next.posted
         ? `Version ${next.version} came in from your AI app at ${new Date(next.posted).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
         : "Waiting for your AI app to send a game.");

@@ -46,6 +46,13 @@ pairing. The page shows words to paste into the app, with the room's address and
 credential, apart from the page's and the helper's, and only its hash is kept. "New key" replaces it, and the old one
 stops working at once. The page says when a version came in from the app.
 
+"Change with ChatGPT", above those words, is the same words as a `codex://new?prompt=` link (`src/lib/change-words.ts`
+holds them for both), which opens a new chat in ChatGPT's desktop app on the Mac with them in the message box, unsent.
+The link carries the key on purpose, as the words do when pasted; it's kept out of PostHog's autocapture, and "New
+key" rebuilds it. The link can't choose Codex, so the words say to switch to it when commands can't run. The words
+read the game, ask what to change and wait, then change and send it, and their curl stops on an HTTP error
+(`--fail-with-body`) so a refused send is never taken for a sent one.
+
 - `GET /r/<room>/game` with `Authorization: Bearer <key>` gives the game's one file as plain text that never runs:
   `text/plain`, `nosniff`, `no-store`, a sandbox with nothing allowed, and the version it is as its `ETag`.
 - `POST /r/<room>/game` with the key, `If-Match: "<that version>"` and the whole HTML file as the body. The body is
