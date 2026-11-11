@@ -346,12 +346,14 @@ enum WishLink {
     struct Maker: Equatable, Sendable {
         var email: String?
         var confirmed: Bool
+        /// Given just now: whether lamp.dev sent the email to confirm it.
+        var sent: Bool? = nil
     }
 
     /// The maker's address as it is; with `email`, given (lamp.dev emails it a link to confirm first), or taken away ("").
     static func maker(for shared: Shared, email: String? = nil) async throws -> Maker {
         let said = try await ask("linkMaker", email.map { secret(shared).merging(["email": $0]) { $1 } } ?? secret(shared))
-        return Maker(email: said["email"] as? String, confirmed: said["confirmed"] as? Bool ?? false)
+        return Maker(email: said["email"] as? String, confirmed: said["confirmed"] as? Bool ?? false, sent: said["sent"] as? Bool)
     }
 
     /// Takes the link down: the page says the wish isn't shared any more. A link the site no longer has is down already.

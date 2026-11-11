@@ -953,6 +953,7 @@ async function main() {
       const given = [...rest.slice(1), ...noted].join(" ").trim();
       if (!given) throw new Problem("email takes your address, or off: lamp ideas email you@example.com");
       const answer = await makerEmail(layout.folder, given === "off" ? "" : given);
+      if (given !== "off" && !answer.confirmed && answer.sent === false) throw new Problem(`lamp.dev couldn't send the confirmation to ${answer.email} just now: try again in a minute`);
       console.log(given === "off" ? "No more emails about this link's ideas."
         : answer.confirmed ? `Ideas and replies go to ${answer.email}.` : `Sent a confirmation to ${answer.email}: ideas and replies come there once you confirm it.`);
       return;

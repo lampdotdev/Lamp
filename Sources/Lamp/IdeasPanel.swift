@@ -458,7 +458,7 @@ private struct IdeasByEmail: View {
             Text("Get new ideas and their replies by email, and answer them from there.")
                 .font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
             TextField("you@example.com", text: $typed).textFieldStyle(.roundedBorder).onSubmit { save(typed) }
-            if let email = maker?.email, maker?.confirmed == false, typed.trimmed == email {
+            if let email = maker?.email, maker?.confirmed == false, maker?.sent != false, typed.trimmed == email {
                 Text("Check \(email) for a link to confirm it.").font(.system(size: 12)).foregroundStyle(Paper.muted)
             }
             if let problem { Text(problem).font(.system(size: 12)).foregroundStyle(Paper.muted) }
@@ -483,9 +483,12 @@ private struct IdeasByEmail: View {
             do {
                 maker = try await WishLink.maker(for: shared, email: email)
                 if !email.isEmpty { UserDefaults.standard.set(email, forKey: Self.lastKey) }
+                if maker?.sent == false { problem = "Couldn't send the email to confirm it. Try again in a minute." }
                 if email.isEmpty { open = false }
             } catch let failure as WishLink.Failure where failure.message.contains("couldn't take") {
                 problem = "Check the address and try again."
+            } catch let failure as WishLink.Failure where failure.message.contains("Too many") {
+                problem = "Wait a minute, then try again."
             } catch { problem = "Couldn't reach lamp.dev. Try again." }
         }
     }

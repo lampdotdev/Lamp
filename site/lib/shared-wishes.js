@@ -277,6 +277,18 @@ export function cloudStore(env, fetcher = fetch) {
     /** The maker's own address for a link's ideas, as `{ email, confirmed, key }`, or null. */
     async maker(id) { const text = await command(["GET", makerKey(id)]); return typeof text === "string" ? JSON.parse(text) : null; },
     async setMaker(id, value) { await command(value ? ["SET", makerKey(id), JSON.stringify(value)] : ["DEL", makerKey(id)]); },
+    /** Confirms ("confirm") or lets go ("stop") the maker's address in one step, only while `key` is still its key. */
+    async makerStep(id, key, step) {
+      await command(["EVAL", `local text = redis.call('GET', KEYS[1])
+        if not text then return 0 end
+        local maker = cjson.decode(text)
+        if maker.key ~= ARGV[1] then return 0 end
+        if ARGV[2] == "confirm" then
+          maker.confirmed = true
+          redis.call('SET', KEYS[1], cjson.encode(maker))
+        else redis.call('DEL', KEYS[1]) end
+        return 1`, "1", makerKey(id), key, step]);
+    },
     /** Keeps an idea for the link, numbered in the order they came: null when the link already holds `IDEA_LIMITS.kept`. */
     async addIdea(id, idea) {
       // Its number is its field, given as it's kept, so two at once never share one. The cap counts those still open
@@ -507,6 +519,11 @@ export function memoryStore() {
     async remove(id) { records.delete(id); ideas.delete(id); makers.delete(id); },
     async maker(id) { return makers.has(id) ? structuredClone(makers.get(id)) : null; },
     async setMaker(id, value) { if (value) makers.set(id, structuredClone(value)); else makers.delete(id); },
+    async makerStep(id, key, step) {
+      const maker = makers.get(id);
+      if (maker?.key !== key) return;
+      if (step === "confirm") maker.confirmed = true; else makers.delete(id);
+    },
     async addIdea(id, idea) {
       const kept = ideas.get(id) ?? { next: 0, all: new Map() };
       if ([...kept.all.values()].filter((one) => !one.status).length >= IDEA_LIMITS.kept) return null;
@@ -685,6 +702,12 @@ export const IDEA_QUOTAS = [
   { name: "idea-ip-day", perIP: true, limit: 40, seconds: 86400 },
   { name: "idea-day", limit: 5000, seconds: 86400 },
 ];
+// Confirmations to a maker's address: one a minute per link, and a few an hour from one place, a ceiling overall.
+export const MAKER_QUOTAS = [
+  { name: "maker-ip", perIP: true, limit: 6, seconds: 3600 },
+  { name: "maker-day", limit: 1000, seconds: 86400 },
+];
+const MAKER_RESEND_MS = 60_000;
 const EMAIL = /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[^\s@<>()",;:]+$/;
 // An idea's mailbox outlives its last message by a little more than the idea itself does (`IDEA_LIMITS.keptDone`).
 const MAILBOX_SECONDS = 100 * 86400;
@@ -884,11 +907,12 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
 
     let kept;
     try { kept = store ?? cloudStore(env, fetcher); } catch { return reply(503, { error: "service_unavailable" }); }
-    if (limited && method === "POST") {
+    // A new idea, or a confirmation to a maker's address: each an email or more, so each is counted.
+    if (limited && (method === "POST" || (method === "PUT" && makerEmail))) {
       const ip = (request.headers.get("x-vercel-forwarded-for") || request.headers.get("x-forwarded-for") || "").trim();
       if (!isIP(ip) || !kept.limiter) return reply(503, { error: "service_unavailable" });
       let retry;
-      try { retry = await reserve(kept.limiter, ip, IDEA_QUOTAS, fetcher); }
+      try { retry = await reserve(kept.limiter, ip, method === "POST" ? IDEA_QUOTAS : MAKER_QUOTAS, fetcher); }
       catch { return reply(503, { error: "service_unavailable" }); }
       if (retry > 0) return reply(429, { error: "rate_limited" }, { "Retry-After": String(retry) });
     }
@@ -977,7 +1001,10 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
     let sent = false;
     if (email === "") { await kept.setMaker(id, null); maker = null; }
     else if (email !== undefined && !(maker?.confirmed && maker.email.toLowerCase() === email.toLowerCase())) {
-      maker = { email, confirmed: false, key: randomBytes(10).toString("hex") };
+      // Send Again, or another address, at most once a minute for a link.
+      const since = now() - new Date(maker?.asked ?? 0);
+      if (since < MAKER_RESEND_MS) return reply(429, { error: "rate_limited" }, { "Retry-After": String(Math.ceil((MAKER_RESEND_MS - since) / 1000)) });
+      maker = { email, confirmed: false, key: randomBytes(10).toString("hex"), asked: now().toISOString() };
       await kept.setMaker(id, maker);
       sent = await sendMail(env, fetcher, {
         to: [email], subject: `Get ideas for ${record.name} by email`,
@@ -985,7 +1012,7 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
           `${origin}/api/wish-ideas?id=${id}&confirm=${maker.key}\n\nIf you didn't ask for this, you can ignore this email.`,
       });
     }
-    return reply(200, { email: maker?.email ?? null, confirmed: maker?.confirmed === true, ...(email ? { sent } : {}) });
+    return reply(200, { email: maker?.email ?? null, confirmed: maker?.confirmed === true, ...(email && !maker?.confirmed ? { sent } : {}) });
   }
 
   /** A link from the maker's emails: their address confirmed, or let go, if the key is theirs. */
@@ -993,8 +1020,7 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
     if (!/^[0-9a-f]{20}$/.test(key)) return reply(404, { error: "not_found" });
     try {
       const kept = store ?? cloudStore(env, fetcher);
-      const maker = await kept.maker(id);
-      if (maker?.key === key) await kept.setMaker(id, step === "confirm" ? { ...maker, confirmed: true } : null);
+      await kept.makerStep(id, key, step === "confirm" ? "confirm" : "stop");
     } catch { return reply(503, { error: "service_unavailable" }); }
     const words = step === "confirm" ? "Ideas for this link, and replies to them, will come to your email." : "You won't get any more emails about this link's ideas.";
     return new Response(`${words}\n`, { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
@@ -1113,16 +1139,17 @@ export function createIdeaMailHandler({ env = process.env, fetcher = fetch, stor
         const record = await kept.get(found.id);
         if (!record) continue;
         const link = linkFor(origin, found.id, record.name);
+        // The email as Resend received it, which a webhook sent again names the same, keeps it from going on twice.
+        const via = `resend:${mail.email_id}`;
         if (fromMaker) {
-          // The maker's own word, as if said in Lamp: on the thread, and on to the sender. The id of the email it came
-          // in keeps it from going twice; the one it goes out with is its own.
-          const said = { by: "maker", text: words, at: now().toISOString(), mid: newMessageID(env), ...(mid ? { via: mid } : {}) };
+          // The maker's own word, as if said in Lamp: on the thread, and on to the sender, with a message id of its own.
+          const said = { by: "maker", text: words, at: now().toISOString(), mid: newMessageID(env), via };
           const was = await kept.talk(found.id, found.n, "say", said);
           if (was?.email) await writeToSender(kept, found.id, was, record, link, { env, fetcher, kind: "reply", said, origin, once: `idea-${found.id}-${found.n}-${said.mid}` });
         } else {
-          const said = { by: "sender", text: words, at: now().toISOString(), ...(mid ? { mid } : {}) };
+          const said = { by: "sender", text: words, at: now().toISOString(), via, ...(mid ? { mid } : {}) };
           const was = await kept.talk(found.id, found.n, "say", said);
-          if (was && maker?.confirmed) await writeToMaker(kept, found.id, was, record, link, { env, fetcher, kind: "reply", said, origin, maker, once: mid ? `maker-${found.id}-${found.n}-${mid}` : undefined });
+          if (was && maker?.confirmed) await writeToMaker(kept, found.id, was, record, link, { env, fetcher, kind: "reply", said, origin, maker, once: `maker-${found.id}-${found.n}-${mail.email_id}` });
         }
       }
     } catch { return reply(503, { error: "service_unavailable" }); }
