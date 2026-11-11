@@ -5,9 +5,10 @@
 // The link's secret, which is what lets it be changed or taken down, is kept with lamp's own state for the folder,
 // never in the folder: a folder is committed and published, and the secret is whoever shared it's alone.
 
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { deflateRawSync } from "node:zlib";
 import { NOTES_FILE, Problem, stateOf } from "./state.mjs";
 import { ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS, LIBRARIES } from "./dev.mjs";
@@ -118,6 +119,33 @@ export function pageFiles(layout, { device = ANY_BROWSER } = {}) {
 
 // MARK: The site
 
+/** The repository a git remote's address names on GitHub, as "owner/name", or null for any other place. */
+export function githubRepoOf(remote) {
+  const found = /^(?:https:\/\/(?:[^@/]+@)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._-]{1,100}?)(?:\.git)?\/?$/.exec(String(remote ?? "").trim());
+  return found && found[2] !== "." && found[2] !== ".." ? `${found[1]}/${found[2]}` : null;
+}
+
+/**
+ * The folder's repository on GitHub, for its link's page to point to: only when the folder is the top of a git
+ * checkout whose origin is on GitHub, and GitHub, asked with no sign-in, says anyone can read it. Null otherwise, and
+ * when git or GitHub can't answer, so nothing is linked that might not be public.
+ */
+export async function publicRepoOf(folder) {
+  let top, remote;
+  try {
+    top = execFileSync("git", ["-C", folder, "rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    remote = execFileSync("git", ["-C", folder, "remote", "get-url", "origin"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch { return null; }
+  if (resolve(top) !== resolve(folder)) return null;
+  const repo = githubRepoOf(remote);
+  if (!repo) return null;
+  try {
+    const answer = await fetch(`https://api.github.com/repos/${repo}`, { headers: { accept: "application/vnd.github+json" }, signal: AbortSignal.timeout(6000) });
+    if (!answer.ok) return null;
+    return (await answer.json())?.private === false ? repo : null;
+  } catch { return null; }
+}
+
 const megabytes = (bytes) => `${(bytes / 1_000_000).toFixed(bytes < 10_000_000 ? 1 : 0)} MB`;
 
 /**
@@ -125,7 +153,7 @@ const megabytes = (bytes) => `${(bytes / 1_000_000).toFixed(bytes < 10_000_000 ?
  * are what the link says (`name`, `words`, and `line`, `by` and `asks` when given), `picture` a PNG or JPEG of the
  * page or null, `shape` "fill" or the page's width over its height. Answers the link and what went up.
  */
-export async function share({ layout, words, picture = null, shape = "fill", site = siteOrigin(), said = () => {}, file = true, anyway = false }) {
+export async function share({ layout, words, picture = null, shape = "fill", site = siteOrigin(), said = () => {}, file = true, anyway = false, github }) {
   // The app's own file goes with the link, as Lamp's Share Link sends it, so whoever follows the link can open it in
   // Lamp too: made first, with Share…'s checks, so a page that can't be shared (a key in it) puts nothing up.
   const app = file ? exportApp(layout.folder, { anyway }) : null;
@@ -137,11 +165,14 @@ export async function share({ layout, words, picture = null, shape = "fill", sit
   const zip = zipOf(files);
   if (zip.length > FILE_LIMITS.total) throw new Problem(`the page is ${megabytes(zip.length)} packed, and a link carries ${megabytes(FILE_LIMITS.total)} at most`);
   if (picture && picture.length > LIMITS.picture) picture = null;
+  // The page links to the folder's public repository on GitHub, when it's one (`github` given in its place by a test).
+  const repo = github === undefined ? await publicRepoOf(layout.folder) : github;
 
   const body = {
     name: words.name, words: words.words, shape,
     ...(words.line ? { line: words.line } : {}), ...(words.by ? { by: words.by } : {}),
     ...(words.asks?.length ? { asks: words.asks } : {}), ...(picture ? { picture: picture.toString("base64") } : {}),
+    ...(repo ? { github: repo } : {}),
   };
   // The folder's own link when it has one on this site, changed in place; a link that's gone is made again.
   let earlier = readLink(layout.folder);
@@ -164,7 +195,7 @@ export async function share({ layout, words, picture = null, shape = "fill", sit
   const version = await sendFile({ site, link, bytes: zip, page: true, said });
   link = { ...link, version, shared: new Date().toISOString() };
   writeLink(layout.folder, link);
-  return { url: link.url, version, files: files.length, bytes: zip.length, picture: !!picture, file: !!app };
+  return { url: link.url, version, files: files.length, bytes: zip.length, picture: !!picture, file: !!app, github: repo || null };
 }
 
 /** Takes the folder's link down, with its page and the ideas sent to it. */

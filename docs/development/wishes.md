@@ -389,7 +389,9 @@ each Release Update sends the file again, which counts the link's version up (se
 game, a screen: `Publish.hasPage`) sends that too (`WishLink.playablePage`, the page a release puts on GitHub, which
 stays as it is), and its link's page opens on it, playing, with the ways to make one's own under it: whoever has the
 link tries the wish first and remixes it after (SHARED_WISHES.md). At the band's left is a link to the app's repository
-on GitHub when a release sent one (`github`, only one Lamp put there, `GitHubRepo.kept`, that GitHub says anyone can read as the release goes, `readableByAnyone`). The box under it (labeled only for screen readers) asks
+on GitHub when a release sent one (`github`: from Lamp's app, one Lamp put there, `GitHubRepo.kept`; from `lamp share`, the
+folder's own `origin` when the folder is the top of its checkout, `publicRepoOf`; either only when GitHub says anyone can
+read it as the release goes). The box under it (labeled only for screen readers) asks
 in turn the questions the link carries (`asks`: open questions about what's broken, missing or could be better, which the
 person can change under Ask for Ideas; a link without any shows the plain ones there, `WishAsks.fallback`), else "Found a
 bug?", "What's missing?" and "What would make it better?"; its button says
