@@ -1,0 +1,48 @@
+---
+import { SETUP_PROMPT, CODEX_LINK, CHATGPT_APP_URL } from "../lib/chatgpt";
+---
+
+<!--
+  "Use with ChatGPT": the button is the link itself, so one click puts the setup prompt in a new chat in ChatGPT's Mac
+  app, waiting to be sent. A page can't tell whether the app is there (without it, Safari calls the address invalid),
+  so one small line under it covers that: getting the app, or copying the prompt for any agent that runs commands
+  on the Mac.
+-->
+<div class="chatgpt">
+  <a href={CODEX_LINK} class="ink-button h-12 px-6 text-base">Use with ChatGPT</a>
+  <p class="chatgpt-other">
+    No ChatGPT app? <a href={CHATGPT_APP_URL} target="_blank" rel="noopener">Get it</a> or <button type="button" data-copy data-prompt={SETUP_PROMPT}>copy the prompt</button>
+  </p>
+</div>
+
+<script>
+  const copy = document.querySelector<HTMLButtonElement>(".chatgpt [data-copy]");
+  copy?.addEventListener("click", async () => {
+    const line = copy.closest(".chatgpt-other")!;
+    try {
+      await navigator.clipboard.writeText(copy.dataset.prompt!);
+      line.textContent = "Copied. Paste it into ChatGPT's Codex, or your agent.";
+    } catch {
+      // Copying can be refused: show the prompt itself, selected, to copy by hand.
+      const box = document.createElement("textarea");
+      box.readOnly = true;
+      box.rows = 4;
+      box.className = "chatgpt-prompt";
+      box.value = copy.dataset.prompt!;
+      line.replaceChildren(box);
+      box.focus();
+      box.select();
+    }
+  });
+</script>
+
+<style>
+  .chatgpt-other { margin: 0.625rem 0 0; font-size: 0.875rem; color: var(--color-muted-ink); }
+  .chatgpt-other :is(a, button) { color: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+  .chatgpt-other :is(a, button):focus-visible { outline: 2px solid var(--color-tape); outline-offset: 2px; }
+  .chatgpt-other :global(.chatgpt-prompt) {
+    display: block; width: min(100%, 34rem); padding: 0.5rem; border-radius: 6px; resize: vertical;
+    font-family: var(--font-mono); font-size: 0.75rem; color: var(--color-tape); background: transparent;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-tape) 30%, transparent);
+  }
+</style>

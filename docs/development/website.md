@@ -14,8 +14,8 @@ with "Lamp" beside it (`LampLockup.astro`), in the menu bar and wherever the sit
 (green to magenta, in that order, never blue or purple) are kept for Lamp's own things: its mark, and the light that
 runs along a part of the homepage as it's added.
 
-The homepage is itself a demo of changing something by asking. It opens as only a headline and the lines under it,
-beside Lamp's chat, and each request in the chat adds a part of the page while you watch: what Lamp is, the starters,
+The homepage is itself a demo of changing something by asking. It opens as only a headline, the lines under it and
+Use with ChatGPT, beside Lamp's chat, and each request in the chat adds a part of the page while you watch: what Lamp is, the starters,
 what it runs on, how to get it (the download, the newest version, and building from source), answers to common
 questions and what's new; "I'm bored" adds Lamplighter (`src/lib/light-game.ts`), a one-button rooftop runner made as Lamp's
 2D game skills make one (Phaser 3.90, loaded only when it's asked for, art and sound made in code, keys only while its
@@ -44,6 +44,15 @@ those a kind of app or a shipped device integration really reaches. The newest v
 `RELEASE_NOTES.md` at the top of the repository, read when the site is built (`src/lib/releases.ts`), as does the
 changelog page (`/changelog`), so release notes are written in one place; a build without them leaves those out and
 points to GitHub's releases.
+
+Use with ChatGPT (`ChatGPTButton.astro`) is there from the start, so nobody has to find the download in the demo first.
+The button is OpenAI's documented `codex://new?prompt=` link: one click opens a new chat in ChatGPT's Mac app with a
+prompt to set up lamp's command line (`cli/README.md`) in its message box, never sent. The link doesn't choose the
+chat's mode, so the prompt says to switch to Codex when it can't run commands. A page can't tell whether the app is
+there (Safari calls the address invalid when it isn't), so one small line under the button gets the app or copies
+the prompt, for any agent that runs commands on the Mac; where copying is refused, the prompt appears selected to
+copy by hand. The prompt is written once, in `src/lib/chatgpt.ts`, for the link and the copy alike; it runs
+`lamp guide` as well as `lamp setup`, since setup writes its skill only where an agent's folder already exists.
 
 A link from a Remix panel or a repository's README (`?ask=`, with `starter=` or `repo=` and `commit=` when it names
 what it's a copy of, and `from=` where it was pressed) opens the homepage's remix dialog (`RemixDialog.astro`,
