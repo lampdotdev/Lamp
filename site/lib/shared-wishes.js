@@ -698,7 +698,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
 // MARK: Ideas for the maker
 
 /** What someone playing a shared wish may send its maker: their idea, and an address to hear back at if they want. */
-export const IDEA_LIMITS = { text: 1000, note: 2000, thread: 60, earlier: 100, email: 200, picture: 400_000, kept: 500, asked: 20, keptDone: 90 * 86400_000 };
+export const IDEA_LIMITS = { text: 1000, note: 2000, thread: 60, earlier: 100, name: 60, email: 200, picture: 400_000, kept: 500, asked: 20, keptDone: 90 * 86400_000 };
 // A visitor sends a handful an hour; a link takes a few hundred a day; overall, a ceiling on a flood.
 export const IDEA_QUOTAS = [
   { name: "idea-ip", perIP: true, limit: 12, seconds: 3600 },
@@ -810,10 +810,10 @@ export async function writeToMaker(kept, wishID, idea, record, link, { env = pro
   const subject = `Idea for ${record.name}: ${[...flat].length > 60 ? `${[...flat].slice(0, 60).join("").trimEnd()}…` : flat}`;
   const root = `<idea-${box}@${mailDomain(env)}>`;
   const text = (kind === "idea"
-    ? `Someone playing ${record.name} sent an idea:\n\n${idea.text}\n\n` +
+    ? `${idea.name || "Someone"} playing ${record.name} sent an idea:\n\n${idea.text}\n\n` +
       (typeof idea.picture === "string" && idea.picture.startsWith("https://") ? `The app as they saw it: ${idea.picture}\n\n` : "") +
       (idea.email ? "They'd like to hear back.\n\n" : "They left no address, so what you say shows on the link's page.\n\n")
-    : `They answered about their idea for ${record.name}:\n\n${said.text}\n\nTheir idea: ${idea.text}\n\n`) +
+    : `${idea.name || "They"} answered about their idea for ${record.name}:\n\n${said.text}\n\nTheir idea: ${idea.text}\n\n`) +
     (replies ? "Reply to this email to answer them. It's in Lamp too.\n" : "Answer them in Lamp.\n") +
     `Play it: ${link}\n\nNo more emails about ideas for ${record.name}: ${stop}`;
   return sendMail(env, fetcher, {
@@ -836,7 +836,10 @@ export function readIdea(body) {
   if (!text) return null;
   const shot = picture(body.picture, IDEA_LIMITS.picture);
   if (!shot) return null;
-  const idea = shot.bytes ? { text, picture: shot } : { text };
+  // Their name, if they gave one, for the maker: shown in Lamp and in the maker's emails, where the address never is.
+  const name = body.name == null || body.name === "" ? "" : tidy(body.name, IDEA_LIMITS.name);
+  if (name == null) return null;
+  const idea = { text, ...(name ? { name } : {}), ...(shot.bytes ? { picture: shot } : {}) };
   if (body.email == null || body.email === "") return idea;
   const email = tidy(body.email, IDEA_LIMITS.email);
   return email && EMAIL.test(email) ? { ...idea, email } : null;

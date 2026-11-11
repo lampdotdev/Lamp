@@ -326,13 +326,13 @@ struct IdeasPanel: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 if idea.waiting == true { tag("ANSWERED") } else if newHere.contains(idea.n) { tag("NEW") }
-                Text(verbatim: [WishIdeas.when(idea.at), outcome, idea.wantsNews == true && idea.status == nil ? "wants to hear back" : nil].compactMap { $0 }.joined(separator: " · "))
+                Text(verbatim: [idea.name, WishIdeas.when(idea.at), outcome, idea.wantsNews == true && idea.status == nil ? "wants to hear back" : nil].compactMap { $0 }.joined(separator: " · "))
                     .font(.system(size: 11.5)).foregroundStyle(Paper.muted).lineLimit(1).truncationMode(.middle)
             }
             Text(verbatim: idea.text).font(.system(size: 14)).foregroundStyle(Paper.ink).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             if let picture = idea.picture { IdeaPicture(address: picture) }
-            if let thread = idea.thread, !thread.isEmpty { conversation(thread, of: idea.n) }
+            if let thread = idea.thread, !thread.isEmpty { conversation(thread, of: idea.n, from: idea.name) }
             TextField(idea.status == nil ? "Note to them (optional)" : "Reply to them", text: Binding(get: { notes[idea.n] ?? "" }, set: { notes[idea.n] = String($0.prefix(2000)) }), axis: .vertical)
                 .textFieldStyle(.roundedBorder).font(.system(size: 13)).lineLimit(1...6)
                 .frame(maxWidth: 480, alignment: .leading)
@@ -390,7 +390,7 @@ struct IdeasPanel: View {
 
     /// What's been said about the idea since it came, each way, under a rule: the last two of a longer one, with the
     /// rest a click away.
-    private func conversation(_ thread: [WishLink.Idea.Said], of number: Int) -> some View {
+    private func conversation(_ thread: [WishLink.Idea.Said], of number: Int, from sender: String?) -> some View {
         let hidden = opened.contains(number) ? 0 : max(0, thread.count - 2)
         return VStack(alignment: .leading, spacing: 8) {
             if hidden > 0 {
@@ -399,7 +399,7 @@ struct IdeasPanel: View {
             }
             ForEach(Array(thread.enumerated().dropFirst(hidden)), id: \.offset) { _, said in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: [said.by == "maker" ? "You" : "They", WishIdeas.when(said.at)].compactMap { $0 }.joined(separator: " · "))
+                    Text(verbatim: [said.by == "maker" ? "You" : sender ?? "They", WishIdeas.when(said.at)].compactMap { $0 }.joined(separator: " · "))
                         .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Paper.muted)
                     Text(verbatim: said.text).font(.system(size: 13)).foregroundStyle(Paper.ink).textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
@@ -544,7 +544,7 @@ extension Gallery {
             let now = Date()
             let at = { (hours: Double) in ISO8601DateFormatter().string(from: now.addingTimeInterval(-hours * 3600)) }
             let made = ideas ?? [
-                WishLink.Idea(n: 3, text: "Rain that makes the roads slippery", wantsNews: true, at: at(0.3), picture: madeUpPicture()),
+                WishLink.Idea(n: 3, text: "Rain that makes the roads slippery", name: "Sam", wantsNews: true, at: at(0.3), picture: madeUpPicture()),
                 WishLink.Idea(n: 2, text: "Let me paint my car any color I want, with stripes and a number on the doors like a real race car.", wantsNews: nil, at: at(5)),
                 WishLink.Idea(n: 1, text: "More boats in the harbor", wantsNews: true, at: at(30), status: "in", waiting: true, thread: [
                     .init(by: "maker", text: "Added a ferry and some sailboats. Try the docks at night!", at: at(26)),

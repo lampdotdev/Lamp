@@ -550,8 +550,11 @@ test("the maker can have ideas and replies at their own address, and answer them
   await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&confirm=${key}`));
   assert.deepEqual(await (await call("GET", "&maker=1")).json(), { email: "Alex@Example.com", confirmed: true });
 
-  const { n } = await (await call("POST", "", { text: "Bigger waves", email: "someone@example.com" }, false)).json();
+  const { n } = await (await call("POST", "", { text: "Bigger waves", name: "Sam", email: "someone@example.com" }, false)).json();
   const toMaker = mails.at(-1);
+  assert.match(toMaker.text, /^Sam playing /, "the maker hears their name, never their address");
+  assert.ok(!toMaker.text.includes("someone@example.com"));
+  assert.equal((await call("POST", "", { text: "x", name: "y".repeat(IDEA_LIMITS.name + 1) }, false)).status, 400);
   assert.deepEqual(toMaker.to, ["Alex@Example.com"]);
   assert.match(toMaker.subject, /^Idea for .+: Bigger waves$/);
   const makerBox = /^idea-([0-9a-f]{20})@/.exec(toMaker.reply_to[0])[1];
