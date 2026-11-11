@@ -404,11 +404,12 @@ under its changes ("Ideas", with how many are new, and a line under the app's ro
 counted by the link, since a link made again counts from one), and the person goes to them in `IdeasPanel`, which takes the list's place
 with Back: Build It asks the wish's chat for one, in the sender's words, marked as theirs (`WishIdeas.request`); It's In
 lets it go and has the site write once to whoever asked to hear back, through Resend (`tellItsIn`: `RESEND_API_KEY` and
-`LAMP_IDEAS_FROM` in the site's environment); Dismiss lets it go quietly. The maker sees only that someone wants to hear
+`LAMP_IDEAS_FROM` in the site's environment); Dismiss lets it go quietly. Either can carry a note to the sender, written
+on the idea's line (the DELETE's JSON `note`): it goes in that email, and on the link's page. The maker sees only that someone wants to hear
 back, never their address. Either way the idea is kept with its outcome for 90 days (`finishIdea`, one step, so the
 email goes once): the sender's browser keeps each idea's number and a token the site answered, asks after them on its
-next visit (`?mine=`), and an idea that's in says so once in a bar over the app, with See What's New; one dismissed
-says nothing. Making one's own with Lamp stays in the
+next visit (`?mine=`), and an idea that's in says so once in a bar over the app, with See What's New and the maker's note
+if there is one; one dismissed says nothing, unless the maker answered it with a note. Making one's own with Lamp stays in the
 dialog under the idea sent, and is all it offers when the idea couldn't go. A new page leaves the one before it playable
 (`previousPage` in lib/shared-wishes.js; the play handler remembers a link's record a minute per instance,
 `PLAY_MEMORY`, rather than reading the store for each of a game's hundreds of files), since a game open on it goes on loading files as it's played (a big city's map

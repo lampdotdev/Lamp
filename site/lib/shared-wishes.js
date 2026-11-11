@@ -293,10 +293,11 @@ export function cloudStore(env, fetcher = fetch) {
     /** True when this call took it away: two at once never both do. */
     async removeIdea(id, n) { return (await command(["HDEL", ideasKey(id), String(n)])) === 1; },
     /**
-     * Gives idea `n` its outcome ("in" or "dismissed"), in one step, and answers it as it was, its address included, to
-     * whichever call gave it: null when it's gone or already has one, so it's told once. The address and the picture go with this step.
+     * Gives idea `n` its outcome ("in" or "dismissed"), with the maker's note to its sender if they wrote one, in one
+     * step, and answers it as it was, its address included, to whichever call gave it: null when it's gone or already
+     * has one, so it's told once. The address and the picture go with this step.
      */
-    async finishIdea(id, n, status, at) {
+    async finishIdea(id, n, status, at, note) {
       const text = await command(["EVAL", `local text = redis.call('HGET', KEYS[1], ARGV[1])
         if not text then return false end
         local idea = cjson.decode(text)
@@ -305,9 +306,10 @@ export function cloudStore(env, fetcher = fetch) {
         idea.done = ARGV[3]
         idea.email = nil
         idea.picture = nil
+        if ARGV[4] ~= "" then idea.note = ARGV[4] end
         redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(idea))
         redis.call('HINCRBY', KEYS[1], 'open', -1)
-        return text`, "1", ideasKey(id), String(n), status, at]);
+        return text`, "1", ideasKey(id), String(n), status, at, note ?? ""]);
       return typeof text === "string" ? { ...JSON.parse(text), n } : null;
     },
     async putImage(id, name, image) {
@@ -442,11 +444,11 @@ export function memoryStore() {
     },
     async ideas(id) { return [...(ideas.get(id)?.all.values() ?? [])].map((idea) => structuredClone(idea)).sort((a, b) => a.n - b.n); },
     async removeIdea(id, n) { return ideas.get(id)?.all.delete(n) ?? false; },
-    async finishIdea(id, n, status, at) {
+    async finishIdea(id, n, status, at, note) {
       const idea = ideas.get(id)?.all.get(n);
       if (!idea || idea.status) return null;
       const before = structuredClone(idea);
-      Object.assign(idea, { status, done: at });
+      Object.assign(idea, { status, done: at, ...(note ? { note } : {}) });
       delete idea.email;
       delete idea.picture;
       return before;
@@ -580,7 +582,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
 // MARK: Ideas for the maker
 
 /** What someone playing a shared wish may send its maker: their idea, and an address to hear back at if they want. */
-export const IDEA_LIMITS = { text: 1000, email: 200, picture: 400_000, kept: 500, asked: 20, keptDone: 90 * 86400_000 };
+export const IDEA_LIMITS = { text: 1000, note: 500, email: 200, picture: 400_000, kept: 500, asked: 20, keptDone: 90 * 86400_000 };
 // A visitor sends a handful an hour; a link takes a few hundred a day; overall, a ceiling on a flood.
 export const IDEA_QUOTAS = [
   { name: "idea-ip", perIP: true, limit: 12, seconds: 3600 },
@@ -594,12 +596,13 @@ const EMAIL = /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[^\s@<>()",;:]+$/;
  * `LAMP_IDEAS_FROM`, an address on a domain Resend has verified). False, and nothing sent, without them or when Resend
  * refuses: the idea still goes. Their address is used for this one email and goes with the idea.
  */
-export async function tellItsIn(idea, record, link, { env = process.env, fetcher = fetch, once } = {}) {
+export async function tellItsIn(idea, record, link, { env = process.env, fetcher = fetch, once, note } = {}) {
   const key = env.RESEND_API_KEY, from = env.LAMP_IDEAS_FROM;
   if (!key || !from || !idea.email) return false;
   const maker = record.by?.trim() || "Whoever made it";
-  const text = `${maker} added your idea to ${record.name}:\n\n${idea.text}\n\nPlay it: ${link}\n\n` +
-    "You asked to hear when it's in, so this is the only email about it.";
+  const text = `${maker} added your idea to ${record.name}:\n\n${idea.text}\n\n` +
+    (note ? `${record.by?.trim() ? `${maker} wrote` : "Their note"}:\n\n${note}\n\n` : "") +
+    `Play it: ${link}\n\nYou asked to hear when it's in, so this is the only email about it.`;
   try {
     const response = await fetcher("https://api.resend.com/emails", {
       method: "POST", redirect: "error", signal: AbortSignal.timeout(5000),
@@ -636,7 +639,8 @@ const ideaPictures = (ideas) => ideas.map((one) => one.picture).filter((url) => 
  * the page took as they opened the box, if they kept it in (in the store, until the idea has its outcome). GET, with
  * the link's secret, answers them for Lamp to show the maker, with each picture's address: never the keys or the
  * addresses, only whether someone wants to hear back. DELETE ?n= with the secret lets one go: with `built=1` it's in, and the site writes
- * to whoever asked (`tellItsIn`); without, it's dismissed. Either way it's kept a while with its outcome, for the
+ * to whoever asked (`tellItsIn`); without, it's dismissed. Its JSON body may carry the maker's `note` to the sender,
+ * which goes in that email and on the link's page. Either way it's kept a while with its outcome, for the
  * sender's own browser, which kept the number and a token the POST answered, to ask after it on a later visit (GET
  * `?id=&mine=<n>.<token>,…`, answering only those). Never logged, never on the page for anyone else, gone with the link.
  */
@@ -659,6 +663,17 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
     }
     const n = method === "DELETE" ? Number(url.searchParams.get("n")) : null;
     if (n !== null && (!Number.isInteger(n) || n < 1)) return reply(400, { error: "invalid_idea" });
+    // The maker's note to the sender, if they wrote one: a body with nothing in it, or none, is no note.
+    let note = null;
+    if (method === "DELETE" && /^application\/json/i.test(request.headers.get("content-type") || "")) {
+      let given;
+      try { given = JSON.parse((await readBody(request)) || "{}")?.note; }
+      catch (error) { return reply(error instanceof RangeError ? 413 : 400, { error: "invalid_idea" }); }
+      if (given != null && given !== "") {
+        note = tidy(given, IDEA_LIMITS.note, { lines: true });
+        if (!note) return reply(400, { error: "invalid_idea" });
+      }
+    }
 
     let kept;
     try { kept = store ?? cloudStore(env, fetcher); } catch { return reply(503, { error: "service_unavailable" }); }
@@ -691,7 +706,7 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
           .filter(([n, token]) => /^\d{1,6}$/.test(n ?? "") && /^[A-Za-z0-9_-]{16}$/.test(token ?? "")).map(([n, token]) => [Number(n), token]));
         const all = await kept.ideas(id);
         return reply(200, { ideas: all.filter((one) => one.token && asked.get(one.n) === one.token)
-          .map((one) => ({ n: one.n, status: one.status ?? "open", ...(one.done ? { done: one.done } : {}) })) });
+          .map((one) => ({ n: one.n, status: one.status ?? "open", ...(one.done ? { done: one.done } : {}), ...(one.note ? { note: one.note } : {}) })) });
       }
       if (!secretMatches(bearer(request), record.secret)) return reply(404, { error: "not_found" });
       // The maker sees the ideas still open, and whether someone wants to hear back, never their address: the site
@@ -710,8 +725,8 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
       // idea open, with its picture, to be let go again, rather than the picture left with nothing pointing to it.
       const open = (await kept.ideas(id)).find((one) => one.n === n && !one.status);
       if (open) await kept.removeImages(ideaPictures([open]));
-      const was = await kept.finishIdea(id, n, built ? "in" : "dismissed", now().toISOString());
-      const notified = built && was?.email ? await tellItsIn(was, record, linkFor(url.origin, id, record.name), { env, fetcher, once: `idea-${id}-${n}` }) : false;
+      const was = await kept.finishIdea(id, n, built ? "in" : "dismissed", now().toISOString(), note);
+      const notified = built && was?.email ? await tellItsIn(was, record, linkFor(url.origin, id, record.name), { env, fetcher, once: `idea-${id}-${n}`, note }) : false;
       return reply(200, { notified });
     } catch { return reply(503, { error: "service_unavailable" }); }
   };

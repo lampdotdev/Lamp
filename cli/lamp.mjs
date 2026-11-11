@@ -115,10 +115,11 @@ Mac app Lamp made in Swift, built and run on this Mac.
       --no-github and --put-on-github in their place. --preview says what would go and sends nothing. Its link
       stays Lamp's; --new-link has lamp make one of its own instead.
   lamp unshare [folder]   Take the link down.
-  lamp ideas [folder] [in <n> | dismiss <n>]
+  lamp ideas [folder] [in <n> | dismiss <n>] [note]
       The ideas people playing the link have sent, with a picture of the app as they saw it when they kept one
       in. "in" says one is in the game now (whoever asked to hear is
-      written to); "dismiss" lets one go.
+      written to); "dismiss" lets one go. Words after the number are a note to whoever sent it, on the link's
+      page and in that email.
   lamp setup [--remove]   Teach Claude Code and Codex on this computer to work this way (a skill for each).
   lamp guide              What that skill says, for any other agent.
   lamp skills [word]      Lamp's guidance for each kind of work, those about a word; lamp skill <name> reads one.
@@ -935,8 +936,12 @@ async function main() {
   }
 
   if (command === "ideas") {
-    const { rest } = parse(args, []);
     const outcomes = ["in", "dismiss"];
+    // Everything after the outcome's number is a note to whoever sent it, word for word: never read as options, so
+    // "--fullscreen" or "--help" in it stays in it.
+    const at = args.findIndex((arg) => outcomes.includes(arg));
+    const { rest } = parse(at < 0 ? args : args.slice(0, at + 2), []);
+    const noted = at < 0 ? [] : args.slice(at + 2);
     const folder = rest.length && !outcomes.includes(rest[0]) ? rest.shift() : ".";
     const lamps = lampsLink(folder);
     if (lamps) throw new Problem(`${lamps} keeps this app's link, and the ideas people send to it: they're on its Share Link card in ${lamps}.`);
@@ -944,8 +949,10 @@ async function main() {
     if (rest.length) {
       const n = Number(rest[1]);
       if (!outcomes.includes(rest[0]) || !Number.isInteger(n) || n < 1) throw new Problem("ideas takes in <number> or dismiss <number>: lamp ideas lists them with their numbers");
-      const answer = await finishIdea(layout.folder, n, rest[0] === "in");
-      console.log(rest[0] === "in" ? `Idea ${n} is in.${answer.notified ? " Whoever sent it asked to hear, and has been written to." : ""}` : `Idea ${n} is let go.`);
+      // On the link's page, and in the email if they asked for one.
+      const note = [...rest.slice(2), ...noted].join(" ").trim() || undefined;
+      const answer = await finishIdea(layout.folder, n, rest[0] === "in", note);
+      console.log(rest[0] === "in" ? `Idea ${n} is in.${answer.notified ? " Whoever sent it asked to hear, and has been written to." : ""}` : `Idea ${n} is let go.${note ? " Your note is on the link's page for them." : ""}`);
       return;
     }
     const sent = await ideas(layout.folder);
@@ -956,7 +963,7 @@ async function main() {
       // The app as they saw it when they opened the box, if they kept it in: there until the idea has its outcome.
       if (typeof idea.picture === "string" && idea.picture.startsWith("https://")) console.log(`     picture: ${idea.picture}`);
     }
-    console.log("Say what became of one with: lamp ideas in <number>, or lamp ideas dismiss <number>.");
+    console.log("Say what became of one with: lamp ideas in <number>, or lamp ideas dismiss <number>, with a note to them after it if you like.");
     return;
   }
 

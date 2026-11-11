@@ -125,9 +125,10 @@ export async function ideasOf({ site = siteOrigin(), link }) {
 }
 
 /** Lets an idea go: with `built` it's in, and the site first writes to whoever asked to hear. Whether it did. */
-export async function removeIdea({ site = siteOrigin(), link, n, built = false }) {
+export async function removeIdea({ site = siteOrigin(), link, n, built = false, note }) {
   try {
-    const { said } = await call("DELETE", `${site}/api/wish-ideas?id=${encodeURIComponent(link.id)}&n=${Number(n)}${built ? "&built=1" : ""}`, { secret: link.secret });
+    const { said } = await call("DELETE", `${site}/api/wish-ideas?id=${encodeURIComponent(link.id)}&n=${Number(n)}${built ? "&built=1" : ""}`,
+      { secret: link.secret, ...(note ? { json: { note } } : {}) });
     return { notified: said.notified === true };
   } catch (error) { if (error.status === 404) return { notified: false }; throw error; }
 }

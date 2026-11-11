@@ -311,10 +311,12 @@ enum WishLink {
     }
 
     /// Lets an idea go from the link. `built`: it's in, and the site first writes to whoever asked to hear back; answers
-    /// whether it did.
+    /// whether it did. `note`, if the maker wrote one, goes to the sender: in that email, and on the link's page.
     @discardableResult
-    static func removeIdea(_ number: Int, built: Bool, for shared: Shared) async throws -> Bool {
-        try await ask("linkRemoveIdea", secret(shared).merging(["n": number, "built": built]) { $1 })["notified"] as? Bool ?? false
+    static func removeIdea(_ number: Int, built: Bool, note: String? = nil, for shared: Shared) async throws -> Bool {
+        var given: [String: Any] = ["n": number, "built": built]
+        if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty { given["note"] = note }
+        return try await ask("linkRemoveIdea", secret(shared).merging(given) { $1 })["notified"] as? Bool ?? false
     }
 
     /// Takes the link down: the page says the wish isn't shared any more. A link the site no longer has is down already.

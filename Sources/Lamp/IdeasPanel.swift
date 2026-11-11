@@ -7,7 +7,8 @@ import SwiftUI
 /// minutes, and the desk says quietly how many are new; nothing goes in the chat until the person picks one. The panel
 /// shows them in the desk's window in place of its list, newest first: Build It asks the wish's chat for it, saying
 /// where it came from; It's In lets it go, and the site writes to whoever asked to hear back (Lamp never sees where);
-/// Dismiss lets it go quietly.
+/// Dismiss lets it go quietly. A note written on its line goes with either, to the sender, on the link's page and in
+/// that email (at most the site's `IDEA_LIMITS.note`).
 enum WishIdeas {
     /// The highest numbered idea seen of each wish's link, kept between launches: numbers only go up on one link, and a
     /// link made again (after one taken down) counts from one, so it's kept by the link as well as the wish.
@@ -118,11 +119,11 @@ extension Store {
         }
     }
 
-    /// It's In, or Dismiss: the idea goes from the link (built, the site first tells whoever asked), and from the panel
-    /// once the site says so.
-    func finishIdea(_ idea: WishLink.Idea, built: Bool, in project: LampProject) async -> Bool {
+    /// It's In, or Dismiss: the idea goes from the link (built, the site first tells whoever asked), with the maker's
+    /// note to its sender if they wrote one, and from the panel once the site says so.
+    func finishIdea(_ idea: WishLink.Idea, built: Bool, note: String? = nil, in project: LampProject) async -> Bool {
         guard let shared = WishLink.kept(for: project) else { return false }
-        do { try await WishLink.removeIdea(idea.n, built: built, for: shared) } catch { return false }
+        do { try await WishLink.removeIdea(idea.n, built: built, note: note, for: shared) } catch { return false }
         ideas[project.id]?.removeAll { $0.n == idea.n }
         if ideas[project.id]?.isEmpty == true { ideas[project.id] = nil }
         return true
@@ -144,6 +145,8 @@ struct IdeasPanel: View {
     @State private var built: Set<Int> = []
     @State private var finishing: Set<Int> = []
     @State private var failed: Int?
+    /// Notes to the senders, by number, as they're written: each goes with its idea's It's In or Dismiss.
+    @State private var notes: [Int: String] = [:]
 
     private var project: LampProject? { preview?.project ?? store.projects.first { $0.id == wish } }
     private var shown: [WishLink.Idea] { (preview?.ideas ?? store.ideas[wish] ?? []).sorted { $0.n > $1.n } }
@@ -206,7 +209,7 @@ struct IdeasPanel: View {
         finishing.insert(idea.n)
         failed = nil
         Task {
-            if !(await store.finishIdea(idea, built: built, in: project)) { failed = idea.n }
+            if await store.finishIdea(idea, built: built, note: notes[idea.n], in: project) { notes[idea.n] = nil } else { failed = idea.n }
             finishing.remove(idea.n)
         }
     }
@@ -225,6 +228,10 @@ struct IdeasPanel: View {
             Text(verbatim: idea.text).font(.system(size: 14)).foregroundStyle(Paper.ink).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             if let picture = idea.picture { IdeaPicture(address: picture) }
+            TextField("Note to them (optional)", text: Binding(get: { notes[idea.n] ?? "" }, set: { notes[idea.n] = String($0.prefix(500)) }), axis: .vertical)
+                .textFieldStyle(.roundedBorder).font(.system(size: 13)).lineLimit(1...4)
+                .frame(maxWidth: 480, alignment: .leading)
+                .disabled(finishing.contains(idea.n))
             HStack(spacing: 8) {
                 if built.contains(idea.n) {
                     Label("Asked in the chat", systemImage: "checkmark").font(.system(size: 12.5)).foregroundStyle(Paper.muted)
@@ -239,11 +246,11 @@ struct IdeasPanel: View {
                 Button("It's In") { finish(idea, built: true) }
                     .buttonStyle(PaperButtonStyle(.outline, height: 28))
                     .disabled(finishing.contains(idea.n))
-                    .help(idea.wantsNews == true ? "Takes it off the list, emails them that it's in, and tells them on the link's page" : "Takes it off the list, and tells them on the link's page")
+                    .help(idea.wantsNews == true ? "Takes it off the list, emails them that it's in, and tells them on the link's page, with your note if you wrote one" : "Takes it off the list, and tells them on the link's page, with your note if you wrote one")
                 Button("Dismiss") { finish(idea, built: false) }
                     .buttonStyle(PaperButtonStyle(.outline, height: 28))
                     .disabled(finishing.contains(idea.n))
-                    .help("Takes it off the list. They aren't told.")
+                    .help("Takes it off the list. They see your note on the link's page, if you wrote one.")
                 if failed == idea.n {
                     Text("Couldn't reach lamp.dev. Try again.").font(.system(size: 12)).foregroundStyle(Paper.muted)
                 }

@@ -41,9 +41,12 @@ import { DOWNLOAD_URL } from "../../lib/download";
     <!-- The thing itself, as big as the room between the header and the band allows: a playing page filling it, and a
          picture only as big as it is. -->
     <main data-stage class="stage relative flex min-h-0 flex-1 items-center justify-center p-3 sm:px-6" aria-label="The app">
-      <!-- An idea this browser sent that the maker has since put in, said once on a later visit. -->
+      <!-- An idea this browser sent that the maker has since put in, or answered with a note, said once on a later visit. -->
       <div data-idea-in hidden role="status" class="idea-in">
-        <span data-idea-in-text></span>
+        <div class="idea-in-words">
+          <span data-idea-in-text></span>
+          <p data-idea-in-note hidden class="idea-in-note"></p>
+        </div>
         <button type="button" data-idea-in-news hidden class="idea-in-news">See what's new</button>
         <button type="button" data-idea-in-close aria-label="Close" class="idea-in-close">
           <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" /></svg>
@@ -248,7 +251,12 @@ import { DOWNLOAD_URL } from "../../lib/download";
   .idea-in[hidden], .idea-in-news[hidden] { display: none; }
   /* Under the header while it's shown, which lies over the top of the app. */
   [data-bars="shown"] .idea-in { top: 4.25rem; }
+  .idea-in-words { min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
   .idea-in span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The maker's note, under it: the bar grows to hold a few lines, and scrolls past that. */
+  .idea-in:has(.idea-in-note:not([hidden])) { align-items: flex-start; border-radius: 1rem; padding-top: 0.625rem; }
+  .idea-in-note { max-height: 7.5rem; overflow-y: auto; white-space: pre-line; overflow-wrap: anywhere; opacity: 0.85; }
+  .idea-in-note[hidden] { display: none; }
   .idea-in-news { flex: none; padding: 0.25rem 0.75rem; border-radius: 999px; background: var(--color-paper); color: var(--color-tape); font-weight: 600; cursor: pointer; }
   .idea-in-close { flex: none; display: grid; place-items: center; width: 1.5rem; height: 1.5rem; border-radius: 999px; cursor: pointer; opacity: 0.8; }
   .idea-in-close svg { width: 0.625rem; height: 0.625rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
@@ -592,25 +600,35 @@ import { DOWNLOAD_URL } from "../../lib/download";
     const remember = (answer: { n: number; token: string }, text: string) => {
       if (Number.isInteger(answer?.n) && typeof answer?.token === "string") keepMine([...mineKept(), { n: answer.n, token: answer.token, text, at: new Date().toISOString() }]);
     };
-    // On a visit, one that's in says so once, over the app; one dismissed, or older than the site keeps them, is let go.
+    // On a visit, one that's in, or that the maker answered with a note, says so once over the app; one dismissed
+    // without a note, or older than the site keeps them, is let go.
     (async () => {
       const all = mineKept();
       if (!all.length) return;
-      let answers: { n: number; status: string }[] = [];
+      let answers: { n: number; status: string; note?: string }[] = [];
       try {
         const response = await fetch(`/api/wish-ideas?id=${encodeURIComponent(wish.id)}&mine=${all.map((one) => `${one.n}.${one.token}`).join(",")}`, { signal: AbortSignal.timeout(8000) });
         if (!response.ok) return;
         answers = (await response.json()).ideas ?? [];
       } catch { return; }
       const status = new Map(answers.map((one) => [one.n, one.status]));
+      const notes = new Map(answers.filter((one) => typeof one.note === "string" && one.note).map((one) => [one.n, one.note as string]));
       const isIn = all.filter((one) => status.get(one.n) === "in");
+      const told = all.filter((one) => status.get(one.n) === "in" || (status.get(one.n) === "dismissed" && notes.has(one.n)));
       // Against what's kept now: one sent while this was being asked stays.
       const asked = new Set(all.map((one) => one.n));
       keepMine(mineKept().filter((one) => !asked.has(one.n) || status.get(one.n) === "open"));
-      if (!isIn.length) return;
+      if (!told.length) return;
       const bar = $<HTMLElement>("[data-idea-in]");
-      $<HTMLElement>("[data-idea-in-text]").textContent = isIn.length === 1
-        ? `Your idea is in: “${isIn[0].text}”` : `${isIn.length} of your ideas are in`;
+      $<HTMLElement>("[data-idea-in-text]").textContent = told.length === 1
+        ? (isIn.length ? `Your idea is in: “${told[0].text}”` : `About your idea “${told[0].text}”`)
+        : isIn.length === told.length ? `${told.length} of your ideas are in` : `${told.length} of your ideas have answers`;
+      // The maker's words under it: one alone, or each after the idea it answers.
+      const noted = told.filter((one) => notes.has(one.n));
+      const by = wish.by?.trim();
+      const note = $<HTMLElement>("[data-idea-in-note]");
+      note.textContent = noted.map((one) => `${told.length > 1 ? `“${one.text}”: ` : ""}${notes.get(one.n)}${by ? ` — ${by}` : ""}`).join("\n\n");
+      note.hidden = !noted.length;
       const news = $<HTMLButtonElement>("[data-idea-in-news]");
       const newsButton = $<HTMLButtonElement>("[data-news]");
       news.hidden = newsButton.hidden;
