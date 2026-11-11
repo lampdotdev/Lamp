@@ -629,7 +629,11 @@ enum AppAI {
             }
             // Every key here is one of Codex's documented settings; --ignore-user-config already leaves out the
             // person's MCP servers.
-            let seal = sealed ? #"-c approval_policy="never" -c features.shell_tool=false -c features.unified_exec=false -c web_search="disabled" -c features.apps=false -c features.multi_agent=false -c tools.view_image=false "# : ""
+            // Its picture tool reads any file on the Mac: `features.view_image` turns it off now, and `tools.view_image` did in
+            // the versions before it (each ignores the other's, with only a warning). Goals are left out too. What's left
+            // of its tools, checked with Codex 0.167.1, is asking the person a question, which a run with no one to ask
+            // can't use.
+            let seal = sealed ? #"-c approval_policy="never" -c features.shell_tool=false -c features.unified_exec=false -c web_search="disabled" -c features.apps=false -c features.multi_agent=false -c features.view_image=false -c tools.view_image=false -c features.goals=false "# : ""
             command = """
             "$LAMP_TOOL" exec --json --ignore-user-config --ignore-rules --skip-git-repo-check --ephemeral \\
               -s read-only -c hooks={} -c model_reasoning_effort="low" \(seal)\(modelArg)\(schemaArg)-c "$LAMP_CODEX_INSTRUCTIONS" \(imageArgs) -- "$LAMP_PROMPT"
