@@ -1,11 +1,11 @@
 // The AI a page asks for with LampAI (lamp.js), answered by lamp itself for the pages it serves, with the person's own
-// Claude Code on this Mac: their subscription, through the program they signed in to, never a key in the page.
+// Claude Code or Codex on this Mac: their subscription, through the program they signed in to, never a key in the page.
 // The same routes and answers Lamp's app gives (`/ai/status`, `/ai`, `/ai/act`, `/ai/decide`), worded and checked the
 // same way (`AppAct` and `AppAI.decideByText` in Lamp's Swift), so a page can't tell which answered it. Pictures and
 // hearing need Lamp's app: asked here, they say so.
 
 import { spawn, execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -13,35 +13,59 @@ import { randomBytes } from "node:crypto";
 const MAX_TOOLS = 24, MAX_CALLS = 8, MAX_STEPS = 4, MAX_CHOICES = 4, MAX_CHOICE = 24, REPLY = "reply";
 const NAME = /^[a-zA-Z][a-zA-Z0-9_]{0,40}$/;
 
-/**
- * Which of the person's programs answers: Claude Code. Not Codex yet: its picture tool reads files anywhere on the Mac,
- * and the setting that should turn it off is ignored by the versions people have, so a page's text could have it read
- * one and send it on.
- */
+/** Which of the person's programs answers: `LAMP_AI` (claude or codex) when it's set, else Claude Code, else Codex. */
 export function engine() {
-  try { execFileSync("/usr/bin/which", ["claude"], { stdio: ["ignore", "pipe", "ignore"] }); return "claude"; } catch { return null; }
+  const wanted = process.env.LAMP_AI;
+  for (const name of wanted ? [wanted] : ["claude", "codex"]) {
+    if (name !== "claude" && name !== "codex") continue;
+    try { execFileSync("/usr/bin/which", [name], { stdio: ["ignore", "pipe", "ignore"] }); return name; } catch {}
+  }
+  return null;
 }
 
-const missing = "AI here needs Claude Code on this Mac, signed in: install it, or open the app in Lamp.";
+const missing = "AI here needs Claude Code or Codex on this Mac, signed in: install one, or open the app in Lamp.";
+const named = (which) => (which === "codex" ? "Codex" : "Claude Code");
 
 /** One answer from the engine: text, or JSON fitting `schema`. Nothing to run, no files, no session kept. */
 export function complete({ system, prompt, schema, seconds = 60, which = engine() }) {
-  if (which !== "claude") return Promise.reject(new Error(missing));
+  if (which !== "claude" && which !== "codex") return Promise.reject(new Error(missing));
   const folder = mkdtempSync(join(tmpdir(), "lamp-ai-"));
-  // Sealed as Lamp's app seals it (`AppAI.viaEngine`): none of the person's settings or hooks (--restricted), no MCP,
-  // no tools.
-  const args = ["-p", prompt, "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--restricted", "--strict-mcp-config",
-    "--disable-slash-commands", "--tools", "", "--system-prompt", system || "You are a helpful assistant inside an app."];
-  if (process.env.LAMP_AI_MODEL) args.push("--model", process.env.LAMP_AI_MODEL);
-  if (schema) args.push("--json-schema", JSON.stringify(schema));
-
+  const sayer = system || "You are a helpful assistant inside an app.";
+  let args;
+  if (which === "claude") {
+    // Sealed as Lamp's app seals it (`AppAI.viaEngine`): none of the person's settings or hooks (--restricted), no MCP,
+    // no tools.
+    args = ["-p", prompt, "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--restricted", "--strict-mcp-config",
+      "--disable-slash-commands", "--tools", "", "--system-prompt", sayer];
+    if (process.env.LAMP_AI_MODEL) args.push("--model", process.env.LAMP_AI_MODEL);
+    if (schema) args.push("--json-schema", JSON.stringify(schema));
+  } else {
+    // Sealed as Lamp's app seals it: read-only, none of the person's config, rules or hooks, and none of its tools. Its
+    // picture tool reads any file on the Mac: `features.view_image` turns it off now, `tools.view_image` did before
+    // (each version ignores the other's, with a warning). What's left, checked with Codex 0.167.1, is asking the person
+    // a question, which a run with no one to ask can't use.
+    args = ["exec", "--json", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check", "--ephemeral", "-s", "read-only",
+      "-c", "hooks={}", "-c", 'model_reasoning_effort="low"', "-c", 'approval_policy="never"',
+      "-c", "features.shell_tool=false", "-c", "features.unified_exec=false", "-c", 'web_search="disabled"',
+      "-c", "features.apps=false", "-c", "features.multi_agent=false", "-c", "features.view_image=false",
+      "-c", "tools.view_image=false", "-c", "features.goals=false",
+      "-c", `developer_instructions=${JSON.stringify(sayer + "\n\nAnswer directly. Don't run commands or change files.")}`];
+    if (process.env.LAMP_AI_MODEL) args.push("-m", process.env.LAMP_AI_MODEL);
+    if (schema) { writeFileSync(join(folder, "schema.json"), JSON.stringify(schema)); args.push("--output-schema", "schema.json"); }
+    args.push("--", prompt);
+  }
   return new Promise((resolve, reject) => {
     const child = spawn(which, args, { cwd: folder, stdio: ["ignore", "pipe", "pipe"] });
     let text = "", failure = null, rest = "", said = "";
-    const timer = setTimeout(() => { failure = "Claude Code took too long to answer."; child.kill("SIGKILL"); }, seconds * 1000);
+    const timer = setTimeout(() => { failure = `${named(which)} took too long to answer.`; child.kill("SIGKILL"); }, seconds * 1000);
     const line = (raw) => {
       let event;
       try { event = JSON.parse(raw); } catch { return; }
+      if (which === "codex") {
+        if (event.type === "item.completed" && event.item?.type === "agent_message" && typeof event.item.text === "string") text = event.item.text;
+        else if (event.type === "turn.failed" || event.type === "error") failure = String(event.error?.message || event.message || "Codex couldn't answer.");
+        return;
+      }
       if (event.type !== "result") return;
       if (event.is_error) failure = String(event.result || "Claude Code couldn't answer.");
       else if (schema && event.structured_output !== undefined) text = JSON.stringify(event.structured_output);
@@ -60,7 +84,7 @@ export function complete({ system, prompt, schema, seconds = 60, which = engine(
       if (rest) line(rest);
       rmSync(folder, { recursive: true, force: true });
       if (failure) return reject(new Error(failure));
-      if (!text) return reject(new Error(`Claude Code didn't answer. Check it's signed in.${said.trim() ? ` ${said.trim().split("\n").pop()}` : ""}`));
+      if (!text) return reject(new Error(`${named(which)} didn't answer. Check it's signed in.${said.trim() ? ` ${said.trim().split("\n").pop()}` : ""}`));
       resolve(text);
     });
   });
@@ -80,7 +104,7 @@ function readJSON(text) {
 /** `/ai/status`: what can answer here. Text, decisions and actions with an engine; pictures only in Lamp's app. */
 export function status() {
   const which = engine();
-  const route = which ? "Claude Code" : null;
+  const route = which ? named(which) : null;
   const available = (kind) => route ? { available: true, route, where: "remote" } : { available: false, reason: missing, setup: "lamp" };
   return {
     text: !!route, decisions: !!route, pictures: false, act: !!route,
