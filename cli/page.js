@@ -186,11 +186,15 @@
     const real = console[level];
     console[level] = (...parts) => { real.apply(console, parts); say(level === 'info' ? 'log' : level, parts); };
   }
+  // Whether the page runs on the game runtime (lamp-game.js), which says so. A game's page without it has `__lampLive`
+  // too (lamp-live.js, given after this script), so that alone doesn't tell; a runtime from before it said so does have
+  // its own `__lampLive`, never lamp-live.js's.
+  const runtime = () => !!window.__lampRuntime || (!!window.__lampLive && !window.__lampLive.lampHelper);
   // A page with the game runtime logs its own errors; any other page's are logged here.
-  addEventListener('error', e => { if (!window.__lampLive) say('error', [e.message + ' (' + (String(e.filename || '').split('/').pop() || 'the page') + ':' + e.lineno + ')']); });
-  addEventListener('unhandledrejection', e => { if (!window.__lampLive) say('error', [String(e.reason && e.reason.message || e.reason)]); });
+  addEventListener('error', e => { if (!runtime()) say('error', [e.message + ' (' + (String(e.filename || '').split('/').pop() || 'the page') + ':' + e.lineno + ')']); });
+  addEventListener('unhandledrejection', e => { if (!runtime()) say('error', [String(e.reason && e.reason.message || e.reason)]); });
   // A page without the game runtime is on screen once it has loaded.
-  addEventListener('load', () => { said({ state: 'page-loaded' }); if (!window.__lampLive) light.reveal(); });
+  addEventListener('load', () => { said({ state: 'page-loaded' }); if (!runtime()) light.reveal(); });
 
   // Changes. The line says which change this copy's files had, so one saved while the page was opening comes as soon
   // as the line is open; the browser says the last it heard when the line is opened again after a break.
@@ -209,7 +213,8 @@
   events.addEventListener('change', e => {
     const change = JSON.parse(e.data);
     light.glow(typeof change.words === 'string' ? change.words : '');
-    // A game takes the change and keeps the player's place; any other page opens again.
+    // A game takes the change and keeps the player's place (on the runtime, or where lamp-live.js can); any other page
+    // opens again.
     let taken = false;
     try { taken = !!(window.__lampLive && window.__lampLive(change)); } catch (e) {}
     if (!taken) { light.turn(); turnAcross(); said({ gen: change.gen, state: 'reloading' }); location.reload(); }
@@ -280,11 +285,11 @@
     // A game drawn on a stage of its own shape, fitted in the window with bars beside or above it: the stage's size.
     // One that fills the window, whatever its shape, has none.
     let stage = null;
-    if (window.__lampLive) {
+    if (runtime()) {
       const canvas = [...document.querySelectorAll('canvas')].map(c => [c, c.getBoundingClientRect()]).sort((a, b) => b[1].width * b[1].height - a[1].width * a[1].height)[0];
       if (canvas && canvas[0].width > 1 && canvas[0].height > 1 && (width - canvas[1].width >= 2 || height - canvas[1].height >= 2)) stage = [canvas[0].width, canvas[0].height];
     }
-    return { tab, stage, title: document.title, path: location.pathname + location.search, width, height, dpr: devicePixelRatio || 1, game: !!window.__lampLive, screen: lines.join('\n') };
+    return { tab, stage, title: document.title, path: location.pathname + location.search, width, height, dpr: devicePixelRatio || 1, game: runtime(), screen: lines.join('\n') };
   };
 
   // The point of the control called this in the screen as text (`button "Add"`, or just `Add`), for a click by name.

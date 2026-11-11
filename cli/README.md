@@ -81,6 +81,9 @@ notes, never part of the page, so saving it hands nothing over; any other Markdo
   in the game differs. A module that accepts changes is swapped in while the game runs (`live`); other code runs
   again with the player where they were (`reran`); what can't go in either way opens the page again from the
   player's place (`reopened`); and a game at a moment it can't be interrupted waits for the person's Reload (`held`).
+- **A game whose page doesn't run on the runtime** (a folder with `lamp-game.js` whose page doesn't load it) takes
+  it as it does inside Lamp too, through `lamp-live.js`, given after `page.js`: a stylesheet, or a change inside one
+  method of a class a module exports, goes in while the game runs (`live`); anything else waits for Reload (`held`).
 - **Any other page** opens again.
 
 ## Lamp's own files beside a game's page

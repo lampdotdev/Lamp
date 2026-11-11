@@ -6,7 +6,8 @@ import Foundation
 /// The app around the page (`LampPageLive` in LampPage.swift) asks Lamp what has changed, a request Lamp holds until
 /// there's a change or a while has passed. When a build changes only the page (Web/: its code, pictures, models,
 /// sounds), Lamp answers with the files that differ from what that copy of the app was installed with, which the app
-/// fetches and serves in place of its own; a page without the game runtime opens itself again; a game's (lamp-game.js) puts new pictures, models and sounds into the running
+/// fetches and serves in place of its own; a web app's or a screen's page opens itself again, and a game's page that doesn't
+/// run on the game runtime puts in what it safely can and holds the rest for Reload (lamp-live.js); a game's on the runtime (lamp-game.js) puts new pictures, models and sounds into the running
 /// game, and new code where its modules take it (`hot(import.meta).accept()`), opens itself again for code that can't be
 /// swapped in, keeping the player's place (`snapshot()` and `restore()`), or, while the game says a match is on
 /// (`busy()`), waits for a pause. The app tells Lamp which it did, and the chat says so: a change that
@@ -190,8 +191,8 @@ import Foundation
     private var lastSaved: [String: [String: String]] = [:]
 
     /// Whether a project's open copy can take changes this way: a page in an app of Lamp's own (a game drawn on Lamp's
-    /// game runtime, a screen, a web app). A page without the game runtime is opened again with what it saved, keeping
-    /// its window where the person has it.
+    /// game runtime, a screen, a web app). A web app's or a screen's page is opened again with what it saved, keeping its
+    /// window where the person has it; a game's that doesn't run on the runtime is handed the change (lamp-live.js).
     nonisolated static func takes(_ project: LampProject) -> Bool {
         GameKit.hostsPage(project)
     }

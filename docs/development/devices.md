@@ -686,6 +686,27 @@ hour restores it once. That's how a change installed on a phone, Android, a TV o
 player back where they were; a copy open there in the wish's room takes the page's change as it's made, opening again
 from the new files (`PageCopies`).
 
+A web game whose page doesn't run on the runtime (one written with its own loop, as a plain canvas game is) is handed
+the same change by lamp-live.js, which the app around a game's page gives it before any of its scripts
+(`LampPageView.make` with `gameChanges`, `LampPageLive.gameScript`, written in from `Resources/GameKit/page/lamp-live.js`
+by `GameKit.page`; lamp dev gives it after page.js for a folder that's a game). A web app's or a screen's page goes
+without it and opens again for every change, as before. It puts in only what can't run anything twice or split what
+the game holds: a stylesheet the page links, and a change inside one method of a class a module exports, made again
+from the method's new source beside the module's imports and its constants that are a plain value (so the module never
+runs again), under a name of its own so a computed key isn't worked out again, and put on the running class. A change it can't tell is safe that way (a constructor, a field, code
+outside a class, two methods, `super`, `import()` or `import.meta` (read from where the code is), a private member, a name
+of the module's top level, a name it can't place, told by where each word stands rather than by a list of names, so a
+module's own `Infinity` is its own and `async` or `of` used as a name is a name) is held for Reload, and so is any file the page asked the app around it for (`read` in the change, every
+file `LampPageFiles` served it, or lamp dev's server; a page can't see that itself) or that the page or its code names;
+a file it never asked for and nothing names is no part of the change. Nothing goes in until the game has started:
+the page loaded without an error as it started, the sources of its modules read as they ran (a file changed before
+then is held, since what runs of it can't be told), and, for a game that asks for it, `lampLive.ready()` called after
+`lampLive.waitForReady()`; a page that stopped with an error as it started opens again instead. lamp-game.js sets
+`window.__lampLive` as it loads, through lamp-live.js's setter, which hands it what it held, the change it was putting in (which
+stops there) and every change handed over meanwhile, in order with their generations; a Reload goes in at once, waiting
+for nothing; `window.__lampRuntime` says the runtime is there (lamp dev's page.js
+reads that, since a page with lamp-live.js has `__lampLive` too).
+
 A module run again is a new module, and the browser keeps the one it replaces, with whatever its variables point at, for as long as the page is open (a kept renderer holds on to what it drew as well), so without more a part let go of stays in memory, the garbage collector walks every old part, and each run takes longer until the page runs out of memory. So a part let go of is taken apart (`letGo`, `retire`, `emptyRetired`), three seconds on and once no run, background build or async part is still deciding what the game goes on with: each of its objects loses its children and its hold on geometry and materials, and points at a blank of each, so old code still calling it finds an object. `retired` holds its roots through `WeakRef`, so it keeps nothing alive. What the game can still reach stays whole: `stillHeld` is everything under what's kept by name (`keptRoots`: parts with their pools to three levels, what's being built or waiting to swap in, registered cameras) and under every scene drawn in the last 60 frames (`drawnScenes`, weak, counted in frames so a run of the code or a window out of sight doesn't make a scene look abandoned), and nothing in it is disposed of or taken apart. A replaced scene something still draws keeps its resources, since the renderer would only make them again, and is asked about again, more rarely each time, until it stops being drawn, when it's disposed of and taken apart together; a held child leaves its retired parent on both sides; a part with a `dispose` of its own is left to it, and an object put back in a scene is no longer retired. This can only free what the game's own objects hold, so a game also releases what its modules gather at their top level, tears down the passes a run built around a kept renderer, hands on data rather than closures and builds big tables inside `keep` (the game skill; New York's `release()`, its game `dispose` and its table modules). A build that names `import.meta` is built again every run, since the runtime writes it out with each run's address. Only the last version's text (`versionOf`, `addVersion`) is kept, an array's being as big as the array.
 
 **Phones as players.** A game takes phones on the Wi‑Fi as a TV app's page does (`Target.takesPhones`): its lamp.js

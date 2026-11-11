@@ -209,11 +209,16 @@ enum GameKit {
     /// Lamp's common host for a page on Apple's devices (a web game's and a screen's: serving and showing it, LampAI
     /// through the app, and `LampNative` calls of the device); and where those calls are answered, the app's own Swift, written only
     /// when the app has none yet.
-    /// The page's host, with the scripts that read the page's screen and click on it as the TV preview does (`PageScreen`) written in.
+    /// The page's host, with the scripts that read the page's screen and click on it as the TV preview does (`PageScreen`) written in,
+    /// and the one a web game's page that doesn't run on Lamp's runtime takes changes with while it's played (page/lamp-live.js).
     static let page: (path: String, text: String)? = read([("Sources/LampPage.swift", "apple/LampPage.swift")]).first.map {
         ($0.path, $0.text.replacingOccurrences(of: "\"{{PAGE_SCREEN_SCRIPT}}\"", with: String(reflecting: PageScreen.script))
-            .replacingOccurrences(of: "\"{{PAGE_CLICK_SCRIPT}}\"", with: String(reflecting: PageScreen.click)))
+            .replacingOccurrences(of: "\"{{PAGE_CLICK_SCRIPT}}\"", with: String(reflecting: PageScreen.click))
+            .replacingOccurrences(of: "\"{{PAGE_LIVE_SCRIPT}}\"", with: String(reflecting: liveScript)))
     }
+    /// What a web game's page is given before its own scripts (`LampPageView.make`, `gameChanges`), and lamp dev's too.
+    static let liveScript: String = read([("", "page/lamp-live.js")]).first?.text ?? ""
+
     static let native: (path: String, text: String)? = read([("Sources/Native.swift", "apple/Native.swift")]).first
     /// The controller kit a game on the Mac runs its own phones with (`ControllerRuntime`: its phone page and relay, in
     /// its own process): LampRelayKit's Swift as one file, which build.sh writes into Lamp's bundle. In the player, and

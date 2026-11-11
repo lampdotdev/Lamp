@@ -50,7 +50,7 @@ struct LampGameScreen: View {
 @MainActor enum LampGamePage {
     static let files = LampPageFiles(scheme: "lamp-game")
 
-    static func make() -> WKWebView { LampPageView.make(files, catchErrors: false, live: true) }
+    static func make() -> WKWebView { LampPageView.make(files, catchErrors: false, live: true, gameChanges: true) }
 }
 
 #if os(macOS)
