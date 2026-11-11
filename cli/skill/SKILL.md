@@ -34,8 +34,9 @@ looked earlier, `--reopen` puts it right.
 `{{lamp}} new path/to/folder --web --name "Its Name"` makes a new web app's page from Lamp's starting files:
 `index.html`, `style.css` and `app.js`, which are yours to write, `APP.md`, and `lamp.js`, Lamp's building blocks for
 a page (saved data with `LampStore`, the app's files and more). Read Lamp's `web-app` skill before writing it, and
-the comments in `lamp.js` for how each block is used; never edit `lamp.js`. What a block asks of Lamp's app as the
-page runs (its AI) isn't answered here. A page that wants none of Lamp's needs no starting files: write its
+the comments in `lamp.js` for how each block is used; never edit `lamp.js`. Its AI (`LampAI`: ask, act, decide) is
+answered by lamp itself on this Mac, with the person's own Claude Code, in every page lamp runs here (`dev`,
+`open`, `look`, `use`); pictures and hearing need Lamp's app. Never put a key or a model provider's address in the page. A page that wants none of Lamp's needs no starting files: write its
 `index.html` in an empty folder.
 
 ## A Mac app
