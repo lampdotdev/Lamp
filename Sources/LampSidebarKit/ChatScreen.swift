@@ -648,6 +648,7 @@ private struct ComposerRow: View {
         .frame(maxWidth: .infinity)
         .onAppear { take(state) }
         .onChange(of: state.draftVersion) { take(state) }
+        .onChange(of: state.focusBox) { focus += 1 }
         .onChange(of: text) {
             link.typed = (version, text)
             if emptiedToSend { emptiedToSend = false; return }

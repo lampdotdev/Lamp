@@ -858,6 +858,23 @@ extension Store {
         }
     }
 
+    /// Whether a copy's chat offers Review Changes…: a copy made for part of a suggested change, ready (its job says so,
+    /// so this holds after a restart), with nothing going on in it (no turn, nothing waiting, no question open) and its
+    /// review not already up. A turn that changes it reviews it by itself (`settleUpdate`).
+    func offersReviewChanges(_ copy: LampProject, busy: Bool) -> Bool {
+        guard !busy, (queued[copy.id] ?? []).isEmpty, pendingImport?.copy != copy.id,
+              let job = AppUpdates.Job.load(copy), job.suggestion != nil, job.ready == true else { return false }
+        return Talk.open(in: logs[copy.id] ?? []) == nil
+    }
+
+    /// Review Changes… in such a copy's chat: the copy exported and checked afresh, as its turn's end would review it, with
+    /// the same checks after (the copy unchanged since, the wish unchanged since the copy was made).
+    func reviewChanges(_ copy: LampProject) {
+        guard let copy = current(copy), offersReviewChanges(copy, busy: busy.contains(copy.id)),
+              let job = AppUpdates.Job.load(copy) else { return }
+        openPreparedReview(copy, job: job)
+    }
+
     /// The copy a review was made of, held for Update or Keep as Separate App from the check until it's put in place, kept or
     /// deleted, so nothing changes it in between: a request sent to it meanwhile waits, and goes to whichever app is
     /// left. Nil, after saying so (and reviewing it again when it's still), when the copy is working, has work waiting,

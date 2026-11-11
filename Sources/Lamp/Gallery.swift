@@ -777,6 +777,15 @@ enum Gallery {
             AnyView(ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.queued("Hot Shelf"), button: "Reload",
                                         disabled: true, prominent: true) {})
         },
+        // A copy of part of a suggested change, kept after its review to change it more: the way back to the review.
+        Entry(group: "Activity", name: "Review Changes in a kept copy") {
+            let line = SidebarServer.reviewChangesLine
+            return AnyView(VStack(alignment: .leading, spacing: 8) {
+                ChatLook.AgentText("The bike lanes are thicker now, and the night map is still left out.")
+                ChatLook.Worked("Worked for 41 s") { EmptyView() }
+                ChatLook.ActionLine(symbol: line.symbol ?? "", text: line.text, button: line.button ?? "", prominent: true) {}
+            })
+        },
         Entry(group: "Activity", name: "Under the agent's progress lines") {
             let started = Date().addingTimeInterval(-95)
             return AnyView(VStack(alignment: .leading, spacing: 12) {
@@ -903,6 +912,13 @@ enum Gallery {
             concerns: [], risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false),
             asked: true, detected: found("Connects to the internet"), partial: true),
                app: "New York Update", existing: "New York", prepared: true),
+        // Part of someone's suggested change, prepared in a copy: Keep Editing goes back to the copy's chat.
+        review("Prepared part of a suggested change", ImportReview(
+            summary: "A bike map of your city with its bike lanes marked, and a night map that dims the streets after dark.",
+            capabilities: ["Shows a map of your city", "Marks bike lanes on the map"],
+            concerns: [], risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false),
+            asked: true, detected: found("Connects to the internet")),
+               app: "Bike Map Update", existing: "Bike Map", prepared: true, keepEditing: true),
         review("Android app", ImportReview(summary: "Counts your taps on one screen and remembers the count after closing.",
                                            capabilities: [], concerns: [], risk: .low,
                                            reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true,
@@ -929,11 +945,12 @@ enum Gallery {
     private static func review(_ name: String, _ review: ImportReview?, app: String = "Drive Anywhere", description: String? = nil,
                                existing: String? = nil, changedHere: Bool = false, android: Bool = false, prepared: Bool = false,
                                mix: Bool = false, trying: Bool = false, progress: String? = nil, failure: String? = nil,
-                               room: CGFloat = .infinity, ownFolder: Bool = false, folderChange: String? = nil) -> Entry {
+                               room: CGFloat = .infinity, ownFolder: Bool = false, folderChange: String? = nil, keepEditing: Bool = false) -> Entry {
         Entry(group: "Shared app", name: name) {
             AnyView(ImportReviewCard(name: app, description: description,
                                      icon: nil, review: review, existing: existing, changedHere: changedHere, room: room, cancel: {}, open: {}, update: {}, android: android,
-                                     prepared: prepared, mix: mix ? {} : nil, trying: trying, ownFolder: ownFolder, folderChange: folderChange, progress: progress, failure: failure)
+                                     prepared: prepared, mix: mix ? {} : nil, trying: trying, ownFolder: ownFolder, folderChange: folderChange, progress: progress, failure: failure,
+                                     keepEditing: keepEditing ? {} : nil)
                 .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
