@@ -482,6 +482,22 @@ test("the maker and an idea's sender talk by email, the replies kept on the idea
   assert.equal((await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${n}&stop=${box}`))).status, 200);
   assert.equal((await (await call("PATCH", `&n=${n}`, { note: "Anyone there?" })).json()).notified, false, "no more emails once they stop them");
   assert.equal(replyWords("Sure\n\n-----Original Message-----\nFrom: Lamp"), "Sure");
+  // Two first emails at once go with one mailbox; an outcome given to an answered idea takes it off the list.
+  const other = (await (await call("POST", "", { text: "Night races", email: "someone@example.com" })).json()).n;
+  const before = mails.length;
+  await Promise.all([call("PATCH", `&n=${other}`, { note: "Do you mean a full race?" }), call("PATCH", `&n=${other}`, { note: "Or just a lap?" })]);
+  assert.deepEqual(new Set(mails.slice(before).map((mail) => mail.reply_to[0])).size, 1);
+  const otherBox = /^idea-([0-9a-f]{20})@/.exec(mails.at(-1).reply_to[0])[1];
+  const answerOther = () => {
+    const body = JSON.stringify({ type: "email.received", data: { email_id: "e2", from: "someone@example.com", to: [`idea-${otherBox}@reply.lamp.dev`], message_id: "<reply-3@example.com>" } });
+    const stamp = String(Math.floor(Date.now() / 1000));
+    const signature = createHmac("sha256", Buffer.from(secretKey, "base64")).update(`msg_2.${stamp}.${body}`).digest("base64");
+    return mailIn(new Request("https://lamp.dev/api/idea-mail", { method: "POST", body, headers: { "svix-id": "msg_2", "svix-timestamp": stamp, "svix-signature": `v1,${signature}` } }));
+  };
+  await answerOther();
+  assert.equal((await listed()).find((one) => one.n === other)?.waiting, true);
+  await call("DELETE", `&n=${other}&built=1`);
+  assert.deepEqual(await listed(), [], "given its outcome, it's seen to");
 });
 
 test("a link's questions go to its page, and only as questions within the limits", async () => {

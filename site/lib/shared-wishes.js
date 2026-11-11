@@ -308,6 +308,7 @@ export function cloudStore(env, fetcher = fetch) {
         idea.done = ARGV[3]
         idea.last = ARGV[3]
         idea.picture = nil
+        idea.waiting = nil
         if ARGV[4] ~= "" then
           local thread = idea.thread or {}
           table.insert(thread, cjson.decode(ARGV[4]))
@@ -323,7 +324,8 @@ export function cloudStore(env, fetcher = fetch) {
      * One step in an idea's conversation, answering the idea as it was before it, or null when it's gone or the step
      * doesn't apply: "say" adds a message to its thread (one of a message id already there, or past
      * `IDEA_LIMITS.thread`, doesn't), and an answer from its sender leaves it waiting on the maker; "settle" says the
-     * maker has seen to it; "box" gives it its mailbox and the subject of the first email; "stop", with its mailbox,
+     * maker has seen to it; "box" gives it its mailbox and the subject of the first email, unless another call gave it
+     * one first (whose is in what's answered); "stop", with its mailbox,
      * lets its address go.
      */
     async talk(id, n, op, value = "", extra = "") {
@@ -341,7 +343,9 @@ export function cloudStore(env, fetcher = fetch) {
           idea.last = said.at
           if said.by == "sender" then idea.waiting = true else idea.waiting = nil end
         elseif op == "settle" then idea.waiting = nil
-        elseif op == "box" then idea.mailbox = ARGV[3]; idea.subject = ARGV[4]
+        elseif op == "box" then
+          if idea.mailbox then return text end
+          idea.mailbox = ARGV[3]; idea.subject = ARGV[4]
         elseif op == "stop" then
           if idea.mailbox ~= ARGV[3] then return false end
           idea.email = nil
@@ -499,6 +503,7 @@ export function memoryStore() {
       if (!idea || idea.status) return null;
       const before = structuredClone(idea);
       Object.assign(idea, { status, done: at, last: at });
+      delete idea.waiting;
       if (message) idea.thread = [...(idea.thread ?? []), message];
       if (status === "dismissed" && !idea.thread) delete idea.email;
       delete idea.picture;
@@ -515,7 +520,7 @@ export function memoryStore() {
         idea.last = value.at;
         if (value.by === "sender") idea.waiting = true; else delete idea.waiting;
       } else if (op === "settle") delete idea.waiting;
-      else if (op === "box") Object.assign(idea, { mailbox: value, subject: extra });
+      else if (op === "box") { if (!idea.mailbox) Object.assign(idea, { mailbox: value, subject: extra }); }
       else if (op === "stop" && idea.mailbox === value) delete idea.email;
       else return null;
       return before;
@@ -679,11 +684,17 @@ const newMessageID = (env) => `<idea.${randomBytes(12).toString("hex")}@${mailDo
 export async function writeToSender(kept, wishID, idea, record, link, { env = process.env, fetcher = fetch, kind = "in", said, origin, once } = {}) {
   const key = env.RESEND_API_KEY, from = env.LAMP_IDEAS_FROM;
   if (!key || !from || !idea.email) return false;
-  const subject = idea.subject || (kind === "in" ? `Your idea is in ${record.name}` : `About your idea for ${record.name}`);
+  let subject = idea.subject || (kind === "in" ? `Your idea is in ${record.name}` : `About your idea for ${record.name}`);
   let box = idea.mailbox;
   if (!box) {
+    // Two first emails at once each open one, and both go with whichever the idea kept.
     box = await kept.openMailbox(wishID, idea.n);
-    await kept.talk(wishID, idea.n, "box", box, subject);
+    const before = await kept.talk(wishID, idea.n, "box", box, subject);
+    if (before?.mailbox) {
+      try { await kept.closeMailbox(box); } catch {}
+      box = before.mailbox;
+      subject = before.subject || subject;
+    }
   }
   const by = record.by?.trim();
   const maker = by || "Whoever made it";
@@ -815,7 +826,8 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
           .filter(([n, token]) => /^\d{1,6}$/.test(n ?? "") && /^[A-Za-z0-9_-]{16}$/.test(token ?? "")).map(([n, token]) => [Number(n), token]));
         const all = await kept.ideas(id);
         return reply(200, { ideas: all.filter((one) => one.token && asked.get(one.n) === one.token).map((one) => {
-          const last = (one.thread ?? []).filter((said) => said.by === "maker").at(-1)?.text;
+          // A note given before ideas had threads was kept on its own.
+          const last = (one.thread ?? []).filter((said) => said.by === "maker").at(-1)?.text ?? one.note;
           return { n: one.n, status: one.status ?? "open", ...(one.done ? { done: one.done } : {}), ...(last ? { note: last } : {}) };
         }) });
       }

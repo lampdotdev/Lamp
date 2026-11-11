@@ -594,14 +594,15 @@ import { DOWNLOAD_URL } from "../../lib/download";
     // The ideas this browser sent to this link, by number and token, for a later visit to ask what became of them (only
     // theirs, nothing else). Kept here alone: there's no account, and nothing of them goes anywhere but this link's site.
     const MINE = `lamp.shared.ideas.${wish.id}`;
-    type Mine = { n: number; token: string; text: string; at: string };
+    // `heard`: the maker's last note to one still open, once it's been shown, so it's said once.
+    type Mine = { n: number; token: string; text: string; at: string; heard?: string };
     const mineKept = (): Mine[] => { try { return JSON.parse(localStorage.getItem(MINE) ?? "[]"); } catch { return []; } };
     const keepMine = (all: Mine[]) => { try { all.length ? localStorage.setItem(MINE, JSON.stringify(all.slice(-20))) : localStorage.removeItem(MINE); } catch {} };
     const remember = (answer: { n: number; token: string }, text: string) => {
       if (Number.isInteger(answer?.n) && typeof answer?.token === "string") keepMine([...mineKept(), { n: answer.n, token: answer.token, text, at: new Date().toISOString() }]);
     };
-    // On a visit, one that's in, or that the maker answered with a note, says so once over the app; one dismissed
-    // without a note, or older than the site keeps them, is let go.
+    // On a visit, one that's in, or that the maker has written a note about since, says so once over the app; one
+    // dismissed without a note, or older than the site keeps them, is let go.
     (async () => {
       const all = mineKept();
       if (!all.length) return;
@@ -614,14 +615,16 @@ import { DOWNLOAD_URL } from "../../lib/download";
       const status = new Map(answers.map((one) => [one.n, one.status]));
       const notes = new Map(answers.filter((one) => typeof one.note === "string" && one.note).map((one) => [one.n, one.note as string]));
       const isIn = all.filter((one) => status.get(one.n) === "in");
-      const told = all.filter((one) => status.get(one.n) === "in" || (status.get(one.n) === "dismissed" && notes.has(one.n)));
-      // Against what's kept now: one sent while this was being asked stays.
+      const told = all.filter((one) => status.get(one.n) === "in"
+        || (status.has(one.n) && notes.has(one.n) && !(status.get(one.n) === "open" && notes.get(one.n) === one.heard)));
+      // Against what's kept now: one sent while this was being asked stays. One still open keeps the note just shown.
       const asked = new Set(all.map((one) => one.n));
-      keepMine(mineKept().filter((one) => !asked.has(one.n) || status.get(one.n) === "open"));
+      keepMine(mineKept().filter((one) => !asked.has(one.n) || status.get(one.n) === "open")
+        .map((one) => asked.has(one.n) && notes.has(one.n) ? { ...one, heard: notes.get(one.n) } : one));
       if (!told.length) return;
       const bar = $<HTMLElement>("[data-idea-in]");
       $<HTMLElement>("[data-idea-in-text]").textContent = told.length === 1
-        ? (isIn.length ? `Your idea is in: “${told[0].text}”` : `About your idea “${told[0].text}”`)
+        ? (status.get(told[0].n) === "in" ? `Your idea is in: “${told[0].text}”` : `About your idea “${told[0].text}”`)
         : isIn.length === told.length ? `${told.length} of your ideas are in` : `${told.length} of your ideas have answers`;
       // The maker's words under it: one alone, or each after the idea it answers.
       const noted = told.filter((one) => notes.has(one.n));
