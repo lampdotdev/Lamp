@@ -327,9 +327,14 @@ enum GameKit {
         return lampSwiftFolder + "/" + String(path.dropFirst("Sources/".count))
     }
 
-    /// Takes Lamp's Swift an earlier Lamp kept in the app's Sources/ away, now it's kept in `lampSwiftFolder`.
-    static func moveLampSwift(of project: LampProject) {
-        for name in ownSwift { AppFolder.remove(project.dir.appendingPathComponent("Sources/" + name), in: project.dir) }
+    /// Takes Lamp's Swift an earlier Lamp kept in the app's Sources/ away, now it's kept in `lampSwiftFolder`; and of that
+    /// folder, what isn't the app's kind's now (`keeping`, names of `ownSwift`), so a kind it was (a screen's host, beside a
+    /// game's) isn't compiled with it.
+    static func moveLampSwift(of project: LampProject, keeping: Set<String>) {
+        for name in ownSwift {
+            AppFolder.remove(project.dir.appendingPathComponent("Sources/" + name), in: project.dir)
+            if !keeping.contains(name) { AppFolder.remove(project.dir.appendingPathComponent(lampSwiftFolder + "/" + name), in: project.dir) }
+        }
     }
 
     /// Lamp's own Swift in a page's app: the player has all of it. `Native.swift` too while it's still Lamp's.
@@ -423,6 +428,8 @@ enum GameKit {
     static func removePage(from project: LampProject) {
         guard let page, let native else { return }
         AppFolder.remove(project.dir.appendingPathComponent(page.path), in: project.dir)
+        // Lamp's Swift for the page goes with it: a kind that hosts none has its own, where its kind keeps it.
+        AppFolder.remove(project.dir.appendingPathComponent(lampSwiftFolder), in: project.dir)
         let own = project.dir.appendingPathComponent(native.path)
         if (try? String(contentsOf: own, encoding: .utf8)) == native.text { AppFolder.remove(own, in: project.dir) }
     }
@@ -448,8 +455,10 @@ enum GameKit {
             hasher.update(data: Data(name.utf8))
             hasher.update(data: AppFile.read(project.dir.appendingPathComponent(name), in: project) ?? Data())
         }
-        let root = project.dir.appendingPathComponent("Sources")
-        let files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []).sorted { $0.path < $1.path }
+        // The app's own Swift, and Lamp's beside what it builds (`lampSwiftFolder`): a Lamp with new Swift builds it again.
+        let files = ["Sources", lampSwiftFolder].flatMap { folder in
+            FileManager.default.enumerator(at: project.dir.appendingPathComponent(folder), includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
+        }.sorted { $0.path < $1.path }
         for file in files {
             hasher.update(data: Data(file.path.utf8))
             hasher.update(data: AppFile.read(file, in: project) ?? Data())
@@ -722,7 +731,8 @@ enum GameKit {
     static func write(for project: LampProject) throws {
         let engine = engine(project)
         if engine == .web {
-            moveLampSwift(of: project)
+            moveLampSwift(of: project, keeping: Set(([page?.path, controllerKit?.path, "Sources/LampSupport.swift"].compactMap { $0 } + webFiles.map(\.path))
+                .filter { $0.hasSuffix(".swift") }.map { ($0 as NSString).lastPathComponent }))
             try Template.put(Template.lampSupportSwift(for: project), at: project.dir.appendingPathComponent(location("Sources/LampSupport.swift")), for: project)
             guard webFiles.count == 3, !DeviceSupport.threeFiles.isEmpty, !DeviceSupport.phaserFiles.isEmpty else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
             for file in webFiles { try Template.write(file.text, to: location(file.path), for: project) }

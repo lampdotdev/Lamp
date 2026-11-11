@@ -103,7 +103,8 @@ enum ScreenKit {
         let page = page(for: project.platform)
         guard let host = host(for: project) else { throw Failure(message: "This copy of Lamp is missing its web app kit.") }
         try TVTemplate.writeOwnedFiles(for: project)
-        GameKit.moveLampSwift(of: project)
+        GameKit.moveLampSwift(of: project, keeping: Set([page.swift, "Sources/LampPage.swift", "Sources/LampControllerKit.swift", "Sources/LampSupport.swift"]
+            .map { ($0 as NSString).lastPathComponent }))
         try Template.write(host, to: GameKit.location(page.swift), for: project)
         try GameKit.writePage(for: project)
         // On Android: Lamp's Android app around the page, as a game's.
@@ -131,7 +132,7 @@ enum ScreenKit {
     /// What Lamp wrote for the kind it was (`was`), gone once the app is another kind.
     static func remove(from project: LampProject, was: Platform) {
         let page = page(for: was)
-        for path in [page.swift, GameAndroid.folder, page.marker] { AppFolder.remove(project.dir.appendingPathComponent(path), in: project.dir) }
+        for path in [page.swift, GameKit.location(page.swift), GameAndroid.folder, page.marker] { AppFolder.remove(project.dir.appendingPathComponent(path), in: project.dir) }
         GameKit.removePage(from: project)
     }
 
