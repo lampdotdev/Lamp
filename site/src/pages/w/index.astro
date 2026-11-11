@@ -82,8 +82,13 @@ import { DOWNLOAD_URL } from "../../lib/download";
          and the header away together (remembered in this browser), leaving only the wish, and from the same place
          brings both back. -->
     <div data-bar data-remix-band class="bar bar-bottom">
-    <aside class="remix-band h-16 border-t border-tape/15 bg-paper" aria-label="Make a change">
+    <aside class="remix-band relative h-16 border-t border-tape/15 bg-paper" aria-label="Make a change">
       <form data-prompt class="mx-auto flex h-full max-w-[44rem] items-center gap-3 py-3 pr-14 pl-3 sm:pl-6 lg:px-6">
+        <!-- The app's code on GitHub, when its maker put it there and it's public: at the band's left, or first in it where it's narrow. -->
+        <a data-github hidden target="_blank" rel="noopener" class="github-link" aria-label="Its code on GitHub">
+          <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" /></svg>
+          <span class="hidden sm:inline">GitHub</span>
+        </a>
         <!-- The box's questions and its button say what it's for; its label is for screen readers. -->
         <label for="change" class="sr-only">How would you make this better?</label>
         <div class="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-tape/15 bg-paper py-1 pr-1 pl-3 shadow-xs transition focus-within:border-tape/50 focus-within:ring-3 focus-within:ring-tape/10">
@@ -99,11 +104,6 @@ import { DOWNLOAD_URL } from "../../lib/download";
           <!-- Says who reads it, when the link names its maker: the box is a note to a person. -->
           <button type="submit" data-remix class="h-8 shrink-0 cursor-pointer rounded-md bg-tape px-3 text-sm font-semibold whitespace-nowrap text-paper transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tape/50"><span data-send-short class="sm:hidden">Send</span><span data-send-long class="hidden sm:inline">Send</span></button>
         </div>
-        <!-- The app's code on GitHub, when its maker put it there and it's public. -->
-        <a data-github hidden target="_blank" rel="noopener" class="github-link" aria-label="Its code on GitHub">
-          <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" /></svg>
-          <span class="hidden sm:inline">GitHub</span>
-        </a>
       </form>
     </aside>
     </div>
@@ -251,6 +251,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
   .github-link:hover { color: var(--color-ink); }
   .github-link[hidden] { display: none; }
   .github-link svg { width: 1.125rem; height: 1.125rem; fill: currentColor; }
+  /* Where the band has room either side of its box, at its left edge. */
+  @media (min-width: 64rem) { .github-link { position: absolute; left: 1.25rem; top: 50%; translate: 0 -50%; } }
 
   /* An idea that's in: a dark bar over the top of the app, closed with its ×. */
   .idea-in {
