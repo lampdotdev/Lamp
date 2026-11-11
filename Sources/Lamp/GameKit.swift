@@ -428,8 +428,9 @@ enum GameKit {
     static func removePage(from project: LampProject) {
         guard let page, let native else { return }
         AppFolder.remove(project.dir.appendingPathComponent(page.path), in: project.dir)
-        // Lamp's Swift for the page goes with it: a kind that hosts none has its own, where its kind keeps it.
-        AppFolder.remove(project.dir.appendingPathComponent(lampSwiftFolder), in: project.dir)
+        // Lamp's Swift for the page goes with it when the app's kind now hosts none (a Mac app keeps its own where its kind
+        // does). A page's kind it became has already written its own there, and taken the other kinds' away (`moveLampSwift`).
+        if !hostsPage(project) { AppFolder.remove(project.dir.appendingPathComponent(lampSwiftFolder), in: project.dir) }
         let own = project.dir.appendingPathComponent(native.path)
         if (try? String(contentsOf: own, encoding: .utf8)) == native.text { AppFolder.remove(own, in: project.dir) }
     }
