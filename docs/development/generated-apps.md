@@ -196,7 +196,7 @@ kept open, failed); Lamp renews it while the turn goes on and the app lets it go
 draws it in clear child windows that let clicks through and are left out of its pictures (`windowsOnScreen`), so the
 builder never sees it; requests are signed with the app's token, with their time and an id, and taken once. An app
 built before it has no `lampTransitionSignature` in its binary and is sent nothing: its next change reopens it with
-the new building blocks. How it looks is `LampTransition.Look` (TransitionLook.swift), compiled into Lamp too and copied into the template by `scripts/sync-transition-look.sh` (`TransitionLookTests` fails while they differ): change it there and try it in the gallery's Transition entries, over made-up app windows or on an open app.
+the new building blocks. How it looks is `LampTransition.Look` (TransitionLook.swift), compiled into Lamp too and copied into the template by `scripts/sync-transition-look.sh` (`TransitionLookTests` fails while they differ): change it there and try it in the gallery's Transition entries, over made-up app windows or on an open app. lamp dev draws the same light over the pages it serves (`light` in cli/page.js: the glow and smoke when a change comes, the stripes rolling while a game runs its code again or opens again, until its new code draws), so a change to how it looks goes there too.
 
 Where the chat goes (`LampSidebar.show`): always a panel of its own beside the window, never inside it (a column there
 took more room from the app than it gave the chat). It's a borderless `NSPanel` attached as the window's child
