@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { NOTES_FILE, Problem, RESOURCES, layoutOf, stateOf, logFileOf, serverFileOf, firstPortOf } from "./state.mjs";
 import { findBrowser, noBrowser, launch, keyNamed } from "./browser.mjs";
+import { answer as answerAI } from "./ai.mjs";
 
 const TYPES = {
   ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -662,6 +663,23 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       const beat = setInterval(() => response.write(": still here\n\n"), 20_000);
       request.on("close", () => { clearInterval(beat); if (pages.get(id) === page) pages.delete(id); });
       return;
+    }
+    // The page's AI (LampAI in lamp.js, through `lampGatewayHost` in page.js): answered here with the person's own
+    // Claude Code or Codex (ai.mjs), only for the page itself on this Mac. Never another site in the person's browser,
+    // which can't send this request's header from another origin, nor another device the server is open to with --lan.
+    if (request.method === "POST" && url.pathname === "/__lamp/ai") {
+      const from = request.socket.remoteAddress || "";
+      const local = from === "127.0.0.1" || from === "::1" || from === "::ffff:127.0.0.1";
+      const origin = request.headers.origin;
+      if (!local || request.headers["x-lamp-page"] !== "1" || (origin && new URL(origin).host !== request.headers.host)) {
+        return json(403, { status: 403, body: JSON.stringify({ error: "The AI answers only the page on this Mac." }) });
+      }
+      const asked = await body(request);
+      const path = typeof asked?.path === "string" ? asked.path : "";
+      let given = {};
+      try { given = typeof asked?.body === "string" ? JSON.parse(asked.body) : asked?.body ?? {}; } catch {}
+      const [status, reply] = await answerAI(path, given);
+      return json(200, { status, body: JSON.stringify(reply) });
     }
     if (request.method === "POST" && url.pathname.startsWith("/__lamp/")) {
       const message = await body(request);

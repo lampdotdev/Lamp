@@ -20,6 +20,25 @@
   };
   const said = message => post('said', message, true);
 
+  // MARK: The page's AI
+  // LampAI in lamp.js reaches Lamp's app through a host bridge when the app shows the page; here lamp itself answers
+  // (`/__lamp/ai`, with the person's own Claude Code or Codex), through the same shape of bridge lamp.js takes from
+  // Lamp's Android app: postMessage of a request, an onmessage with its answer.
+  if (!window.lampGatewayHost && !(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampGateway)) {
+    const gateway = { onmessage: null };
+    gateway.postMessage = (text) => {
+      let asked;
+      try { asked = JSON.parse(text); } catch (e) { return; }
+      const answer = (status, body) => { if (typeof gateway.onmessage === 'function') gateway.onmessage({ data: JSON.stringify({ id: asked.id, status, body }) }); };
+      const stop = new AbortController();
+      const timer = later(() => stop.abort(), Math.max(1000, Number(asked.timeout) || 240000));
+      ask('/__lamp/ai', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lamp-Page': '1' }, body: JSON.stringify({ path: asked.path, body: asked.body }), signal: stop.signal })
+        .then((r) => r.json()).then((r) => answer(r.status, r.body), () => answer(502, JSON.stringify({ error: 'lamp dev took too long to answer.' })))
+        .finally(() => unlater(timer));
+    };
+    try { Object.defineProperty(window, 'lampGatewayHost', { value: gateway, configurable: true }); } catch (e) {}
+  }
+
   // MARK: The card on a change
   // The same card Lamp's app puts on an open app as a change goes in (`LampTransition.Look`, TransitionLook.swift, which
   // says how it looks: keep the two in step), at the foot of the page: Lamp's mark turning, "Updating" and what's
