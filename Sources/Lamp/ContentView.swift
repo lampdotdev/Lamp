@@ -350,13 +350,21 @@ struct ImportReviewView: View {
                          trying: pending.trying, tryIt: store.confirmTrial, ownFolder: pending.outside != nil,
                          folderChange: pending.outside?.conversion.reviewLine,
                          progress: work?.failed == false ? work?.line : nil, failure: work?.failed == true ? work?.line : nil,
-                         retry: store.retryReview)
+                         retry: store.retryReview,
+                         keepEditing: keepEditing)
             .task { icon = await Sharing.icon(of: pending.package) }
+            .onDisappear { store.reviewClosed(pending.id) }
             .background(WindowFinder { sheet = $0; fit() })
             // The window can be moved or resized with the sheet down, and the Dock can come and go.
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMoveNotification)) { _ in fit() }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { _ in fit() }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in fit() }
+    }
+
+    /// Keep Editing, for a copy made for part of a suggested change only.
+    private var keepEditing: (() -> Void)? {
+        guard pending.prepared?.suggestion != nil else { return nil }
+        return { store.keepEditing() }
     }
 
     /// This sheet's review while it's made: its stage, or why it couldn't be.
@@ -418,6 +426,9 @@ struct ImportReviewCard: View {
     /// with Try Again. Nothing is checked, so nothing opens or updates.
     var failure: String? = nil
     var retry: () -> Void = {}
+    /// A copy made for part of a suggested change: Keep Editing closes the review and keeps the copy, to go on changing it
+    /// in its chat (`Store.keepEditing`). Nil for anything else, whose Cancel is the only way out.
+    var keepEditing: (() -> Void)? = nil
 
     /// The heights of what stays put, measured as laid out: the app's name and description at the top, the
     /// review's summary, the line about the copy already here when there is one, and the buttons.
@@ -647,6 +658,8 @@ struct ImportReviewCard: View {
             // (`ImportReview.opening`); anything less takes a deliberate click.
             Button("Cancel", role: .cancel, action: cancel)
                 .keyboardShortcut(.cancelAction)
+            // Neither Return nor Escape: keeping the copy to change it more is chosen with a click.
+            if let keepEditing { Button("Keep Editing", action: keepEditing) }
             if failure != nil {
                 // Nothing was checked: the one thing to do is check again.
                 Button("Try Again", action: retry)

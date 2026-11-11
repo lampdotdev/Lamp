@@ -49,6 +49,9 @@ front of the person: the desk says quietly that there are some, and the person g
      what was left out and what isn't checked yet. The person can keep talking in the copy's chat to change it; each
      turn that changes it reviews it again. The review is the update's: Update This App puts the copy in place as one
      version, named for the sender, which Undo takes back; Keep as Separate App and Cancel leave the app as it was.
+     Keep Editing, on this review only, closes it and keeps the copy as it is (`Store.keepEditing`), still unopened,
+     with its chat in front to ask for more. Its next turn that changes the copy reviews it again, and while it's idle
+     its chat offers Review Changes…, worked out from the copy's job, so it's there after a restart too.
      Part of a request never counts as brought in, so no release marks it merged, and the panel still offers it.
 
    The agent never copies a change in by itself.

@@ -514,7 +514,9 @@ turn ends, as an adapted wish's update is (`Store.prepareSuggestion`, an `AppUpd
 review is the update's. The copy gets the request laid out as an update's (`SuggestedChanges.layOutForCopy`: the
 whole diff, `latest/` with links left out, and `repo`, or nothing when a commit is missing), kept until the copy is
 put in place, kept or deleted, and any turn there that changes the copy or asks the person something is the part's
-(`AppUpdates.outcome`). Part of a request moves no credit and is never `accept`ed, so no release marks it merged.
+(`AppUpdates.outcome`). Its review alone has Keep Editing (`Store.keepEditing`), which closes it and keeps the copy, its
+job still ready, with the copy's chat in front; the chat offers Review Changes… while the copy is idle
+(`Store.offersReviewChanges`, from the job, so a restart keeps it), which reviews it afresh (`openPreparedReview`). Part of a request moves no credit and is never `accept`ed, so no release marks it merged.
 Bring Into My App in the panel asks the wish's chat what the request does (`talkAboutSuggestion`): the agent lists it,
 and the person says what they want. All of it
 is Bring In Changes with the request's head (`refs/pull/<n>/head`) in the repository's latest's place,

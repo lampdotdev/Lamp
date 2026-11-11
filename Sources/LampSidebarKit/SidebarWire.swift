@@ -107,6 +107,9 @@ public struct SidebarState: Codable, Equatable {
     /// Where the person was reading when this chat was last drawn anywhere: the first line in view, or nil at the end.
     /// A chat drawn again elsewhere (beside the app, in Lamp's panel) opens there (`SidebarCommand.scrolled`).
     public var readingAt: UUID?
+    /// Goes up when Lamp asks the message box to take the keyboard (after Keep Editing on a review, the person goes on
+    /// typing in the chat it brought forward).
+    public var focusBox: Int?
 
     public init(app: String, lines: [SidebarLine], working: String?, workingSince: Date?, empty: Bool, busy: Bool,
                 draft: String, draftVersion: Int, attachments: [SidebarAttachment]) {

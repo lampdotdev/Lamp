@@ -4357,6 +4357,32 @@ final class Store: ObservableObject {
         pendingImport = nil
     }
 
+    /// Keep Editing, on the review of a copy made for part of someone's suggested change: the review closes and the copy
+    /// stays as it is (its code, chat, draft and waiting messages, what was laid out for it in .lamp/update/, and its job,
+    /// still ready), so the person can go on asking for changes in its chat. A check still running is stopped and the
+    /// package unpacked for the review goes, as on Cancel, but nothing of the copy does. It still isn't opened until it's
+    /// reviewed (`AppUpdates.mayOpen`); a turn that changes it reviews it again, and its chat offers Review Changes… meanwhile.
+    func keepEditing() {
+        guard let pending = pendingImport, pending.prepared?.suggestion != nil, let copy = pending.copy else { return }
+        endReview()
+        try? FileManager.default.removeItem(at: pending.package.folder)
+        editingAfterReview = (pending.id, copy)
+        pendingImport = nil
+    }
+
+    /// The copy whose chat comes forward once the review Keep Editing closed has gone from the screen (`reviewClosed`).
+    private var editingAfterReview: (sheet: UUID, copy: String)?
+
+    /// A review's sheet has gone from the screen. After Keep Editing, the copy's chat comes forward with its box ready to
+    /// type in: not before, since the sheet's window would take the keyboard back as the sheet went.
+    func reviewClosed(_ sheet: UUID) {
+        guard let after = editingAfterReview, after.sheet == sheet else { return }
+        editingAfterReview = nil
+        guard projects.contains(where: { $0.id == after.copy }) else { return }
+        showChat(after.copy)
+        SidebarServer.shared.focusBox(of: after.copy)
+    }
+
     func confirmImport() {
         guard let pending = pendingImport else { return }
         // Marked before the review closes, which would otherwise tell the agent's folder the person said no.
