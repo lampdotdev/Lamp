@@ -211,20 +211,22 @@ final class SharingScreenTests: XCTestCase {
         XCTAssertFalse(changed.truncated)
     }
 
-    /// On GitHub, a screen's repository holds its page and Native.swift with Lamp's files around them, so it builds as
-    /// it is; opened from there, only the sender's code is read, and Lamp's files are the ones an update leaves out.
-    func testAScreensRepositoryBuildsOnItsOwnAndOpensAsAScreen() throws {
+    /// On GitHub, a screen's repository holds its page and Native.swift, with lamp.js and what builds it but none of
+    /// Lamp's Swift; opened from there, only the sender's code is read, and Lamp's files are the ones an update leaves out.
+    func testAScreensRepositoryHoldsItsOwnCodeAndOpensAsAScreen() throws {
         let fm = FileManager.default
         let screen = try homeHQ(.screen)
         let staged = try GitHubRepo.stage(screen, repo: "someone/homehq", link: nil)
         defer { try? fm.removeItem(at: staged.folder.deletingLastPathComponent()) }
         func has(_ path: String) -> Bool { fm.fileExists(atPath: staged.folder.appendingPathComponent(path).path) }
         for path in ["Web/index.html", "Web/js/app.js", "Sources/Native.swift", "Web/LICENSE-photo-frame-dashboard",
-                     TVTemplate.supportFile, ScreenKit.screenPage.swift, "Sources/LampPage.swift", "Sources/LampSupport.swift",
-                     "build.sh", "Package.swift", ScreenKit.marker, "lamp-app.json", Credits.file, "README.md"] {
+                     TVTemplate.supportFile, "build.sh", "Package.swift", ScreenKit.marker, "lamp-app.json", Credits.file, "README.md"] {
             XCTAssertTrue(has(path), path)
         }
-        XCTAssertFalse(has(ScreenKit.webAppPage.swift))
+        // Lamp's Swift is kept beside what the app builds, never with its code: none of it goes up.
+        for path in [ScreenKit.screenPage.swift, ScreenKit.webAppPage.swift, "Sources/LampPage.swift", "Sources/LampSupport.swift", GameKit.lampSwiftFolder] {
+            XCTAssertFalse(has(path), path)
+        }
         XCTAssertFalse(has(".lamp"))
         XCTAssertFalse(try fm.contentsOfDirectory(atPath: staged.folder.path).contains { $0.hasSuffix(".lampapp") })
 

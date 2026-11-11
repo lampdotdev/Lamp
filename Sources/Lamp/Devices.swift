@@ -181,8 +181,11 @@ enum Devices {
         try Template.writeDeviceProject(for: project, team: team, in: dir, reading: files, wishKey: wishKey)
         let names = ["Sources", Sharing.Assets.folder, Template.widgetFolder, Template.shareFolder, Template.watchFolder]
             + (Template.showsPage(project) ? [TVTemplate.webFolder] : [])
+        // A page's app keeps Lamp's Swift beside what it builds (`GameKit.lampSwiftFolder`): it goes in with the app's own.
+        let lampSwift = Sandbox.quoted(GameKit.hostsPage(project) ? GameKit.lampSwiftFolder : "")
         let copy = "cd \"$LAMP_FROM\" && for name in \(names.map(Sandbox.quoted).joined(separator: " ")); do "
             + "if [ -e \"$name\" ] || [ -L \"$name\" ]; then /bin/cp -Rp \"$name\" \"$LAMP_TO/\" || exit 1; fi; done"
+            + " && if [ -d \(lampSwift) ]; then /bin/mkdir -p \"$LAMP_TO/Sources\" && /bin/cp -Rp \(lampSwift)/. \"$LAMP_TO/Sources/\" || exit 1; fi"
         guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [files.path]) else {
             throw Failure(message: "Lamp couldn't copy the app's files to build it.")
         }

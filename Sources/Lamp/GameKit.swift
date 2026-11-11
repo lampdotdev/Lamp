@@ -315,6 +315,28 @@ enum GameKit {
         (isGame(project) && engine(project) == .web) || ScreenKit.isScreen(project)
     }
 
+    /// Where Lamp keeps its own Swift for a page's app (a web game's, a screen's): in the ignored build/ folder, never in
+    /// the app's Sources/, so the app's code is its page and the Swift of its own alone, in its folder, its versions and
+    /// on GitHub. Written afresh before every build, compiled from there by the app's Package.swift and copied in beside
+    /// the app's own Swift for a phone's build (`Devices`). Copies an earlier Lamp left in Sources/ go (`moveLampSwift`).
+    static let lampSwiftFolder = "build/lamp-swift"
+
+    /// Where one of Lamp's files for a page's app is kept: its Swift in `lampSwiftFolder`, the rest where it was.
+    static func location(_ path: String) -> String {
+        guard path.hasPrefix("Sources/"), path.hasSuffix(".swift"), ownSwift.contains(String(path.dropFirst("Sources/".count))) else { return path }
+        return lampSwiftFolder + "/" + String(path.dropFirst("Sources/".count))
+    }
+
+    /// Takes Lamp's Swift an earlier Lamp kept in the app's Sources/ away, now it's kept in `lampSwiftFolder`; and of that
+    /// folder, what isn't the app's kind's now (`keeping`, names of `ownSwift`), so a kind it was (a screen's host, beside a
+    /// game's) isn't compiled with it.
+    static func moveLampSwift(of project: LampProject, keeping: Set<String>) {
+        for name in ownSwift {
+            AppFolder.remove(project.dir.appendingPathComponent("Sources/" + name), in: project.dir)
+            if !keeping.contains(name) { AppFolder.remove(project.dir.appendingPathComponent(lampSwiftFolder + "/" + name), in: project.dir) }
+        }
+    }
+
     /// Lamp's own Swift in a page's app: the player has all of it. `Native.swift` too while it's still Lamp's.
     static let ownSwift: Set<String> = Set(["Sources/LampSupport.swift", "Sources/LampPage.swift", "Sources/LampGame.swift", "Sources/LampControllerKit.swift",
                                                      ScreenKit.screenPage.swift, ScreenKit.webAppPage.swift].map { String($0.dropFirst("Sources/".count)) })
@@ -364,8 +386,8 @@ enum GameKit {
     /// Writes the page's bridge, and the app's `Native` when it has none.
     static func writePage(for project: LampProject) throws {
         guard let page, let native, let controllerKit else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
-        try Template.write(pageText(page.text, for: project), to: page.path, for: project)
-        try Template.write(controllerKit.text, to: controllerKit.path, for: project)
+        try Template.write(pageText(page.text, for: project), to: location(page.path), for: project)
+        try Template.write(controllerKit.text, to: location(controllerKit.path), for: project)
         if !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(native.path).path) {
             try Template.write(native.text, to: native.path, for: project)
         }
@@ -406,6 +428,9 @@ enum GameKit {
     static func removePage(from project: LampProject) {
         guard let page, let native else { return }
         AppFolder.remove(project.dir.appendingPathComponent(page.path), in: project.dir)
+        // Lamp's Swift for the page goes with it when the app's kind now hosts none (a Mac app keeps its own where its kind
+        // does). A page's kind it became has already written its own there, and taken the other kinds' away (`moveLampSwift`).
+        if !hostsPage(project) { AppFolder.remove(project.dir.appendingPathComponent(lampSwiftFolder), in: project.dir) }
         let own = project.dir.appendingPathComponent(native.path)
         if (try? String(contentsOf: own, encoding: .utf8)) == native.text { AppFolder.remove(own, in: project.dir) }
     }
@@ -431,8 +456,10 @@ enum GameKit {
             hasher.update(data: Data(name.utf8))
             hasher.update(data: AppFile.read(project.dir.appendingPathComponent(name), in: project) ?? Data())
         }
-        let root = project.dir.appendingPathComponent("Sources")
-        let files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []).sorted { $0.path < $1.path }
+        // The app's own Swift, and Lamp's beside what it builds (`lampSwiftFolder`): a Lamp with new Swift builds it again.
+        let files = ["Sources", lampSwiftFolder].flatMap { folder in
+            FileManager.default.enumerator(at: project.dir.appendingPathComponent(folder), includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
+        }.sorted { $0.path < $1.path }
         for file in files {
             hasher.update(data: Data(file.path.utf8))
             hasher.update(data: AppFile.read(file, in: project) ?? Data())
@@ -690,10 +717,11 @@ enum GameKit {
 
     /// Every path Lamp owns in a game, as written in its folder.
     static func paths(for project: LampProject) -> [String] {
-        let common = ["Sources/LampSupport.swift", "build.sh", "Package.swift", marker]
+        let common = [location("Sources/LampSupport.swift"), "build.sh", "Package.swift", marker]
         // A C++ game made before three.js games is the kit's alone, played on the Xbox.
         guard engine(project) == .web else { return files.map { "\(folder)/\($0.name)" } + ["\(folder)/kit.stamp", marker] }
-        return webFiles.map(\.path) + [page?.path ?? "Sources/LampPage.swift", controllerKit?.path ?? "Sources/LampControllerKit.swift", "\(webFolder)/lamp.js", controllersFile] + DeviceSupport.threeFiles.map { "\(webFolder)/three/\($0.name)" }
+        return (webFiles.map(\.path) + [page?.path ?? "Sources/LampPage.swift", controllerKit?.path ?? "Sources/LampControllerKit.swift"]).map(location)
+            + ["\(webFolder)/lamp.js", controllersFile] + DeviceSupport.threeFiles.map { "\(webFolder)/three/\($0.name)" }
             + DeviceSupport.rapierFiles.map { "\(rapierFolder)/\($0.name)" }
             + DeviceSupport.phaserFiles.map { "\(phaserFolder)/\($0.name)" } + common
             + GameAndroid.paths(for: project)
@@ -704,9 +732,11 @@ enum GameKit {
     static func write(for project: LampProject) throws {
         let engine = engine(project)
         if engine == .web {
-            try Template.put(Template.lampSupportSwift(for: project), at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
+            moveLampSwift(of: project, keeping: Set(([page?.path, controllerKit?.path, "Sources/LampSupport.swift"].compactMap { $0 } + webFiles.map(\.path))
+                .filter { $0.hasSuffix(".swift") }.map { ($0 as NSString).lastPathComponent }))
+            try Template.put(Template.lampSupportSwift(for: project), at: project.dir.appendingPathComponent(location("Sources/LampSupport.swift")), for: project)
             guard webFiles.count == 3, !DeviceSupport.threeFiles.isEmpty, !DeviceSupport.phaserFiles.isEmpty else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
-            for file in webFiles { try Template.write(file.text, to: file.path, for: project) }
+            for file in webFiles { try Template.write(file.text, to: location(file.path), for: project) }
             // The controllers lamp-game.js names buttons for. The device the page is on isn't written here: each copy of
             // the page gets its own (`GamePage`).
             try Template.put(Controllers.pageJS, at: project.dir.appendingPathComponent(controllersFile), for: project)
@@ -759,7 +789,7 @@ enum GameKit {
     /// Takes Lamp's game files out of an app that's no longer a game, so its next kind builds without them; the
     /// game's own code in Game/ is the agent's to move and delete.
     static func remove(from project: LampProject) {
-        for path in [folder, "Sources/LampGame.swift", "\(webFolder)/lamp-game.js", phaserRuntime, controllersFile, "\(webFolder)/three", rapierFolder, phaserFolder, marker] {
+        for path in [folder, "Sources/LampGame.swift", location("Sources/LampGame.swift"), "\(webFolder)/lamp-game.js", phaserRuntime, controllersFile, "\(webFolder)/three", rapierFolder, phaserFolder, marker] {
             AppFolder.remove(project.dir.appendingPathComponent(path), in: project.dir)
         }
         removePage(from: project)
@@ -925,7 +955,8 @@ enum GameKit {
     let package = Package(
         name: "{{EXE}}",
         platforms: [.macOS(.v14), .iOS(.v17)],
-        targets: [.executableTarget(name: "{{EXE}}", path: "Sources")]
+        // The app's own Swift in Sources/, and Lamp's beside what it builds (`GameKit.lampSwiftFolder`).
+        targets: [.executableTarget(name: "{{EXE}}", path: ".", sources: ["Sources", "build/lamp-swift"])]
     )
 
     """
@@ -988,6 +1019,8 @@ enum GameKit {
       if [[ "$PLACE" != "ios" && -n "${LAMP_SWIFT_BUILT:-}" && -f .build/lamp-mac-bin ]] && BIN="$(<.build/lamp-mac-bin)" && [[ -x "$BIN" ]]; then
         :
       else
+        # Lamp's own Swift is kept beside what it builds, written before each build of Lamp's.
+        if [[ ! -f build/lamp-swift/LampSupport.swift ]]; then echo "Lamp's own Swift isn't in build/lamp-swift: build the app from Lamp, which writes it first." >&2; exit 1; fi
         BIN="$(swift build "${FLAGS[@]}" --show-bin-path)/{{EXE}}"
         swift build "${FLAGS[@]}" 2>&1
         [[ "$PLACE" == "ios" ]] || print -r -- "$BIN" > .build/lamp-mac-bin
@@ -1346,7 +1379,7 @@ extension Agent.Rules {
     - The person's own things (their mail, calendar, reminders, contacts, photos, where they are) are read by the app \
     around the page, not by the page: register a call in Sources/Native.swift, yours, inside `Native.register()` \
     (`LampNative.on("unanswered") { args in … }`, Swift returning anything Encodable, with Lamp's building blocks in \
-    Sources/LampSupport.swift: LampMail on the Mac, LampCalendar, LampReminders, LampContacts, LampPhotos, \
+    build/lamp-swift/LampSupport.swift: LampMail on the Mac, LampCalendar, LampReminders, LampContacts, LampPhotos, \
     LampLocation…; read their doc comments there), and ask for it from the page with \
     `LampNative.call("unanswered", { limit: 30 })`, a Promise of the JSON it returned. Return only what the page \
     shows. AI in the page is LampAI from Web/lamp.js (read it), which reaches Lamp through the app. Both answer only in \

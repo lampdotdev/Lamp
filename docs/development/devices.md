@@ -474,7 +474,7 @@ screen is: in its window on this Mac while that's open or Try On points at the M
 Xbox's web app ("Where the agent looks at it", under "Screens"), and its rules say so (`Rules.gameOwnLoop`, `gameOwnLoopTry`).
 
 On the Mac and on iOS a web game is an app like any other Lamp makes, of Lamp's own (`GameKit.webPackageSwift`,
-`GameKit.webBuildSh`, `Sources/LampGame.swift`, `LampPage.swift` and LampSupport.swift, none the agent's), so its Mac copy
+`GameKit.webBuildSh`, and `LampGame.swift`, `LampPage.swift` and LampSupport.swift in `build/lamp-swift/`, none the agent's), so its Mac copy
 is installed, opened, quit and shown on the desk as a Mac app is, with the wand floating over its full-bleed window and
 the chat beside it. A three.js or Phaser game isn't built live as a Mac app is (`LiveReload.eligible`, `Target.hostedByLamp`):
 a change of its page goes into the open game instead (`PageLive`, below), and any other change (its Swift, Package.swift,
@@ -993,7 +993,7 @@ A kind that takes places has what its places give it, not what its kind could (`
 
 **What a page can reach.** A web game's page and a screen's have Lamp's web building blocks in `Web/lamp.js`
 (`DeviceSupport.webJS`, written for a game on the Mac too, not only on the Xbox), and on the Mac, iPhone and iPad the
-app around the page answers for them (`Sources/LampPage.swift`, `LampPage.attach`, Lamp's common host, shared by
+app around the page answers for them (`LampPage.swift` in `build/lamp-swift/`, `LampPage.attach`, Lamp's common host, shared by
 `LampWebGame.swift` and `LampWebApp.swift`): LampAI's calls go through the app to Lamp with the app's own token (`lampGateway`, only the AI
 routes, `/ai`, `/ai/status`, `/ai/image`, `/ai/decide`, `/ai/act` and `/ai/hear`, the same list as Android's `LampPageGateway.kt` and the TV preview's,
 only from the app's own page; the page's voice, `LampVoice` in lamp.js, is answered there too: `LampPageVoice` in LampPage.swift records with

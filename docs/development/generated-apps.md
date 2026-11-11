@@ -4,7 +4,10 @@ One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the r
 
 Lamp owns three files in every app and never trusts what's in them: `Sources/LampSupport.swift`, `build.sh`
 and `Package.swift` are written afresh before every build (`Template.writeOwnedFiles`), and the build stops if
-that fails. The last two are what the build runs (the shell runs build.sh; SwiftPM compiles and executes
+that fails. A page's app (a web game, a screen, a web app) keeps Lamp's Swift out of its folder's code instead: LampSupport.swift
+and the app around the page are written into `build/lamp-swift/` (`GameKit.lampSwiftFolder`, ignored like the rest of
+build/), which its Package.swift compiles beside its own Sources/, so the app's code, versions and GitHub repository are its
+page and its own Swift alone. The last two are what the build runs (the shell runs build.sh; SwiftPM compiles and executes
 Package.swift as a program), so they're replaced rather than checked: nothing the agent's file tools wrote
 into them, with no card, can run. Shared apps never carry them: import writes its own.
 What a shared file says still reaches build.sh: the app's name and its permission reasons. They are never pasted into
