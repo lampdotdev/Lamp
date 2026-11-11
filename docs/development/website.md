@@ -45,15 +45,14 @@ those a kind of app or a shipped device integration really reaches. The newest v
 changelog page (`/changelog`), so release notes are written in one place; a build without them leaves those out and
 points to GitHub's releases.
 
-Use with ChatGPT (`ChatGPTDialog.astro`) is there from the start, so nobody has to find the download in the demo first.
-It opens a plain card, dressed as the remix card is, that hands ChatGPT's Mac app a prompt to set up lamp's command line
-(`cli/README.md`) and work with it: Open in ChatGPT, OpenAI's documented `codex://new?prompt=` link, which puts the
-prompt in a new chat's message box without sending it; Copy the prompt, for ChatGPT or any agent that runs commands on
-the Mac; the prompt itself to select by hand; and a link to get ChatGPT's app. The link doesn't choose the chat's mode,
-so the card says to choose Codex. A page can't tell whether the app is there (Safari calls the address invalid when
-it isn't), so the card keeps all three ways in sight rather than guessing. The prompt is written once, in
-`src/lib/chatgpt.ts`, and the card, the copy and the link all take it from there; it runs `lamp guide` as well as
-`lamp setup`, since setup writes its skill only where an agent's folder already exists.
+Use with ChatGPT (`ChatGPTButton.astro`) is there from the start, so nobody has to find the download in the demo first.
+The button is OpenAI's documented `codex://new?prompt=` link: one click opens a new chat in ChatGPT's Mac app with a
+prompt to set up lamp's command line (`cli/README.md`) in its message box, never sent. The link doesn't choose the
+chat's mode, so the prompt says to switch to Codex when it can't run commands. A page can't tell whether the app is
+there (Safari calls the address invalid when it isn't), so one small line under the button gets the app or copies
+the prompt, for any agent that runs commands on the Mac; where copying is refused, the prompt appears selected to
+copy by hand. The prompt is written once, in `src/lib/chatgpt.ts`, for the link and the copy alike; it runs
+`lamp guide` as well as `lamp setup`, since setup writes its skill only where an agent's folder already exists.
 
 A link from a Remix panel or a repository's README (`?ask=`, with `starter=` or `repo=` and `commit=` when it names
 what it's a copy of, and `from=` where it was pressed) opens the homepage's remix dialog (`RemixDialog.astro`,

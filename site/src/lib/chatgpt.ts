@@ -1,6 +1,6 @@
 // "Use with ChatGPT": the homepage hands this prompt to ChatGPT's Mac app, whose Codex runs commands on the Mac and
 // so can install lamp's command line (cli/README.md, "For a coding agent") and work with it. The one copy of the
-// prompt: the panel shows it, copies it and puts it in the link, so all three are always the same words.
+// prompt: the button's link carries it and "copy the prompt" copies it, so both are always the same words.
 //
 // `lamp guide` is a required step, not an extra: `lamp setup` only writes its skill where an agent's folder already
 // exists, and succeeds without writing anything when none does, so the guide is what this chat itself works from.
@@ -13,7 +13,8 @@ export const SETUP_PROMPT = `Set up Lamp's command line on this Mac so you can m
 5. Then ask me what I'd like to make.`;
 
 // OpenAI documents this link for the ChatGPT Mac app (it kept Codex's scheme): it opens a new chat with the prompt in
-// the message box and never sends it. It doesn't say which mode the chat opens in, so the panel says to choose Codex.
+// the message box and never sends it. It doesn't say which mode the chat opens in, so the prompt itself says to
+// switch to Codex when it can't run commands.
 export const CODEX_LINK = `codex://new?prompt=${encodeURIComponent(SETUP_PROMPT)}`;
 
 // OpenAI's page for getting the ChatGPT apps, the Mac's among them.
