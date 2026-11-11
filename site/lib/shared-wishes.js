@@ -802,15 +802,16 @@ export function playOrigin(base, id) {
  */
 export const DIRECT_FILE = 9_000_000;
 /**
- * A file of data a game reads with fetch (map tiles, models, sound, JSON) is played straight from the store from this
- * size: the store's CDN serves it to any page (CORS for all), keeps it whatever the site deploys, and the play host
- * reads nothing for it. The play host reading a game's hundreds of files from the store in bursts is what the store
+ * A file of data a game reads with fetch (map tiles, models, sound, JSON) is played straight from the store, whatever
+ * its size: the store's CDN serves it to any page (CORS for all), keeps it whatever the site deploys, and the play host
+ * reads nothing for it. A game may have hundreds of small ones (a map's tiles), all asked for again after each deploy.
+ * From 1 byte, so only for a page kept with each file's size and type (`page.sizes`). The play host reading a game's hundreds of files from the store in bursts is what the store
  * turned away (403) until the game didn't load. Not a script or a style sheet, whose own imports would then resolve
  * at the store, nor a picture, which a game may draw from without asking for it cross-origin. Only when the page
  * fetched it (`Sec-Fetch-Mode: cors`): a video or sound an element of the page loads (no-cors), drawn into WebGL or
  * played through Web Audio, works only from the page's own origin.
  */
-export const DIRECT_DATA = 64_000;
+export const DIRECT_DATA = 1;
 const DATA_FILE = /\.(bin|gz|br|zst|json|geojson|csv|txt|glb|gltf|ktx2|basis|drc|wasm|mp3|ogg|m4a|wav|aac|flac|opus|mp4|webm|mov)$/i;
 
 /** How long a link's record is remembered for serving its page's files, and how many links at once. */
