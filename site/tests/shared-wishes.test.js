@@ -375,6 +375,15 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   assert.equal(big.headers.get("vary"), "Sec-Fetch-Dest");
   assert.notEqual((await ask("lamp.js", "worker")).status, 302, "a worker's script stays on the page's origin");
   assert.equal((await ask("index.html")).status, 200, "never a page's HTML");
+  // A game's data goes to the store from a much smaller size; its scripts don't.
+  const data = createPlayHandler({ store, env, direct: 1e9, directData: 5, now: () => (later += 61_000) });
+  const pageNow = store.records.get(id).page;
+  pageNow.files["map.bin"] = "https://store.example/map.bin";
+  pageNow.sizes = { ...pageNow.sizes, "map.bin": 10, "lamp.js": 10 };
+  const asked = (path) => data(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=${path}`));
+  assert.equal((await asked("map.bin")).headers.get("location"), "https://store.example/map.bin");
+  assert.notEqual((await asked("lamp.js")).status, 302, "a script stays where its imports resolve");
+  delete pageNow.files["map.bin"];
   stored["lamp.js"] = kept;
   const without = await (await createPageHandler({ store, env: {}, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
   assert.doesNotMatch(without, /"play"/, "with no play host, nothing plays");
@@ -477,15 +486,15 @@ test("ideas reach the link's maker, and only the maker reads them", async () => 
   assert.equal(mails.length, 2);
   assert.equal(mails[1][1].to[0], "someone@example.com");
   // The sender's browser asks after its own ideas, by number and token, and hears only their outcome.
-  const kept1 = await (await post({ text: "A lighthouse on the point" })).json();
+  const pageNow = await (await post({ text: "A lighthouse on the point" })).json();
   const kept2 = await (await post({ text: "Fog in the mornings" })).json();
   const mine = async (pairs) => (await (await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&mine=${pairs}`))).json()).ideas;
-  assert.deepEqual(await mine(`${kept1.n}.${kept1.token},${kept2.n}.${kept2.token}`), [{ n: kept1.n, status: "open" }, { n: kept2.n, status: "open" }]);
-  assert.deepEqual(await mine(`${kept1.n}.${"x".repeat(16)}`), [], "only with its token");
-  await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${kept1.n}&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
+  assert.deepEqual(await mine(`${pageNow.n}.${pageNow.token},${kept2.n}.${kept2.token}`), [{ n: pageNow.n, status: "open" }, { n: kept2.n, status: "open" }]);
+  assert.deepEqual(await mine(`${pageNow.n}.${"x".repeat(16)}`), [], "only with its token");
+  await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${pageNow.n}&built=1`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
   await built(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${kept2.n}`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
-  assert.deepEqual((await mine(`${kept1.n}.${kept1.token},${kept2.n}.${kept2.token}`)).map((one) => one.status), ["in", "dismissed"]);
-  assert.ok(!(await (await list()).json()).ideas.some((one) => one.n === kept1.n || one.n === kept2.n), "the maker sees only those still open");
+  assert.deepEqual((await mine(`${pageNow.n}.${pageNow.token},${kept2.n}.${kept2.token}`)).map((one) => one.status), ["in", "dismissed"]);
+  assert.ok(!(await (await list()).json()).ideas.some((one) => one.n === pageNow.n || one.n === kept2.n), "the maker sees only those still open");
   // Dealing with ideas makes room for more: the cap counts those still open.
   const full = memoryStore();
   const { id: fullID, secret: fullSecret } = await (await send(createShareHandler({ store: full, limited: false }), "POST", share)).json();
