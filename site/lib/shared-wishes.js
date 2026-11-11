@@ -347,35 +347,37 @@ export function cloudStore(env, fetcher = fetch) {
     },
     // A page's file as it comes, passed on without being held whole: a big one (a game's map data, tens of MB) is more
     // than a function's answer may hold at once, and more than it can read in the time a whole read is given.
-    // The store turns a plain read from Lamp's own functions away at times (403, 429 or a 5xx), many at once while a
-    // game asks for its files: such a read is asked again signed in as the project, whose reads the store keeps
-    // serving, and tried again a little later after that, rather than answered as missing.
+    // A small one is kept in the instance after its first read (`remembered`): a page's files never change, and a game
+    // asks for some many times over (a worker's script, under an address of its own each time), which the CDN can't
+    // keep. The store turns this function's reads away for a while when they come in bursts (403), and asking again
+    // soon only keeps that going: a refused read is asked once more, a second later, and said with what the store
+    // gave as its reason.
     async openFile(url) {
       const address = new URL(url);
       if (address.protocol !== "https:" || !address.hostname.endsWith(".public.blob.vercel-storage.com")) throw new Error("Not the store's");
+      const kept = remembered.get(url);
+      if (kept) { remembered.delete(url); remembered.set(url, kept); return { body: kept, length: String(kept.length) }; }
       let said = null;
-      const headersInTime = async (ask) => {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        if (attempt > 1) await new Promise((done) => setTimeout(done, 1000 + Math.random() * 500));
+        // The time limit is for the store to start answering: a big file's body may take longer to pass on.
         const waiting = new AbortController();
         const timer = setTimeout(() => waiting.abort(), 10000);
-        try { return await ask(waiting.signal); } finally { clearTimeout(timer); }
-      };
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        if (attempt > 1) await new Promise((done) => setTimeout(done, 200 * 3 ** (attempt - 2) + Math.random() * 100));
-        try {
-          // The time limit is for the store to start answering: a big file's body may take longer to pass on.
-          const response = await headersInTime((signal) => fetcher(url, { redirect: "error", signal }));
-          if (response.ok && response.body) return { body: response.body, length: response.headers.get("content-length") };
-          try { await response.body?.cancel(); } catch {}
-          said = `${response.status}${response.headers.get("x-vercel-error") ? ` ${response.headers.get("x-vercel-error")}` : ""}`;
-          if (response.status === 404) break;
-          if (!(response.status === 403 || response.status === 429 || response.status >= 500)) break;
-        } catch (error) { said = error?.message ?? String(error); }
-        try {
-          const { get } = await import("@vercel/blob");
-          const blob = await headersInTime((abortSignal) => get(url, { access: "public", abortSignal, ...auth }));
-          if (blob?.stream) return { body: blob.stream, length: blob.headers.get("content-length") };
-          if (blob === null) { said = "404"; break; }
-        } catch (error) { said = `${said}; signed in: ${error?.message ?? error}`; }
+        let response;
+        try { response = await fetcher(url, { redirect: "error", signal: waiting.signal }); }
+        catch (error) { said = error?.message ?? String(error); continue; }
+        finally { clearTimeout(timer); }
+        const length = response.headers.get("content-length");
+        if (response.ok && response.body) {
+          if (length === null || Number(length) > REMEMBERED_FILE) return { body: response.body, length };
+          const bytes = Buffer.from(await response.arrayBuffer());
+          remember(url, bytes);
+          return { body: bytes, length: String(bytes.length) };
+        }
+        let words = "";
+        try { words = (await response.text()).slice(0, 100).replace(/\s+/g, " "); } catch {}
+        said = [response.status, response.headers.get("x-vercel-error"), response.headers.get("x-vercel-mitigated") && `mitigated ${response.headers.get("x-vercel-mitigated")}`, words && `"${words}"`].filter(Boolean).join(" ");
+        if (!(response.status === 403 || response.status === 429 || response.status >= 500)) break;
       }
       throw new Error(`Part unavailable (${said})`);
     },
@@ -388,6 +390,21 @@ export function cloudStore(env, fetcher = fetch) {
       } catch {}
     },
   };
+}
+
+// A page's small files, as read from the store by this instance, the most recently served last: at most REMEMBERED in
+// all, the least recently served going first.
+const REMEMBERED = 96 * 1024 * 1024, REMEMBERED_FILE = 2 * 1024 * 1024;
+const remembered = new Map();
+let rememberedBytes = 0;
+function remember(url, bytes) {
+  remembered.set(url, bytes);
+  rememberedBytes += bytes.length;
+  for (const [oldest, kept] of remembered) {
+    if (rememberedBytes <= REMEMBERED) break;
+    remembered.delete(oldest);
+    rememberedBytes -= kept.length;
+  }
 }
 
 /** Kept in memory, for `npm run dev` and the tests: pictures as data: URLs, so nothing else needs serving. */
