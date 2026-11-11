@@ -215,14 +215,12 @@ test("what's taken is at most 4,000,000 bytes of UTF-8 HTML, and the source is r
   assert.match((await relay.played(room.room, 2)).csp, /; sandbox allow-scripts allow-same-origin/);
 });
 
-test("a room playing a game of several files doesn't take or give one file", async () => {
+// An AI app reads and sends the game as one file, so a room for one is refused at once for a game of several files
+// (from a stale page or a typed address), rather than the app failing at its first read.
+test("a room for an AI app isn't opened on a game of several files", async () => {
   const relay = await started();
-  const room = (await relay.call("open", { origin: SITE, body: { wish: WISH, mode: "post" } })).body;
-  assert.equal(room.version, 1);
-  for (const method of ["GET", "POST"]) {
-    const response = await relay.handler(new Request(`${SITE}/api/relay?op=game&room=${room.room}`, {
-      method, headers: { Authorization: `Bearer ${room.postKey}`, "If-Match": '"1"' }, ...(method === "POST" ? { body: page("x") } : {}),
-    }));
-    assert.equal(response.status, 409);
-  }
+  const opened = await relay.call("open", { origin: SITE, body: { wish: WISH, mode: "post" } });
+  assert.equal(opened.status, 422);
+  assert.equal(opened.body.error, "not_one_file");
+  assert.equal((await relay.call("open", { origin: SITE, body: { wish: WISH } })).status, 200, "the helper still takes it");
 });

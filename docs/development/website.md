@@ -81,7 +81,8 @@ else Email me the link, since it opens with Lamp on a Mac. It's never an empty p
 turning in it as its placeholder and a send button that opens Remix with what's written, or else the change it shows.
 A chevron at the window's right, centered on the band, slides it and the header out of the window together (remembered in that
 browser), the wish growing to the whole window on black, and from the same place brings both back. The change dialog is a plain card on the paper: the change, one line on Lamp, and
-Get Lamp and Open in Lamp (on a Mac). As the page opens the wish fades up and the band after it; the wish's frame is
+Get Lamp and Open in Lamp (on a Mac). Under the change, a quiet fold, "I want to make this change myself", offers
+ChatGPT or Claude Code to make it in the player's own copy, for a game of one file (`site/RELAY.md`). As the page opens the wish fades up and the band after it; the wish's frame is
 black until the page in it draws; where less motion is asked for, it's simply there. The ideas page is on the same paper: the categories as plain tabs, the ideas as flat cards with
 a thin edge, and its first-idea section a plain ink card. An opened idea (`WishDialog.astro`) says what it is, that it's an
 idea for Lamp to make (waiting when Lamp opens), and how to get it. What Lamp is asked stays out of sight; only words

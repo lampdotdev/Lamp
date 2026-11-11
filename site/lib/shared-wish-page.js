@@ -74,6 +74,8 @@ export function wishPage(template, wish, { origin, playOrigin = null }) {
     releases: wish.releases ?? [], picture: wish.picture?.url ?? "", icon: wish.icon?.url ?? "",
     ...(wish.file?.url ? { file: wish.file.url, fileSize: wish.file.size, shared: wish.id } : {}),
     ...(plays ? { play: `${playOrigin}/w/${wish.id}/play/${wish.page.version}/`, ...(wish.shape ? { shape: wish.shape } : {}) } : {}),
+    // A page of one file can be changed by the player's own AI app (the change page), so the idea's dialog offers it.
+    ...(plays && wish.page.oneFile ? { oneFile: true } : {}),
   }).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   return head
     .replace("</head>", () => `${previewTags(wish, origin)}</head>`)

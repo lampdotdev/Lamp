@@ -1,6 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
-import { CHATGPT_APP_URL } from "../lib/change-words";
+import { CHATGPT_APP_URL, CLAUDE_CODE_URL } from "../lib/change-words";
 ---
 
 <!--
@@ -10,10 +10,22 @@ import { CHATGPT_APP_URL } from "../lib/change-words";
   not), it's for an AI app on the player's computer instead: the page gives words to paste into the app, with a key
   that lets it read the game and send a new one whole, and each one it sends comes in here. The page's credentials stay
   in this tab (sessionStorage on lamp.dev), never in an address and never where the game's frame could read them. The one exception is on purpose: "Change with
-  ChatGPT" is a codex:// link carrying the room words, key and all, so they land in ChatGPT's message box, the same
-  words Copy puts on the clipboard for pasting there. It goes to the app on the player's computer, not to a server.
+  ChatGPT" (a codex:// link) and "Change with Claude Code" (a claude-cli:// link) carry the room words, key and all, so
+  they land in the app's message box, the same words Copy puts on the clipboard for pasting there. They go to the app
+  on the player's computer, not to a server. `app=claude` (from "I want to make this change myself" on the game's
+  page) makes Claude Code's the button; otherwise it's ChatGPT's. An idea brought from that page comes as `#idea=`,
+  taken out of the address (into this tab's sessionStorage) before anything else on the page runs, analytics included.
 -->
 <Base title="Change this game · Lamp" description="Change a game with your own coding agent." bare>
+  <!-- A classic script runs as it's read, before the page's modules (analytics among them) start. -->
+  <script is:inline>
+    (() => {
+      const found = /^#idea=(.*)$/s.exec(location.hash);
+      if (!found) return;
+      try { sessionStorage.setItem("lamp.change.idea", decodeURIComponent(found[1]).slice(0, 1000)); } catch {}
+      history.replaceState(history.state, "", location.pathname + location.search);
+    })();
+  </script>
   <!--
     The game gets as much of the window as the page can give it, as tall as the window under the header: on a wide
     screen the controls sit in a column beside it that scrolls on its own, and on a narrow one below it, the page
@@ -38,8 +50,11 @@ import { CHATGPT_APP_URL } from "../lib/change-words";
         <div data-direct hidden class="space-y-3 text-sm">
           <!-- ph-no-capture: the link holds the room's key, and PostHog's autocapture would record a clicked link's address. -->
           <div class="ph-no-capture">
-            <a data-chatgpt href="#" class="ink-button flex h-11 w-full items-center justify-center text-base">Change with ChatGPT</a>
-            <p class="mt-1.5 text-xs text-muted-ink">Opens the ChatGPT desktop app on a Mac. No app? <a href={CHATGPT_APP_URL} target="_blank" rel="noopener" class="underline underline-offset-2 hover:text-tape">Get it</a></p>
+            <a data-app-link href="#" class="ink-button flex h-11 w-full items-center justify-center text-base">Change with ChatGPT</a>
+            <p data-app-hint="chatgpt" class="mt-1.5 text-xs text-muted-ink">Opens the ChatGPT desktop app on a Mac. No app? <a href={CHATGPT_APP_URL} target="_blank" rel="noopener" class="underline underline-offset-2 hover:text-tape">Get it</a></p>
+            <!-- Claude Code answers its link only once it has put its handler in place: after a message is sent in it, and not
+                 when that's turned off in its settings. -->
+            <p data-app-hint="claude" hidden class="mt-1.5 text-xs text-muted-ink">Opens Claude Code in a terminal. It answers this link once you've sent it a message, unless that's turned off in its settings. No Claude Code? <a href={CLAUDE_CODE_URL} target="_blank" rel="noopener" class="underline underline-offset-2 hover:text-tape">Get it</a></p>
           </div>
           <!-- The same words to paste by hand, for another AI app: there when asked for, folded away otherwise. -->
           <details data-paste class="group">
@@ -66,7 +81,7 @@ import { CHATGPT_APP_URL } from "../lib/change-words";
 </Base>
 
 <script>
-  import { changeWords, chatgptLink } from "../lib/change-words";
+  import { appLink, changeWords, isChangeApp } from "../lib/change-words";
 
   const $ = <T extends HTMLElement>(name: string) => document.querySelector(`[data-${name}]`) as T;
   type Request = { id: string; prompt: string; state: string; message: string | null; version: number | null };
@@ -79,8 +94,17 @@ import { CHATGPT_APP_URL } from "../lib/change-words";
   let token = sessionStorage.getItem(kept);
   let postKey = sessionStorage.getItem(`${kept}.key`);
 
-  // The words for the player's AI app (lib/change-words.ts): Copy copies them and the ChatGPT link carries them.
-  const words = (room: string) => changeWords(`${location.origin}/r/${room}/game`, postKey!);
+  // The app the main button opens: Claude Code when the game's page asked for it, else ChatGPT.
+  const askedApp = query.get("app");
+  const app = isChangeApp(askedApp) ? askedApp : "chatgpt";
+  $("app-link").textContent = app === "claude" ? "Change with Claude Code" : "Change with ChatGPT";
+  for (const hint of document.querySelectorAll<HTMLElement>("[data-app-hint]")) hint.hidden = hint.dataset.appHint !== app;
+  // The idea brought from the game's page, if any (taken out of the address by the inline script above).
+  let idea = "";
+  try { idea = sessionStorage.getItem("lamp.change.idea") ?? ""; } catch {}
+
+  // The words for the player's AI app (lib/change-words.ts): Copy copies them and the app's link carries them.
+  const words = (room: string) => changeWords(`${location.origin}/r/${room}/game`, postKey!, { app, idea });
   let room: Room | null = null;
   let shown = 0;
   let quiet = 0;
@@ -114,7 +138,7 @@ import { CHATGPT_APP_URL } from "../lib/change-words";
       if (next.seeding) { $("direct").hidden = true; say(next.seeding.failed ?? `Getting the game ready… ${next.seeding.copied} of ${next.seeding.total} files`); return; }
       $("direct").hidden = !postKey;
       $<HTMLTextAreaElement>("words").value = postKey ? words(next.room) : "";
-      $<HTMLAnchorElement>("chatgpt").href = postKey ? chatgptLink(words(next.room)) : "#";
+      $<HTMLAnchorElement>("app-link").href = postKey ? appLink(app, words(next.room)) : "#";
       say(next.posted
         ? `Version ${next.version} came in from your AI app at ${new Date(next.posted).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
         : "Waiting for your AI app to send a game.");
@@ -220,7 +244,7 @@ import { CHATGPT_APP_URL } from "../lib/change-words";
         show(opened);
       } catch (error) {
         const status = (error as { status?: number }).status;
-        say(status === 404 ? "This link has no game to change." : status === 422 ? "This game is too big to change here." : status === 429 ? "Too many rooms opened from here. Try again later." : "lamp.dev isn't answering.");
+        say(status === 404 ? "This link has no game to change." : (error as Error).message === "not_one_file" ? "This game is more than one file, so an AI app can't change it here." : status === 422 ? "This game is too big to change here." : status === 429 ? "Too many rooms opened from here. Try again later." : "lamp.dev isn't answering.");
         return;
       }
     }

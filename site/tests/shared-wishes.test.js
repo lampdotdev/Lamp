@@ -356,6 +356,7 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   const built = "<html><head><title>A wish</title></head><body></body></html>";
   const page = await (await createPageHandler({ store, env, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
   assert.match(page, new RegExp(`"play":"https://${own}/w/${id}/play/1/"`), "it plays from the link's own host, from its folder");
+  assert.doesNotMatch(page, /"oneFile"/, "a page of several files isn't offered to the player's own AI app");
   assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=`))).status, 200, "the folder is its index.html");
   assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=index`))).status, 200, "a .html file by its clean name");
   const folder = await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=dir`));
@@ -692,4 +693,23 @@ test("ideas reach the link's maker, and only the maker reads them", async () => 
   assert.equal((await (await list()).json()).ideas.find((one) => one.n === shot.n).picture, `data:image/png;base64,${dot}`);
   await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${shot.n}`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
   assert.equal((await store.ideas(id)).find((one) => one.n === shot.n).picture, undefined);
+});
+
+// The change page's AI app reads and sends a game as one file, so only a page that's exactly index.html is offered to it.
+test("a link's page of one file says so, for making a change oneself", async () => {
+  const store = memoryStore();
+  const handler = createShareHandler({ store, limited: false });
+  const files = createFileHandler({ store, limited: false });
+  const { id, secret } = await (await send(handler, "POST", share)).json();
+  const send_ = (what, method, body, query = "") => files(new Request(`https://lamp.dev/api/wish-file?id=${id}${what}${query}`, {
+    method, headers: { authorization: `Bearer ${secret}`, ...(body ? { "content-type": "application/octet-stream" } : {}) }, ...(body ? { body } : {}),
+  }));
+  assert.equal((await send_("", "PUT", zip("lamp-app.json", Buffer.alloc(10, 1)), "&part=0&of=1")).status, 204);
+  assert.equal((await send_("", "POST")).status, 200);
+  assert.equal((await send_("&what=page", "PUT", zip("index.html", Buffer.from("<!doctype html><title>One</title>")), "&part=0&of=1")).status, 204);
+  assert.equal((await send_("&what=page", "POST")).status, 200);
+  const env = { LAMP_PLAY_ORIGIN: "https://play.lamp.dev", LAMP_SITE_ORIGIN: "https://lamp.dev" };
+  const built = "<html><head><title>A wish</title></head><body></body></html>";
+  const page = await (await createPageHandler({ store, env, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
+  assert.match(page, /"oneFile":true/);
 });

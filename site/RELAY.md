@@ -2,7 +2,7 @@
 
 Someone playing a shared game on lamp.dev asks for a change, and their own coding agent, on their own Mac, makes it.
 The rebuilt game then comes back into the page. The page is `/change?w=<id>` (`src/pages/change.astro`), for a link
-whose page plays. Nothing links to it yet. The helper is `lamp play <code>` (`cli/play.mjs`). Between them are
+whose page plays. Nothing links to its helper form yet; the AI app form below is opened from a link's idea dialog. The helper is `lamp play <code>` (`cli/play.mjs`). Between them are
 stateless functions: `api/relay.js`, `api/relay-play.js` and `api/relay-cleanup.js`, all in `lib/relay.js`. Nothing
 runs between their calls.
 
@@ -51,8 +51,21 @@ stops working at once. The page says when a version came in from the app.
 holds them for both), which opens a new chat in ChatGPT's desktop app on the Mac with them in the message box, unsent.
 The link carries the key on purpose, as the words do when pasted; it's kept out of PostHog's autocapture, and "New
 key" rebuilds it. The link can't choose Codex, so the words say to switch to it when commands can't run. The words
-read the game, ask what to change and wait, then change and send it, and their curl stops on an HTTP error
-(`--fail-with-body`) so a refused send is never taken for a sent one.
+make a new empty folder (`mktemp -d`) and name it in full in every command, so `game.html` and `headers.txt` never
+land in the player's home folder or wherever the app starts. They read the game, ask what to change (or confirm the
+idea brought along) and wait, then change and send it, and their curl stops on an HTTP error (`--fail-with-body`) so a
+refused send is never taken for a sent one.
+
+`&app=claude` makes "Change with Claude Code" the main control instead: a `claude-cli://open?q=` link with the same
+words (without the line about Codex), which opens Claude Code in a terminal with them typed in, unsent. Claude Code
+takes at most 5,000 characters from it; the words with the longest idea stay under that (a test holds it). It answers
+the link only once it has registered its handler, after a message is sent in it, and not when that's turned off in its
+settings; the line under the button says so.
+
+The link's page offers this beside sending an idea (SHARED_WISHES.md): "I want to make this change myself", then
+ChatGPT or Claude Code, opens `/change?with=app&w=<id>&app=<app>#idea=<the idea>` in a new tab. The idea goes in the
+fragment, which never reaches a server; an inline script on the change page moves it into the tab's sessionStorage and
+takes it out of the address before analytics starts, and those links are kept out of autocapture.
 
 - `GET /r/<room>/game` with `Authorization: Bearer <key>` gives the game's one file as plain text that never runs:
   `text/plain`, `nosniff`, `no-store`, a sandbox with nothing allowed, and the version it is as its `ETag`.
@@ -64,8 +77,10 @@ read the game, ask what to change and wait, then change and send it, and their c
     `again: true`).
   - Quotas: 30 games a room an hour, 120 an hour per address, and the room's 256 MB.
   - Vercel turns away a body over about 4.5 MB before the function runs, with its own 413.
-- Only a game that's one file (`index.html`) goes back and forth whole. A room playing a game of several files
-  answers both with 409, and points to `lamp play`.
+- Only a game that's one file (`index.html`) goes back and forth whole. A room for an AI app isn't opened on a link
+  whose page is several files (`op=open` answers 422 `not_one_file`), so an old page or a typed address fails at
+  once; the link's page only offers it when its page is one file (`page.oneFile`). A room that somehow plays several
+  files still answers both with 409, and points to `lamp play`.
 - Publishing is one step. The file goes to Blob under a name of its own, and its list goes under an id of its own,
   written so it never overwrites anything. Neither is played until the room's compare-and-set points at it. That
   compare-and-set checks again, against the room it replaces, the key, the base version, the idempotency key, that no

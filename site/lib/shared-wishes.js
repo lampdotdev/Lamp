@@ -69,6 +69,13 @@ export const ID_LENGTH = 10;
 export const newID = () => Array.from({ length: ID_LENGTH }, () => ALPHABET[randomInt(ALPHABET.length)]).join("");
 export const isID = (id) => typeof id === "string" && id.length === ID_LENGTH && [...id].every((c) => ALPHABET.includes(c));
 
+/** Whether a page's files (path to address) are exactly one, index.html: the only page an AI app can read and send
+ * back whole on the change page (relay.js), so the link's page offers it only for such a page. */
+export const oneFile = (files) => {
+  const paths = Object.keys(files ?? {});
+  return paths.length === 1 && paths[0] === "index.html";
+};
+
 /** The secret that lets the sharer's Lamp change or remove the link. Only its hash is kept here. */
 export const newSecret = () => randomBytes(32).toString("base64url");
 const hashSecret = (secret) => createHash("sha256").update(secret).digest("hex");
@@ -165,7 +172,8 @@ export function readShare(body) {
 export const shown = (record) => record && ({
   id: record.id, name: record.name, by: record.by ?? "", line: record.line, words: record.words, ideas: record.ideas ?? [], asks: record.asks ?? [], shape: record.shape ?? null,
   releases: record.releases ?? [], picture: record.picture, icon: record.icon, file: record.file ?? null, updated: record.updated,
-  page: record.page ? { version: record.page.version } : null,
+  // Never the page's files, only whether it's one (`oneFile`), for the link's page to offer making a change oneself.
+  page: record.page ? { version: record.page.version, ...(oneFile(record.page.files) ? { oneFile: true } : {}) } : null,
 });
 
 /** Every file kept for a record: its pictures, the wish's file and any parts of one still being sent. */

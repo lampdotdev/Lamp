@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { quotaScript } from "./quota.js";
 import { casScript } from "./relay-store.js";
-import { isID, pageType } from "./shared-wishes.js";
+import { isID, oneFile, pageType } from "./shared-wishes.js";
 
 // The relay (RELAY.md): a shared game's page asks the player's own agent, on their own Mac, to change the game, and
 // the rebuilt game comes back into the page. The page and the helper (`lamp play <code>`) each ask these functions,
@@ -252,6 +252,9 @@ export function createRelayHandler({ env = process.env, db, blobs, wishes, now =
     const source = wish ? record?.page?.files : { "index.html": null };
     if (!source || !("index.html" in source)) return reply(404, { error: "no_page" });
     const paths = Object.keys(source);
+    // An AI app reads and sends the game as one file, so a room for one takes only a game that's exactly index.html;
+    // refused here, a stale page or a typed address fails at once instead of at the app's first read.
+    if (mode === "post" && !oneFile(source)) return reply(422, { error: "not_one_file" });
     const sizes = record?.page?.sizes ?? {};
     if (paths.length > limits.files || !paths.every(goodPath) || paths.some((path) => (sizes[path] ?? 0) > limits.file)
       || Object.values(sizes).reduce((sum, size) => sum + size, 0) > limits.total) return reply(422, { error: "too_large" });
