@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { changeWords, chatgptLink, claudeLink, CLAUDE_LINK_MAX, fileName, gamesFolder } from "../src/lib/change-words.ts";
+import { changeWords, chatgptLink, claudeLink, CLAUDE_FOLDER_FIRST, CLAUDE_LINK_MAX, fileName } from "../src/lib/change-words.ts";
 import { SETUP_PROMPT } from "../src/lib/chatgpt.ts";
 
 const HANDOFF = { name: "Pong", page: "https://lamp.dev/w/abcdefghij", file: "https://store.example/w/abcdefghij/Pong.lampapp" };
@@ -12,11 +12,11 @@ test("each app's link carries the words exactly", () => {
   assert.equal(chatgpt.host + chatgpt.pathname, "new");
   assert.equal(chatgpt.searchParams.get("prompt"), changeWords(HANDOFF));
   const words = changeWords({ ...HANDOFF, app: "claude", idea: "add a timer" });
-  const claude = new URL(claudeLink(words, "/Users/sam/My Games"));
-  assert.equal(claude.protocol, "claude-cli:");
-  assert.equal(claude.host + claude.pathname, "open");
+  const claude = new URL(claudeLink(words));
+  assert.equal(claude.protocol, "claude:");
+  assert.equal(claude.host + claude.pathname, "code/new");
   assert.equal(claude.searchParams.get("q"), words);
-  assert.equal(claude.searchParams.get("cwd"), "/Users/sam/My Games", "Claude Code opens in the games folder, never the home folder");
+  assert.deepEqual([...claude.searchParams.keys()], ["q"], "no folder: the words say where the copy goes");
 });
 
 // The order the brief set: ask before installing, check Node, install and read the guide (or reuse a lamp that works),
@@ -54,10 +54,15 @@ test("an old lamp is updated only after asking, and a new enough one is used as 
   }
 });
 
-test("Claude Code works in the folder it's opened in and is never told about ChatGPT", () => {
+// Claude is opened in no folder of the person's, so before it runs anything it's told where the copy goes and to ask
+// for that folder if its session can't reach it.
+test("Claude is told where the copy goes, and to ask for access, before any command, and never about ChatGPT", () => {
   const words = changeWords({ ...HANDOFF, app: "claude" });
-  assert.match(words, /You were opened in my games folder/);
-  assert.doesNotMatch(words, /ChatGPT|Codex|Lamp Games/);
+  assert.equal(CLAUDE_FOLDER_FIRST, "Work locally on this Mac. Put my copy in ~/Lamp Games (create it if needed), and keep the game files there. If this session can't access that folder, ask me to choose it or grant access before downloading or unpacking.");
+  const at = (part) => { const i = words.indexOf(part); assert.ok(i >= 0, part); return i; };
+  for (const command of ["lamp help", "npm install", "curl -fsSL", "lamp unpack", "lamp open"])
+    assert.ok(at(CLAUDE_FOLDER_FIRST) < at(command), command);
+  assert.doesNotMatch(words, /ChatGPT|Codex/);
 });
 
 // The homepage's prompt and Make it myself share the install steps, so they ask the same way.
@@ -74,27 +79,14 @@ test("the game's file is named safely for a shell", () => {
   assert.ok(fileName("N".repeat(200)).length <= 60);
 });
 
-// The longest idea the game's page takes still fits in what Claude Code takes from a link.
-test("the words with the longest idea stay within Claude Code's limit", () => {
+// The longest idea the game's page takes, with a long name, still fits whole in what Claude takes from its link: it
+// cuts the words at 14,336 UTF-16 units.
+test("the words with the longest idea stay within Claude's limit", () => {
+  assert.equal(CLAUDE_LINK_MAX, 14336);
   const idea = "Make the ball \"blue\" & faster ".repeat(40).slice(0, 1000);
   const words = changeWords({ ...HANDOFF, name: "N".repeat(80), app: "claude", idea });
-  const link = new URL(claudeLink(words, "/Users/sam/Games"));
-  assert.ok(link.searchParams.get("q").length <= CLAUDE_LINK_MAX, `${words.length} characters`);
+  const q = new URL(claudeLink(words)).searchParams.get("q");
+  assert.equal(q, words);
+  assert.ok(q.length <= CLAUDE_LINK_MAX, `${q.length} UTF-16 units`);
   assert.ok(words.includes(idea.trim().replace(/\s+/g, " ")));
-});
-
-// A folder Claude Code would refuse, or none, is said plainly instead of making a link that does nothing.
-test("the games folder must be a whole path Claude Code takes", () => {
-  const problem = (typed) => gamesFolder(typed).problem;
-  assert.match(problem(""), /Write the path/);
-  assert.match(problem("Games"), /isn't a whole path/);
-  assert.match(problem("~/Games"), /not ~/);
-  assert.match(problem("//server/share/Games"), /network/);
-  assert.match(problem("/Users/sam/../Games"), /\.\./);
-  assert.match(problem("/Users/sam/Ga​mes"), /characters/);
-  assert.match(problem("/Users/sam"), /folder of its own/, "never the home folder itself");
-  assert.match(problem("/"), /folder of its own/);
-  assert.match(problem("/Users/" + "a".repeat(4100)), /too long/);
-  assert.deepEqual(gamesFolder(" /Users/sam/My\\ Games/ "), { folder: "/Users/sam/My Games" });
-  assert.deepEqual(gamesFolder("'/Users/sam/My Games'"), { folder: "/Users/sam/My Games" });
 });

@@ -108,7 +108,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
 
     <!-- An idea, and two ways on with it, as tabs over the same words: send it to the person who made it (its words,
          which can still be changed, a picture of the app, a name and an address to hear back at), or make it oneself,
-         in one's own copy on one's own computer, with ChatGPT or Claude Code. The tabs are there only when the game can
+         in one's own copy on one's own computer, with ChatGPT or Claude. The tabs are there only when the game can
          be made that way (it plays here and came with its file); otherwise it's sending alone, with Lamp under it. -->
     <dialog data-remix-dialog aria-labelledby="remix-title" class="remix-popup">
       <button type="button" data-remix-close aria-label="Close" class="remix-popup-close">
@@ -157,18 +157,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
             <a href="#" data-open="chatgpt" class="shared-button">Open</a>
           </div>
           <div class="remix-option" data-option="claude">
-            <div><b>Claude Code</b><small><span data-claude-where>Opens in your games folder</span> <button type="button" data-folder-change hidden class="remix-folder-change">Change</button></small></div>
+            <div><b>Claude</b><small>The desktop app makes it on your computer</small></div>
             <a href="#" data-open="claude" class="shared-button">Open</a>
-            <!-- Claude Code opens in this folder, asked for once and kept in this browser, so the person trusts it and
-                 never their home folder (lib/change-words.ts `gamesFolder`). -->
-            <form data-folder-form hidden class="remix-folder">
-              <label for="games-folder" class="remix-popup-label">Your games folder</label>
-              <div class="remix-folder-row">
-                <input id="games-folder" data-folder-input class="remix-popup-input" autocomplete="off" spellcheck="false" placeholder="/Users/you/Games" />
-                <button type="submit" class="shared-button shared-button-outline">Save</button>
-              </div>
-              <p data-folder-problem class="remix-folder-problem empty:hidden" role="alert"></p>
-            </form>
           </div>
         </div>
       </div>
@@ -374,20 +364,12 @@ import { DOWNLOAD_URL } from "../../lib/download";
   .remix-option .shared-button { background: var(--color-paper); color: var(--color-tape); border: 1px solid color-mix(in srgb, var(--color-tape) 15%, transparent); }
   .remix-option.chosen { border-color: var(--color-tape); box-shadow: inset 0 0 0 1px var(--color-tape); }
   .remix-option.chosen .shared-button { background: var(--color-tape); color: var(--color-paper); border-color: var(--color-tape); }
-  .remix-folder { grid-column: 1 / -1; margin-top: 0.25rem; }
-  .remix-folder[hidden] { display: none; }
-  .remix-folder .remix-popup-label { margin-top: 0.25rem; }
-  .remix-folder-row { display: flex; gap: 0.5rem; margin-top: 0.375rem; }
-  .remix-folder-row .remix-popup-input { margin-top: 0; font-family: var(--font-mono); font-size: 0.75rem; }
-  .remix-folder-change { color: var(--color-tape); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
-  .remix-folder-change[hidden] { display: none; }
-  .remix-folder-problem { margin: 0.375rem 0 0; font-size: 0.8125rem; color: #a3261b; }
 </style>
 
 <script>
   import { askFrom, copyWish, sharedWishLink, withAsk, wishLink } from "../../../lib/wish.js";
   import { track } from "../../lib/analytics";
-  import { appLink, changeWords, CLAUDE_LINK_MAX, gamesFolder, type ChangeApp } from "../../lib/change-words";
+  import { appLink, changeWords, type ChangeApp } from "../../lib/change-words";
 
   type Release = { date: string; lines: string[] };
   type Shared = { id: string; name: string; by?: string; github?: string; ideas?: string[]; asks?: string[]; releases?: Release[]; about: string; wish: string; picture: string; icon: string; file?: string; shared?: string; play?: string; shape?: number | "fill" };
@@ -653,26 +635,14 @@ import { DOWNLOAD_URL } from "../../lib/download";
 
     // Making it oneself: each app's Open is a link with the one prompt (lib/change-words.ts), which has it install
     // Lamp's command line if it's not there (asking first), unpack the game's file and make the change on the player's
-    // computer. Claude Code opens in the games folder the player picks, asked for once and kept in this browser.
-    const FOLDER = "lamp.change.folder";
-    let folder = "";
-    try { const kept = gamesFolder(localStorage.getItem(FOLDER) ?? ""); if ("folder" in kept) folder = kept.folder; } catch {}
-    // Claude Code takes only so much from its link: an idea that would go past it says so here, instead of an Open
-    // that hands over words cut short or opens nothing.
-    let tooLong = false;
+    // computer. Claude used to open in a games folder typed here and kept in this browser; that path is let go.
+    try { localStorage.removeItem("lamp.change.folder"); } catch {}
     const links = () => {
       if (!canMake) return;
-      tooLong = false;
       for (const link of document.querySelectorAll<HTMLAnchorElement>("[data-open]")) {
         const app = link.dataset.open as ChangeApp;
-        const words = changeWords({ name: wish.name, page: `${location.origin}/w/${wish.id}`, file: wish.file!, app, idea: ideaText.value });
-        if (app === "claude" && words.length > CLAUDE_LINK_MAX) tooLong = true;
-        link.href = app === "claude" && (!folder || tooLong) ? "#" : appLink(app, words, folder);
+        link.href = appLink(app, changeWords({ name: wish.name, page: `${location.origin}/w/${wish.id}`, file: wish.file!, app, idea: ideaText.value }));
       }
-      $<HTMLElement>("[data-claude-where]").textContent = tooLong ? "Your idea is too long for Claude Code. Shorten it."
-        : folder ? `Opens in ${folder}` : "Opens in your games folder";
-      // The folder can be changed once it's saved: a typo, or a folder since moved, isn't kept for good.
-      $<HTMLElement>("[data-folder-change]").hidden = !folder || tooLong || !$<HTMLElement>("[data-folder-form]").hidden;
     };
     ideaText.addEventListener("input", links);
     const choose = (app: ChangeApp) => {
@@ -680,37 +650,13 @@ import { DOWNLOAD_URL } from "../../lib/download";
     };
     choose("chatgpt");
     for (const link of document.querySelectorAll<HTMLAnchorElement>("[data-open]")) {
-      link.addEventListener("click", (event) => {
+      link.addEventListener("click", () => {
         const app = link.dataset.open as ChangeApp;
         choose(app);
-        if (app === "claude" && tooLong) { event.preventDefault(); ideaText.focus(); return; }
-        if (app === "claude" && !folder) {
-          event.preventDefault();
-          $<HTMLElement>("[data-folder-form]").hidden = false;
-          $<HTMLInputElement>("[data-folder-input]").focus();
-          return;
-        }
         // Which app, never what the idea says.
         track("idea_change_yourself", { idea: wish.name, place: "shared", app });
       });
     }
-    $<HTMLButtonElement>("[data-folder-change]").addEventListener("click", () => {
-      choose("claude");
-      $<HTMLInputElement>("[data-folder-input]").value = folder;
-      $<HTMLElement>("[data-folder-form]").hidden = false;
-      $<HTMLElement>("[data-folder-change]").hidden = true;
-      $<HTMLInputElement>("[data-folder-input]").focus();
-    });
-    $<HTMLFormElement>("[data-folder-form]").addEventListener("submit", (event) => {
-      event.preventDefault();
-      const checked = gamesFolder($<HTMLInputElement>("[data-folder-input]").value);
-      $<HTMLElement>("[data-folder-problem]").textContent = "problem" in checked ? checked.problem : "";
-      if ("problem" in checked) return;
-      folder = checked.folder;
-      try { localStorage.setItem(FOLDER, folder); } catch {}
-      $<HTMLElement>("[data-folder-form]").hidden = true;
-      links();
-    });
 
     // The bar's send opens the dialog with the idea, to confirm before it goes; nothing is sent until then.
     $<HTMLFormElement>("[data-prompt]").addEventListener("submit", (event) => {
