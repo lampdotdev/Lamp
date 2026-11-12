@@ -92,10 +92,16 @@ jobs:
         # Compiles the generated LampSupport.swift and exercises its action sessions outside the Swift test target.
         run: scripts/check-act.sh
 
-      - name: Set up Node for the WebSocket client
+      - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+
+      - name: npm package checks
+        # Install the release tarball away from the checkout, where missing files cannot be found in the source tree.
+        run: |
+          scripts/npm-package.sh 0.0.0
+          node scripts/check-npm-package.mjs build/npm/lampdotdev-lamp-0.0.0.tgz
 
       - name: Xbox phone protocol checks
         # Runs the host's C++ protocol over local HTTP and WebSockets; no console or signing needed.
