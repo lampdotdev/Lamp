@@ -14,7 +14,7 @@ fi
 # names it, with the app version it was fetched for, so an app that has updated since runs its own again.
 script="$here/lamp.mjs"
 bundled="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$here/package.json" 2>/dev/null | head -1)"
-export LAMP_LAUNCHER=1 LAMP_BUNDLED_VERSION="$bundled"
+export LAMP_LAUNCHER=1 LAMP_LAUNCHER_PATH="$here/lamp" LAMP_BUNDLED_VERSION="$bundled"
 use="${LAMP_DEV_HOME:+${LAMP_DEV_HOME:h}}"; use="${use:-$HOME/.lamp}/cli/use"
 if [[ -z "${LAMP_NO_UPDATE_CHECK:-}" && -n "$bundled" && -r "$use" ]]; then
   lines=("${(@f)$(<"$use")}")

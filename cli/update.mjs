@@ -9,7 +9,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,12 +53,29 @@ export function versionLine() {
   return `lamp ${mine}${fromNpm() ? "" : " (from a checkout)"}`;
 }
 
-/** Whether version a is newer than b, by their numbers (a pre-release is older than its release). */
+/**
+ * Whether version a is newer than b, as semver orders them: by their numbers, a pre-release older than its release, and
+ * two pre-releases by their parts in turn, numbers as numbers (0.36.2-nightly.10 after 0.36.2-nightly.9). Build
+ * metadata (+…) says nothing about order.
+ */
 export function newer(a, b) {
-  const parts = (version) => { const [main, pre] = String(version).split("-"); return { numbers: main.split(".").map(Number), pre: pre ?? null }; };
+  const parts = (version) => {
+    const [main, ...rest] = String(version).split("+")[0].split("-");
+    return { numbers: main.split(".").map(Number), pre: rest.length ? rest.join("-").split(".") : null };
+  };
   const x = parts(a), y = parts(b);
   for (let i = 0; i < 3; i++) if ((x.numbers[i] || 0) !== (y.numbers[i] || 0)) return (x.numbers[i] || 0) > (y.numbers[i] || 0);
-  return y.pre !== null && x.pre === null;
+  if (!x.pre || !y.pre) return !x.pre && !!y.pre;
+  for (let i = 0; i < Math.max(x.pre.length, y.pre.length); i++) {
+    const p = x.pre[i], q = y.pre[i];
+    if (p === undefined || q === undefined) return q === undefined;
+    if (p === q) continue;
+    const pn = /^\d+$/.test(p), qn = /^\d+$/.test(q);
+    if (pn && qn) return Number(p) > Number(q);
+    if (pn !== qn) return qn;   // a word part outranks a number part
+    return p > q;
+  }
+  return false;
 }
 
 /**
@@ -122,8 +139,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === "-
         renameSync(part, folder);
       }
       writeFileSync(join(fetched(), "use"), `${app}\n${join(folder, "package")}\n`);
-      // Only the one in use is kept.
-      for (const other of readdirSync(fetched())) if (other !== "use" && other !== String(version)) rmSync(join(fetched(), other), { recursive: true, force: true });
+      // Older ones go once they've been out of use a week: one a `lamp dev` started before is still serving from may run
+      // for days, and reads its files (libraries, controllers) as it goes.
+      for (const other of readdirSync(fetched())) {
+        if (other === "use" || other === String(version) || other.endsWith(".part")) continue;
+        try { if (statSync(join(fetched(), other)).mtimeMs < Date.now() - 7 * DAY) rmSync(join(fetched(), other), { recursive: true, force: true }); } catch {}
+      }
+      // The one in use is touched, so it's counted from when it was last named.
+      try { const now = new Date(); utimesSync(folder, now, now); } catch {}
     }
   } catch {}
 }

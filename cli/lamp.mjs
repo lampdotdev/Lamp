@@ -164,7 +164,8 @@ const SKILL_MARK = "<!-- Written by lamp setup: run it again to update, or with 
 function lampCommand() {
   const me = fileURLToPath(import.meta.url);
   // The copy in Lamp's app is run by its launcher beside it, on the app's own runtime, and updates with Lamp.
-  if (process.env.LAMP_FROM_APP === "1") { const launcher = join(here, "lamp"); return /\s/.test(launcher) ? JSON.stringify(launcher) : launcher; }
+  // A newer copy fetched from npm is run by that same launcher (lamp.sh names it): the app's, never one beside this.
+  if (process.env.LAMP_FROM_APP === "1") { const launcher = process.env.LAMP_LAUNCHER_PATH || join(here, "lamp"); return /\s/.test(launcher) ? JSON.stringify(launcher) : launcher; }
   const found = spawnSync(process.platform === "win32" ? "where" : "which", ["lamp"], { encoding: "utf8" });
   const onPath = found.status === 0 && found.stdout.trim().split("\n").some((path) => { try { return realpathSync(path.trim()) === realpathSync(me); } catch { return false; } });
   return onPath ? "lamp" : `node ${/\s/.test(me) ? JSON.stringify(me) : me}`;
