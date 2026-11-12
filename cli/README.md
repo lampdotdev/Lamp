@@ -365,3 +365,11 @@ into a Mac app without opening it again.
 ```bash
 node --test cli/tests/*.test.mjs
 ```
+
+The nightly Mac checks also pack and install the npm tarball in a temporary folder, then run its command, read its
+guidance and create each kind of starter. To check the package without publishing it, on a Mac:
+
+```bash
+scripts/npm-package.sh 0.0.0
+node scripts/check-npm-package.mjs build/npm/lampdotdev-lamp-0.0.0.tgz
+```
