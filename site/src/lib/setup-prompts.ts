@@ -1,10 +1,10 @@
-// The homepage's setup buttons (`SetupButtons.astro`): Use with ChatGPT and Use with Claude each hand an AI app on the
-// Mac a prompt to set up lamp's command line and work with it, and "Copy the prompt" copies one for any agent that runs
-// commands on the Mac. The three prompts share every step (`lamp-cli-words.ts`, also behind a shared game's Make it
-// myself): asking before installing, checking Node, the install, `lamp setup` and `lamp guide`. They differ only in the
-// one step on where the commands run, which depends on the app the prompt lands in.
+// The homepage's setup buttons (`SetupButtons.astro`): Use with ChatGPT and Use with Claude each open an AI app on the
+// Mac with a prompt to set up lamp's command line and work with it, as Make it myself opens them (`change-words.ts`).
+// The two prompts share every step (`lamp-cli-words.ts`, also behind Make it myself): asking before installing,
+// checking Node, the install, `lamp setup` and `lamp guide`. They differ only in the one step on where the commands
+// run, which depends on the app the prompt lands in.
 import { claudeLink } from "./change-words.ts";
-import { ASK_TO_INSTALL, CHECK_NODE, FOLLOW_GUIDE, INSTALL, RUN_HERE_CHATGPT, RUN_HERE_CLAUDE, RUN_HERE_ANY, numbered } from "./lamp-cli-words.ts";
+import { ASK_TO_INSTALL, CHECK_NODE, FOLLOW_GUIDE, INSTALL, RUN_HERE_CHATGPT, RUN_HERE_CLAUDE, numbered } from "./lamp-cli-words.ts";
 
 const setupPrompt = (runHere: string) => `Help me decide whether to set up Lamp's command-line tools on this Mac, so you can make and change apps with them here.
 
@@ -12,8 +12,6 @@ ${numbered([ASK_TO_INSTALL, runHere, CHECK_NODE, INSTALL, FOLLOW_GUIDE, "Then as
 
 export const CHATGPT_SETUP_PROMPT = setupPrompt(RUN_HERE_CHATGPT);
 export const CLAUDE_SETUP_PROMPT = setupPrompt(RUN_HERE_CLAUDE);
-/** What "Copy the prompt" copies: it can be pasted into any agent, so it names no app. */
-export const COPY_SETUP_PROMPT = setupPrompt(RUN_HERE_ANY);
 
 // OpenAI documents this link for the ChatGPT Mac app (it kept Codex's scheme): it opens a new chat with the prompt in
 // the message box and never sends it. It doesn't say which mode the chat opens in, and a plain chat can't run

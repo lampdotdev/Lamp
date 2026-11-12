@@ -15,9 +15,6 @@ export const RUN_HERE_CHATGPT = "You need to run commands on this computer for t
 // for a local Claude Code session, and a folder if need be, rather than go on without one.
 export const RUN_HERE_CLAUDE = "Work locally on this Mac; you need to run commands here. If this session can't, ask me to open a local Claude Code session and choose a folder if needed, then stop until that's ready.";
 
-// The copied prompt goes to whatever agent it's pasted into, so it names none.
-export const RUN_HERE_ANY = "You need to run commands on this computer for this. If you can't, tell me and stop.";
-
 export const ASK_TO_INSTALL = "Explain that Lamp's command-line tools would be installed on this computer (the command-line tools only, not the Lamp Mac app) and that setup can add Lamp instructions for future AI chats. Ask me: \"Would you like me to install and set up Lamp's command-line tools?\" Wait for my explicit yes before running any installation or setup commands. If I decline or haven't answered, stop.";
 
 // A lamp that's already installed can be older than the commands a prompt goes on to use: updating it is installing
