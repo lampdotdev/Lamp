@@ -334,7 +334,7 @@ export const CALLS = {
         ...(Number.isInteger(given.port) ? { port: given.port } : {}),
         said: () => {},
         ask: (_question, page) => fromLamp("ask", { id: page.id, name: page.name }).then((reply) => reply.yes === true),
-        answer: (path, body) => fromLamp("answer", { path, body }).then((reply) => [Number(reply.status) || 502, reply.reply ?? {}]),
+        answer: (path, body, page) => fromLamp("answer", { path, body, id: page.id }).then((reply) => [Number(reply.status) || 502, reply.reply ?? {}]),
       });
     } catch (error) {
       if (error?.code === "EADDRINUSE") throw new Problem("lamp ai already answers shared pages' AI on this computer");

@@ -14836,7 +14836,11 @@ final class Store: ObservableObject {
     /// The routes a running app uses: text, pictures, decisions, and using the other apps on the Mac.
     /// A page shared on lamp.dev asking for its AI, through lamp's command line (`SharedPagesAI`), which has already
     /// checked the page and that the person allowed it: answered as an app's request is, with no app behind it.
-    func sharedPageAI(path: String, body: [String: Any]) async -> (Int, [String: Any]) {
+    func sharedPageAI(path: String, body: [String: Any], page: String) async -> (Int, [String: Any]) {
+        await AppAI.$sharedPage.withValue(page) { await sharedPageRequest(path: path, body: body) }
+    }
+
+    private func sharedPageRequest(path: String, body: [String: Any]) async -> (Int, [String: Any]) {
         guard SharedPagesAI.routes.contains(path) else { return (404, ["error": "Not found."]) }
         if !EngineInstall.hasLooked { await EngineInstall.lookForPersonsCopies() }
         if path == "/ai/status" { return await aiStatus(for: nil) }
@@ -14859,7 +14863,7 @@ final class Store: ObservableObject {
         // One step of the app's own agent loop (`LampAI.act`): its body has no prompt, so it goes before that check.
         // What the person said, as text (`LampAI.hear`): its body is audio, not a prompt, so it goes before that check too.
         if request.path == "/ai/hear" {
-            let (status, json, cost) = await AppHear.handle(request.body, app: project?.id ?? "shared-page")
+            let (status, json, cost) = await AppHear.handle(request.body, app: project?.id ?? "shared-\(AppAI.sharedPage ?? "")")
             if cost > 0, let project { record(project, cost: cost) }
             return (status, json)
         }

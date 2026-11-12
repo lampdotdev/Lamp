@@ -33,7 +33,7 @@ enum SharedPagesAI {
             let yes = await askInDialog(name: event["name"] as? String ?? "", id: event["id"] as? String ?? "")
             _ = try? await LampCLI.ask("sharedPagesReply", ["n": n, "yes": yes])
         } else if let n = event["answer"] as? Int, let path = event["path"] as? String {
-            let (status, reply) = await Store.shared.sharedPageAI(path: path, body: event["body"] as? [String: Any] ?? [:])
+            let (status, reply) = await Store.shared.sharedPageAI(path: path, body: event["body"] as? [String: Any] ?? [:], page: event["id"] as? String ?? "")
             _ = try? await LampCLI.ask("sharedPagesReply", ["n": n, "status": status, "reply": reply])
         }
     }
