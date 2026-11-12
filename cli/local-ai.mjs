@@ -57,8 +57,10 @@ const same = (a, b) => {
 };
 
 /**
- * Answers shared pages' AI until it's closed. `ask(question)` puts a yes-or-no to the person and resolves true for yes;
- * by default it's the terminal's, and without a terminal nothing is let in. Resolves to the server once it listens.
+ * Answers shared pages' AI until it's closed. `ask(question, page)` puts a yes-or-no to the person and resolves true
+ * for yes; by default it's the terminal's, and without a terminal nothing is let in. `answer(path, body, page)` is the
+ * AI's [status, reply]: the person's Claude Code or Codex by default, Lamp's own AI when Lamp's app runs this
+ * (`sharedPages` in calls.mjs). Resolves to the server once it listens.
  */
 export async function serveLocalAI({ port = LOCAL_AI_PORT, ask = askInTerminal(), answer = answerAI, said = console.log } = {}) {
   const busy = new Map(), queued = new Map(), refused = new Set(), waiting = new Map();
@@ -82,7 +84,7 @@ export async function serveLocalAI({ port = LOCAL_AI_PORT, ask = askInTerminal()
       const kept = allowed()[origin];
       if (kept) return kept.token;
       const titled = name ? `"${name}" ` : "A page ";
-      const yes = await ask(`${titled}shared at lamp.dev/w/${id} wants to use your ${engineName()} here. Allow it?`);
+      const yes = await ask(`${titled}shared at lamp.dev/w/${id} wants to use your ${engineName()} here. Allow it?`, { id, name });
       if (!yes) { refused.add(origin); return null; }
       const token = randomBytes(32).toString("base64url");
       keep({ ...allowed(), [origin]: { token, id, name: name || "", at: new Date().toISOString() } });
@@ -145,7 +147,7 @@ export async function serveLocalAI({ port = LOCAL_AI_PORT, ask = askInTerminal()
     // What there is to answer with, asked before anyone is let in: only the routes whose probe asks no model.
     const asksNothing = url.pathname === "/ai/status" || (body?.probe === true && (url.pathname === "/ai/act" || url.pathname === "/ai/hear"));
     if (asksNothing) {
-      const [status, answered] = await answer(url.pathname, { probe: true });
+      const [status, answered] = await answer(url.pathname, url.pathname === "/ai/status" ? {} : { probe: true }, { id });
       return reply(status, answered);
     }
     const kept = allowed()[origin];
@@ -153,7 +155,7 @@ export async function serveLocalAI({ port = LOCAL_AI_PORT, ask = askInTerminal()
     if (!kept || !same(given, kept.token)) return reply(401, { error: "This page isn't allowed to use the AI here yet." });
     await turn(origin);
     try {
-      const [status, answered] = await answer(url.pathname, body);
+      const [status, answered] = await answer(url.pathname, body, { id });
       reply(status, answered);
     } catch (error) {
       reply(502, { error: error?.message || "The AI didn't answer." });

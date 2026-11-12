@@ -130,7 +130,7 @@ Mac app Lamp made in Swift, built and run on this Mac.
       sends new ideas and replies to your own address too (once you confirm it), and you can answer from there.
   lamp ai [--forget]
       Answer the AI of pages shared on lamp.dev, played in a browser on this computer, with your own Claude Code
-      or Codex, until stopped. Each page asks here once, and you allow it or not. --forget takes back every
+      or Codex, until stopped. Lamp does the same while it's open, with the AI you set up there. Each page asks here once, and you allow it or not. --forget takes back every
       page allowed, so each asks again.
   lamp setup [--remove]   Teach Claude Code and Codex on this computer to work this way (a skill for each).
   lamp guide              What that skill says, for any other agent.
@@ -953,7 +953,7 @@ async function main() {
     const which = engine();
     if (!which) throw new Problem("AI here needs Claude Code or Codex on this computer, signed in.");
     try { await serveLocalAI(); } catch (error) {
-      if (error?.code === "EADDRINUSE") throw new Problem("Something on this computer already answers there: lamp ai may be running in another terminal.");
+      if (error?.code === "EADDRINUSE") throw new Problem("Lamp, or lamp ai in another terminal, already answers shared pages' AI on this computer.");
       throw error;
     }
     const allowedNow = Object.values(allowed());

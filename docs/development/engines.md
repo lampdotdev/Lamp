@@ -317,6 +317,11 @@ A capability given to one engine must be given to all of them that can take it, 
   `--json-schema`/`--output-schema` paths, a GGUF model through `response_format`, and mlx_lm.server has neither.
   `LampAI.isAvailable('act')` asks `/ai/act` itself (`probe`), so it's true only when lamp.js has `act`, the app around
   the page lets the route through and the app's route can take it.
+- **Shared pages' AI** (`SharedPagesAI`, `Store.sharedPageAI`): a page shared on lamp.dev, played in a browser on the
+  Mac, asks one port of the computer's own (`NEARBY` in lamp.js). Which pages are let in is lamp's command line's
+  (cli/local-ai.mjs, also `lamp ai`); Lamp keeps its `sharedPages` call running and is asked only for the person's yes
+  (a dialog) and the AI's answer, given as an app's request is with no app behind it (`appRequest(for: nil)`: Lamp's
+  default choices, no cost recorded, no setup card). Not `/ai/computer`, nor anything of the agent's.
 - **Hearing for apps** (`LampAI.hear` in Web/lamp.js, `/ai/hear`, `Sources/Lamp/AppHear.swift`): the page's host
   records (`LampVoice`, devices guide) and the page sends a WAV in base64; the gateway checks it is 16 kHz mono 16-bit
   PCM, 0.3 to 15 seconds, with exactly the header the hosts write and nothing more, before anything is paid for, then transcribes it with
