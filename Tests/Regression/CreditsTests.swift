@@ -34,7 +34,10 @@ final class CreditsTests: XCTestCase {
         XCTAssertEqual(Credits.load(sender).upstream.first, city)
         XCTAssertNil(Credits.load(sender).upstream[1].url, "only https addresses are kept")
 
-        let package = try opened(try exported(sender))
+        // Made for its link, as the Share Link card makes it: a copy shared as a link of its own says it came from that one.
+        let forLink = try Sharing.export(sender, link: "https://lamp.dev/w/2345678922")
+        addTeardownBlock { try? FileManager.default.removeItem(at: forLink.deletingLastPathComponent()) }
+        let package = try opened(forLink)
         let receiver = try app("copy")
         try Sharing.install(package, into: receiver)
         let arrived = Credits.load(receiver)
@@ -42,6 +45,8 @@ final class CreditsTests: XCTestCase {
         XCTAssertEqual(arrived.basedOn, "Based on Slop New York by Mr.doob")
         XCTAssertEqual(arrived.remixOf.map(\.name), ["New York", "City"])
         XCTAssertEqual(arrived.remixOf.last?.wish, Sharing.identity(of: sender, create: false))
+        XCTAssertEqual(arrived.sourceLink(on: "https://lamp.dev", own: nil), "2345678922")
+        XCTAssertNil(arrived.sourceLink(on: "https://lamp.dev", own: "2345678922"), "a link is never its own source")
 
         // The copy's file emptied: it still shares its whole credit, with itself added once however often it's shared.
         try Data("{}".utf8).write(to: receiver.dir.appendingPathComponent(Credits.file))
@@ -49,6 +54,7 @@ final class CreditsTests: XCTestCase {
         _ = try opened(try exported(receiver))
         XCTAssertEqual(again.credits?.upstream.map(\.name), ["Slop New York", "Snow"])
         XCTAssertEqual(again.credits?.remixOf.map(\.name), ["New York", "City", "Copy"])
+        XCTAssertEqual(again.credits?.remixOf.map(\.link), [nil, "https://lamp.dev/w/2345678922", nil])
     }
 
     /// A missing license file or a key in the code keeps a wish from being shared; work with no license and a

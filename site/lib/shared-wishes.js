@@ -137,11 +137,11 @@ function release(value) {
 }
 
 /** What a share sends, checked. Null when anything is off. `releases` is undefined when the share didn't say (a Lamp
- *  from before them), so a change keeps the ones the link has. */
+ *  from before them), so a change keeps the ones the link has; `from` too, the id of the link the app is a copy of. */
 const GITHUB_REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/(?!\.\.?$)[A-Za-z0-9._-]{1,100}$/;
 export function readShare(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
-  const known = ["name", "by", "line", "words", "ideas", "asks", "shape", "releases", "picture", "icon", "github"];
+  const known = ["name", "by", "line", "words", "ideas", "asks", "shape", "releases", "picture", "icon", "github", "from"];
   if (Object.keys(body).some((key) => !known.includes(key))) return null;
   const name = tidy(body.name, LIMITS.name);
   const words = tidy(body.words, LIMITS.words, { lines: true });
@@ -159,9 +159,10 @@ export function readShare(body) {
   const icon = picture(body.icon, LIMITS.icon, { square: true });
   // The app's public repository on GitHub, as "owner/name", which the page links to: nothing else is taken.
   const github = body.github == null || body.github === "" ? null : GITHUB_REPO.test(body.github) ? body.github : undefined;
-  if (!name || !words || line == null || by == null || ideas.includes(null) || asks.includes(null) || shape === undefined || releases?.includes(null) || !shot || !icon || github === undefined) return null;
+  const from = body.from == null ? undefined : isID(body.from) ? body.from : null;
+  if (!name || !words || line == null || by == null || ideas.includes(null) || asks.includes(null) || shape === undefined || releases?.includes(null) || !shot || !icon || github === undefined || from === null) return null;
   return { name, by, line, words, ideas, asks, shape, releases: releases?.sort((a, b) => b.date.localeCompare(a.date)),
-    picture: shot.bytes ? shot : null, icon: icon.bytes ? icon : null, github };
+    picture: shot.bytes ? shot : null, icon: icon.bytes ? icon : null, github, from };
 }
 
 /** What anyone may see of a shared wish: never its secret. */
@@ -772,8 +773,11 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       const picture = share.picture && { url: await put("picture", share.picture), width: share.picture.width, height: share.picture.height };
       const icon = share.icon && { url: await put("icon", share.icon) };
       const time = now().toISOString();
+      // The link the app is a copy of, kept only while there's such a link and it isn't this one: a share that doesn't
+      // say, or names one that's gone, keeps what the record had.
+      const from = share.from && share.from !== wishID && (await kept.get(share.from)) ? share.from : null;
       const words = { name: share.name, by: share.by, line: share.line, words: share.words, ideas: share.ideas, asks: share.asks, shape: share.shape, github: share.github,
-        ...(share.releases ? { releases: share.releases } : {}), picture: picture || null, icon: icon || null };
+        ...(share.releases ? { releases: share.releases } : {}), ...(from ? { from } : {}), picture: picture || null, icon: icon || null };
       // Its name under the account stays what it was first given, whatever the app is called later.
       const named = earlier?.owner ? { owner: earlier.owner, app: earlier.app }
         : owner ? { owner, app: await claimAppName(kept, owner, words.name, wishID) } : {};
@@ -1287,10 +1291,21 @@ export function createIdeaMailHandler({ env = process.env, fetcher = fetch, stor
 }
 
 /** A shared wish for the page and its card, or null when there's none by that id (or it can't be read now). */
-export async function findWish(id, { env = process.env, fetcher = fetch, store } = {}) {
+export async function findWish(id, { env = process.env, fetcher = fetch, store, origin = null } = {}) {
   if (!isID(id)) return null;
-  try { return shown(await (store ?? cloudStore(env, fetcher)).get(id)); }
+  let kept, record;
+  try { kept = store ?? cloudStore(env, fetcher); record = await kept.get(id); }
   catch { return undefined; }
+  const wish = shown(record);
+  // Asked with the site's origin (the page): the link it came from, as that link is known now, `from` on its page. One
+  // taken down since, or that can't be read just now, is left out.
+  if (wish && origin && isID(record.from) && record.from !== id) {
+    try {
+      const source = await kept.get(record.from);
+      if (source) wish.from = { url: linkOf(origin, source), label: source.owner && source.app ? `${source.owner}/${source.app}` : source.name };
+    } catch {}
+  }
+  return wish;
 }
 
 /** Takes a shared wish down without its secret: for the Lamp team, when a link shows what it mustn't. */

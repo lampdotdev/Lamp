@@ -92,6 +92,33 @@ test("a wish is shared, changed and taken down only with its secret", async () =
   assert.equal(store.records.has(id), false);
 });
 
+test("a copy's link names the link it came from, while that's up", async () => {
+  const store = memoryStore();
+  const handler = createShareHandler({ store, limited: false });
+  const pageOf = async (id) => {
+    const html = await (await createPageHandler({ store, template: async () => "<html><head></head><body></body></html>" })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
+    return JSON.parse(/id="shared-wish">(.*?)<\/script>/.exec(html)[1]);
+  };
+  const source = await (await send(handler, "POST", share)).json();
+  assert.equal(readShare({ ...share, from: "not an id" }), null);
+  const copy = await (await send(handler, "POST", { ...share, name: "Plant Pal Too", from: source.id })).json();
+  assert.equal(store.records.get(copy.id).from, source.id);
+  assert.deepEqual((await pageOf(copy.id)).from, { url: `https://lamp.dev/w/${source.id}-plant-pal`, label: "Plant Pal" });
+  assert.equal((await pageOf(source.id)).from, undefined);
+
+  // A change that doesn't say keeps it; a link that isn't there, or the link itself, is never one.
+  await send(handler, "PUT", share, { id: copy.id, secret: copy.secret });
+  assert.equal(store.records.get(copy.id).from, source.id);
+  const stray = await (await send(handler, "POST", { ...share, from: "2345678922" })).json();
+  assert.equal(store.records.get(stray.id).from, undefined);
+  await send(handler, "PUT", { ...share, from: stray.id }, { id: stray.id, secret: stray.secret });
+  assert.equal(store.records.get(stray.id).from, undefined);
+
+  // Taken down, the source leaves the page.
+  await send(handler, "DELETE", undefined, { id: source.id, secret: source.secret });
+  assert.equal((await pageOf(copy.id)).from, undefined);
+});
+
 test("what's new in each release is checked, kept newest first, and kept by a change that doesn't say", async () => {
   const older = { date: "2026-10-01T09:00:00Z", lines: ["Plants have names now"] };
   const newer = { date: "2026-11-02T10:30:00.000Z", lines: ["Reminders come at dawn", " Ferns  are in "] };

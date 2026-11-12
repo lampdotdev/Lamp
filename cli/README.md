@@ -222,7 +222,10 @@ of the link's own.
   errors isn't shared without `--anyway`.
 - **The link's secret**, which is what lets it be changed or taken down, is kept with lamp's state for the folder
   (`link.json`, readable only by the person), never in the folder.
-- **Not sent:** the wish's own file, which only Lamp's app makes. The link plays the page and carries its words.
+- **The app's file** goes too (`exportApp`, as `lamp export` makes it), as Lamp's Share Link card sends it, unless
+  `--no-file`. Its own place on its credits' chain names the link it went up with (`link`, `lamp.dev/w/<id>`).
+- **Where it came from:** a copy of an app someone shared (`lamp play`, `lamp unpack`) has their link on its chain, so
+  its own share names that link (`from`, `sourceLinkOf`), and its page says "from" them.
 - **`LAMP_SITE`** names another site to share to, for trying this against a copy of the site (`npm run dev` in
   `site/` keeps links in memory). The tests run against the site's handlers the same way, and never reach lamp.dev.
 

@@ -189,12 +189,25 @@ enum WishLink {
 
     private static func secret(_ shared: Shared) -> [String: Any] { ["id": shared.id, "secret": shared.secret] }
 
+    /// A link by its id alone (`https://lamp.dev/w/<id>`), which the site sends on to its address now: what a shared
+    /// file names (`Credits.Remix.link`), so a rename or a username never breaks it.
+    static func stableLink(of shared: Shared) -> String { "\(site)/w/\(shared.id)" }
+
+    /// An id as the site gives them (`isID` in lib/shared-wishes.js), or nil.
+    static func validID(_ id: String) -> String? {
+        let alphabet = Set("23456789abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ")
+        return id.count == 10 && id.allSatisfy(alphabet.contains) ? id : nil
+    }
+
     /// Shares the wish, or changes what its link shows, and answers the link as it is now. `releases` is what's new in
     /// each version released, as `WishReleases.shown` gives it.
     /// `github`, the app's repository there as "owner/name", only when anyone can read it: the page links to it.
-    static func publish(_ words: Words, picture: Data?, icon: Data?, releases: [[String: Any]] = [], github: String? = nil, replacing earlier: Shared?) async throws -> Shared {
+    /// `project`'s credits say which link it's a copy of, if any, which its page names.
+    static func publish(_ words: Words, picture: Data?, icon: Data?, releases: [[String: Any]] = [], github: String? = nil,
+                        of project: LampProject? = nil, replacing earlier: Shared?) async throws -> Shared {
         var body: [String: Any] = ["name": words.name.trimmed, "line": words.line.trimmed, "words": words.words.trimmed, "releases": releases]
         if let github { body["github"] = github }
+        if let project, let from = Credits.load(project).sourceLink(on: site, own: earlier?.id) { body["from"] = from }
         if let by = words.by?.trimmed, !by.isEmpty { body["by"] = by }
         if let ideas = words.ideas, !ideas.isEmpty { body["ideas"] = ideas }
         if let asks = words.asks, !asks.isEmpty { body["asks"] = asks }
@@ -800,7 +813,7 @@ enum WishLink {
                 if let repo = GitHubRepo.kept(for: project)?.repo, await GitHubRepo.readableByAnyone(repo) { github = repo }
                 var shared = try await WishLink.publish(words, picture: picture, icon: icon,
                                                         releases: WishReleases.shown([release] + WishReleases.load(project)),
-                                                        github: github, replacing: card.shared)
+                                                        github: github, of: project, replacing: card.shared)
                 // Kept at once, with the file as the link had it so far: its secret is the only way to change it or take it
                 // down, so a file that fails after this leaves a link the card can still stop.
                 shared.shown.file = card.shared?.shown.file
@@ -818,9 +831,11 @@ enum WishLink {
                 // The link goes into the installed app too, for a Mac without Lamp (`RemixPanel`).
                 Store.shared.refreshInstalled(project)
                     cards[project.id]?.shared = shared
+                    let link = WishLink.stableLink(of: shared)
                     let data = try await Task.detached(priority: .userInitiated) { () throws -> Data in
                         // With this release's lines, which are kept only once the file is up.
-                        let file = try Sharing.export(project, releasing: WishReleases.Entry(date: release.date, lines: release.lines))
+                        let file = try Sharing.export(project, releasing: WishReleases.Entry(date: release.date, lines: release.lines),
+                                                      link: link)
                         defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
                         return try Data(contentsOf: file)
                     }.value
