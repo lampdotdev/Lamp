@@ -31,7 +31,7 @@ import { tile } from "./png.mjs";
 import { Problem } from "./state.mjs";
 import { serveLocalAI } from "./local-ai.mjs";
 import { EngineTrouble, complete } from "./ai.mjs";
-import { OpenRouterTrouble, chat as openRouterChat, text as openRouterText } from "./openrouter.mjs";
+import { OpenRouterTrouble, chat as openRouterChat, decide as openRouterDecide, image as openRouterImage, text as openRouterText } from "./openrouter.mjs";
 
 /** OpenRouter's answer, or what kept it from one, as Lamp's app reads it. */
 async function openRouter(asking) {
@@ -340,6 +340,18 @@ export const CALLS = {
   /** One chat completion from OpenRouter, its request as `body` (`actAsk`'s): `{message, cost}`, or `{trouble}`. */
   async openRouterChat(given, { stopped } = {}) {
     return openRouter(() => openRouterChat({ key: text(given, "key"), body: given.body ?? {}, seconds: seconds(given.seconds, 60, 600), signal: stopped }));
+  },
+
+  /** Decisions from OpenRouter's decision model (`AppAI.decide`): `key`, `model`, `state`, `questions`. `{answers, cost}` or `{trouble}`. */
+  async openRouterDecide(given, { stopped } = {}) {
+    return openRouter(() => openRouterDecide({ key: text(given, "key"), model: text(given, "model"), state: given.state, questions: given.questions ?? {},
+      seconds: seconds(given.seconds, 60, 120), signal: stopped }));
+  },
+
+  /** A picture from OpenRouter (`AppAI.image`): `key`, `model`, `prompt`, `references`, `aspectRatio`. `{image, cost}` or `{trouble}`. */
+  async openRouterImage(given, { stopped } = {}) {
+    return openRouter(() => openRouterImage({ key: text(given, "key"), model: text(given, "model"), prompt: text(given, "prompt"),
+      references: given.references, aspectRatio: typeof given.aspectRatio === "string" ? given.aspectRatio : undefined, seconds: seconds(given.seconds, 240, 300), signal: stopped }));
   },
 
   /**

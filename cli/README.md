@@ -336,7 +336,7 @@ does. A problem says its kind where Lamp's app acts on which it was: a device th
   `decideAsk` and `decideRead`, a decision answered by a text model (`AppAI.decideByText`). Which route answers and
   asking it stay in Lamp's app, with its keys and its models, except Claude Code and Codex, which `engineAnswer` runs
   (`AppAI.viaEngine`), sealed, with the program and its settings Lamp's app chose, and OpenRouter, which
-  `openRouterText` and `openRouterChat` ask with the person's key (cli/openrouter.mjs; `AppAI.viaOpenRouter`,
+  `openRouterText`, `openRouterChat`, `openRouterDecide` and `openRouterImage` ask with the person's key (cli/openrouter.mjs; `AppAI.viaOpenRouter`,
   `AppAct.openRouterStep`).
   Two things stay in Lamp's app, since only it can see them: whether macOS lets Lamp look at all, which is
   Network.framework's to say (`DeviceProbe.localNetworkDenied`), and the neighbor table, which macOS shows only to a
