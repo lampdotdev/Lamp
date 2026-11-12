@@ -1206,6 +1206,7 @@ enum DeviceSupport {
          * probability, choice, score and confidence. Fails only when no item could be judged.
          */
         decideEach: function (items, questions, options) {
+          var failed = null;
           var o = options || {}, about = o.about || function (item) { return item; };
           var limit = Math.max(1, o.concurrency || 12), total = items.length, done = 0, next = 0;
           var results = new Array(total), saved = o.remember ? read('verdicts', {}) : null, now = Date.now();
@@ -1233,7 +1234,7 @@ enum DeviceSupport {
               for (var k in (reply.answers || {})) if (reply.answers.hasOwnProperty(k)) answers[k] = decision(reply.answers[k]);
               if (key) saved[key] = { answers: reply.answers, until: now + o.remember * 1000 };
               finish(i, answers);
-            }, function (error) { finish(i, null, error.message); });
+            }, function (error) { if (!failed) failed = error; finish(i, null, error.message); });
           }
           function worker() {
             if (next >= total) return Promise.resolve();
@@ -1249,7 +1250,8 @@ enum DeviceSupport {
               keys.slice(-2000).forEach(function (k) { kept[k] = saved[k]; });
               write('verdicts', kept);
             }
-            if (total && results.every(function (r) { return r.error; })) throw new Failure(results[0].error);
+            // Every item failed: the first failure's setup and help go with it, as a single decision's would.
+            if (total && results.every(function (r) { return r.error; })) throw new Failure(results[0].error, failed && failed.needsSetup, failed && failed.help);
             return results;
           });
         },
