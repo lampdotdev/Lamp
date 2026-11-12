@@ -1137,7 +1137,8 @@ enum AppAI {
         if wantsLocal, ImageModels.ready, !editing { return .local }
         if Provider.hasKey { return .openRouter }
         if ImageModels.ready, !editing { return .local }
-        if codexChosen(appText: appText), EngineInstall.path(for: .codex) != nil, EngineSignIn.known[.codex] != false { return .codex }
+        // Never for a page shared on lamp.dev: Codex makes a picture with its own tools (`viaCodexImage`).
+        if sharedPage == nil, codexChosen(appText: appText), EngineInstall.path(for: .codex) != nil, EngineSignIn.known[.codex] != false { return .codex }
         return nil
     }
 
