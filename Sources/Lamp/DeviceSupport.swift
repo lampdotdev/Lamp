@@ -865,12 +865,22 @@ enum DeviceSupport {
       var actRan = {};      // turn id -> call key -> the result a write gave, while this copy of the page is open
       function actId() { return 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
       function isList(v) { return Object.prototype.toString.call(v) === '[object Array]'; }
-      /** At most `max` characters of a result go back to the model, cut with a note. */
+      /** A text's size in UTF-8 bytes, as a step is measured where it's checked. */
+      function utf8Bytes(text) { try { return unescape(encodeURIComponent(text)).length; } catch (e) { return text.length * 3; } }
+      /** At most `max` bytes of a result go back to the model, as it's sent (UTF-8, its cut wrapper included), cut with a note. */
       function actValue(value, max) {
         var json = jsonState(value === undefined ? null : value), text;
         try { text = JSON.stringify(json); } catch (e) { return { note: 'The result couldn\'t be read.' }; }
-        if (text && text.length > max) return { cut: text.slice(0, max - 96), note: 'Cut short: ask for less.' };
-        return json;
+        if (!text || utf8Bytes(text) <= max) return json;
+        // The cut is JSON inside JSON, so its quotes are escaped again: shrink it until the whole wrapper fits.
+        var cut = text.slice(0, max);
+        for (var i = 0; i < 24; i++) {
+          var wrapped = { cut: cut, note: 'Cut short: ask for less.' };
+          var size = utf8Bytes(JSON.stringify(wrapped));
+          if (size <= max) return wrapped;
+          cut = cut.slice(0, Math.max(0, Math.floor(cut.length * max / size) - 16));
+        }
+        return { note: 'Cut short: ask for less.' };
       }
       /** The page's own check of a call before it runs: a tool it declared, its arguments an object with nothing
        *  undeclared and nothing required missing. Lamp has checked the shapes; this is what the page itself can hold to. */
@@ -898,7 +908,7 @@ enum DeviceSupport {
         var resultsLeft = ACT_TURN_RESULTS;
         function sized(value) {
           var kept = actValue(value, Math.max(1024, Math.min(resultMax, resultsLeft)));
-          try { resultsLeft = Math.max(0, resultsLeft - JSON.stringify(kept).length); } catch (e) {}
+          try { resultsLeft = Math.max(0, resultsLeft - utf8Bytes(JSON.stringify(kept))); } catch (e) {}
           return kept;
         }
         var id = o.turn || actId();

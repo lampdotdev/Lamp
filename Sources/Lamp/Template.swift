@@ -15521,7 +15521,15 @@ enum Template {
                 return ["note": "The result couldn't be read."]
             }
             guard data.count > max else { return value }
-            return ["cut": String(decoding: data.prefix(max - 96), as: UTF8.self), "note": "Cut short: ask for less."]
+            // The cut is JSON inside JSON, so its quotes are escaped again: shrink it until the whole wrapper fits.
+            var cut = String(decoding: data.prefix(max), as: UTF8.self)
+            for _ in 0..<24 {
+                let wrapped: [String: Any] = ["cut": cut, "note": "Cut short: ask for less."]
+                let size = (try? JSONSerialization.data(withJSONObject: [wrapped]))?.count ?? Int.max
+                if size <= max { return wrapped }
+                cut = String(cut.prefix(Swift.max(0, cut.count * max / Swift.max(size, 1) - 16)))
+            }
+            return ["note": "Cut short: ask for less."]
         }
 
         private static func canonical(_ value: Any) -> String {
