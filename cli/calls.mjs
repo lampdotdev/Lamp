@@ -169,7 +169,7 @@ export const CALLS = {
    */
   async linkPublish(given) {
     const earlier = given.earlier && typeof given.earlier.id === "string" ? given.earlier : null;
-    return publishLink({ site: siteOf(given), body: given.body ?? {}, earlier });
+    return publishLink({ site: siteOf(given), body: given.body ?? {}, earlier, account: typeof given.account === "string" ? given.account : undefined });
   },
 
   /** What a followed link has now, asked with nothing of the person's; `latest` null when it can't be asked or is gone. */
