@@ -34,7 +34,7 @@ import { engine } from "./ai.mjs";
 import { allowed, forgetAllowed, serveLocalAI } from "./local-ai.mjs";
 import { accountFor, keepAccount } from "./share.mjs";
 import { accountName, askAccount } from "./link.mjs";
-import { share, unshare, ideas, finishIdea, answerIdea, makerEmail, readLink, writeLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
+import { share, unshare, ideas, finishIdea, answerIdea, makerEmail, readLink, writeLink, forgetLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
 import { Runner, allKept, fields, forget, integrationOf, isReady, look as lookForDevices, takesPages } from "./devices.mjs";
 import { placeNamed } from "./place.mjs";
 import { androidAdvice, androidDevices, androidDone, emulatorNamed, emulators, forgetAndroid, installTools, knowsAndroid, toolsThere } from "./android.mjs";
@@ -498,13 +498,25 @@ async function inLamp(layout) {
 function lampsLink(folder) {
   let real = resolve(folder);
   try { real = realpathSync(real); } catch {}
-  if (readLink(real)) return null;
   const owner = lampOwning(real);
   if (!owner) return null;
   // The link Lamp keeps for its app is lamp's to use too, Lamp open or not.
-  const kept = lampsKeptLink(real);
-  if (kept) { writeLink(real, kept); return null; }
-  return editionName(owner);
+  lampsCopy(real);
+  return readLink(real) ? null : editionName(owner);
+}
+
+/**
+ * For an app in a Lamp's own folder: brings lamp's copy of its link in step with the one that Lamp keeps, which is the
+ * link's own record (the person may have changed its words, or stopped sharing and made a new one, in Lamp since).
+ * False when the folder has a link of lamp's own instead (`share --new-link`), which is left as it is.
+ */
+function lampsCopy(folder) {
+  const mine = readLink(folder);
+  if (mine && !mine.fromLamp) return false;
+  const kept = lampsKeptLink(folder);
+  if (kept) writeLink(folder, { ...(mine?.id === kept.id ? mine : {}), ...kept, fromLamp: true });
+  else if (mine) forgetLink(folder);
+  return true;
 }
 
 /** What Lamp's app answered, as lamp says things: how the change went in, its words, and where its pictures are. */
@@ -917,12 +929,10 @@ async function main() {
     // An app with a page in a Lamp's own folder is lamp's to share, whether that Lamp is open or not, to the link the
     // Lamp keeps for it, and its Share Link card is told what went (`keepInLamp`). Only what lamp doesn't pack itself
     // (a Mac app, an iPhone app, a wish of several) goes through Lamp's app.
-    const lampsOwn = owner && hasPage && !options["new-link"];
-    if (lampsOwn && !readLink(project.folder)) {
-      const kept = lampsKeptLink(project.folder);
-      if (kept) writeLink(project.folder, kept);
-    }
-    if (!readLink(project.folder) && !options["new-link"] && (owner || given)) {
+    // A link of lamp's own (--new-link) is a new one, never lamp's copy of the link Lamp keeps.
+    if (options["new-link"] && readLink(project.folder)?.fromLamp) forgetLink(project.folder);
+    const lampsOwn = owner && hasPage && !options["new-link"] && lampsCopy(project.folder);
+    if (!lampsOwn && !readLink(project.folder) && !options["new-link"] && (owner || given)) {
       const lamp = await reachLamp([owner ?? given]);
       if (lamp) {
         const list = (text) => String(text).split("|").map((item) => item.trim()).filter(Boolean);
@@ -990,7 +1000,11 @@ async function main() {
     if (options.by !== undefined) keepSharer(words.by);
     const sent = await share({ layout, words, shape, picture: card.picture ? Buffer.from(card.picture, "base64") : null, said: (line) => console.log(line),
       file: !options["no-file"], anyway: !!options.anyway });
-    if (lampsOwn) keepInLamp(layout.folder, readLink(layout.folder));
+    if (lampsOwn) {
+      const link = { ...readLink(layout.folder), fromLamp: true };
+      writeLink(layout.folder, link);
+      keepInLamp(layout.folder, link);
+    }
     console.log(`${before ? "Sent again to its link" : "Shared"}: ${sent.url}`);
     console.log(`"${words.name}"${words.by ? ` by ${words.by}` : ""}: ${sent.files} files, ${(sent.bytes / 1_000_000).toFixed(1)} MB packed, ${shape === "fill" ? "filling the window" : "on its own stage"}${sent.picture ? ", with a picture of it" : ", with no picture"}${sent.file ? ", and its app file, for anyone to open in Lamp" : ""}${sent.github ? `, with a link to its code on GitHub (${sent.github})` : ""}.`);
     console.log("Anyone with the link can play it and send an idea: lamp ideas shows them. lamp unshare takes it down.");
@@ -1004,8 +1018,11 @@ async function main() {
     const lamps = lampsLink(rest[0] ?? ".");
     if (lamps) throw new Problem(`${lamps} keeps this app's link: take it down from its Share Link card (Stop Sharing).`);
     const folder = layoutOf(rest[0] ?? ".").folder;
+    // Lamp's record goes only when the link taken down is the one it keeps, not a link of lamp's own beside it.
+    const taken = readLink(folder);
+    const lampsKept = lampOwning(folder) ? lampsKeptLink(folder) : null;
     console.log(`Taken down: ${await unshare(folder)}`);
-    if (lampOwning(folder)) keepInLamp(folder, null);
+    if (lampsKept && taken?.id === lampsKept.id) keepInLamp(folder, null);
     return;
   }
 

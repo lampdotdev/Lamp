@@ -42,6 +42,8 @@ export function keepAccount(site, account) {
 export function readLink(folder) {
   try { return JSON.parse(readFileSync(linkFileOf(folder), "utf8")); } catch { return null; }
 }
+/** Forgets the folder's link here, leaving it on the site (one Lamp's app let go of, say). */
+export function forgetLink(folder) { rmSync(linkFileOf(folder), { force: true }); }
 export function writeLink(folder, link) {
   mkdirSync(stateOf(folder), { recursive: true });
   writeFileSync(linkFileOf(folder), JSON.stringify(link, null, 2), { mode: 0o600 });
