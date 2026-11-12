@@ -25,51 +25,92 @@ export function engine() {
 const missing = "AI here needs Claude Code or Codex on this Mac, signed in: install one, or open the app in Lamp.";
 const named = (which) => (which === "codex" ? "Codex" : "Claude Code");
 
-/** One answer from the engine: text, or JSON fitting `schema`. Nothing to run, no files, no session kept. */
-export function complete({ system, prompt, schema, seconds = 60, which = engine() }) {
-  if (which !== "claude" && which !== "codex") return Promise.reject(new Error(missing));
+/** Why an engine gave no answer: `kind` is "missing", "timeout", "stopped", "failed" (its own words) or "silent". */
+export class EngineTrouble extends Error {
+  constructor(kind, message) { super(message); this.kind = kind; }
+}
+
+/**
+ * One answer from Claude Code or Codex, the person's own sign-in: text, or JSON fitting `schema`. Every run is sealed:
+ * none of the person's settings, rules, hooks or MCP servers, and none of the engine's tools, so nothing of the
+ * computer is read or run whatever the prompt asks. Pictures (`images`, base64 with their `media_type`) go with the
+ * request itself: to Claude Code in its input, to Codex as attachments, never through a tool that reads files.
+ * Lamp's app runs it this way too (`engineAnswer` in calls.mjs, `AppAI.viaEngine`), naming the program (`tool`) and
+ * what it needs set (`env`); on its own lamp finds the person's own on the PATH.
+ */
+export function complete({ system, prompt, schema, seconds = 60, which = engine(), tool, env = {}, model = process.env.LAMP_AI_MODEL || "", images = [], signal } = {}) {
+  if (which !== "claude" && which !== "codex") return Promise.reject(new EngineTrouble("missing", missing));
   const folder = mkdtempSync(join(tmpdir(), "lamp-ai-"));
   const sayer = system || "You are a helpful assistant inside an app.";
-  let args;
+  const pictures = (Array.isArray(images) ? images : []).filter((image) => typeof image?.data === "string" && image.data);
+  let args, input = null;
   if (which === "claude") {
-    // Sealed as Lamp's app seals it (`AppAI.viaEngine`): none of the person's settings or hooks (--restricted), no MCP,
-    // no tools.
-    args = ["-p", prompt, "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--restricted", "--strict-mcp-config",
-      "--disable-slash-commands", "--tools", "", "--system-prompt", sayer];
-    if (process.env.LAMP_AI_MODEL) args.push("--model", process.env.LAMP_AI_MODEL);
+    // None of the person's settings or hooks (--restricted), no MCP, no tools. With pictures, the prompt and the pictures
+    // go in on its input as one message, which it takes in stream-json.
+    args = ["-p", ...(pictures.length ? [] : [prompt]), "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--restricted",
+      "--strict-mcp-config", "--disable-slash-commands", "--tools", "", "--system-prompt", sayer];
+    if (model) args.push("--model", model);
     if (schema) args.push("--json-schema", JSON.stringify(schema));
+    if (pictures.length) {
+      args.push("--input-format", "stream-json");
+      const content = [{ type: "text", text: prompt }, ...pictures.map((image) => ({ type: "image",
+        source: { type: "base64", media_type: String(image.media_type || "image/jpeg"), data: image.data } }))];
+      input = JSON.stringify({ type: "user", message: { role: "user", content } }) + "\n";
+    }
   } else {
-    // Sealed as Lamp's app seals it: read-only, none of the person's config, rules or hooks, and none of its tools. Its
-    // picture tool reads any file on the Mac: `features.view_image` turns it off now, `tools.view_image` did before
-    // (each version ignores the other's, with a warning). What's left, checked with Codex 0.167.1, is asking the person
-    // a question, which a run with no one to ask can't use.
+    // Read-only, none of the person's config, rules or hooks, and none of its tools. Its picture tool reads any file on
+    // the computer: `features.view_image` turns it off now, `tools.view_image` did before (each version ignores the
+    // other's, with a warning); pictures given with `-i` are part of the request, not that tool. What's left, checked
+    // with Codex 0.167.1, is asking the person a question, which a run with no one to ask can't use.
     args = ["exec", "--json", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check", "--ephemeral", "-s", "read-only",
       "-c", "hooks={}", "-c", 'model_reasoning_effort="low"', "-c", 'approval_policy="never"',
       "-c", "features.shell_tool=false", "-c", "features.unified_exec=false", "-c", 'web_search="disabled"',
       "-c", "features.apps=false", "-c", "features.multi_agent=false", "-c", "features.view_image=false",
       "-c", "tools.view_image=false", "-c", "features.goals=false",
       "-c", `developer_instructions=${JSON.stringify(sayer + "\n\nAnswer directly. Don't run commands or change files.")}`];
-    if (process.env.LAMP_AI_MODEL) args.push("-m", process.env.LAMP_AI_MODEL);
+    if (model) args.push("-m", model);
     if (schema) { writeFileSync(join(folder, "schema.json"), JSON.stringify(schema)); args.push("--output-schema", "schema.json"); }
+    pictures.forEach((image, i) => {
+      const name = `image${i}.${String(image.media_type).endsWith("png") ? "png" : "jpg"}`;
+      writeFileSync(join(folder, name), Buffer.from(image.data, "base64"));
+      args.push("-i", name);
+    });
     args.push("--", prompt);
   }
+  // Run on Lamp's own runtime, lamp is Bun told to be itself; the engine is never told so, or Claude Code, which is
+  // built on Bun, would be Bun too.
+  const childEnv = { ...process.env, ...env };
+  delete childEnv.BUN_BE_BUN;
   return new Promise((resolve, reject) => {
-    const child = spawn(which, args, { cwd: folder, stdio: ["ignore", "pipe", "pipe"] });
-    let text = "", failure = null, rest = "", said = "";
-    const timer = setTimeout(() => { failure = `${named(which)} took too long to answer.`; child.kill("SIGKILL"); }, seconds * 1000);
+    const child = spawn(tool || which, args, { cwd: folder, env: childEnv, detached: true, stdio: [input ? "pipe" : "ignore", "pipe", "pipe"] });
+    let text = "", trouble = null, rest = "", said = "";
+    // The whole group, since an engine may leave a child holding its output.
+    const stop = (kind, words) => { if (!trouble) trouble = new EngineTrouble(kind, words); try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); } };
+    const timer = setTimeout(() => stop("timeout", `${named(which)} took too long to answer.`), Math.max(1, seconds) * 1000);
+    const stopped = () => stop("stopped", "Stopped.");
+    if (signal?.aborted) stopped(); else signal?.addEventListener("abort", stopped);
     const line = (raw) => {
       let event;
       try { event = JSON.parse(raw); } catch { return; }
       if (which === "codex") {
         if (event.type === "item.completed" && event.item?.type === "agent_message" && typeof event.item.text === "string") text = event.item.text;
-        else if (event.type === "turn.failed" || event.type === "error") failure = String(event.error?.message || event.message || "Codex couldn't answer.");
+        else if (event.type === "turn.failed" || event.type === "error") {
+          // Codex nests the service's error as JSON text: its message is what's said.
+          const words = String(event.message || event.error?.message || "Codex couldn't answer.");
+          let nested;
+          try { nested = JSON.parse(words)?.error?.message; } catch {}
+          trouble ??= new EngineTrouble("failed", nested || words);
+        }
         return;
       }
       if (event.type !== "result") return;
-      if (event.is_error) failure = String(event.result || "Claude Code couldn't answer.");
+      if (event.is_error) trouble ??= new EngineTrouble("failed", String(event.result || "Claude Code couldn't answer."));
       else if (schema && event.structured_output !== undefined) text = JSON.stringify(event.structured_output);
       else if (typeof event.result === "string") text = event.result;
     };
+    // Read as text across chunks, so a character split between two of them stays whole.
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       rest += chunk;
       const lines = rest.split("\n");
@@ -77,13 +118,14 @@ export function complete({ system, prompt, schema, seconds = 60, which = engine(
       lines.forEach(line);
     });
     child.stderr.on("data", (chunk) => { said = (said + chunk).slice(-400); });
-    child.on("error", () => { clearTimeout(timer); rmSync(folder, { recursive: true, force: true }); reject(new Error(missing)); });
+    if (input) { child.stdin.on("error", () => {}); child.stdin.end(input); }
+    const done = () => { clearTimeout(timer); signal?.removeEventListener("abort", stopped); rmSync(folder, { recursive: true, force: true }); };
+    child.on("error", () => { done(); reject(new EngineTrouble("missing", missing)); });
     child.on("close", () => {
-      clearTimeout(timer);
+      done();
       if (rest) line(rest);
-      rmSync(folder, { recursive: true, force: true });
-      if (failure) return reject(new Error(failure));
-      if (!text) return reject(new Error(`${named(which)} didn't answer. Check it's signed in.${said.trim() ? ` ${said.trim().split("\n").pop()}` : ""}`));
+      if (trouble) return reject(trouble);
+      if (!text) return reject(new EngineTrouble("silent", `${named(which)} didn't answer. Check it's signed in.${said.trim() ? ` ${said.trim().split("\n").pop()}` : ""}`));
       resolve(text);
     });
   });
@@ -107,10 +149,9 @@ export function status() {
 export async function ask(body) {
   const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
   if (!prompt) return [400, { error: "Missing prompt." }];
-  if (Array.isArray(body.images) && body.images.length) return [501, { error: "Pictures go to the AI through Lamp's app: open the app in Lamp." }];
   let system = typeof body.system === "string" ? body.system : "";
   if (body.json) system += (system ? "\n\n" : "") + "Answer with JSON only, nothing around it.";
-  try { return [200, { text: await complete({ system, prompt }) }]; }
+  try { return [200, { text: await complete({ system, prompt, images: body.images }) }]; }
   catch (error) { return [502, { error: error.message }]; }
 }
 

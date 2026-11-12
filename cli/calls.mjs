@@ -30,6 +30,7 @@ import { PUBLISHER, identityName, keptSigner, namesOf, packageOf, versionAfter }
 import { tile } from "./png.mjs";
 import { Problem } from "./state.mjs";
 import { serveLocalAI } from "./local-ai.mjs";
+import { EngineTrouble, complete } from "./ai.mjs";
 import { Refused as StepRefused, chatBody, decidePrompt, planPrompt, planSchema, readDecision, readMessage, readPlan, readStep } from "./app-ai.mjs";
 
 // Pages shared on lamp.dev asking for their AI, answered by Lamp's app (`sharedPages`): what each is waiting on from it.
@@ -318,6 +319,23 @@ export const CALLS = {
   },
 
   /**
+   * One answer from Claude Code or Codex for an app's AI (`AppAI.viaEngine`), sealed as ai.mjs runs every one: `engine`,
+   * the program Lamp chose (`tool`) and what it needs set (`env`), `system`, `prompt`, optional `schema`, `model`,
+   * `images` and `seconds`. `{text}`, or `{trouble: {kind, message}}`; stopping the call stops the engine.
+   */
+  async engineAnswer(given, { stopped } = {}) {
+    try {
+      return { text: await complete({ which: text(given, "engine"), tool: typeof given.tool === "string" && given.tool ? given.tool : undefined,
+        env: given.env && typeof given.env === "object" ? given.env : {}, system: typeof given.system === "string" ? given.system : "",
+        prompt: text(given, "prompt"), schema: given.schema ?? undefined, model: typeof given.model === "string" ? given.model : "",
+        images: Array.isArray(given.images) ? given.images : [], seconds: seconds(given.seconds, 300, 600), signal: stopped }) };
+    } catch (error) {
+      if (error instanceof EngineTrouble) return { trouble: { kind: error.kind, message: error.message } };
+      throw error;
+    }
+  },
+
+  /**
    * A step of an app's `LampAI.act` as the page sent it (`text`, its JSON), checked: `{step}`, the step as the other
    * act calls take it, or `{refused: {status, error}}` for the page.
    */
@@ -449,11 +467,19 @@ async function once(name) {
 async function serve() {
   const say = (line) => process.stdout.write(JSON.stringify(line) + "\n");
   const under = new Map();
+  // A stop can overtake the call it's for (Lamp's app cancelled it as it was sent): it's kept, and the call starts stopped.
+  const early = new Set();
   const answer = async (line) => {
     let asked;
     try { asked = JSON.parse(line); } catch { return; }
-    if (asked?.stop !== undefined) return void under.get(asked.stop)?.abort();
+    if (asked?.stop !== undefined) {
+      const stopping = under.get(asked.stop);
+      if (stopping) stopping.abort();
+      else { early.add(asked.stop); if (early.size > 1000) early.delete(early.values().next().value); }
+      return;
+    }
     const id = asked?.id, call = CALLS[asked?.call], stopping = new AbortController();
+    if (early.delete(id)) stopping.abort();
     under.set(id, stopping);
     try {
       if (!call) throw new Error(`lamp has no call named "${asked?.call ?? ""}"`);

@@ -319,6 +319,13 @@ A capability given to one engine must be given to all of them that can take it, 
   four short plain-text answers, checked in app-ai.mjs and again in lamp.js); words without a call carry none.
   `LampAI.isAvailable('act')` asks `/ai/act` itself (`probe`), so it's true only when lamp.js has `act`, the app around
   the page lets the route through and the app's route can take it.
+- **Claude Code and Codex answering apps** (`AppAI.viaEngine`): run by lamp's command line (`engineAnswer` in
+  cli/calls.mjs, `complete` in cli/ai.mjs, which `lamp dev` and `lamp ai` use too), with the copy and its settings
+  Lamp chose (`EngineInstall.path(for:)`, `EngineInstall.environment(for:)`). Every run is sealed: Claude Code
+  `--restricted` with no tools at all, Codex read-only with its shell, pictures, web, apps and sub-agents off and no
+  approvals. Pictures go with the request, in Claude Code's stream-json input and as Codex's `-i` attachments, never
+  through a tool that reads files. The engine is never run with `BUN_BE_BUN`, which the runtime around lamp sets and
+  would make Claude Code, itself built on Bun, act as Bun.
 - **Shared pages' AI** (`SharedPagesAI`, `Store.sharedPageAI`): a page shared on lamp.dev, played in a browser on the
   Mac, asks one port of the computer's own (`NEARBY` in lamp.js). Which pages are let in is lamp's command line's
   (cli/local-ai.mjs, also `lamp ai`); Lamp keeps its `sharedPages` call running and is asked only for the person's yes

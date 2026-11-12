@@ -126,3 +126,52 @@ test("a decision by a text model is held to its questions and read into answers"
   assert.deepEqual(decidePrompt({}, odd).schema.required, ["__proto__"]);
   assert.deepEqual(Object.keys(readDecision('{"__proto__": {"noul": 0.5}}', odd).answers), ["__proto__"]);
 });
+
+test("Claude Code and Codex are run sealed, pictures in the request, and never told to be Bun", async () => {
+  const { complete } = await import("../ai.mjs");
+  const { mkdtempSync, writeFileSync, chmodSync, readFileSync: read } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const folder = mkdtempSync(join(tmpdir(), "lamp-engine-test-"));
+  // A stand-in for either engine: it writes down how it was run and answers in the engine's own way.
+  const fake = join(folder, "engine");
+  writeFileSync(fake, `#!/bin/sh
+input="$(cat 2>/dev/null)"
+printf '%s\\n' "$@" > "${folder}/args"; printf '%s' "$BUN_BE_BUN" > "${folder}/bun"; printf '%s' "$input" > "${folder}/input"; ls > "${folder}/files"
+if [ "$1" = exec ]; then echo '{"type":"item.completed","item":{"type":"agent_message","text":"Red"}}'; else echo '{"type":"result","result":"Red"}'; fi
+`);
+  chmodSync(fake, 0o755);
+  process.env.BUN_BE_BUN = "1";
+  const image = { media_type: "image/png", data: Buffer.from("png").toString("base64") };
+  try {
+    assert.equal(await complete({ which: "claude", tool: fake, prompt: "What color?", images: [image] }), "Red");
+    const claude = read(join(folder, "args"), "utf8").split("\n");
+    assert.equal(claude[claude.indexOf("--tools") + 1], "", "no tools, not even Read");
+    assert.ok(claude.includes("--restricted") && claude.includes("--input-format"));
+    assert.match(read(join(folder, "input"), "utf8"), /"type":"image"/);
+    assert.equal(read(join(folder, "bun"), "utf8"), "");
+    assert.equal(await complete({ which: "codex", tool: fake, prompt: "What color?", images: [image] }), "Red");
+    const codex = read(join(folder, "args"), "utf8");
+    for (const seal of ["features.shell_tool=false", "features.view_image=false", 'approval_policy="never"', "--ignore-user-config"]) assert.ok(codex.includes(seal), seal);
+    assert.match(codex, /-i\nimage0\.png/);
+  } finally { delete process.env.BUN_BE_BUN; }
+});
+
+test("an engine's answer keeps a character split between two reads, and a stop sent before its call stops it", async () => {
+  const { complete } = await import("../ai.mjs");
+  const { mkdtempSync, writeFileSync, chmodSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { spawn } = await import("node:child_process");
+  const folder = mkdtempSync(join(tmpdir(), "lamp-engine-split-"));
+  const fake = join(folder, "engine");
+  // The é's two bytes go out in two writes, a moment apart.
+  writeFileSync(fake, `#!/bin/sh\nprintf '{"type":"result","result":"caf\\303'\nsleep 0.2\nprintf '\\251 \\360\\237\\237\\242"}\\n'\n`);
+  chmodSync(fake, 0o755);
+  assert.equal(await complete({ which: "claude", tool: fake, prompt: "x" }), "café 🟢");
+  // Through calls.mjs --serve: the stop for 1 comes first, and the call that follows is answered as stopped.
+  writeFileSync(fake, "#!/bin/sh\nsleep 5\necho '{\"type\":\"result\",\"result\":\"late\"}'\n");
+  const run = spawn(process.execPath, [join(import.meta.dirname, "..", "calls.mjs"), "--serve"], { stdio: ["pipe", "pipe", "inherit"] });
+  run.stdin.write(JSON.stringify({ stop: 1 }) + "\n" + JSON.stringify({ id: 1, call: "engineAnswer", given: { engine: "claude", tool: fake, prompt: "x" } }) + "\n");
+  const said = await new Promise((done) => { let out = ""; run.stdout.on("data", (c) => { out += c; if (out.includes("\n")) done(JSON.parse(out.split("\n")[0])); }); });
+  run.stdin.end();
+  assert.equal(said.done?.trouble?.kind, "stopped");
+});
