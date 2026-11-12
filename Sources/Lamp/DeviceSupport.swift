@@ -606,7 +606,7 @@ enum DeviceSupport {
         return done.then(null, function (e) {
           if (e instanceof Failure) throw e;
           // Safari never lets a page on the web reach this computer this way, so Lamp or lamp ai open here wouldn't help.
-          if (safari()) throw new Failure('AI here works in Chrome, or open it in Lamp.');
+          if (safari()) throw new Failure('AI here works in Chrome or in Lamp, or with Lamp\'s command line: lamp play and this page\'s link.');
           throw new Failure('AI isn\'t available here. Open Lamp on this computer, or with Lamp\'s command line, run lamp ai.');
         });
       }
