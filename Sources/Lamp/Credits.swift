@@ -39,7 +39,8 @@ struct Credits: Codable, Equatable {
         /// `assets` tool's), so what each file is and whose it is can be told from the credits.
         var files: [String]? = nil
         /// Fetched while the app runs (a live feed, a map service, an API), with nothing of it in the app: sharing the app
-        /// passes on none of it, so it never needs a license to go (`ShareCheck.unlicensed`).
+        /// passes on none of it, so it never needs a license to go (`ShareCheck.unlicensed`). An explicit false is kept,
+        /// so a source that comes to be copied into the app stops being live over an older credit that said it was.
         var live: Bool? = nil
 
         /// Every file of its terms the wish keeps: its license, then the others.
@@ -379,7 +380,7 @@ extension Credits.Source {
         return Credits.Source(name: name, author: Credits.text(author), url: Credits.validURL(url), commit: Credits.validCommit(commit),
                               license: Credits.validLicense(license), licenseFile: Credits.validPath(licenseFile),
                               noticeFiles: notices.isEmpty ? nil : notices, adapted: adapted, files: files.isEmpty ? nil : files,
-                              live: live == true ? true : nil)
+                              live: live)
     }
 
     /// The same work: the same address, or for one with none, the same name.
