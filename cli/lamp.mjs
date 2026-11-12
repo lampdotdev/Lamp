@@ -959,11 +959,13 @@ async function main() {
     const { options, rest } = parse(args, ["to"]);
     const id = /(?:^|\/w\/)([A-Za-z0-9]{10})(?:-|$|\/|\?|#)/.exec(rest[0] ?? "")?.[1];
     if (!id) throw new Problem("play takes a link to an app shared on lamp.dev: lamp play https://lamp.dev/w/AbCdEf1234-its-name");
-    // Which folder each link was played into, so playing it again picks up where it was, saves and all.
-    const playedFile = join(process.env.LAMP_DEV_HOME || join(homedir(), ".lamp", "dev"), "played.json");
-    let played = {};
-    try { played = JSON.parse(readFileSync(playedFile, "utf8")) || {}; } catch {}
-    let folder = !options.newest && !options.to && typeof played[id] === "string" && existsSync(join(played[id], "lamp-app.json")) ? played[id] : null;
+    // Which folder each link was played into, so playing it again picks up where it was, saves and all: a file of its
+    // own for each link, so two links played at once never write over each other's.
+    const playedFile = join(process.env.LAMP_DEV_HOME || join(homedir(), ".lamp", "dev"), "played", id);
+    let recorded = null;
+    try { recorded = readFileSync(playedFile, "utf8").trim() || null; } catch {}
+    const wanted = options.to ? resolve(options.to) : null;
+    let folder = !options.newest && recorded && (!wanted || wanted === recorded) && existsSync(join(recorded, "lamp-app.json")) ? recorded : null;
     if (folder) console.log(`Playing the copy in ${folder}. --newest takes the link's latest version instead.`);
     else {
       const latest = await latestOf({ id });
@@ -975,7 +977,7 @@ async function main() {
       if (bytes.length > MAX_ARCHIVE) throw new Problem("its file is bigger than a Lamp app file is let be");
       const name = String(latest.name || "Shared app").replace(/[\r\n/:\\]+/g, " ").trim().slice(0, 60) || "Shared app";
       const games = join(homedir(), "Lamp Games");
-      folder = options.to ? resolve(options.to) : join(games, name);
+      folder = wanted ?? join(games, name);
       for (let n = 2; !options.to && existsSync(folder) && readdirSync(folder).length; n++) folder = join(games, `${name} ${n}`);
       const work = join(stateOf(folder), "download.lampapp");
       mkdirSync(dirname(work), { recursive: true });
@@ -984,9 +986,8 @@ async function main() {
       try { opened = unpack(work, folder); } finally { rmSync(work, { force: true }); }
       if (opened.refused) throw new Problem(`it's unpacked in ${folder}, but lamp can't run it: ${opened.refused}. Open it in Lamp instead`);
       if (opened.project.kind === "page") lampsFilesBeside(opened.project.root, { game: opened.project.game || manifestOf(folder)?.platform === "game" });
-      played[id] = folder;
       mkdirSync(dirname(playedFile), { recursive: true });
-      writeFileSync(playedFile, JSON.stringify(played, null, 2));
+      writeFileSync(playedFile, folder);
       console.log(`"${opened.name}", version ${latest.version}, is in ${folder}.`);
     }
     const opened = await ask(await serverFor(projectOf(folder).folder), "open", {}, { timeout: 30_000 });
