@@ -898,7 +898,7 @@ final class SidebarServer {
                 case .result:
                     continue
                 case .needsKey, .offer:
-                    // The card's header: setting it up (a key, a download, a sign-in) happens in Lamp's window.
+                    // The card's header: setting it up (a key or a sign-in) happens in Lamp's window.
                     guard let offer = line.setupOffer else { continue }
                     let header = SetupCard.header(offer, reason: line.text, project: project)
                     var card = SidebarLine(id: line.id, kind: .offer, text: header.title, gap: gap)

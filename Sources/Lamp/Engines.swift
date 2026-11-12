@@ -56,19 +56,13 @@ enum CommandApproval: String, CaseIterable, Identifiable {
 
 /// The user's builder choice (Settings → Building). Stored in UserDefaults.
 enum Builder {
-    /// pi's provider for a model on this Mac (Native Mac AI); the other is OpenRouter.
-    static let localProvider = "forge-local"
-
     static var engine: Engine {
         get { Engine(rawValue: UserDefaults.standard.string(forKey: "engine") ?? "") ?? .pi }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "engine") }
     }
 
-    /// What pi builds through: OpenRouter, or a model on this Mac. Anything else saved reads as OpenRouter.
-    static var piProvider: String {
-        get { UserDefaults.standard.string(forKey: "piProvider") == localProvider ? localProvider : "openrouter" }
-        set { UserDefaults.standard.set(newValue == localProvider ? localProvider : "openrouter", forKey: "piProvider") }
-    }
+    /// What pi builds through: OpenRouter, whatever an earlier Lamp saved (it could also build with a model on this Mac).
+    static let piProvider = "openrouter"
 
     /// The model Claude Code or Codex builds with; "" leaves it to the tool's own default (for Claude Code,
     /// the account's default, since Lamp runs it without the person's settings). Claude Code starts on
@@ -146,7 +140,6 @@ enum Builder {
     /// The model saved for one of pi's providers, chosen or not.
     static func piModel(for provider: String) -> String {
         if let saved = UserDefaults.standard.string(forKey: "piModel.\(provider)"), !saved.isEmpty { return saved }
-        if provider == localProvider { return LocalModels.installedIDs().first ?? "" }
         return Provider.defaultModel
     }
 
@@ -157,16 +150,7 @@ enum Builder {
         switch engine {
         case .pi:
             if Agent.executable == nil { return piMissing }
-            switch piProvider {
-            case localProvider:
-                let installed = LocalModels.scan()
-                if installed.isEmpty { return "Download a model in Settings → AI Providers → Native Mac AI." }
-                if let model = installed.first(where: { $0.id == piModel }), model.format == .mlx, LocalModels.mlxServerPath == nil {
-                    return "\(model.name) needs a one-time install before it can run: click Install beside it in Settings → AI Providers → Native Mac AI."
-                }
-            default:
-                if KeyStore.openRouterKey == nil { return "Add your OpenRouter key." }
-            }
+            if KeyStore.openRouterKey == nil { return "Add your OpenRouter key." }
             if piModel.isEmpty { return "Choose a model." }
         default:
             // With no copy on the Mac, Lamp downloads its own when the engine is chosen (EngineDownloads), so
@@ -179,7 +163,6 @@ enum Builder {
     static var summary: String {
         switch engine {
         case .pi:
-            if piProvider == localProvider { return "\(piModel.isEmpty ? "No model" : piModel) via Native Mac AI" }
             return "\(Provider.models.first { $0.id == piModel }?.name ?? piModel) via OpenRouter"
         default:
             let model = engineModel(engine)

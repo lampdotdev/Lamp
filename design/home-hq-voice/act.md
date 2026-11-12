@@ -174,8 +174,6 @@ model choice and the cost record are the same as for `/ai`. The route is listed 
 | --- | --- |
 | **OpenRouter** (`.openRouter`, the default with a key) | Real tool calling. `provider.require_parameters: true`, so only providers that take the tools and `tool_choice` as sent are used. `tool_choice` is `"auto"`, or `"none"` for the reply-only step. Recorded for Sonnet 5.5 on 2026-10-27: `"required"`, and naming a tool, find no provider ("No endpoints found that support the provided 'tool_choice' value"). The Anthropic models offered for apps take only `"auto"` and `"none"`. Lamp's `reply` tool is offered, but can't be required, so an answer of words without a call is the reply, and whether it asks something is read from its final question mark. **That's a workaround** for the missing `"required"`. |
 | **Claude Code, Codex** (`.engine`) | **Unsupported for now**: a 501 saying so, and `isAvailable('act')` is false. When added, they reuse the existing `--json-schema` and `--output-schema` paths in `AppAI.viaEngine` through `AppAI.complete(…, schema:, via:)`, with a plan schema of calls (each call's `args` a JSON string checked against its tool) or a reply. Each step pays an engine's start-up. |
-| **A GGUF model on this Mac** (llama-server) | Unsupported for now. When added: the same plan through `response_format: json_schema`, which `viaOpenAICompatible` already sends. |
-| **An MLX model** (mlx_lm.server) | Unsupported. It has no `response_format`. It would need a labeled JSON-prompt fallback checked the same way, or it stays unsupported. |
 | **pi** | No route, as for any app text. |
 | **A phone away from the Mac** (`LampDirect`) | Not offered. Pages never use it. |
 

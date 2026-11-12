@@ -225,31 +225,26 @@ enum StepTitles {
         return text
     }
 
-    /// What built a turn, taken as it starts: the engine and, for pi, whether through OpenRouter or a model on this
-    /// Mac, and which.
+    /// What built a turn, taken as it starts: the engine, or OpenRouter for pi.
     enum TurnRoute: Equatable {
         case engine(Engine)
         case openRouter
-        case local(model: String)
 
         @MainActor static var current: TurnRoute {
             switch Builder.engine {
-            case .pi: Builder.piProvider == Builder.localProvider ? .local(model: Builder.piModel) : .openRouter
+            case .pi: .openRouter
             case let engine: .engine(engine)
             }
         }
     }
 
-    /// The route the titles go along: the one that built the turn, with its small model where it has one. A turn
-    /// built on this Mac is titled on this Mac, by the model that built it, or not at all: a key saved for
-    /// OpenRouter is no leave to send what stayed on the Mac to the cloud.
+    /// The route the titles go along: the one that built the turn, with its small model where it has one.
     nonisolated static func route(for turn: TurnRoute, among routes: [AppAI.TextRoute]) -> (route: AppAI.TextRoute, model: String?)? {
         let found = routes.first { route in
             guard route.available else { return false }
             switch (turn, route.kind) {
             case (.engine(let engine), .engine(let other, _)): return engine == other
             case (.openRouter, .openRouter(let model)): return model == AppAI.defaultOpenRouterModel
-            case (.local(let model), .localModel(_, let other)): return model == other
             default: return false
             }
         }

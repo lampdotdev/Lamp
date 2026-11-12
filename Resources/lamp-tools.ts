@@ -19,7 +19,7 @@
  * - `assets`: asks Lamp to find free ready-made models, sprites, tiles, icons, textures, sounds and music in its index, or to fetch the
  *   chosen ones into the app and credit them; Lamp does the fetching, and the reply may show their pictures.
  * - `offer_setup`: asks Lamp to show the person a card in the chat for setting up a kind of AI the app can't
- *   use yet (a key, a download, a sign-in). Lamp decides whether to show it and says what happened.
+ *   use yet (a key or a sign-in). Lamp decides whether to show it and says what happened.
  * - `make_app_for`: gives the wish a new app, or changes the one whose folder `app` names, given what it is (a game or
  *   an app), the devices it's on and whether it's made as a web page or native code; the wish's other apps stay. The
  *   reply says how to adapt the code and gives a new app's rules.

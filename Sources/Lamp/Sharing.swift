@@ -1094,12 +1094,9 @@ enum Sharing {
 struct ImportReview {
     enum Risk: String, CaseIterable { case low, medium, high }
 
-    /// What read the code. A model running on this Mac is small next to the ones Lamp asks over the
-    /// internet: it misses more and is more easily talked round by the code it reads, so its word counts
-    /// when it's a warning and not when it's an all-clear.
+    /// What read the code.
     struct Reviewer: Equatable {
         let name: String
-        let onThisMac: Bool
     }
 
     var summary: String
@@ -1124,24 +1121,24 @@ struct ImportReview {
     var split = false
 
     /// The rating when it comes from a reviewer whose all-clear Lamp passes on, and covers all of the code.
-    private var vouched: Risk? { reviewer?.onThisMac == false && !partial && !split ? risk : nil }
+    private var vouched: Risk? { reviewer != nil && !partial && !split ? risk : nil }
 
     /// The one-line verdict: the AI's rating, lifted by what the code was seen to do. A warning stands
     /// whoever gave it; "safe" takes a low rating from a reviewer Lamp vouches for, given on all of the
     /// code. A rating on part of it says so instead, unless there is something worse to say.
-    enum Verdict: Equatable { case risky, sensitive, partlyChecked, powerful, safe, checkedInParts, checkedOnThisMac, unchecked }
+    enum Verdict: Equatable { case risky, sensitive, partlyChecked, powerful, safe, checkedInParts, unvouched, unchecked }
     var verdict: Verdict {
         if risk == .high { return .risky }
         if worst == .sensitive { return .sensitive }
         if partial, risk != nil { return .partlyChecked }
         if risk == .medium || worst == .powerful { return .powerful }
-        if risk == .low { return vouched == .low ? .safe : split && reviewer?.onThisMac == false ? .checkedInParts : .checkedOnThisMac }
+        if risk == .low { return vouched == .low ? .safe : split && reviewer != nil ? .checkedInParts : .unvouched }
         return .unchecked
     }
 
     /// How the app is opened from the review. Return opens it only on a rating Lamp vouches for that isn't
     /// high, with nothing sensitive seen in the code. Without one (no AI, a failed check, an unusable answer,
-    /// a model on this Mac, code the reviewer wasn't sent) it takes a click, and "Open Anyway" when there's something to be wary of: a high
+    /// code the reviewer wasn't sent) it takes a click, and "Open Anyway" when there's something to be wary of: a high
     /// rating, sensitive code, or no rating where a check was tried or the fixed checks found something.
     enum Opening: Equatable { case byReturn, byClick, anyway }
     var opening: Opening {
@@ -1289,12 +1286,11 @@ extension Sharing {
 
     /// Who to say checked, for the route that did. A model through OpenRouter goes by the name OpenRouter
     /// publishes for it, looked up now, when the answer is in, so a list fetched meanwhile counts. The
-    /// sign-ins, pi and the models on this Mac go by the names their own routes carry.
+    /// sign-ins and pi go by the names their own routes carry.
     static func reviewer(for route: AppAI.TextRoute, name: (String) -> String = { Provider.modelName($0) }) -> ImportReview.Reviewer {
         switch route.kind {
-        case .openRouter(let model): .init(name: "\(name(model)) via \(Provider.openRouter)", onThisMac: false)
-        case .localModel: .init(name: route.label, onThisMac: true)
-        case .engine: .init(name: route.label, onThisMac: false)
+        case .openRouter(let model): .init(name: "\(name(model)) via \(Provider.openRouter)")
+        case .engine: .init(name: route.label)
         }
     }
 
@@ -1658,10 +1654,8 @@ extension Sharing {
     enum Outcome { case answer(Answer), unusable, failed(String) }
 
     /// Sends the review's requests and keeps each outcome in its request's place; why the first that came to nothing
-    /// did is what the review says. Through a service they go at once. A model on this Mac takes them one at a time:
-    /// each request starts the model's server if it isn't serving that model, and a second one starting it alongside
-    /// would stop the server the first just started.
-    static func outcomes(of requests: [ReviewRequest], via route: AppAI.TextRoute,
+    /// did is what the review says. They go at once.
+    static func outcomes(of requests: [ReviewRequest],
                          complete: @escaping @Sendable (ReviewRequest) async throws -> String) async -> [Outcome] {
         @Sendable func ask(_ request: ReviewRequest) async -> Outcome {
             do {
@@ -1671,11 +1665,6 @@ extension Sharing {
             } catch {
                 return .failed("Lamp's AI check didn't run. Look at the list above carefully.")
             }
-        }
-        if case .localModel = route.kind {
-            var outcomes: [Outcome] = []
-            for request in requests { outcomes.append(await ask(request)) }
-            return outcomes
         }
         return await withTaskGroup(of: (Int, Outcome).self) { group in
             for (index, request) in requests.enumerated() { group.addTask { (index, await ask(request)) } }
@@ -1719,7 +1708,7 @@ extension Sharing {
                           android: android, web: web, page: page, parts: parts,
                           batch: batches.count > 1 ? (index, batches.count) : nil)
         }
-        let said = await outcomes(of: requests, via: route) { request in
+        let said = await outcomes(of: requests) { request in
             try await AppAI.complete(prompt: request.prompt, images: [], system: request.system, json: true,
                                      schema: answerSchema, via: route).0
         }

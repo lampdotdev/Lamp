@@ -136,8 +136,7 @@ enum Edition {
     /// them (`NEARBY` in lamp.js, `LOCAL_AI_PORT` in cli/local-ai.mjs). Never a worktree's instance or the tests', which
     /// would take it from the Lamp the person uses, unless `LAMP_SHARED_PAGES_AI` asks for it to check a change.
     static let answersSharedPages = instance.isEmpty || ProcessInfo.processInfo.environment["LAMP_SHARED_PAGES_AI"] != nil
-    static let localModelPort = Int(firstPort) + 1
-    static let mlxPort = Int(firstPort) + 2
+    // firstPort + 1 and + 2 were the model servers' on this Mac, which Lamp no longer runs; the sidebar keeps its own.
     /// Where the chat inside each app's window (`Sidebar`) reaches Lamp, on this Mac only.
     static let sidebarPort: UInt16 = firstPort + 3
 

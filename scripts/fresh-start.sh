@@ -12,14 +12,14 @@
 # an old one's name would be installed over it and open its data. Their small settings (UserDefaults) stay.
 #
 # Lamp keeps everything in three places: ~/Library/Application Support/Lamp (apps, keys.json, pi's config,
-# the signing keychain, downloaded models), the defaults domain dev.lamp.host (engine, provider, models,
+# the signing keychain), the defaults domain dev.lamp.host (engine, provider, models,
 # privacy switches, Sparkle's update state) and, for notarized builds, Keychain items with service
 # dev.lamp.host (provider keys). `begin` moves the folder, exports the defaults and copies the Keychain
 # items into one backup folder, and `restore` puts them all back. Nothing is deleted until you restore.
 #
 # This covers the welcome screen, the key check, picking an engine, and making the first app. Set
 # LAMP_PRETEND_MISSING (see Pretend.swift) to also see it as a Mac without the Command Line Tools, Xcode,
-# Claude Code, Codex or tools like uv would: LAMP_PRETEND_MISSING=bare scripts/fresh-start.sh begin. It can't
+# Claude Code or Codex would: LAMP_PRETEND_MISSING=bare scripts/fresh-start.sh begin. It can't
 # show Gatekeeper on a fresh download, Apple's own installer, or the permission prompts you've already
 # answered: for those, use a second macOS user (permissions) or a clean VM (everything).
 set -euo pipefail

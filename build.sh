@@ -35,22 +35,6 @@ case "$(uname -m)" in
 esac
 PI_TARBALL="vendor/pi-$PI_VERSION-darwin-$PI_ARCH.tar.gz"
 
-# llama.cpp's server runs downloaded models on this Mac (MIT, github.com/ggml-org/llama.cpp). Lamp doesn't carry it:
-# it's signed here and zipped as an asset of the release (below), which Lamp fetches the first time a local model is
-# downloaded or picked (LlamaInstall.swift).
-LLAMA_BUILD="b11346"
-case "$(uname -m)" in
-  arm64)  LLAMA_ARCH="arm64"; LLAMA_SHA256="25cefd22cf708a14eacea623327a2320fa07493a29b4c37bf3376623de581553" ;;
-  x86_64) LLAMA_ARCH="x64";   LLAMA_SHA256="1f91f85611d1573c53409c99d96d43451cd89e928ce1882b6739fd1cf7befaf2" ;;
-esac
-LLAMA_TARBALL="vendor/llama-$LLAMA_BUILD-bin-macos-$LLAMA_ARCH.tar.gz"
-if [ ! -f "$LLAMA_TARBALL" ] || ! echo "$LLAMA_SHA256  $LLAMA_TARBALL" | shasum -a 256 -c - >/dev/null 2>&1; then
-  mkdir -p vendor
-  echo "Downloading llama.cpp $LLAMA_BUILD ($LLAMA_ARCH)…"
-  curl -fL --progress-bar -o "$LLAMA_TARBALL" \
-    "https://github.com/ggml-org/llama.cpp/releases/download/$LLAMA_BUILD/llama-$LLAMA_BUILD-bin-macos-$LLAMA_ARCH.tar.gz"
-  echo "$LLAMA_SHA256  $LLAMA_TARBALL" | shasum -a 256 -c - >/dev/null || { echo "llama.cpp checksum mismatch" >&2; rm -f "$LLAMA_TARBALL"; exit 1; }
-fi
 if [ ! -f "$PI_TARBALL" ] || ! echo "$PI_SHA256  $PI_TARBALL" | shasum -a 256 -c - >/dev/null 2>&1; then
   mkdir -p vendor
   echo "Downloading pi $PI_VERSION ($PI_ARCH)…"
@@ -254,7 +238,7 @@ CALLS="${APP:A}/Contents/Resources/cli/calls.mjs" BUN_BE_BUN=1 "$APP/Contents/Re
   -e 'await import(process.env.CALLS)' || { echo "lamp's calls don't load from the bundle: is a file they read missing from it?" >&2; exit 1; }
 # What Lamp fetches when it's needed rather than carrying it goes into the assets folder, which the release puts on
 # GitHub beside the DMG, each file named by edition and version and pinned in the bundle by address, size and SHA-256:
-# llama.cpp (here), and the starters' prebuilt apps (at the end). A build from source points at its own files.
+# the starters' prebuilt apps (at the end). A build from source points at its own files.
 ASSETS="${${ASSETS_DIR:-${BUILD_DIR:-build}/assets}:A}"   # absolute: the zips are made from inside other folders
 if [ "$FLAVOR" = release ]; then
   ASSET_STEM="Lamp"; ASSET_BASE="https://updates.lamp.dev/download/v$APP_VERSION"
@@ -351,26 +335,6 @@ sign() {
 }
 # Nested code first (pi's native module, pi), then the app.
 find "$APP/Contents/Resources/pi" -name '*.node' -print0 | while IFS= read -r -d '' item; do sign "$item"; done
-# llama.cpp: only the server and its libraries (symlinks kept), not its other tools, signed as Lamp is (which Lamp
-# checks before running them) and zipped as llama-<build>/. A build from source keeps its zip while the build and the
-# signing identity are the same, so its pin, and the copy a Lamp Dev already fetched, hold across rebuilds.
-LLAMA_ASSET="$ASSETS/$ASSET_STEM-llama-$LLAMA_BUILD-$APP_VERSION.zip"
-LLAMA_KEY=$( { echo "$LLAMA_BUILD $LLAMA_SHA256 $SIGN_ID"; shasum build.sh; } | shasum | cut -c1-16 )
-LLAMA_CACHED=".build/llama/$LLAMA_KEY.zip"
-rm -f "$ASSETS/$ASSET_STEM"-llama-*.zip(N)
-if [ "$FLAVOR" = dev ] && [ -f "$LLAMA_CACHED" ]; then
-  cp "$LLAMA_CACHED" "$LLAMA_ASSET"
-else
-  LLAMA_WORK="$(mktemp -d)"
-  tar xzf "$LLAMA_TARBALL" -C "$LLAMA_WORK" \
-    --include "llama-$LLAMA_BUILD/llama-server" --include "llama-$LLAMA_BUILD/LICENSE" --include "llama-$LLAMA_BUILD/*.dylib"
-  find "$LLAMA_WORK/llama-$LLAMA_BUILD" -type f \( -name '*.dylib' -o -name 'llama-server' \) -print0 |
-    while IFS= read -r -d '' item; do sign "$item"; done
-  (cd "$LLAMA_WORK" && ditto -c -k --norsrc --keepParent "llama-$LLAMA_BUILD" "$LLAMA_ASSET")
-  rm -rf "$LLAMA_WORK"
-  if [ "$FLAVOR" = dev ]; then rm -rf .build/llama && mkdir -p .build/llama && cp "$LLAMA_ASSET" "$LLAMA_CACHED"; fi
-fi
-echo "{\"build\": \"$LLAMA_BUILD\", \"asset\": $(pinned "$LLAMA_ASSET")}" > "$APP/Contents/Resources/llama.json"
 sign "${PI_ENTITLEMENTS[@]}" "$APP/Contents/Resources/pi/pi"
 sign "$APP/Contents/Resources/LampSidebar"
 if [ -f "$APP/Contents/Resources/bin/xwin" ]; then sign "$APP/Contents/Resources/bin/xwin"; fi

@@ -11,8 +11,6 @@ struct SetupCard: View {
     let reason: String
     /// The folder of the app whose chat this is.
     let dir: URL
-    @ObservedObject private var local = LocalModels.shared
-    @ObservedObject private var images = ImageModels.shared
     @State private var revision = 0
     @State private var declined = false
 
@@ -171,23 +169,18 @@ struct UpgradeList: View {
     }
 }
 
-/// One way to make a capability better: a key, a download or a sign-in.
+/// One way to make a capability better: a key, a sign-in, or drawing icons by hand.
 struct UpgradeView: View {
     let upgrade: Upgrade
     let compact: Bool
     let onChange: () -> Void
 
-    /// Some can't be done on this Mac: a picture model that needs more memory than it has.
+    /// Some can't be done on this Mac: drawing icons by hand without Image Playground.
     static func isOffered(_ upgrade: Upgrade) -> Bool {
         switch upgrade {
-        case .pictureModel:
-            guard let spec = ImageModels.catalog.first else { return false }
-            return Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824 >= Double(spec.minRAMGB)
-        case .decisionModel: return LocalModels.decisionCatalog.first != nil
         case .key(let provider): return Provider.keyProvider(provider) != nil
         case .signIn: return true
         case .drawIcons: return Icons.playgroundAvailable
-        case .useText: return true
         }
     }
 
@@ -195,16 +188,10 @@ struct UpgradeView: View {
         switch upgrade {
         case .key(let id):
             if let provider = Provider.keyProvider(id) { KeyUpgrade(provider: provider, compact: compact, onChange: onChange) }
-        case .pictureModel:
-            PictureModelUpgrade(compact: compact, onChange: onChange)
-        case .decisionModel:
-            DecisionModelUpgrade(compact: compact, onChange: onChange)
         case .signIn(let engine):
             SignInUpgrade(engine: engine, compact: compact, onChange: onChange)
         case .drawIcons:
             DrawIconsUpgrade(compact: compact)
-        case .useText(let route, let label, let app):
-            UseTextUpgrade(route: route, label: label, app: app, compact: compact, onChange: onChange)
         }
     }
 }
@@ -317,89 +304,6 @@ private struct KeyUpgrade: View {
             open = false
             Task { await Store.shared.recheckSetup() }
             onChange()
-        }
-    }
-}
-
-private struct PictureModelUpgrade: View {
-    let compact: Bool
-    let onChange: () -> Void
-    @ObservedObject private var local = LocalModels.shared
-    @ObservedObject private var tools = PythonTools.shared
-
-    var body: some View {
-        if let spec = ImageModels.catalog.first {
-            OptionRow(symbol: "desktopcomputer", title: compact ? "Make them on this Mac" : "Download a picture model to this Mac",
-                      detail: compact ? String(format: "Free and private, with %@. A %.1f GB download.", spec.name, spec.sizeGB)
-                                      : String(format: "Pictures are made right here, free and private, with nothing sent online. %@ is a %.1f GB download and needs a Mac with %d GB of memory or more.",
-                                               spec.name, spec.sizeGB, spec.minRAMGB),
-                      compact: compact) {
-                if let progress = local.progress["image:" + spec.id] {
-                    ProgressView(value: progress).frame(width: 80).onDisappear(perform: onChange)
-                } else if tools.installing.contains(.mflux) {
-                    ProgressView()
-                } else {
-                    Button("Download") {
-                        Task {
-                            if !ImageModels.hasMflux { await tools.install(.mflux) }
-                            if ImageModels.hasMflux { ImageModels.shared.download(spec) }
-                        }
-                    }
-                }
-            }
-            if let error = tools.errors[.mflux] {
-                Label(error, systemImage: "exclamationmark.triangle.fill").symbolRenderingMode(.multicolor)
-                    .font(.caption).padding(.leading, CardColumn.indent(compact: compact))
-            }
-        }
-    }
-}
-
-private struct DecisionModelUpgrade: View {
-    let compact: Bool
-    let onChange: () -> Void
-    @ObservedObject private var local = LocalModels.shared
-
-    var body: some View {
-        if let spec = LocalModels.decisionCatalog.first {
-            OptionRow(symbol: "desktopcomputer", title: compact ? "Make them on this Mac" : "Download a judgment model to this Mac",
-                      detail: compact ? String(format: "Free and private, with %@. A %.1f GB download.", spec.name, spec.sizeGB)
-                                      : String(format: "Judgments are made right here, free and private, with nothing sent online. %@ is a %.1f GB download.",
-                                               spec.name, spec.sizeGB),
-                      compact: compact) {
-                if let progress = local.progress[spec.id] {
-                    ProgressView(value: progress).frame(width: 80).onDisappear(perform: onChange)
-                } else {
-                    Button("Download") { local.download(spec) }
-                }
-            }
-        }
-    }
-}
-
-/// What answers now, kept as the choice: for one app, or in Settings for every app.
-private struct UseTextUpgrade: View {
-    let route: String
-    let label: String
-    let app: String?
-    let compact: Bool
-    let onChange: () -> Void
-
-    var body: some View {
-        OptionRow(symbol: "arrow.triangle.swap", title: "Use \(label) instead",
-                  detail: app == nil ? "For every app, as Settings' choice. What they send goes to it."
-                                     : "For this app. What it sends goes to it.",
-                  compact: compact) {
-            Button("Use It") {
-                if let app, let project = Store.shared.projects.first(where: { $0.id == app }) {
-                    var models = AppModels.load(project)
-                    models.text = route
-                    models.save(project)
-                } else {
-                    UserDefaults.standard.set(route, forKey: "appModel")
-                }
-                onChange()
-            }
         }
     }
 }
@@ -593,7 +497,6 @@ struct CapabilityNote: View {
     let capability: Capability
     var project: LampProject? = nil
     var context: AIContext = .mac
-    @ObservedObject private var local = LocalModels.shared
     @State private var revision = 0
 
     var body: some View {

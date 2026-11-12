@@ -55,13 +55,12 @@ enum SideAnswer {
         var keyProvider = ""
     }
 
-    /// The running turn's route, read from the engine's own launch. Nil for a model on this Mac, whose server can't
-    /// take a second request without slowing the builder.
-    static func route(env: [String: String], engine: Engine, local: Bool, keyProvider: String,
+    /// The running turn's route, read from the engine's own launch.
+    static func route(env: [String: String], engine: Engine, keyProvider: String,
                       configFolder: String = "", environment: [String: String] = [:]) -> Route? {
         switch engine {
         case .pi:
-            guard !local, let executable = env["LAMP_PI"], let configFolder = env["PI_CODING_AGENT_DIR"], let provider = env["LAMP_PROVIDER"],
+            guard let executable = env["LAMP_PI"], let configFolder = env["PI_CODING_AGENT_DIR"], let provider = env["LAMP_PROVIDER"],
                   let model = env["LAMP_MODEL"], let system = env["LAMP_SYSTEM"], let session = env["LAMP_SESSION"] else { return nil }
             return Route(engine: .pi, executable: executable, configFolder: configFolder, model: model, system: system,
                          path: "/usr/bin:/bin:/usr/sbin:/sbin", session: session, provider: provider, keyProvider: keyProvider)

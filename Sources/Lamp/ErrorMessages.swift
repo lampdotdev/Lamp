@@ -8,7 +8,6 @@ enum ErrorMessages {
     static let restoreFailed = "Lamp couldn't go back to how the app was before that message, so nothing was sent."
     static let providerBusy = "The AI is busy right now. Wait a minute and try again."
     static let connectionFailed = "Couldn't reach the AI. Check your internet connection and try again."
-    static let localServerUnreachable = "Couldn't reach the local model server. Check Settings → AI Providers → Native Mac AI."
 
     static let openFailedPrefix = "Couldn't open the app: "
     static let installFailedPrefix = "Couldn't install the app: "

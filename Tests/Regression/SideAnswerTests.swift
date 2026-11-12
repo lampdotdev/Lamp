@@ -411,15 +411,14 @@ final class SideAnswerTests: XCTestCase {
                        "nobody was told anything yet")
     }
 
-    func testEachEngineHasARouteAndALocalModelHasNone() {
+    func testEachEngineHasARoute() {
         let pi = ["LAMP_PI": "/pi", "PI_CODING_AGENT_DIR": "/config", "LAMP_PROVIDER": "openrouter", "LAMP_MODEL": "m",
                   "LAMP_SYSTEM": "s", "LAMP_SESSION": "lamp-1"]
-        XCTAssertEqual(SideAnswer.route(env: pi, engine: .pi, local: false, keyProvider: "openrouter")?.model, "m")
-        XCTAssertNil(SideAnswer.route(env: pi, engine: .pi, local: true, keyProvider: "openrouter"))
+        XCTAssertEqual(SideAnswer.route(env: pi, engine: .pi, keyProvider: "openrouter")?.model, "m")
         let claude = ["LAMP_TOOL": "/claude", "LAMP_SYSTEM": "s", "LAMP_MODEL": "opus"]
-        XCTAssertEqual(SideAnswer.route(env: claude, engine: .claude, local: false, keyProvider: "")?.model, "opus")
-        XCTAssertEqual(SideAnswer.route(env: ["LAMP_TOOL": "/codex"], engine: .codex, local: false, keyProvider: "")?.model, SideAnswer.testedCodexModel)
-        XCTAssertNil(SideAnswer.route(env: [:], engine: .codex, local: false, keyProvider: ""))
+        XCTAssertEqual(SideAnswer.route(env: claude, engine: .claude, keyProvider: "")?.model, "opus")
+        XCTAssertEqual(SideAnswer.route(env: ["LAMP_TOOL": "/codex"], engine: .codex, keyProvider: "")?.model, SideAnswer.testedCodexModel)
+        XCTAssertNil(SideAnswer.route(env: [:], engine: .codex, keyProvider: ""))
     }
 
     private func route(_ engine: Engine) -> SideAnswer.Route {

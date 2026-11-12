@@ -18,7 +18,7 @@ few days and keep you posted while it's fixed. We're glad to credit you in the r
 - **The website and update service** in `site/` and `updates/` (lamp.dev and updates.lamp.dev): bug reports,
   shared wishes, the update feed and downloads.
 
-Bugs in the coding agents Lamp bundles or drives (pi, Claude Code, Codex, llama.cpp) belong with those
+Bugs in the coding agents Lamp bundles or drives (pi, Claude Code, Codex) belong with those
 projects, unless the problem is in how Lamp runs them.
 
 ## How Lamp handles your data

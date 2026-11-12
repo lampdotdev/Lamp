@@ -26,7 +26,6 @@ enum Analytics {
         case welcomeSignIn = "onboarding_sign_in_started"     // agent
         case welcomeSignedIn = "onboarding_sign_in_finished"  // agent, success
         case welcomeKey = "onboarding_openrouter_key_checked" // valid
-        case welcomeModelDownload = "onboarding_local_model_download_started"
         case welcomeDone = "onboarding_completed"             // agent, kind, has_idea, seconds
 
         // A new app, from New to its first run.
@@ -106,7 +105,6 @@ enum Analytics {
         case .claude: "claude"
         case .chatGPT: "chatgpt"
         case .openRouter: "openrouter"
-        case .onThisMac: "on_this_mac"
         }
     }
 

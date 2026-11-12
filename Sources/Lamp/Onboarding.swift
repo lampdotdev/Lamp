@@ -204,7 +204,7 @@ struct OnboardingView: View {
             let window = window
             let started = UserDefaults.standard.object(forKey: Onboarding.startedKey) as? Date
             Analytics.capture(.welcomeDone, [
-                "agent": Builder.Choice.current(engine: Builder.engine.rawValue, piProvider: Builder.piProvider, ready: true)
+                "agent": Builder.Choice.current(engine: Builder.engine.rawValue, ready: true)
                     .map(Analytics.agent) ?? "none",
                 "has_idea": !idea.isEmpty,
                 "seconds": started.map { Int(Date().timeIntervalSince($0)) } ?? -1,
@@ -316,7 +316,6 @@ private struct SetupStep: View {
     /// Leaves the welcome for the desk.
     let start: () -> Void
     @AppStorage("engine") private var engine = Engine.pi.rawValue
-    @AppStorage("piProvider") private var piProvider = "openrouter"
     @State private var choice: Builder.Choice?
     @State private var signedIn: [Engine: Bool] = [:]
     @State private var signingIn: Engine?
@@ -357,7 +356,7 @@ private struct SetupStep: View {
                 store.requestBuildTools()
                 Analytics.capture(.welcomeToolsInstall, ["by": "automatic"])
             }
-            choice = Builder.Choice.current(engine: engine, piProvider: piProvider, ready: store.setup.hasBuilder)
+            choice = Builder.Choice.current(engine: engine, ready: store.setup.hasBuilder)
         }
         .task { await refreshSignIns() }
         .onChange(of: store.setup.hasBuildTools) { _, has in
@@ -375,7 +374,7 @@ private struct SetupStep: View {
 
     /// Ready once something can build. Claude Code and ChatGPT also need to be signed in.
     private var ready: Bool {
-        guard store.setup.hasBuilder, let choice, choice.matches(engine: engine, piProvider: piProvider) else { return false }
+        guard store.setup.hasBuilder, let choice, choice.matches(engine: engine) else { return false }
         switch choice {
         case .claude: return signedIn[.claude] == true
         case .chatGPT: return signedIn[.codex] == true
@@ -394,26 +393,24 @@ private struct SetupStep: View {
 extension Builder {
     /// What the welcome offers to build apps with.
     enum Choice: Hashable {
-        case claude, chatGPT, openRouter, onThisMac
+        case claude, chatGPT, openRouter
 
-        var isForge: Bool { self != .claude && self != .chatGPT }
+        var isForge: Bool { self == .openRouter }
 
-        static func current(engine: String, piProvider: String, ready: Bool) -> Choice? {
+        static func current(engine: String, ready: Bool) -> Choice? {
             guard ready else { return nil }
             switch Engine(rawValue: engine) {
             case .claude: return .claude
             case .codex: return .chatGPT
-            default: return piProvider == Builder.localProvider ? .onThisMac : .openRouter
+            default: return .openRouter
             }
         }
 
-        func matches(engine: String, piProvider: String) -> Bool {
-            let forge = engine == Engine.pi.rawValue
+        func matches(engine: String) -> Bool {
             switch self {
             case .claude: return engine == Engine.claude.rawValue
             case .chatGPT: return engine == Engine.codex.rawValue
-            case .openRouter: return forge && piProvider != Builder.localProvider
-            case .onThisMac: return forge && piProvider == Builder.localProvider
+            case .openRouter: return engine == Engine.pi.rawValue
             }
         }
     }
@@ -527,7 +524,7 @@ private struct BuilderCard: View {
                         switch choice {
                         case .claude: account(.claude, app: "Claude")
                         case .chatGPT: account(.codex, app: "ChatGPT")
-                        default: LampAgentOptions(choice: Binding(get: { choice }, set: { pick($0) }), ready: $lampReady)
+                        default: LampAgentOptions(ready: $lampReady)
                         }
                     }
                     .transition(.opacity.combined(with: .offset(y: -6)))
@@ -617,100 +614,42 @@ private struct BuilderCard: View {
     }
 }
 
-/// Lamp's own agent: OpenRouter, or a model on this Mac, each set up right here.
+/// Lamp's own agent, through OpenRouter, set up right here.
 private struct LampAgentOptions: View {
     @EnvironmentObject private var store: Store
-    @ObservedObject private var local = LocalModels.shared
-    @Binding var choice: Builder.Choice
     @Binding var ready: Bool
     @AppStorage("engine") private var engine = Engine.pi.rawValue
-    @AppStorage("piProvider") private var piProvider = "openrouter"
     @State private var key = ""
     @State private var checkingKey = false
     @State private var problem: String?
-    @State private var localChoice = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Radio(title: "OpenRouter", selected: choice == .openRouter) { pick(.openRouter) } content: {
-                openRouter
-            }
-            Radio(title: "A model on this Mac", selected: choice == .onThisMac) { pick(.onThisMac) } content: {
-                onThisMac
-            }
+            openRouter
         }
         .padding(.top, 2)
         .onAppear {
-            localChoice = defaultLocalChoice()
-            apply()
+            // A saved key is used straight away.
+            if KeyStore.key(for: "openrouter") != nil { useOpenRouter() }
         }
-        // Ready only when what's on screen is exactly what will build: not a provider chosen before, nor a
-        // model that isn't downloaded yet.
-        .onChange(of: showsReady, initial: true) { ready = showsReady }
-        .onChange(of: local.installed) {
-            // A download finished: switch to the model it installed, and use it.
-            if let spec = spec(localChoice), let id = local.installedID(for: spec) {
-                localChoice = "installed:" + id
-                apply()
-            }
-        }
+        // Ready only when what's on screen is what will build, not another engine chosen before.
+        .onChange(of: isUsing, initial: true) { ready = isUsing }
     }
 
-    private func pick(_ new: Builder.Choice) {
-        guard choice != new else { return }
-        problem = nil
-        key = ""
-        choice = new
-        apply()
-    }
-
-    /// Uses the chosen option straight away when it's ready (a saved key, a downloaded model).
-    private func apply() {
-        switch choice {
-        case .openRouter:
-            if KeyStore.key(for: "openrouter") != nil { use(provider: "openrouter", model: nil) }
-        case .onThisMac:
-            if localChoice.hasPrefix("installed:") {
-                let id = String(localChoice.dropFirst(10))
-                use(provider: Builder.localProvider, model: id)
-                // Picked to run here: what runs it comes now, rather than with the first request.
-                if LocalModels.model(id)?.format == .gguf { local.getServer() }
-            }
-        default:
-            break
-        }
-    }
-
-    private func use(provider id: String, model chosen: String?) {
+    private func useOpenRouter() {
         Builder.engine = .pi
-        Builder.piProvider = id
-        if let chosen { Builder.piModel = chosen }
         engine = Engine.pi.rawValue
-        piProvider = id
         Task { await store.recheckSetup() }
     }
 
-    private var showsReady: Bool {
-        guard isUsing(choice) else { return false }
-        switch choice {
-        case .openRouter:
-            return piProvider == "openrouter"
-        case .onThisMac:
-            return localChoice.hasPrefix("installed:") && piProvider == Builder.localProvider
-                && Builder.piModel == String(localChoice.dropFirst(10))
-        default:
-            return false
-        }
-    }
-
-    private func isUsing(_ option: Builder.Choice) -> Bool {
-        store.setup.hasBuilder && option.matches(engine: engine, piProvider: piProvider)
+    private var isUsing: Bool {
+        store.setup.hasBuilder && Builder.Choice.openRouter.matches(engine: engine)
     }
 
     // MARK: OpenRouter
 
     @ViewBuilder private var openRouter: some View {
-        if isUsing(.openRouter) {
+        if isUsing {
             ready("Your OpenRouter key is saved.")
         } else {
             note("Hundreds of AI models, paying OpenRouter only for what you use.")
@@ -733,77 +672,7 @@ private struct LampAgentOptions: View {
             Analytics.capture(.welcomeKey, ["valid": true])
             KeyStore.setOpenRouterKey(candidate)
             key = ""
-            use(provider: "openrouter", model: nil)
-        }
-    }
-
-    // MARK: A model on this Mac
-
-    private var recommended: LocalModelSpec? {
-        LocalModels.catalog.filter { $0.minRAMGB <= LocalModels.ramGB }.max { $0.minRAMGB < $1.minRAMGB }
-            ?? LocalModels.catalog.min { $0.minRAMGB < $1.minRAMGB }
-    }
-
-    /// "installed:<id>" for a model on this Mac, "spec:<id>" for one to download.
-    private func defaultLocalChoice() -> String {
-        if Builder.piProvider == Builder.localProvider, local.installed.contains(where: { $0.id == Builder.piModel }) {
-            return "installed:" + Builder.piModel
-        }
-        if let recommended, let id = local.installedID(for: recommended) { return "installed:" + id }
-        if let first = local.installed.first { return "installed:" + first.id }
-        return recommended.map { "spec:" + $0.id } ?? ""
-    }
-
-    private func spec(_ tag: String) -> LocalModelSpec? {
-        guard tag.hasPrefix("spec:") else { return nil }
-        return LocalModels.catalog.first { $0.id == tag.dropFirst(5) }
-    }
-
-    @ViewBuilder private var onThisMac: some View {
-        note("Free and private: Lamp runs the model right here. Smaller models make simpler apps.")
-        Picker("", selection: $localChoice) {
-            ForEach(local.installed) { Text("\($0.name) (on this Mac)").tag("installed:" + $0.id) }
-            ForEach(LocalModels.catalog.filter { !local.isInstalled($0) }) { spec in
-                Text(spec.name + (spec == recommended ? " (recommended)" : "")).tag("spec:" + spec.id)
-            }
-        }
-        .labelsHidden()
-        .frame(width: 320)
-        .onChange(of: localChoice) { apply() }
-        if let spec = spec(localChoice) {
-            HStack(spacing: 10) {
-                Text(String(format: "%@ %.1f GB download, needs %d GB of memory.", spec.blurb, spec.sizeGB, spec.minRAMGB))
-                    .font(.system(size: 12)).foregroundStyle(spec.minRAMGB > LocalModels.ramGB ? Color.orange : Color.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer()
-                if let progress = local.progress[spec.id] {
-                    ProgressView(value: progress).frame(width: 100)
-                    Button("Cancel") { local.cancel(spec.id) }.buttonStyle(PaperButtonStyle(.outline))
-                } else {
-                    Button("Download") {
-                        local.download(spec)
-                        Analytics.capture(.welcomeModelDownload, ["model": spec.id])
-                    }
-                    .buttonStyle(PaperButtonStyle(.ink))
-                }
-            }
-            if let error = local.errors[spec.id] {
-                Text(error).font(.system(size: 12)).foregroundStyle(.orange)
-            }
-        } else if let progress = local.progress[LocalModels.serverID] {
-            HStack(spacing: 10) {
-                Text("Downloading what runs it on this Mac.").font(.system(size: 12)).foregroundStyle(.secondary)
-                Spacer()
-                ProgressView(value: progress).frame(width: 100)
-            }
-        } else if let error = local.errors[LocalModels.serverID] {
-            HStack(spacing: 10) {
-                Text(error).font(.system(size: 12)).foregroundStyle(.orange)
-                Spacer()
-                Button("Try Again") { local.getServer() }.buttonStyle(PaperButtonStyle(.outline))
-            }
-        } else if isUsing(.onThisMac) {
-            ready("\(local.installed.first { "installed:" + $0.id == localChoice }?.name ?? "This model") will make your apps.")
+            useOpenRouter()
         }
     }
 
@@ -844,37 +713,6 @@ private struct LampAgentOptions: View {
         }
         if let problem {
             Label(problem, systemImage: "exclamationmark.triangle").font(.system(size: 12)).foregroundStyle(.orange)
-        }
-    }
-}
-
-/// A radio button whose own settings open up right beneath it when it's chosen.
-private struct Radio<Content: View>: View {
-    let title: String
-    let selected: Bool
-    let action: () -> Void
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button(action: action) {
-                HStack(spacing: 8) {
-                    ZStack {
-                        Circle().strokeBorder(selected ? Palette.accent : Palette.ink.opacity(0.25), lineWidth: selected ? 5 : 1)
-                            .background(Circle().fill(Palette.card))
-                    }
-                    .frame(width: 16, height: 16)
-                    Text(title).font(.system(size: 13.5, weight: selected ? .semibold : .regular)).foregroundStyle(Palette.ink)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityAddTraits(selected ? [.isSelected] : [])
-            if selected {
-                VStack(alignment: .leading, spacing: 8) { content() }
-                    .padding(.leading, 24)
-                    .transition(.opacity)
-            }
         }
     }
 }

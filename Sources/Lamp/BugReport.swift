@@ -25,8 +25,6 @@ enum BugReport {
             return "The AI provider rate-limited the request."
         case ErrorMessages.connectionFailed:
             return "The connection to the AI failed."
-        case ErrorMessages.localServerUnreachable:
-            return "The local model server could not be reached."
         default:
             if message.hasPrefix(ErrorMessages.openFailedPrefix) {
                 return "The app could not be opened."

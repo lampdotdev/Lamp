@@ -532,7 +532,7 @@ enum ComputerUse {
 
     /// Runs the task along the app's text route and returns the answer plus the cost in USD: an OpenRouter
     /// model in Lamp's own loop, Claude Code or Codex with the driver's tools over Lamp's MCP endpoint, or pi
-    /// (with its key provider, its own sign-ins, or a model on this Mac) through its extension. `token` is
+    /// (with its key provider or its own sign-ins) through its extension. `token` is
     /// the task's, for that endpoint.
     static func answer(_ task: Job, route: AppAI.TextRoute, token: String) async throws -> (String, Double) {
         switch route.kind {
@@ -541,11 +541,9 @@ enum ComputerUse {
                 throw Failure(message: "Using other apps needs an OpenRouter key, or a working builder. Set one up in Lamp → Settings (⌘,).")
             }
             return try await loop(task, endpoint: "https://openrouter.ai/api/v1/chat/completions", key: key, model: model)
-        case .engine(.pi, _), .localModel:
+        case .engine(.pi, _):
             guard Agent.executable != nil else { throw Failure(message: "Lamp's AI builder is missing. Download Lamp again.") }
-            // A local model's server is started, as before a build turn.
-            if case .localModel(_, let model) = route.kind { _ = try await LocalModels.shared.ensureServer(for: model) }
-            return try await viaEngine(.pi, task, token: token, model: nil, piRoute: route)
+            return try await viaEngine(.pi, task, token: token, model: nil)
         case .engine(let engine, let model):
             guard EngineInstall.path(for: engine) != nil else {
                 throw Failure(message: "Using other apps needs an OpenRouter key, or a working builder. Set one up in Lamp → Settings (⌘,).")
@@ -664,7 +662,7 @@ enum ComputerUse {
     /// posts each call to Lamp), Claude Code and Codex through Lamp's MCP endpoint. Isolated from the
     /// person's own setup like a build turn, in an empty folder, with no file or shell tools. The agent's
     /// last message is the answer.
-    private static func viaEngine(_ engine: Engine, _ task: Job, token: String, model: String?, piRoute: AppAI.TextRoute? = nil) async throws -> (String, Double) {
+    private static func viaEngine(_ engine: Engine, _ task: Job, token: String, model: String?) async throws -> (String, Double) {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-computer-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -672,7 +670,7 @@ enum ComputerUse {
                                      "LAMP_SYSTEM": task.systemPrompt, "LAMP_PROMPT": task.taskText,
                                      "MCP_TOOL_TIMEOUT": "600000"]
         // What the turn goes through, for an error to name.
-        var source = Provider.name(of: engine)
+        let source = Provider.name(of: engine)
         let command: String
         switch engine {
         case .pi:
@@ -680,15 +678,6 @@ enum ComputerUse {
             let toolsFile = folder.appendingPathComponent("computer-tools.json")
             try JSONSerialization.data(withJSONObject: task.mcpTools).write(to: toolsFile)
             env.merge(Agent.environment(prompt: task.taskText, files: [], session: "", sessionDir: folder.path)) { $1 }
-            // The route's own provider and model when it's a model on this Mac rather than the builder's.
-            // Those providers are registered in Lamp's own pi configuration, so pi reads that even when
-            // building goes through the person's own setup.
-            if case .localModel(_, let model)? = piRoute?.kind {
-                env["LAMP_PROVIDER"] = LocalModels.piProvider(for: model)
-                env["LAMP_MODEL"] = model
-                env["PI_CODING_AGENT_DIR"] = Agent.configDir
-                source = piRoute?.group ?? source
-            }
             env["LAMP_COMPUTER_TOOLS_JSON"] = toolsFile.path
             env["LAMP_COMPUTER_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/computer"
             env["LAMP_SYSTEM"] = task.systemPrompt

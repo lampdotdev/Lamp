@@ -129,9 +129,7 @@ checks and the Share Link card.
   or the agent, describes a download its actions saved, wherever the save panel sent it: the path, the size and a
   bounded list of the names in a zip, nothing of what's in them. Only saves whose panel the agent's batch answered are said, so
   the agent can confirm a Save without reading the folder; reading or listing that folder itself is still checked.
-- **What Lamp fetches for itself** (`StarterDownloads`, `LlamaInstall`, `Downloads`): llama.cpp's server and libraries
-  come from Lamp's own release at the size and SHA-256 the bundle pins, and each program and library is checked for the
-  certificate that signed Lamp, once unpacked and again before the server starts; a starter's tree comes from its repository's
+- **What Lamp fetches for itself** (`StarterDownloads`, `Downloads`): a starter's tree comes from its repository's
   archive at the pinned commit and is used only when it hashes, as git hashes a tree, to the tree the commit object in
   Lamp's bundle names, and that object hashes to the pin; a starter's prebuilt app comes from Lamp's own release and is
   used only at the size and SHA-256 the bundle pins and once it's signed with the certificate that signed Lamp itself

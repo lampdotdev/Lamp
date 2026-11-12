@@ -220,7 +220,7 @@ step, checks the plan's shape itself, and runs the loop above.
 runs the model side of the loop:
 
 - It uses real tool calling on routes that have it (OpenRouter).
-- It falls back to a JSON plan with a schema on routes that don't (Claude Code, Codex, the models on this Mac).
+- It falls back to a JSON plan with a schema on routes that don't (Claude Code, Codex).
 
 The page still runs each read and write itself, between steps. `act` hands them to the page and passes back what the
 page observed.
