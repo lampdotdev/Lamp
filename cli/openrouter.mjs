@@ -1,5 +1,6 @@
-// An app's AI asked of OpenRouter with the person's own key: the one place it's sent, for Lamp's app (`openRouterText`
-// and `openRouterChat` in calls.mjs, `AppAI.viaOpenRouter` and `AppAct.openRouterStep`) and for lamp's own answers
+// An app's AI asked of OpenRouter with the person's own key: the one place it's sent, for Lamp's app (`openRouterText`,
+// `openRouterChat`, `openRouterDecide` and `openRouterImage` in calls.mjs; `AppAI.viaOpenRouter`, `AppAct.openRouterStep`,
+// `AppAI.decide` and `AppAI.image`) and for lamp's own answers
 // (ai.mjs, with OPENROUTER_API_KEY). The key comes with each request and is kept nowhere here.
 
 const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
@@ -73,4 +74,60 @@ export async function chat({ key, body, seconds = 120, signal, fetcher = fetch }
 export async function text(given) {
   const { message, cost } = await chat({ ...given, body: textBody(given) });
   return { text: typeof message.content === "string" ? message.content : "", cost };
+}
+
+/** One request to OpenRouter, within `seconds`: its status and its JSON, or why there was none. */
+async function post(path, { key, body, seconds, signal, fetcher = fetch }) {
+  const timeout = AbortSignal.timeout(Math.floor(seconds * 1000));
+  let answer;
+  try {
+    answer = await fetcher(`https://openrouter.ai/api/v1/${path}`, { method: "POST", body: JSON.stringify(body),
+      headers: { Authorization: `Bearer ${key || ""}`, "Content-Type": "application/json", "X-Title": "Lamp" },
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+  } catch (error) {
+    if (signal?.aborted) throw new OpenRouterTrouble("stopped", "Stopped.");
+    if (error?.name === "TimeoutError") throw new OpenRouterTrouble("timeout", "This ran out of time.");
+    throw new OpenRouterTrouble("refused", "Couldn't reach OpenRouter.");
+  }
+  let reply = {};
+  try { reply = await answer.json(); } catch {}
+  return { status: answer.status, reply: reply && typeof reply === "object" ? reply : {} };
+}
+
+/**
+ * Decisions from a decision model (`LampAI.decide`, `AppAI.decide`): `{answers, cost}`. Rate limits (429) and overload
+ * (529) are expected under load, so it backs off and asks again three times at most. A request the model can't take
+ * (422) is "invalid", with what it said.
+ */
+export async function decide({ key, model, state, questions, seconds = 60, signal, fetcher }) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const { status, reply } = await post("systemone", { key, body: { state, model, questions }, seconds, signal, fetcher });
+    if ((status === 429 || status === 529) && attempt < 3) { await new Promise((done) => setTimeout(done, 500 << attempt)); continue; }
+    if (status !== 200 || !reply.answers || typeof reply.answers !== "object") {
+      const detail = reply.error?.message ?? (reply.detail !== undefined ? String(typeof reply.detail === "string" ? reply.detail : JSON.stringify(reply.detail)) : `HTTP ${status}`);
+      throw new OpenRouterTrouble(status === 422 ? "invalid" : "refused", status === 422 ? `The decision request was invalid: ${detail}` : "The decision model didn't answer.", { status, reply });
+    }
+    // Jev charges per input token ($0.042 per million); OpenRouter may report the exact cost.
+    // A cost OpenRouter reports stands, nothing included; the estimate is only for when it reports none.
+    const reported = reply.usage?.cost;
+    const cost = typeof reported === "number" && Number.isFinite(reported) ? reported : (Number(reply.usage?.input_tokens) || 0) * 0.042 / 1_000_000;
+    return { answers: reply.answers, cost };
+  }
+  throw new OpenRouterTrouble("busy", "The decision model is busy. Try again in a moment.");
+}
+
+/**
+ * A picture from an image model (`LampAI.makeImage` and its edits, `AppAI.image`): `{image, cost}`, the PNG in base64.
+ * `references` are the pictures to edit or build on (base64, with their `media_type`).
+ */
+export async function image({ key, model, prompt, references = [], aspectRatio, seconds = 240, signal, fetcher }) {
+  const body = { model, prompt, n: 1, output_format: "png" };
+  if (aspectRatio) body.aspect_ratio = aspectRatio;
+  const given = (Array.isArray(references) ? references : []).filter((reference) => reference?.data);
+  if (given.length) body.input_references = given.map((reference) => ({ type: "image_url", image_url: { url: `data:${reference.media_type || "image/png"};base64,${reference.data}` } }));
+  const { status, reply } = await post("images", { key, body, seconds, signal, fetcher });
+  if (status !== 200) throw new OpenRouterTrouble("refused", "The image model didn't answer.", { status, reply });
+  const picture = Array.isArray(reply.data) ? reply.data[0]?.b64_json : null;
+  if (typeof picture !== "string" || !picture) throw new OpenRouterTrouble("empty", "The image model didn't return a picture.", { reply });
+  return { image: picture, cost: Number(reply.usage?.cost) || 0 };
 }

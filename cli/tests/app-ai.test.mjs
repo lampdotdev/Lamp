@@ -192,3 +192,21 @@ test("OpenRouter is asked again when a provider's filter cuts the reply off, and
   assert.ok(refused instanceof OpenRouterTrouble);
   assert.deepEqual([refused.kind, refused.status, refused.reply.error.message], ["refused", 401, "No auth"]);
 });
+
+test("OpenRouter's decision model is asked again when busy, and a picture comes back as one or says why not", async () => {
+  const { decide, image } = await import("../openrouter.mjs");
+  const replies = [{ status: 429, body: {} }, { status: 200, body: { answers: { urgent: { noul: 0.9 } }, usage: { input_tokens: 1000000 } } }];
+  const fetcher = async (url, request) => { const next = replies.shift(); return { status: next.status, json: async () => next.body, url, request }; };
+  const decided = await decide({ key: "k", model: "jev", state: {}, questions: { urgent: { type: "noul" } }, fetcher });
+  assert.deepEqual([decided.answers.urgent.noul, decided.cost], [0.9, 0.042]);
+  const free = await decide({ key: "k", model: "jev", state: {}, questions: {}, fetcher: async () => ({ status: 200, json: async () => ({ answers: {}, usage: { cost: 0, input_tokens: 1000000 } }) }) });
+  assert.equal(free.cost, 0, "a reported cost of nothing stands");
+  const invalid = await decide({ key: "k", model: "jev", state: {}, questions: {}, fetcher: async () => ({ status: 422, json: async () => ({ detail: "no questions" }) }) }).catch((e) => e);
+  assert.deepEqual([invalid.kind, invalid.message], ["invalid", "The decision request was invalid: no questions"]);
+  let sent;
+  const made = await image({ key: "k", model: "m", prompt: "a fox", aspectRatio: "1:1", references: [{ media_type: "image/png", data: "AAAA" }],
+    fetcher: async (url, request) => { sent = { url, body: JSON.parse(request.body) }; return { status: 200, json: async () => ({ data: [{ b64_json: "iVBOR" }], usage: { cost: 0.04 } }) }; } });
+  assert.deepEqual([made.image, made.cost, sent.url.endsWith("/images"), sent.body.input_references.length, sent.body.aspect_ratio], ["iVBOR", 0.04, true, 1, "1:1"]);
+  const none = await image({ key: "k", model: "m", prompt: "x", fetcher: async () => ({ status: 200, json: async () => ({ data: [] }) }) }).catch((e) => e);
+  assert.equal(none.kind, "empty");
+});

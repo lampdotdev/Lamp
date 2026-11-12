@@ -773,35 +773,11 @@ enum AppAI {
             // Gone since the route was chosen: the text model answers the same questions in JSON instead.
             return try await decideByText(state: state, questions: questions, appText: appText)
         }
-        var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/systemone")!)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 60
-        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Lamp", forHTTPHeaderField: "X-Title")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["state": state, "model": choice.model,
-                                                                       "questions": questions] as [String: Any])
-        // Rate limits (429) and overload (529) are expected under load: back off and retry a few times.
-        for attempt in 0..<4 {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-            if (status == 429 || status == 529) && attempt < 3 {
-                try await Task.sleep(for: .milliseconds(500 << attempt))
-                continue
-            }
-            guard status == 200, let answers = obj["answers"] as? [String: Any] else {
-                let error = obj["error"] as? [String: Any]
-                let detail = error?["message"] as? String ?? obj["detail"].map { "\($0)" } ?? "HTTP \(status)"
-                throw Failure(message: status == 422 ? "The decision request was invalid: \(detail)"
-                                                     : Provider.friendlyError(status: status, reply: obj, from: Provider.keyProvider(choice.provider)?.name ?? choice.provider))
-            }
-            let usage = obj["usage"] as? [String: Any] ?? [:]
-            // Jev charges per input token ($0.042 per million); OpenRouter may report the exact cost.
-            let cost = usage["cost"] as? Double ?? Double(usage["input_tokens"] as? Int ?? 0) * 0.042 / 1_000_000
-            return (answers, cost)
-        }
-        throw Failure(message: "The decision model is busy. Try again in a moment.")
+        // Sent by lamp's command line (`openRouterDecide`, cli/openrouter.mjs), which backs off and asks again when the
+        // model is busy.
+        let done = try await LampCLI.ask("openRouterDecide", ["key": key, "model": choice.model, "state": state, "questions": questions])
+        if let answers = done["answers"] as? [String: Any] { return (answers, done["cost"] as? Double ?? 0) }
+        throw openRouterFailure(done["trouble"] as? [String: Any] ?? [:], from: Provider.keyProvider(choice.provider)?.name ?? choice.provider)
     }
 
     /// The state as the decision models read it: text as it is, anything else as JSON.
@@ -1015,33 +991,17 @@ enum AppAI {
             return (try await ImageModels.generate(prompt: prompt, width: width, height: height), 0)
         case nil: throw Failure(message: noImageRoute, needs: .pictures)
         }
-        var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/images")!)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 240
-        request.setValue("Bearer \(KeyStore.openRouterKey ?? "")", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Lamp", forHTTPHeaderField: "X-Title")
+        // Sent by lamp's command line (`openRouterImage`, cli/openrouter.mjs); what comes back is checked here as a picture.
         let imageModel = Icons.artModels.contains { $0.id == appChoice } ? appChoice! : Icons.artModel
-        var body: [String: Any] = ["model": imageModel, "prompt": prompt, "n": 1, "output_format": "png"]
-        if let aspectRatio { body["aspect_ratio"] = aspectRatio }
-        if !references.isEmpty {
-            body["input_references"] = references.map {
-                ["type": "image_url", "image_url": ["url": "data:\($0.mediaType);base64,\($0.data)"]]
-            }
-        }
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard status == 200 else {
-            throw Failure(message: Provider.friendlyError(status: status, reply: obj, from: Provider.openRouter))
-        }
-        guard let base64 = (obj["data"] as? [[String: Any]])?.first?["b64_json"] as? String,
-              let decoded = Data(base64Encoded: base64), NSImage(data: decoded) != nil else {
+        var given: [String: Any] = ["key": KeyStore.openRouterKey ?? "", "model": imageModel, "prompt": prompt,
+                                    "references": references.map { ["media_type": $0.mediaType, "data": $0.data] }]
+        if let aspectRatio { given["aspectRatio"] = aspectRatio }
+        let done = try await LampCLI.ask("openRouterImage", given)
+        guard let base64 = done["image"] as? String else { throw openRouterFailure(done["trouble"] as? [String: Any] ?? [:]) }
+        guard let decoded = Data(base64Encoded: base64), NSImage(data: decoded) != nil else {
             throw Failure(message: "The image model didn't return a picture.")
         }
-        return (decoded, (obj["usage"] as? [String: Any])?["cost"] as? Double ?? 0)
+        return (decoded, done["cost"] as? Double ?? 0)
     }
 
     /// Pixel sizes for the local models (multiples of 16, about a megapixel).
@@ -1115,10 +1075,10 @@ enum AppAI {
     }
 
     /// What kept OpenRouter from answering, as the app is told it, with what it cost all the same.
-    static func openRouterFailure(_ trouble: [String: Any]) -> Failure {
+    static func openRouterFailure(_ trouble: [String: Any], from name: String = Provider.openRouter) -> Failure {
         let cost = trouble["cost"] as? Double ?? 0
         if trouble["kind"] as? String == "refused", let status = trouble["status"] as? Int, status > 0 {
-            return Failure(message: Provider.friendlyError(status: status, reply: trouble["reply"] as? [String: Any] ?? [:], from: Provider.openRouter), cost: cost)
+            return Failure(message: Provider.friendlyError(status: status, reply: trouble["reply"] as? [String: Any] ?? [:], from: name), cost: cost)
         }
         return Failure(message: trouble["message"] as? String ?? "The AI didn't answer.", cost: cost)
     }
