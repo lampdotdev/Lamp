@@ -38,6 +38,10 @@ struct Credits: Codable, Equatable {
         /// The files of it in the wish, for work brought in a file at a time (a model, a sprite sheet, a texture: the
         /// `assets` tool's), so what each file is and whose it is can be told from the credits.
         var files: [String]? = nil
+        /// Fetched while the app runs (a live feed, a map service, an API), with nothing of it in the app: sharing the app
+        /// passes on none of it, so it never needs a license to go (`ShareCheck.unlicensed`). An explicit false is kept,
+        /// so a source that comes to be copied into the app stops being live over an older credit that said it was.
+        var live: Bool? = nil
 
         /// Every file of its terms the wish keeps: its license, then the others.
         var termsFiles: [String] { (licenseFile.map { [$0] } ?? []) + (noticeFiles ?? []) }
@@ -179,7 +183,7 @@ struct Credits: Codable, Equatable {
                                             commit: newer.commit ?? source.commit, license: newer.license ?? source.license,
                                             licenseFile: newer.licenseFile ?? source.licenseFile,
                                             noticeFiles: newer.noticeFiles ?? source.noticeFiles, adapted: newer.adapted ?? source.adapted,
-                                            files: Self.union(source.files, newer.files))
+                                            files: Self.union(source.files, newer.files), live: newer.live ?? source.live)
         }
         for remix in other.remixOf where !result.remixOf.contains(where: { $0.sameLink(as: remix) }) { result.remixOf.append(remix) }
         // A link both have keeps the address it has, or takes the one the newer file gives; its commit is the newer
@@ -375,7 +379,8 @@ extension Credits.Source {
         let files = Array((files ?? []).compactMap(Credits.validPath).prefix(Credits.maxFiles))
         return Credits.Source(name: name, author: Credits.text(author), url: Credits.validURL(url), commit: Credits.validCommit(commit),
                               license: Credits.validLicense(license), licenseFile: Credits.validPath(licenseFile),
-                              noticeFiles: notices.isEmpty ? nil : notices, adapted: adapted, files: files.isEmpty ? nil : files)
+                              noticeFiles: notices.isEmpty ? nil : notices, adapted: adapted, files: files.isEmpty ? nil : files,
+                              live: live)
     }
 
     /// The same work: the same address, or for one with none, the same name.

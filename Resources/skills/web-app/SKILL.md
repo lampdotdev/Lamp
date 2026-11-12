@@ -71,6 +71,11 @@ So every feature that leans on Lamp keeps the app usable without it, going by wh
 for everything AI would do, example content where the person's own things would be, and a short line where something
 needs Lamp (for AI, `LampAI.status`'s `reason`), never an error or an empty screen.
 
+Credit a live source the app fetches as it runs (a transit feed, a map service, an open-data API) in credits.json's
+`upstream` with `"live": true`: nothing of it is in the app, so sharing passes none of it on, and it isn't asked about
+as work with no license. Work copied into the app (code, models, pictures, a data file saved from a feed) is never
+`live`, and its license is asked about before it's shared.
+
 ## Doing things for the person
 
 `LampAI.act(request, { about, context, tools, history, onStep })` runs a short loop: the AI picks calls among the
