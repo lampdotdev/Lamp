@@ -79,6 +79,8 @@ export function wishPage(template, wish, { origin, playOrigin = null }) {
     releases: wish.releases ?? [], picture: wish.picture?.url ?? "", icon: wish.icon?.url ?? "",
     ...(wish.file?.url ? { file: wish.file.url, fileSize: wish.file.size, shared: wish.id } : {}),
     ...(wish.github ? { github: wish.github } : {}),
+    // The link it's a copy of, when that's still up: "from <maker>/<app>" under its name.
+    ...(wish.from ? { from: wish.from } : {}),
     ...(plays ? { play: `${playOrigin}/w/${wish.id}/play/${wish.page.version}/`, ...(wish.shape ? { shape: wish.shape } : {}) } : {}),
   }).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   return head
@@ -138,7 +140,7 @@ export function createPageHandler({ env = process.env, fetcher = fetch, store, t
     if (!id && isUsername(user) && /^[a-z0-9-]{1,60}$/.test(app ?? "")) {
       try { id = await (store ?? cloudStore(env, fetcher)).appID(user, app); } catch { id = null; }
     }
-    const wish = id ? await findWish(id, { env, fetcher, store }) : null;
+    const wish = id ? await findWish(id, { env, fetcher, store, origin: url.origin }) : null;
     // An old link to a wish whose maker has an account goes to the name it's known by now.
     if (wish?.owner && url.searchParams.get("id")) {
       // What the link carries for the page (a change to ask for) goes with it; only how it was found doesn't.

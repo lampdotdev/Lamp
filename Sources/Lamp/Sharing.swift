@@ -281,8 +281,10 @@ enum Sharing {
     /// file is made from, so a file that comes back from whoever it was sent to can be merged against that version
     /// (`Upstream.ownVersion`); a copy sharing on keeps the version it was given, which is the sender's and not its own.
     /// `releasing` is what's new in a release the file goes out with, which isn't kept until it has (`WishReleases`).
+    /// `link` is the lamp.dev link the file goes up with (the Share Link card), which this wish's place on the chain
+    /// names, so a copy shared on as a link of its own says it came from this one.
     static func export(_ project: LampProject, icon: Data? = nil, repository: String? = nil, commit: String? = nil,
-                       releasing: WishReleases.Entry? = nil) throws -> URL {
+                       releasing: WishReleases.Entry? = nil, link: String? = nil) throws -> URL {
         // Some kinds' files can't go in a shared file yet (an app for a device through its integration). The wish's
         // other apps are read off its folder, as Lamp lists them.
         // The file holds one app at its root and the others in their folders, as Lamp laid wishes out until any app could
@@ -337,7 +339,7 @@ enum Sharing {
         let moved = root.dir.standardizedFileURL == project.dir.standardizedFileURL ? nil : root.dir.lastPathComponent + "/"
         func inFile(_ path: String) -> String { moved.map { path.hasPrefix($0) ? String(path.dropFirst($0.count)) : path } ?? path }
         let kept = repository == nil ? GitHubRepo.kept(for: project) : nil
-        let me = Credits.Remix(name: project.name, wish: identity(of: project), url: repository ?? kept?.url, commit: commit ?? kept?.commit)
+        let me = Credits.Remix(name: project.name, wish: identity(of: project), url: repository ?? kept?.url, commit: commit ?? kept?.commit, link: link)
         var carried = credits.remixed(from: me.url == nil ? ownVersionLink(me, of: project, chain: credits) : me)
         carried.generated = carried.generated.map { Credits.Generated(file: inFile($0.file)) }
         carried.upstream = carried.upstream.map { source in

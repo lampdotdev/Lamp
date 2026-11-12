@@ -8,6 +8,7 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { Problem, RESOURCES, manifestOf, projectOf, stateOf } from "./state.mjs";
 import { LIMITS, nameOf, zipOf } from "./share.mjs";
+import { isID } from "../site/lib/shared-wishes.js";
 
 // What a Lamp app file may hold, written once in Resources/share-rules.json, which Lamp's app reads too (`ShareRules`):
 // the sizes another Lamp opens, the names a license goes by, and the shapes of keys a shared file never carries.
@@ -214,9 +215,10 @@ function identityOf(folder) {
  * and lamp-app.json, which says what it is. Never Lamp's own files, which the Mac that opens it writes, nor anything
  * hidden. Refused when a license its credits name is gone, when something in it is shaped like a key, or when it's
  * more than another Lamp opens. Work its credits give no license for goes only with `anyway`: its author may not want
- * it passed on.
+ * it passed on. `link` is the lamp.dev link the file goes up with (`share`), which this app's place in the chain carries,
+ * so a copy of it shared on can say which link it came from (`sourceLinkOf`).
  */
-export function exportApp(given, { anyway = false } = {}) {
+export function exportApp(given, { anyway = false, link = null } = {}) {
   const project = projectOf(given), folder = project.folder, manifest = manifestOf(folder);
   // Where the app's own record is (its credits, licenses, notes, files and the Swift beside its page): the folder, or
   // for a site laid out as Lamp puts one on GitHub, `.lamp-wish/` beside the page (`StaticSite.layOut`).
@@ -291,7 +293,7 @@ export function exportApp(given, { anyway = false } = {}) {
 
   // Whoever opens the file is remixing this app: it's added to the chain its credits carry, as one link if it's
   // already the last (`Credits.remixed`).
-  const me = { name, wish: identityOf(folder) }, chain = Array.isArray(credits?.remixOf) ? credits.remixOf.filter((link) => link && typeof link.name === "string") : [];
+  const me = { name, wish: identityOf(folder), ...(link ? { link } : {}) }, chain = Array.isArray(credits?.remixOf) ? credits.remixOf.filter((link) => link && typeof link.name === "string") : [];
   const last = chain.at(-1);
   if (last && (last.wish ? last.wish === me.wish : !last.starter && last.name === me.name)) chain[chain.length - 1] = { ...last, ...me, url: last.url, commit: last.commit };
   else chain.push(me);
@@ -322,6 +324,28 @@ export function exportApp(given, { anyway = false } = {}) {
   const bytes = zipOf([...files].sort(([a], [b]) => a.localeCompare(b)));
   if (bytes.length > MAX_ARCHIVE) throw new Problem(`${name} is too big to share`);
   return { name, kind, bytes, files: files.size };
+}
+
+/**
+ * The id of the link on `site` that the app in the folder came from, for a share to name (`from`): the last app in its
+ * credits' chain that went up with a link there (`exportApp`'s `link`), other than `own`, the folder's own link. Null for
+ * an app that came from no link. An unpacked copy keeps the app's identity, so its first share replaces that entry's
+ * link in the file it sends; the folder's own credits still name the one it came from.
+ */
+export function sourceLinkOf(folder, site, own = null) {
+  const app = existsSync(join(folder, ".lamp-wish", "lamp-app.json")) ? join(folder, ".lamp-wish") : folder;
+  let chain;
+  try { chain = JSON.parse(readFileSync(join(app, "credits.json"), "utf8"))?.remixOf; } catch { return null; }
+  if (!Array.isArray(chain)) return null;
+  let origin;
+  try { origin = new URL(site).origin; } catch { return null; }
+  for (const entry of [...chain].reverse()) {
+    let url;
+    try { url = new URL(entry?.link); } catch { continue; }
+    const id = /^\/w\/([^/]+)$/.exec(url.pathname)?.[1];
+    if (url.origin === origin && isID(id) && id !== own) return id;
+  }
+  return null;
 }
 
 /** An object with its keys in order, at every level, as Lamp's own encoder writes its files. */

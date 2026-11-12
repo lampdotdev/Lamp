@@ -15,11 +15,13 @@ import { NOTES_FILE, Problem, stateOf } from "./state.mjs";
 import { ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS, LIBRARIES } from "./dev.mjs";
 import { LIMITS, FILE_LIMITS, PAGE_LIMITS } from "../site/lib/shared-wishes.js";
 import { ideasOf, makerOf, pageUp, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile, siteOrigin } from "./link.mjs";
-import { exportApp } from "./lampapp.mjs";
+import { exportApp, sourceLinkOf } from "./lampapp.mjs";
 
 export { siteOrigin };
 
 const linkFileOf = (folder) => join(stateOf(folder), "link.json");
+/** A link by its id alone, which the site sends on to its address now: what a file names, so a rename never breaks it. */
+const stableLink = (site, id) => `${site}/w/${id}`;
 
 
 /**
@@ -174,9 +176,13 @@ const megabytes = (bytes) => `${(bytes / 1_000_000).toFixed(bytes < 10_000_000 ?
  * page or null, `shape` "fill" or the page's width over its height. Answers the link and what went up.
  */
 export async function share({ layout, words, picture = null, shape = "fill", site = siteOrigin(), said = () => {}, file = true, anyway = false, github, fromLamp = false }) {
+  // The folder's own link when it has one on this site, changed in place; a link that's gone is made again.
+  let earlier = readLink(layout.folder);
+  if (earlier && earlier.site !== site) earlier = null;
   // The app's own file goes with the link, as Lamp's Share Link sends it, so whoever follows the link can open it in
-  // Lamp too: made first, with Share…'s checks, so a page that can't be shared (a key in it) puts nothing up.
-  const app = file ? exportApp(layout.folder, { anyway }) : null;
+  // Lamp too: made first, with Share…'s checks, so a page that can't be shared (a key in it) puts nothing up. It names
+  // the link it goes up with, so a copy shared on says it came from this one: made again below if that's a new link.
+  let app = file ? exportApp(layout.folder, { anyway, link: earlier ? stableLink(site, earlier.id) : null }) : null;
   const files = pageFiles(layout);
   const unpacked = files.reduce((total, [, bytes]) => total + bytes.length, 0);
   if (!files.some(([path]) => path === "index.html")) throw new Problem("the page has no index.html at its top");
@@ -194,9 +200,9 @@ export async function share({ layout, words, picture = null, shape = "fill", sit
     ...(words.asks?.length ? { asks: words.asks } : {}), ...(picture ? { picture: picture.toString("base64") } : {}),
     ...(repo ? { github: repo } : {}),
   };
-  // The folder's own link when it has one on this site, changed in place; a link that's gone is made again.
-  let earlier = readLink(layout.folder);
-  if (earlier && earlier.site !== site) earlier = null;
+  // The link this app came from, when it's a copy of one shared there: its page says so.
+  const from = sourceLinkOf(layout.folder, site, earlier?.id);
+  if (from) body.from = from;
   // A file an earlier share sent stays on the record until it's taken away, so a retry after a failed removal tries again.
   // A link that's a Lamp's (`fromLamp`, the app in its own folder) stays so in every write, a share that fails partway too.
   let link = { site, ...(await publishLink({ site, body, earlier, account: accountFor(site)?.key })), ...words, shape, ...(earlier?.file ? { file: true } : {}),
@@ -204,6 +210,8 @@ export async function share({ layout, words, picture = null, shape = "fill", sit
   // Kept before the page goes up: a link whose page didn't make it is still this folder's to send again or take down.
   writeLink(layout.folder, link);
 
+  // A new link (or one made again) has its id only now, which the file carries.
+  if (app && link.id !== earlier?.id) app = exportApp(layout.folder, { anyway, link: stableLink(site, link.id) });
   // The file, or none: a link that carried one and shouldn't now has it taken away (and its page with it, sent next).
   if (app) {
     link.file = true;

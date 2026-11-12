@@ -265,7 +265,11 @@ starter, and a shared file carries the wish being shared as its last link (`Shar
 stays one link), with where that wish lives when Lamp knows it (`url`: its repository on GitHub, written by a release there
 and by opening a repository, "Generated apps") and the commit of it the wish has (`commit`: the one it was opened at,
 the last one merged in by Update from GitHub…, or the last one a release pushed there; for a wish that lives nowhere, the
-version of its own history the file was made from; shown nowhere, it's what an update is merged from, "Generated apps"). The same wish put somewhere else is a link of its own
+version of its own history the file was made from; shown nowhere, it's what an update is merged from, "Generated apps"),
+and for a file made for a lamp.dev link (the Share Link card, `lamp share`) that link by its id (`link`,
+`https://lamp.dev/w/<id>`). A copy of it shared as a link of its own sends the last such link that isn't its own as
+`from` (`Credits.sourceLink`, `sourceLinkOf` in cli/lampapp.mjs), and its page says where it came from. A copy keeps
+the wish's identity, so its own file's entry takes its own link; the copy's credits still name the one it came from. The same wish put somewhere else is a link of its own
 (`Remix.sameLink`), so the chain keeps where a wish came from beside where it was put; `Credits.origin(own:)` is the
 former. The About window and a repository's README link the chain. Credit is only added to: what a wish arrived with (a starter's copy, a file opened) is kept in
 `.lamp/credits-arrived.json` and read back with the file (`Credits.load`), so a source the file lost while the wish was

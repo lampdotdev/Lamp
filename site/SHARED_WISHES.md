@@ -94,6 +94,15 @@ idea with an address that has no account is emailed a link to confirm it (`askTo
 button, so nothing is used up by a mail scanner, and pressing it signs the browser in to the address's account or
 makes one with the username they choose (suggested from the name they gave). Emails about an idea go only to an
 address with an account (`writeToSender`), so nobody hears about an idea someone else typed their address into.
+
+## Where a link came from
+
+A link made from a copy of another link's app says where it came from. The file that goes with a link names that link
+on its credits' chain (`link`), so a copy of it, opened in Lamp or by `lamp play` or `lamp unpack`, knows it, and its own
+share sends that link's id as `from`. The site keeps it only when there's such a link and it isn't the share's own; a
+change that doesn't send it keeps it. The page draws "from <maker>/<app>" (or the source's name, with no username)
+beside the name, linking to the source as it's known now (`findWish`), and nothing once the source is taken down.
+
 ## Setup (one time)
 
 In the **lamp** Vercel project:

@@ -59,6 +59,10 @@ struct Credits: Codable, Equatable {
         /// one it went up in), so a contribution measures the wish's changes in its own history and goes on the
         /// repository's latest (`Contribute`).
         var commit: String?
+        /// The lamp.dev link this wish went up with, by its id alone (`https://lamp.dev/w/<id>`, which the site sends on
+        /// to its address now), when the file was made for that link (`WishLink`): a copy of it shared on as a link of
+        /// its own names this one as where it came from (`sourceLink`). Nil in files from before, and in any other file.
+        var link: String? = nil
     }
 
     /// A picture made with AI, by its path in the wish.
@@ -184,6 +188,7 @@ struct Credits: Codable, Equatable {
             guard let newer = other.remixOf.first(where: { $0.sameLink(as: remix) }) else { continue }
             if remix.url == nil, let url = newer.url { result.remixOf[index].url = url }
             if let commit = newer.commit { result.remixOf[index].commit = commit }
+            if let link = newer.link { result.remixOf[index].link = link }
         }
         for picture in other.generated where !result.generated.contains(picture) { result.generated.append(picture) }
         return result.checked
@@ -209,6 +214,7 @@ struct Credits: Codable, Equatable {
             var link = remix
             if link.url == nil { link.url = last.url }
             if link.commit == nil { link.commit = last.commit }
+            if link.link == nil { link.link = last.link }
             result.remixOf[result.remixOf.count - 1] = link
         } else {
             result.remixOf.append(remix)
@@ -223,6 +229,21 @@ struct Credits: Codable, Equatable {
             guard let url = link.url else { return false }
             return own.map { Source.plain(url) != Source.plain($0) } ?? true
         }
+    }
+
+    /// The id of the link on `site` the wish came from, which a share of its own names (`from`) so its page says so:
+    /// the last link on the chain there (`Remix.link`) that isn't the wish's own (`own`). Nil for a wish that came from
+    /// none. A copy keeps the wish's identity, so its own share puts its link in that same entry of the file it sends;
+    /// the wish's own credits still name the one it came from.
+    func sourceLink(on site: String, own: String?) -> String? {
+        guard let origin = URL(string: site), let host = origin.host else { return nil }
+        for remix in remixOf.reversed() {
+            guard let link = remix.link.flatMap(URL.init(string:)), link.scheme == origin.scheme, link.host == host, link.port == origin.port else { continue }
+            let parts = link.path.split(separator: "/")
+            guard parts.count == 2, parts[0] == "w", let id = WishLink.validID(String(parts[1])), id != own else { continue }
+            return id
+        }
+        return nil
     }
 
     // MARK: What a person reads
@@ -376,7 +397,8 @@ extension Credits.Remix {
         guard let name = Credits.text(name) else { return nil }
         let starter = starter.flatMap(Credits.text).flatMap { $0.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" } ? $0 : nil }
         let wish = wish.flatMap { UUID(uuidString: $0.trimmed)?.uuidString }
-        return Credits.Remix(name: name, starter: starter, wish: wish, url: Credits.validURL(url), commit: Credits.validCommit(commit))
+        return Credits.Remix(name: name, starter: starter, wish: wish, url: Credits.validURL(url), commit: Credits.validCommit(commit),
+                             link: Credits.validURL(link))
     }
 
     func sameWish(as other: Credits.Remix) -> Bool {
