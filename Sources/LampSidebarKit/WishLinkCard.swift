@@ -27,9 +27,15 @@ public struct WishLinkCard: View {
         /// The release puts the app on GitHub too, the first time, as a repository on the person's account: unticked
         /// unless the person ticks it, since it makes the code public by default, and only for an app that isn't there yet.
         public var putOnGitHub: Bool
+        /// A username on lamp.dev for the maker's links (lamp.dev/<username>/<app>), and the address that confirms it:
+        /// asked only while the maker has none. Both empty shares as before; an address alone signs in to its username.
+        public var username: String
+        public var email: String
 
         public init(name: String, by: String = "", line: String, words: String, includeFile: Bool = false, notes: String = "",
-                    asks: String = "", alsoGitHub: Bool = true, putOnGitHub: Bool = false) {
+                    asks: String = "", alsoGitHub: Bool = true, putOnGitHub: Bool = false, username: String = "", email: String = "") {
+            self.username = username
+            self.email = email
             self.name = name
             self.by = by
             self.line = line
@@ -69,6 +75,17 @@ public struct WishLinkCard: View {
             self.ask = ask
             self.note = note
         }
+    }
+
+    /// The maker's username on lamp.dev, which their links go under.
+    public enum Account: Equatable {
+        /// Not known yet: nothing is drawn for it.
+        case unknown
+        /// None: the card asks for one, with a suggestion.
+        case none(suggested: String)
+        /// Asked for, until the link in the email sent to the address is opened.
+        case waiting(username: String, email: String)
+        case signedIn(String)
     }
 
     public enum Stage: Equatable {
@@ -206,6 +223,9 @@ public struct WishLinkCard: View {
     let retryGitHub: (() -> Void)?
     let gitHubSetup: GitHubSetup?
     let setUpGitHub: GitHubSetupActions
+    let account: Account
+    /// Asks for a username again, in place of the one waiting for its email (a mistyped address, say).
+    let changeAccount: (() -> Void)?
     @State private var termsOpen = false
     @Environment(\.openURL) private var openURL
     /// Copy Link the first time, Release Update after: shares what's on the card and copies the link.
@@ -221,6 +241,7 @@ public struct WishLinkCard: View {
                 writingNotes: Bool = false, gitHub: String? = nil, gitHubNote: String? = nil, gitHubStage: GitHubStage? = nil,
                 checkingGitHub: Bool = false, retryGitHub: (() -> Void)? = nil, gitHubBehind: String? = nil, bringIn: (() -> Void)? = nil,
                 gitHubSetup: GitHubSetup? = nil, setUpGitHub: GitHubSetupActions = .none,
+                account: Account = .unknown, changeAccount: (() -> Void)? = nil,
                 share: @escaping () -> Void, copy: @escaping () -> Void, stop: @escaping () -> Void, close: @escaping () -> Void,
                 width: CGFloat? = 480) {
         self.noLicense = noLicense
@@ -234,6 +255,8 @@ public struct WishLinkCard: View {
         self.bringIn = bringIn
         self.gitHubSetup = gitHubSetup
         self.setUpGitHub = setUpGitHub
+        self.account = account
+        self.changeAccount = changeAccount
         self.icon = icon
         self.picture = picture
         self._values = values
@@ -293,6 +316,7 @@ public struct WishLinkCard: View {
                         .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
                         .help("Shown under the app's name on its page")
                 }
+                accountRow
                 // The wish always goes with its link when it can: what the person must know before it does.
                 if canIncludeFile, let noLicense {
                     Text(noLicense).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -404,7 +428,58 @@ public struct WishLinkCard: View {
             Button("Cancel", role: .cancel, action: close).keyboardShortcut(.cancelAction)
             Button(link == nil ? "Copy Link" : "Release Update", action: share)
                 .keyboardShortcut(.defaultAction)
-                .disabled(!values.isComplete || checkingGitHub || !canPutOnGitHub)
+                .disabled(!values.isComplete || checkingGitHub || !canPutOnGitHub || !accountReady)
+        }
+    }
+
+    /// An address started is finished before anything goes: without one, the link goes as before.
+    private var accountReady: Bool {
+        guard case .none = account else { return true }
+        return values.email.trimmingCharacters(in: .whitespaces).isEmpty || values.email.contains("@")
+    }
+
+    /// The maker's username: asked for while there's none, the email to open while it waits, and, once it's theirs,
+    /// that releasing moves a link from before it under it.
+    @ViewBuilder private var accountRow: some View {
+        switch account {
+        case .unknown:
+            EmptyView()
+        case .none(let suggested):
+            field("Username") {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 0) {
+                        Text("lamp.dev/").foregroundStyle(.secondary)
+                        TextField("Username", text: Binding(get: { values.username },
+                                                            set: { values.username = String($0.lowercased().prefix(30)) }),
+                                  prompt: Text(suggested.isEmpty ? "your-name" : suggested))
+                            .textFieldStyle(.plain)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 6)
+                    .background(Paper.card, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
+                    TextField("Email", text: clipped(\.email, 200), prompt: Text("Email, to confirm it"))
+                        .textContentType(.emailAddress)
+                        .textFieldStyle(.plain)
+                        .padding(.horizontal, 8).padding(.vertical, 6)
+                        .background(Paper.card, in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
+                    Text("Optional. With your email, your links go here once you confirm it.")
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .help("Links go under lamp.dev/<username>; your email isn't shown")
+        case .waiting(let username, let email):
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Open the link sent to \(email) to get lamp.dev/\(username).")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                if let changeAccount { Button("Change", action: changeAccount).controlSize(.small) }
+            }
+        case .signedIn(let username):
+            if let link, link.contains("/w/") {
+                Text("Release Update moves this link to lamp.dev/\(username).")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 

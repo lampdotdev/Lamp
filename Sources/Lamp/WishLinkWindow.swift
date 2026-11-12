@@ -92,6 +92,7 @@ private struct WishLinkWindowContent: View {
                          gitHubSetup: card.firstPush.map { GitHubRelease.setup($0, of: project) },
                          setUpGitHub: .init(fix: { cards.fixGitHub(project) }, setPrivate: { cards.setGitHubPrivate(project, $0) },
                                             setLicense: { cards.setGitHubLicense(project, $0) }, setPicture: { cards.setGitHubPicture(project, $0) }),
+                         account: card.account, changeAccount: { cards.changeAccount(project) },
                          share: { cards.share(project) }, copy: { cards.copy(project) }, stop: { cards.stop(project) },
                          close: { cards.close(project) }, width: 440)
                 // Under the window's clear title bar, so the close button sits on the card.

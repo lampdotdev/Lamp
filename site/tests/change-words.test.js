@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { changeWords, chatgptLink, claudeLink, CLAUDE_FOLDER_FIRST, CLAUDE_LINK_MAX, fileName } from "../src/lib/change-words.ts";
-import { SETUP_PROMPT } from "../src/lib/chatgpt.ts";
+import { CHATGPT_SETUP_PROMPT } from "../src/lib/setup-prompts.ts";
 
 const HANDOFF = { name: "Pong", page: "https://lamp.dev/w/abcdefghij", file: "https://store.example/w/abcdefghij/Pong.lampapp" };
 
@@ -65,10 +65,10 @@ test("Claude is told where the copy goes, and to ask for access, before any comm
   assert.doesNotMatch(words, /ChatGPT|Codex/);
 });
 
-// The homepage's prompt and Make it myself share the install steps, so they ask the same way.
+// The homepage's ChatGPT prompt and Make it myself share the install steps, so they ask the same way.
 test("the homepage prompt asks before installing in the same words", () => {
   for (const part of ["Would you like me to install and set up Lamp's command-line tools?", "Wait for my explicit yes", "ChatGPT Work"])
-    assert.ok(SETUP_PROMPT.includes(part) && changeWords(HANDOFF).includes(part), part);
+    assert.ok(CHATGPT_SETUP_PROMPT.includes(part) && changeWords(HANDOFF).includes(part), part);
 });
 
 // The file's name goes into a shell command in double quotes: nothing that could end the quotes or expand in them.

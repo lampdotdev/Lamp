@@ -1,0 +1,52 @@
+---
+import { CHATGPT_LINK, CLAUDE_LINK, CHATGPT_APP_URL, CLAUDE_APP_URL } from "../lib/setup-prompts";
+---
+
+<!--
+  Use with ChatGPT and Use with Claude: each button is the link itself, so one click puts that app's setup prompt in a
+  new chat in its Mac app, waiting to be sent, as Make it myself opens them on a shared game's page. ChatGPT is the
+  ink button and Claude the outline beside it; where there's no room they wrap. Each carries its maker's mark, the
+  file exactly as they publish it (public/brands): OpenAI's Blossom in white on the ink, and in black where "Make it
+  dark" turns the ink light (its guidelines allow black or white, nothing added, with the space around it that's
+  part of the file), and Anthropic's Claude spark in its own color. A page can't tell whether an app is there
+  (without it, Safari calls the address invalid), so the line under them gets either app.
+-->
+<div class="setup">
+  <div class="setup-buttons">
+    <a href={CHATGPT_LINK} class="ink-button setup-button h-12 text-base">
+      <img src="/brands/openai-blossom-white.svg" alt="" width="40" height="40" class="setup-mark setup-blossom setup-on-light" />
+      <img src="/brands/openai-blossom-black.svg" alt="" width="40" height="40" class="setup-mark setup-blossom setup-on-dark" />
+      Use with ChatGPT
+    </a>
+    <a href={CLAUDE_LINK} class="setup-outline setup-button h-12 text-base">
+      <img src="/brands/claude-spark.svg" alt="" width="20" height="20" class="setup-mark setup-spark" />
+      Use with Claude
+    </a>
+  </div>
+  <p class="setup-other">
+    <a href={CHATGPT_APP_URL} target="_blank" rel="noopener">Get ChatGPT</a> · <a href={CLAUDE_APP_URL} target="_blank" rel="noopener">Get Claude</a>
+  </p>
+</div>
+
+<style>
+  .setup-buttons { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+  .setup-button { gap: 0.625rem; padding: 0 1.5rem; }
+  /* The Blossom's file holds the clear space OpenAI asks for, a quarter of it on each side, so it's drawn at twice
+     the spark's size and its edges overlap the button's padding and the gap: the mark itself shows at the spark's
+     size, as far from the words, and nothing comes inside that space. */
+  .setup-blossom { width: 2.5rem; height: 2.5rem; margin: 0 -0.6rem; }
+  .setup-spark { width: 1.25rem; height: 1.25rem; }
+  .setup-on-dark { display: none; }
+  :global([data-theme="dark"]) .setup-on-light { display: none; }
+  :global([data-theme="dark"]) .setup-on-dark { display: block; }
+  /* The second choice beside the ink button: an ink outline. */
+  .setup-outline {
+    display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; white-space: nowrap;
+    font-weight: 700; color: var(--color-tape); box-shadow: inset 0 0 0 1px var(--color-tape);
+  }
+  .setup-outline:hover { opacity: 0.88; }
+  .setup-outline:focus-visible { outline: 2px solid var(--color-tape); outline-offset: 3px; }
+  .setup-other { margin: 0.625rem 0 0; font-size: 0.875rem; color: var(--color-muted-ink); }
+  .setup-other a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+  .setup-other a:focus-visible { outline: 2px solid var(--color-tape); outline-offset: 2px; }
+</style>

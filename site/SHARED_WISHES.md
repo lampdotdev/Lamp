@@ -80,6 +80,12 @@ to the new one (301). A share with no key is made as before, at `/w/`. The page 
 either way. Usernames are 2 to 30 lowercase letters, digits and dashes, never one of the site's own words (`w`, `api`,
 `ideas` and the rest, `RESERVED`), and `/:user/:app` is the last of the site's routes, so a page of its own always wins.
 
+Lamp and `lamp account` keep one account between them: lamp's command line keeps the key (`account.json` in lamp's
+state, by site), and Lamp's app asks through it (the `account`, `accountAsk` and `accountForget` calls), so a link
+shared from either goes under the same username. Lamp's Share Link card asks for one while there's none, filled in from
+the name on the card and taken only with an email; without one the link goes out as before. While the email waits the
+card says so, with Change for a mistyped address, and once it's confirmed a link from before moves at its next release.
+
 A browser is signed in only by pressing the button on an idea's confirm page (never by opening a link, which anyone
 could be sent to): a key of its own in an HttpOnly, SameSite=Lax cookie (`ACCOUNT_COOKIE`), which `GET /api/accounts`
 reads and `DELETE` clears. An idea sent from a signed-in browser is by
