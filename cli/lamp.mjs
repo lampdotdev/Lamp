@@ -946,8 +946,6 @@ async function main() {
     if (count(words.words) > LIMITS.words) throw new Problem(`a link's words are at most ${LIMITS.words} characters`);
     if (count(words.line) > LIMITS.line) throw new Problem(`a link's line is at most ${LIMITS.line} characters`);
     if (count(words.by) > LIMITS.by) throw new Problem(`who it's by is at most ${LIMITS.by} characters`);
-    // A name given is the one every later link says it's by, as Lamp's Share Link card keeps it.
-    if (options.by !== undefined) keepSharer(words.by);
     if (words.asks.length > LIMITS.asks || words.asks.some((ask) => count(ask) > LIMITS.ask)) throw new Problem(`a link asks at most ${LIMITS.asks} things, each of at most ${LIMITS.ask} characters`);
     // The page as it runs now: its picture for the link's card, the shape it plays in, and whether it's working.
     let card = { picture: null, stage: null, errors: [] };
@@ -961,6 +959,9 @@ async function main() {
       if (options.shape !== "fill" && !ratio) throw new Problem("--shape is fill, for a page that takes any window, or a shape like 16:9");
       shape = ratio ? Math.round((Number(ratio[1]) / Number(ratio[2])) * 10000) / 10000 : "fill";
     }
+    // A name given is the one every later link says it's by, as Lamp's Share Link card keeps it: kept once the share is
+    // checked and about to go, so a share refused leaves it as it was.
+    if (options.by !== undefined) keepSharer(words.by);
     const sent = await share({ layout, words, shape, picture: card.picture ? Buffer.from(card.picture, "base64") : null, said: (line) => console.log(line),
       file: !options["no-file"], anyway: !!options.anyway });
     console.log(`${before ? "Sent again to its link" : "Shared"}: ${sent.url}`);
