@@ -707,6 +707,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
     makeOwn.addEventListener("click", () => {
       draft += 1;
       fromBar = "";
+      // A new draft: an earlier send still under way no longer speaks for this one, so its button is free again.
+      confirmSend.disabled = false;
       shot = null;
       shotBox.hidden = true;
       sentIdea = false;
