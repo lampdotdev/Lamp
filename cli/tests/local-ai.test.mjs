@@ -24,6 +24,7 @@ test("only a shared page the person allowed has its AI answered", async (t) => {
     ask: async (question) => { asked.push(question); return yes; },
     answer: async (path, body) => {
       if (path === "/ai/status") return [200, { text: true }];
+      if (path === "/ai/models") return [200, { models: [{ id: "sonnet", name: "Sonnet", available: true }], default: "sonnet" }];
       if (body.probe) return [200, { act: true }];
       await new Promise((done) => setTimeout(done, 20));
       return [200, { text: `answered ${body.prompt}` }];
@@ -55,6 +56,7 @@ test("only a shared page the person allowed has its AI answered", async (t) => {
 
   // What there is is said before anyone's asked; using it isn't.
   assert.deepEqual((await call("/ai/status")).reply, { text: true });
+  assert.equal((await call("/ai/models")).reply.default, "sonnet");
   assert.deepEqual((await call("/ai/act", { body: { probe: true } })).reply, { act: true });
   assert.equal((await call("/ai", { body: { prompt: "hi" } })).status, 401);
   // A probe is only a probe where it asks no model.

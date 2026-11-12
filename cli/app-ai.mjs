@@ -7,14 +7,17 @@
 // the whole turn so far (the request, the tools, every earlier call and its result) and gets back either the calls to
 // make next or the reply. Nothing is kept between steps. What a step can hold on its own is checked here: the tools'
 // shapes, the calls the model hands back (checked against them, at most `MAX_CALLS`), the call ids, and that a turn
-// with `MAX_STEPS - 1` steps behind it is asked for a reply only. Limits across the turn (writes, time, cancel) are the
-// page's.
+// with `MAX_STEPS - 1` steps behind it is asked for a reply only. A turn's own step limit is the page's (4 unless the app
+// raises it, up to `MAX_STEPS`), which it keeps by sending `final` on its last step; so are its writes, time and cancel.
 //
 // Every route is asked one of two ways and read into the same calls-or-reply: a chat with OpenAI-style tools
 // (OpenRouter: `chatBody`, `readMessage`), or one prompt whose answer must fit the step's JSON shape (Claude Code, Codex:
 // `planPrompt`, `planSchema`, `readPlan`).
 
-export const MAX_TOOLS = 24, MAX_CALLS = 8, MAX_STEPS = 4, MAX_BODY = 2 * 1024 * 1024, MAX_CHOICES = 4, MAX_CHOICE = 24;
+// `MAX_STEPS` is the most steps an app may raise a turn to (`ACT_LIMITS_MAX` in lamp.js, `LampActSession.mostSteps`):
+// room to build something real a few calls at a time, while a turn that goes round in circles still ends. The most
+// writes follows from it, since each step holds at most `MAX_CALLS`.
+export const MAX_TOOLS = 24, MAX_CALLS = 8, MAX_STEPS = 40, MAX_BODY = 2 * 1024 * 1024, MAX_CHOICES = 4, MAX_CHOICE = 24;
 /** The longest a step may take, whatever its route, before its call is taken to have stopped answering (`ACT_STEP_SECONDS`
  *  in lamp.js, `AppAct.turnSeconds`). A turn has no time of its own unless the app gives it one. */
 export const MAX_TURN_SECONDS = 600;
@@ -63,7 +66,7 @@ function parseArg(raw, path) {
 
 /**
  * A step as the page sent it (its JSON text), checked and put in order: `{request, about, now, context?, tools, history,
- * steps, route, seconds, final}`, each tool's `args` as [name, shape] pairs by name. Throws `Refused`.
+ * steps, route, seconds, final, model?}`, each tool's `args` as [name, shape] pairs by name. Throws `Refused`.
  */
 export function readStep(text) {
   if (Buffer.byteLength(text) > MAX_BODY) throw new Refused(413, "A step can carry at most 2 MB.");
@@ -112,6 +115,8 @@ export function readStep(text) {
     tools, history, steps, route: typeof body.route === "string" ? body.route : null, seconds: Math.max(1, Math.min(seconds, MAX_TURN_SECONDS)),
     final: body.final === true || rawSteps.length >= MAX_STEPS - 1 };
   if ("context" in body) step.context = body.context;
+  // The model the app asked for (an id `LampAI.models` lists): the answering side takes it when it can, else its default.
+  if (typeof body.model === "string" && body.model) step.model = body.model;
   return step;
 }
 

@@ -1,6 +1,6 @@
 // The AI a page asks for with LampAI (lamp.js), answered by lamp itself for the pages it serves, with the person's own
 // Claude Code or Codex on this Mac: their subscription, through the program they signed in to, never a key in the page.
-// The same routes and answers Lamp's app gives (`/ai/status`, `/ai`, `/ai/act`, `/ai/decide`), told and checked by the
+// The same routes and answers Lamp's app gives (`/ai/status`, `/ai/models`, `/ai`, `/ai/act`, `/ai/decide`), told and checked by the
 // same code (app-ai.mjs, which Lamp's app has do it too), so a page can't tell which answered it. Pictures and
 // hearing need Lamp's app: asked here, they say so.
 
@@ -163,13 +163,56 @@ export function status() {
   };
 }
 
+// MARK: Models (`LampAI.models`, and `model` on `ask` and `act`)
+
+/** The models a page may name here, by Lamp's ids for them (`AppAI.anthropicModels` in Lamp's app, the same strings), with
+ *  what OpenRouter calls each. Claude Code takes the ids as they are. */
+const APP_MODELS = [
+  { id: "claude-fable-5-2", name: "Claude Fable", openRouter: "anthropic/claude-fable-5.2" },
+  { id: "opus", name: "Claude Opus", openRouter: "anthropic/claude-opus-5.5" },
+  { id: "sonnet", name: "Claude Sonnet", openRouter: DEFAULT_MODEL },
+  { id: "haiku", name: "Claude Haiku", openRouter: "anthropic/claude-haiku-5.5" },
+];
+/** Codex's models aren't known here without running it, so it's offered as one choice, by the id Lamp's app gives it then. */
+const CODEX = "engine:codex";
+
+/** One of the listed models by an id a page sent, Lamp's app's sign-in ids ("engine:claude:opus") included. */
+const listed = (asked) => APP_MODELS.find((m) => m.id === String(asked || "").replace(/^engine:claude:/, ""));
+
+/** The model's id a page gets when it names none: `LAMP_AI_MODEL` when it names a listed one, else Sonnet, as Lamp's app
+ *  answers apps (never Haiku unasked). */
+function defaultId(which) {
+  if (which === "codex") return CODEX;
+  const wanted = process.env.LAMP_AI_MODEL || "";
+  return (APP_MODELS.find((m) => m.id === wanted || m.openRouter === wanted) ?? listed("sonnet")).id;
+}
+
+/** What `complete` is told to run for the model a page named: an unknown one is answered as one that named none, never
+ *  refused. A `LAMP_AI_MODEL` that isn't listed still answers what names none, as before. */
+export function modelFor(which, asked) {
+  const model = listed(asked);
+  if (which === "codex") return process.env.LAMP_AI_MODEL || "";
+  if (model) return which === "openrouter" ? model.openRouter : model.id;
+  if (process.env.LAMP_AI_MODEL) return process.env.LAMP_AI_MODEL;
+  return which === "openrouter" ? DEFAULT_MODEL : "sonnet";
+}
+
+/** `/ai/models`: what a page can offer to choose from here, asked of nothing. */
+export function models() {
+  const which = engine();
+  if (!which) return { models: [], default: null, reason: missing };
+  if (which === "codex") return { models: [{ id: CODEX, name: "ChatGPT's default model via Codex", available: true }], default: CODEX };
+  return { models: APP_MODELS.map((m) => ({ id: m.id, name: `${m.name} via ${named(which)}`, available: true })), default: defaultId(which) };
+}
+
 /** `/ai`: a text answer, or JSON when asked for it. */
 export async function ask(body) {
   const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
   if (!prompt) return [400, { error: "Missing prompt." }];
   let system = typeof body.system === "string" ? body.system : "";
   if (body.json) system += (system ? "\n\n" : "") + "Answer with JSON only, nothing around it.";
-  try { return [200, { text: await complete({ system, prompt, images: body.images }) }]; }
+  const which = engine();
+  try { return [200, { text: await complete({ system, prompt, images: body.images, which, model: modelFor(which, body.model) }) }]; }
   catch (error) { return [502, { error: error.message }]; }
 }
 
@@ -208,11 +251,11 @@ export async function act(body) {
     let read;
     try {
       if (which === "openrouter") {
-        const body = chatBody(r, tag, retry, process.env.LAMP_AI_MODEL || DEFAULT_MODEL);
+        const body = chatBody(r, tag, retry, modelFor(which, r.model));
         read = readMessage((await openRouterChat({ key: process.env.OPENROUTER_API_KEY, body, seconds: left })).message, r);
       } else {
         const { system, prompt } = planPrompt(r, tag, retry);
-        read = readPlan(await complete({ system, prompt, schema: planSchema(r), seconds: left, which }), r);
+        read = readPlan(await complete({ system, prompt, schema: planSchema(r), seconds: left, which, model: modelFor(which, r.model) }), r);
       }
     } catch (error) {
       const words = error?.reply?.error?.message || error.message;
@@ -228,6 +271,7 @@ export async function act(body) {
 /** A page's AI request, by its route, as Lamp's app answers it: [status, JSON]. */
 export async function answer(path, body) {
   if (path === "/ai/status") return [200, status()];
+  if (path === "/ai/models") return [200, models()];
   if (path === "/ai") return ask(body);
   if (path === "/ai/act") return act(body);
   if (path === "/ai/decide") return decide(body);

@@ -12,7 +12,7 @@ import Foundation
 /// does (`Edition.answersSharedPages`).
 enum SharedPagesAI {
     /// What a shared page may ask (local-ai.mjs's `ROUTES`): never a route of the agent's or another app's.
-    static let routes: Set<String> = ["/ai/status", "/ai", "/ai/act", "/ai/decide", "/ai/hear", "/ai/image"]
+    static let routes: Set<String> = ["/ai/status", "/ai/models", "/ai", "/ai/act", "/ai/decide", "/ai/hear", "/ai/image"]
 
     @MainActor private static var started = false
 

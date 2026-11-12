@@ -14297,7 +14297,7 @@ final class Store: ObservableObject {
     /// Every route the gateway answers: pi's tools (`Agent.piRoutes`), and the AI, MCP and apps' own. Anything else is
     /// Not found.
     nonisolated static let gatewayPaths: Set<String> = Set(Agent.piRoutes.values).union([
-        "/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/setup", "/ai/computer", "/agent/computer", "/agent/approve",
+        "/ai", "/ai/keys", "/ai/status", "/ai/models", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/setup", "/ai/computer", "/agent/computer", "/agent/approve",
         "/agent/versions/name", "/agent/versions/restore", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/reload", "/app/credits", "/app/releases", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state", "/app/page/saved"
     ])
 
@@ -14386,6 +14386,7 @@ final class Store: ObservableObject {
             await EngineInstall.lookForPersonsCopies()
         }
         if route == "/ai/status" { return await aiStatus(for: project) }
+        if route == "/ai/models" { return await aiModels(for: project) }
         if route == "/ai/setup" { return askedForSetup(request, for: project) }
         if route == "/app/secrets" { return appSecrets(request, for: project) }
         if route == "/app/share" { return await appShare(request, for: project) }
@@ -14841,6 +14842,7 @@ final class Store: ObservableObject {
         guard SharedPagesAI.routes.contains(path) else { return (404, ["error": "Not found."]) }
         if !EngineInstall.hasLooked { await EngineInstall.lookForPersonsCopies() }
         if path == "/ai/status" { return await aiStatus(for: nil) }
+        if path == "/ai/models" { return await aiModels(for: nil) }
         guard setup.ready || (setup.hasBuilder && setup.hasAgent) else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         let data = (try? JSONSerialization.data(withJSONObject: body)) ?? Data("{}".utf8)
         return await appRequest(Gateway.Request(method: "POST", path: path, headers: [:], body: data), for: nil)
@@ -14906,7 +14908,7 @@ final class Store: ObservableObject {
             let (text, cost) = try await AppAI.complete(prompt: prompt, images: images,
                                                          system: body["system"] as? String ?? "",
                                                          json: body["json"] as? Bool ?? false,
-                                                         appModel: body["model"] as? String ?? models.text)
+                                                         appModel: AppAI.textChoice(asked: body["model"] as? String, app: models.text))
             if let project { record(project, cost: cost) }
             return (200, ["text": text])
         } catch let failure as AppAI.Failure {
@@ -14956,6 +14958,16 @@ final class Store: ObservableObject {
         }
         reply["details"] = details
         return (200, reply)
+    }
+
+    /// `LampAI.models`: the text routes the app may name as `model`, and which answers it when it names none. Nothing
+    /// until Lamp is set up, as `aiStatus` says nothing can answer then.
+    private func aiModels(for project: LampProject?) async -> (Int, [String: Any]) {
+        await EngineSignIn.refresh()
+        guard project.map(readyFor) ?? (setup.ready || (setup.hasBuilder && setup.hasAgent)) else {
+            return (200, ["models": [Any](), "default": NSNull(), "reason": "Lamp is still being set up."])
+        }
+        return (200, AppAI.modelChoices(app: (project.map(AppModels.load) ?? AppModels()).text))
     }
 
     /// `LampAI.openSetup`: the person pressed the app's own "Set up in Lamp", so the setup card goes in the app's chat

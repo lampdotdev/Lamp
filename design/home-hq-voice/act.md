@@ -35,7 +35,7 @@ belongs to the page.
 | Calls the model returns fit their tool | Gateway | Each call is checked against its tool's shape. A bad answer is asked for once more with the reason, then returned as a reply that says it couldn't. The page never sees a call that doesn't fit. |
 | At most 8 calls per answer | Gateway | Applies to every route. |
 | Earlier call ids are unique | Gateway | A duplicate id gets a 400. The model's calls get ids of Lamp's own (`s<step>c<n>`). |
-| A reply-only step after three steps | Gateway and page | A request with three steps behind it (`maxSteps - 1`) is answered with a reply only: `tool_choice: "none"`, and any call refused. A fourth is a 400. The page also sends `final` on that step. |
+| A reply-only last step | Gateway and page | The page sends `final` on its turn's last step (the fourth unless the app raised `limits.steps`, up to 40), which is answered with a reply only: `tool_choice: "none"`, and any call refused. The gateway does the same for a request with 39 steps behind it (`MAX_STEPS - 1`), and a 41st is a 400. |
 | One route for the whole turn | Gateway, from the page | The first answer carries the route's id. The page sends it back on every later step. A route that can't answer any more gets a 409, never a quiet switch. |
 | Writes per turn (6), the deadline (25 s), cancel | Page | Each step's request carries only the seconds left. The gateway turns that into one absolute deadline for the step, shared by every attempt it makes. |
 | A write checked right before it runs | Page | See "The loop". |

@@ -200,7 +200,7 @@ enum GameAndroid {
     import kotlin.concurrent.thread
 
     object LampPageGateway {
-        private val routes = setOf("/ai", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear")
+        private val routes = setOf("/ai", "/ai/status", "/ai/models", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear")
 
         /** Answers the page at `origin`, the page's own, in its main frame: no other page or frame reaches Lamp. */
         fun attach(web: WebView, origin: String) {

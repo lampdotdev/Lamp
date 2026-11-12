@@ -438,6 +438,31 @@ enum AppAI {
         return nil
     }
 
+    /// The text route an app's call asks for by `model` (an id `LampAI.models` lists), when that route can answer now;
+    /// else the app's own choice. A model that's unknown or can't answer never fails a call: it's answered as one that
+    /// named none. `ask` and `act` both go by this, so a picker's choice reaches either the same way.
+    @MainActor static func textChoice(asked: String?, app: String?) -> String? {
+        guard let asked, !asked.isEmpty else { return app }
+        let id = canonicalRoute(asked)
+        return allTextRoutes.contains(where: { $0.id == id && $0.available }) ? id : app
+    }
+
+    /// `/ai/models`, for `LampAI.models`: every text route by the id `ask` and `act` take as `model`, whether it can
+    /// answer now, and the one that answers an app whose call names none. Only what's set up is looked at (a key, a
+    /// sign-in), never a model asked, so an app can show its picker as it opens.
+    @MainActor static func modelChoices(app: String?) -> [String: Any] {
+        let routes = allTextRoutes
+        let fallback = route(for: app)
+        return [
+            "models": routes.map { route -> [String: Any] in
+                var one: [String: Any] = ["id": route.id, "name": route.label, "available": route.available]
+                if !route.available { one["reason"] = "Not set up in \(Edition.name)." }
+                return one
+            },
+            "default": fallback.available ? fallback.id : NSNull(),
+        ]
+    }
+
     /// The route for a task done with the person's other apps (`ComputerUse`): what was chosen for the app's
     /// text, when something was; else `computerDefault`, which isn't the text default.
     @MainActor static func computerRoute(for choice: String?) -> TextRoute {

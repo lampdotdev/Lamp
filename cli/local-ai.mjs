@@ -7,7 +7,7 @@
 // the request and a page can't change, so an approval is for one link's page: the first time it asks, the person is
 // asked in the terminal, and the page is given a token it keeps and sends from then on. Nothing else is answered:
 // another site, another link's page, or a request naming this computer by another name (a site that rebinds its own
-// name to 127.0.0.1) is refused. Whether there's an AI here (`/ai/status` and the probes) is answered without one, so a
+// name to 127.0.0.1) is refused. Whether there's an AI here (`/ai/status`, `/ai/models` and the probes) is answered without one, so a
 // page can say what it can do before anyone is asked.
 
 import { createServer } from "node:http";
@@ -22,7 +22,7 @@ import { answer as answerAI, engine } from "./ai.mjs";
 export const LOCAL_AI_PORT = 47423;
 const PLAY_HOST = "play.lamp.dev";
 const MOST = 4_000_000, AT_ONCE = 3, ASKING_FOR = 120_000;
-const ROUTES = new Set(["/ai/status", "/ai", "/ai/act", "/ai/decide", "/ai/hear", "/ai/image"]);
+const ROUTES = new Set(["/ai/status", "/ai/models", "/ai", "/ai/act", "/ai/decide", "/ai/hear", "/ai/image"]);
 
 const keptFile = () => join(process.env.LAMP_DEV_HOME || join(homedir(), ".lamp", "dev"), "shared-pages-ai.json");
 
@@ -153,9 +153,10 @@ export async function serveLocalAI({ port = LOCAL_AI_PORT, ask = askInTerminal()
     }
     if (!ROUTES.has(url.pathname)) return reply(404, { error: "Not found." });
     // What there is to answer with, asked before anyone is let in: only the routes whose probe asks no model.
-    const asksNothing = url.pathname === "/ai/status" || (body?.probe === true && (url.pathname === "/ai/act" || url.pathname === "/ai/hear"));
+    const listing = url.pathname === "/ai/status" || url.pathname === "/ai/models";
+    const asksNothing = listing || (body?.probe === true && (url.pathname === "/ai/act" || url.pathname === "/ai/hear"));
     if (asksNothing) {
-      const [status, answered] = await answer(url.pathname, url.pathname === "/ai/status" ? {} : { probe: true }, { id });
+      const [status, answered] = await answer(url.pathname, listing ? {} : { probe: true }, { id });
       return reply(status, answered);
     }
     const kept = allowed()[origin];
