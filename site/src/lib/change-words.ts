@@ -21,9 +21,12 @@ export type ChangeHandoff = {
   idea?: string;
 };
 
-// ChatGPT has no folder of the person's to open in, so its copy goes in one folder of its own that's there next time;
-// Claude Code is opened in the games folder the person picked (`gamesFolder`).
-export const CHATGPT_FOLDER = "~/Lamp Games";
+// Neither app is opened in a folder of the person's, so the copy goes in one folder of its own that's there next time.
+export const GAMES_FOLDER = "~/Lamp Games";
+
+// Claude's link sends no folder (see `claudeLink`), so before any command its words say where the copy goes and have
+// it ask for that folder when its session can't reach it, rather than work wherever it happened to open.
+export const CLAUDE_FOLDER_FIRST = `Work locally on this Mac. Put my copy in ${GAMES_FOLDER} (create it if needed), and keep the game files there. If this session can't access that folder, ask me to choose it or grant access before downloading or unpacking.`;
 
 // The file's name on disk, from the game's: only what's safe inside double quotes in any shell, so the words can name
 // it as a command without quoting rules of their own. A name with nothing of that left is "Game".
@@ -35,7 +38,7 @@ export function changeWords({ name, page, file, app = "chatgpt", idea = "" }: Ch
   const at = fileName(name);
   const lamp = "/Applications/Lamp.app/Contents/Resources/cli/lamp";
   const steps = [
-    ...(app === "chatgpt" ? [RUN_HERE_CHATGPT] : []),
+    app === "chatgpt" ? RUN_HERE_CHATGPT : CLAUDE_FOLDER_FIRST,
     // What a lamp needs for the steps below, checked by what it lists rather than a version number, since the copy
     // inside the Lamp Mac app and one from npm are numbered apart.
     `Check whether Lamp's command-line tools are already here: run lamp help (or ${lamp} help, the copy inside the Lamp Mac app). One is new enough if it lists lamp unpack, lamp open and lamp look. If one is, use it for every lamp command below, skip installing and updating, run lamp guide, and go on from "Read what lamp guide prints".`,
@@ -45,9 +48,7 @@ export function changeWords({ name, page, file, app = "chatgpt", idea = "" }: Ch
     INSTALL,
     "Then check that lamp help lists lamp unpack, lamp open and lamp look. If it still doesn't (an older lamp may come first on this computer), stop and tell me.",
     FOLLOW_GUIDE,
-    app === "chatgpt"
-      ? `Work in my games folder, ${CHATGPT_FOLDER} (make it if it isn't there). Keep everything you make in it.`
-      : "You were opened in my games folder: work in it, and keep everything you make in it.",
+    `Work in my games folder, ${GAMES_FOLDER} (make it if it isn't there). Keep everything you make in it.`,
     `Download the game's Lamp app file into the games folder: curl -fsSL -o "${at}.lampapp" "${file}"`,
     `Unpack it: lamp unpack "${at}.lampapp". If a folder named "${at}" already has things in it, it's an earlier copy of mine: unpack into a new folder whose name isn't taken (lamp unpack "${at}.lampapp" "${at} 2"), never over it. If lamp says the game needs the Lamp Mac app, tell me and stop.`,
     "Open my copy with lamp open in its folder, so I can see it.",
@@ -72,41 +73,12 @@ export function changeWords({ name, page, file, app = "chatgpt", idea = "" }: Ch
 // themselves have a chat that can't run commands offer ChatGPT Work on this computer, and Codex when Work can't.
 export const chatgptLink = (words: string) => `codex://new?prompt=${encodeURIComponent(words)}`;
 
-// Claude Code's own link: it opens Claude Code in a terminal with the words typed in, unsent. Claude Code takes at most
-// CLAUDE_LINK_MAX characters of them; the words with the longest idea and name the game's page takes stay under it (a
-// test holds that). The link only works once Claude Code has put its handler in place, which it does after a message
-// is sent in it, unless that's turned off in its settings.
-//
-// `cwd` is the folder Claude Code opens in. Without it, it opens in the person's home folder and asks whether to trust
-// it, so the page asks once for a games folder of their own (`gamesFolder`) and always sends it: they trust that folder
-// once, never their home folder. A page can't know a Mac's home path nor make a folder, so it's the person's to give.
-export const CLAUDE_LINK_MAX = 5000;
-export const claudeLink = (words: string, folder: string) =>
-  `claude-cli://open?q=${encodeURIComponent(words)}&cwd=${encodeURIComponent(folder)}`;
+// The Claude desktop app's link (it documents `claude://code/new`): it opens a new Claude Code session with the words
+// in its message box, unsent. It's given no folder, so the session starts wherever Claude starts one, and the words
+// themselves name the folder and ask for it if need be (`CLAUDE_FOLDER_FIRST`). Claude cuts the words at
+// CLAUDE_LINK_MAX UTF-16 units; the words with the longest idea and name the game's page takes stay well under it (a
+// test holds that).
+export const CLAUDE_LINK_MAX = 14336;
+export const claudeLink = (words: string) => `claude://code/new?q=${encodeURIComponent(words)}`;
 
-export const appLink = (app: ChangeApp, words: string, folder = "") => (app === "claude" ? claudeLink(words, folder) : chatgptLink(words));
-
-/** The longest folder Claude Code takes from its link. */
-export const CLAUDE_FOLDER_MAX = 4096;
-
-/**
- * The games folder as the person typed or pasted it, checked as Claude Code checks its link's `cwd` (a whole path from
- * "/", no "..", nothing on the network, no control or invisible characters, within its length), so a folder it would
- * refuse is said here in plain words instead of making a link that does nothing. Quotes around it and a path dragged
- * from Finder into Terminal (spaces written "\ ") are taken as the folder they name. Whether the folder exists can't
- * be known from a page, which is why the page says to make it first.
- */
-export function gamesFolder(typed: string): { folder: string } | { problem: string } {
-  let folder = typed.trim().replace(/^(["'])(.*)\1$/s, "$2").replace(/\\ /g, " ").trim();
-  if (folder.length > 1) folder = folder.replace(/\/+$/, "");
-  if (!folder) return { problem: "Write the path of your games folder." };
-  if (folder.startsWith("~")) return { problem: "Write the whole path, starting with /Users/, not ~." };
-  if (folder.startsWith("//")) return { problem: "Pick a folder on this Mac, not on the network." };
-  if (!folder.startsWith("/")) return { problem: "That isn't a whole path: it starts with /, like /Users/you/Games." };
-  if (folder.split("/").some((part) => part === "..")) return { problem: "Write the path without \"..\" in it." };
-  if (/[\u0000-\u001f\u007f]/.test(folder) || /(?![\u200C\u200D\uFE00-\uFE0F\u{E0100}-\u{E01EF}])[\p{Default_Ignorable_Code_Point}\u2028\u2029\u2800\uFFF9-\uFFFB]/u.test(folder))
-    return { problem: "That path has characters in it that Claude Code won't take." };
-  if (folder.length > CLAUDE_FOLDER_MAX) return { problem: "That path is too long." };
-  if (folder === "/" || /^\/Users\/?[^/]*$/.test(folder)) return { problem: "Pick a folder of its own for games, inside your home folder." };
-  return { folder };
-}
+export const appLink = (app: ChangeApp, words: string) => (app === "claude" ? claudeLink(words) : chatgptLink(words));

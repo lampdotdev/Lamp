@@ -84,8 +84,9 @@ turning in it as its placeholder and a send button that opens Remix with what's 
 A chevron at the window's right, centered on the band, slides it and the header out of the window together (remembered in that
 browser), the wish growing to the whole window on black, and from the same place brings both back. The change dialog is a plain card on the paper: the change, one line on Lamp, and
 Get Lamp and Open in Lamp (on a Mac). For a game that plays on the page and came with its Lamp app file, two tabs
-under the change choose between sending it and Make it myself, which has ChatGPT and Claude Code rows with Open (Claude
-Code asks once for a games folder to open in). Open hands the app one prompt (`src/lib/change-words.ts`): get Lamp's
+under the change choose between sending it and Make it myself, which has ChatGPT and Claude rows with Open (Claude's
+desktop app, opened with no folder: the prompt puts the copy in `~/Lamp Games` and, before any command, has Claude ask
+for that folder if its session can't reach it). Open hands the app one prompt (`src/lib/change-words.ts`): get Lamp's
 command line, asking first, or use one that already lists `unpack`, `open` and `look` (an older one is updated, asking
 first the same way), then download the game's file into a games folder that
 stays, `lamp unpack`, `lamp open`, make the change and `lamp look`, keeping its credits and licenses. The player ends
