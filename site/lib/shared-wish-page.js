@@ -62,12 +62,16 @@ function previewTags(wish, origin) {
  * play host, nothing is played. Null when the page isn't the shape this expects. */
 export function wishPage(template, wish, { origin, playOrigin = null }) {
   if (!template || !template.includes("</head>") || !template.includes("</body>")) return null;
-  // Only the head's own: the page's icons carry titles of their own.
+  // Only the head's own: the page's icons carry titles of their own. The app's icon is the tab's, in Lamp's place.
   const end = template.indexOf("</head>");
+  const icon = wish.icon?.url;
   const head = template.slice(0, end)
     .replace(/<title>[\s\S]*?<\/title>/, "")
     .replace(/<meta (?:name|property)="(?:description|og:[^"]*|twitter:[^"]*)"[^>]*>/g, "")
-    .replace(/<link rel="canonical"[^>]*>/, "") + template.slice(end);
+    .replace(/<link rel="canonical"[^>]*>/, "")
+    .replace(icon ? /<link rel="(?:icon|apple-touch-icon)"[^>]*>/g : /$^/, "")
+    + (icon ? `<link rel="icon" type="image/png" href="${escape(icon)}"><link rel="apple-touch-icon" href="${escape(icon)}">` : "")
+    + template.slice(end);
   const plays = Boolean(wish.page && wish.file?.url && playOrigin);
   // What the page reads (src/pages/w/index.astro), its words kept from closing the script early.
   const card = JSON.stringify({

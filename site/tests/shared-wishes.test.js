@@ -141,7 +141,7 @@ test("without its store or quota it answers unavailable rather than sharing", as
 test("the page is the shared wish's own, with the wish in it, its words escaped, and its own preview", async () => {
   const store = memoryStore();
   const { id } = await (await send(createShareHandler({ store, limited: false }), "POST", share)).json();
-  const built = `<!DOCTYPE html><html><head><title>An app · Lamp</title><meta name="description" content="An app made with Lamp."><link rel="canonical" href="https://lamp.dev/w/"><meta property="og:title" content="An app · Lamp"><meta name="twitter:card" content="summary"></head><body><section data-stage></section></body></html>`;
+  const built = `<!DOCTYPE html><html><head><title>An app · Lamp</title><meta name="description" content="An app made with Lamp."><link rel="canonical" href="https://lamp.dev/w/"><link rel="icon" type="image/png" href="/favicon.png"><meta property="og:title" content="An app · Lamp"><meta name="twitter:card" content="summary"></head><body><section data-stage></section></body></html>`;
   const response = await createPageHandler({ store, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}`));
   assert.equal(response.status, 200);
   const html = await response.text();
@@ -149,6 +149,7 @@ test("the page is the shared wish's own, with the wish in it, its words escaped,
   assert.ok(!html.includes("An app · Lamp") && !html.includes('content="summary"'), "the built page's own preview is gone");
   assert.ok(html.includes(`<meta property="og:image" content="https://lamp.dev/w/${id}/card.png?v=`));
   assert.ok(html.includes(`<meta name="twitter:card" content="summary_large_image">`));
+  assert.equal([...html.matchAll(/<link rel="icon" type="image\/png" href="([^"]+)">/g)].map((one) => one[1]).join(), store.records.get(id).icon.url, "the app's icon is the tab's");
   const card = JSON.parse(/<script type="application\/json" id="shared-wish">(.*?)<\/script>/.exec(html)[1]);
   assert.equal(card.wish, store.records.get(id).words);
   assert.equal(card.about, "Reminds me when each plant needs water.");
