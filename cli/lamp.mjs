@@ -10,6 +10,7 @@
 //   lamp use [folder] …   try it: a key, a click, some typing
 //   lamp stop [folder]    stop running it
 //   lamp share [folder]   a link on lamp.dev to play it, and lamp ideas for what people send back
+//   lamp ai               the AI of pages shared on lamp.dev, played here, from the person's own Claude Code or Codex
 //   lamp devices          the person's devices; lamp open --on xbox, or --on android, puts a page on one
 //   lamp setup            teach the coding agents on this computer to work this way
 //   lamp skills           Lamp's guidance for each kind of work; lamp skill <name> reads one
@@ -27,6 +28,8 @@ import { editionName, giveTo, givenTo, keepPictures, lampOwning, reachLamp, take
 import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS } from "./dev.mjs";
 import { findBrowser, noBrowser } from "./browser.mjs";
 import { allSkills } from "./skills.mjs";
+import { engine } from "./ai.mjs";
+import { allowed, forgetAllowed, serveLocalAI } from "./local-ai.mjs";
 import { share, unshare, ideas, finishIdea, answerIdea, makerEmail, readLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
 import { Runner, allKept, fields, forget, integrationOf, isReady, look as lookForDevices, takesPages } from "./devices.mjs";
 import { placeNamed } from "./place.mjs";
@@ -125,6 +128,10 @@ Mac app Lamp made in Swift, built and run on this Mac.
       page and in that email; they can answer it by email. "reply" says something more, and "done" leaves
       their answer without one. --earlier lists those seen to, to look back on or answer again. "email"
       sends new ideas and replies to your own address too (once you confirm it), and you can answer from there.
+  lamp ai [--forget]
+      Answer the AI of pages shared on lamp.dev, played in a browser on this computer, with your own Claude Code
+      or Codex, until stopped. Each page asks here once, and you allow it or not. --forget takes back every
+      page allowed, so each asks again.
   lamp setup [--remove]   Teach Claude Code and Codex on this computer to work this way (a skill for each).
   lamp guide              What that skill says, for any other agent.
   lamp skills [word]      Lamp's guidance for each kind of work, those about a word; lamp skill <name> reads one.
@@ -938,6 +945,21 @@ async function main() {
     if (lamps) throw new Problem(`${lamps} keeps this app's link: take it down from its Share Link card (Stop Sharing).`);
     console.log(`Taken down: ${await unshare(layoutOf(rest[0] ?? ".").folder)}`);
     return;
+  }
+
+  if (command === "ai") {
+    const { options } = parse(args, []);
+    if (options.forget) { forgetAllowed(); console.log("Every shared page asks again before it uses your AI here."); return; }
+    const which = engine();
+    if (!which) throw new Problem("AI here needs Claude Code or Codex on this computer, signed in.");
+    try { await serveLocalAI(); } catch (error) {
+      if (error?.code === "EADDRINUSE") throw new Problem("Something on this computer already answers there: lamp ai may be running in another terminal.");
+      throw error;
+    }
+    const allowedNow = Object.values(allowed());
+    console.log(`Answering the AI of pages shared on lamp.dev with your ${which === "codex" ? "Codex" : "Claude Code"}, as they're played in a browser on this computer. Ctrl-C stops.`);
+    if (allowedNow.length) console.log(`Allowed: ${allowedNow.map((page) => (page.name ? `"${page.name}"` : `lamp.dev/w/${page.id}`)).join(", ")}.`);
+    await new Promise(() => {});
   }
 
   if (command === "ideas") {

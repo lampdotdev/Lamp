@@ -413,7 +413,9 @@ import { DOWNLOAD_URL } from "../../lib/download";
       $<HTMLElement>("[data-stage]").classList.add("plays");
       const frame = document.createElement("iframe");
       frame.title = wish.name;
-      frame.allow = "fullscreen; gamepad; autoplay; clipboard-write";
+      // Reaching this computer is for the page's AI, answered by the person's own `lamp ai` (lamp.js's `nearby`): the
+      // browser asks them first, and only a frame given it here may ask. Chrome has named it each of these ways.
+      frame.allow = "fullscreen; gamepad; autoplay; clipboard-write; local-network-access; local-network; loopback-network";
       frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-popups allow-modals allow-downloads");
       frame.className = "absolute inset-0 size-full border-0 bg-black";
       stage.prepend(frame);
