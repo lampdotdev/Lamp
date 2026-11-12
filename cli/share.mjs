@@ -7,9 +7,9 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { deflateRawSync } from "node:zlib";
 import { NOTES_FILE, Problem, stateOf } from "./state.mjs";
 import { ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS, LIBRARIES } from "./dev.mjs";
@@ -191,10 +191,16 @@ export function iconOf(layout) {
     }
   } catch {}
   const candidates = [...names.map((name) => join(layout.root, name)), join(layout.folder, ".lamp", "icon.png")];
+  // Only a file really in the app's folder, links followed: a name like ../elsewhere.png or a link out of the folder
+  // would put someone's other picture on a public page.
+  let home;
+  try { home = realpathSync(layout.folder); } catch { return null; }
   for (const file of candidates) {
-    if (!resolve(file).startsWith(resolve(layout.folder))) continue;
+    let real;
+    try { real = realpathSync(file); } catch { continue; }
+    if (!real.startsWith(home + sep)) continue;
     let bytes;
-    try { bytes = readFileSync(file); } catch { continue; }
+    try { bytes = readFileSync(real); } catch { continue; }
     const size = sizeOf(bytes);
     if (!size || size.width !== size.height || size.width < 16) continue;
     if (size.width <= 512 && bytes.length <= LIMITS.icon) return bytes;
