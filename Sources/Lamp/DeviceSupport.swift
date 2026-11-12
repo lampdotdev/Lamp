@@ -573,10 +573,42 @@ enum DeviceSupport {
         });
       }
 
+      // A page shared on lamp.dev plays from a host of its own under play.lamp.dev, away from Lamp. The person's own
+      // lamp on this computer can answer it (`lamp ai`, at a port of the computer's own), once they've allowed this
+      // page there; the token it's given is kept with the page's saved things. Whether there's an AI is asked first,
+      // without one, so the person is asked only when the page uses it.
+      var NEARBY = 'http://127.0.0.1:47423';
+      function shared() { return !installed && here.protocol === 'https:' && /\.play\.lamp\.dev$/.test(here.hostname || ''); }
+      function nearby(path, body, timeout, deadline) {
+        var text = JSON.stringify(body);
+        function go(t) { return exchange(NEARBY, path, t, text, deadline ? Math.max(1000, deadline - Date.now()) : timeout); }
+        function allow() {
+          return exchange(NEARBY, '/pair', null, JSON.stringify({ name: document.title || '' }), 130000).then(function (answer) {
+            if (answer.status !== 200 || !answer.reply.token) throw new Failure('This computer didn\'t allow this page to use its AI.');
+            write('nearby.token', answer.reply.token);
+            return answer.reply.token;
+          });
+        }
+        var kept = read('nearby.token', null);
+        var done = path === '/ai/status' || (body && body.probe === true) ? go(kept) : (kept ? Promise.resolve(kept) : allow()).then(function (t) {
+          return go(t).then(function (answer) {
+            if (answer.status !== 401) return answer;
+            // Taken back on the computer: ask once more.
+            forget('nearby.token');
+            return allow().then(go);
+          });
+        });
+        return done.then(null, function (e) {
+          throw e instanceof Failure ? e : new Failure('This page is on the web, away from Lamp. For its AI, run lamp ai in a terminal on this computer, or open it in Lamp.');
+        });
+      }
+
       function post(path, body, timeout, deadline) {
         timeout = timeout || 240000;
         var done;
-        if (bridge) {
+        if (!bridge && shared()) {
+          done = nearby(path, body, timeout, deadline);
+        } else if (bridge) {
           // The TV preview on the Mac answers for Lamp itself.
           done = bridge.postMessage({ path: path, body: JSON.stringify(body), timeout: timeout }).then(function (r) {
             var reply = {};

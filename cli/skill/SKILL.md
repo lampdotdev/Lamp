@@ -36,7 +36,7 @@ looked earlier, `--reopen` puts it right.
 a page (saved data with `LampStore`, the app's files and more). Read Lamp's `web-app` skill before writing it, and
 the comments in `lamp.js` for how each block is used; never edit `lamp.js`. Its AI (`LampAI`: ask, act, decide) is
 answered by lamp itself on this Mac, with the person's own Claude Code or Codex, in every page lamp runs here (`dev`,
-`open`, `look`, `use`); pictures and hearing need Lamp's app. Never put a key or a model provider's address in the page. A page that wants none of Lamp's needs no starting files: write its
+`open`, `look`, `use`); pictures and hearing need Lamp's app. Shared on lamp.dev, it's answered on the computer the page is played on while `{{lamp}} ai` runs there in a terminal, once the person allows that page. Never put a key or a model provider's address in the page. A page that wants none of Lamp's needs no starting files: write its
 `index.html` in an empty folder.
 
 ## A Mac app
