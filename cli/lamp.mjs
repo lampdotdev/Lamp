@@ -1176,8 +1176,6 @@ async function main() {
     console.log("");
     console.log(credited === "already" ? `${whose} is already credited in this app's credits.json.`
       : `${credited === "added" ? "Credited" : "Credit updated for"} ${whose} in this app's credits.json, so its next share credits them.`);
-    // A copy's file names no license for itself, so the next share asks the person once, as for any such work.
-    if (credited === "added") console.log("A copy comes with no license of its own, so the next share asks the person once whether they're comfortable sharing work from it.");
     return;
   }
 

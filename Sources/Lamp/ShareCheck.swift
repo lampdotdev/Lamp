@@ -120,7 +120,14 @@ enum ShareCheck {
     /// The work in the wish that came with no license, which the person is told of before it leaves this Mac.
     static func unlicensed(_ credits: Credits) -> [Credits.Source] {
         // What the app only fetches as it runs isn't passed on by sharing it.
-        credits.upstream.filter { licence($0.license) == .none && $0.live != true }
+        // A copy shared on lamp.dev was shared for anyone to make their own and take from: taking part of one never asks.
+        credits.upstream.filter { licence($0.license) == .none && $0.live != true && !isSharedCopy($0.url) }
+    }
+
+    /// A link to a copy shared on lamp.dev (`https://lamp.dev/w/<id>`), as `lamp take` credits one.
+    static func isSharedCopy(_ url: String?) -> Bool {
+        guard let url else { return false }
+        return url.range(of: #"^https://lamp\.dev/w/[A-Za-z0-9]{10}([-/?#]|$)"#, options: .regularExpression) != nil
     }
 
     /// What the person is told before a wish with work under no license leaves this Mac, or nil when it has none. Its

@@ -302,7 +302,10 @@ export function exportApp(given, { anyway = false, link = null } = {}) {
   }
   // Work in the app that came with no license: the person is asked once, as Lamp's Share Link asks (`ShareCheck`), and
   // again only when the app takes in more. What it only fetches as it runs (`live`) isn't passed on, so it isn't asked of.
-  const unlicensed = upstream.filter((source) => noLicense(source.license) && source.live !== true);
+  // A copy shared on lamp.dev (its link, `/w/<id>`) was shared for anyone to make their own and take from, so taking
+  // part of one never asks either (`lamp take`, Lamp's `shared_copy`).
+  const sharedCopy = (source) => typeof source.url === "string" && /^https:\/\/lamp\.dev\/w\/[A-Za-z0-9]{10}(?:[-/?#]|$)/.test(source.url);
+  const unlicensed = upstream.filter((source) => noLicense(source.license) && source.live !== true && !sharedCopy(source));
   const named = (source) => (source.author ? `${source.name} by ${source.author}` : source.name);
   // Agreed to by the work itself, as Lamp keeps it (`ShareCheck.fingerprint`): its name, address and commit, so another
   // work under the same name is asked about again.
