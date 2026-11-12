@@ -155,3 +155,23 @@ if [ "$1" = exec ]; then echo '{"type":"item.completed","item":{"type":"agent_me
     assert.match(codex, /-i\nimage0\.png/);
   } finally { delete process.env.BUN_BE_BUN; }
 });
+
+test("an engine's answer keeps a character split between two reads, and a stop sent before its call stops it", async () => {
+  const { complete } = await import("../ai.mjs");
+  const { mkdtempSync, writeFileSync, chmodSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { spawn } = await import("node:child_process");
+  const folder = mkdtempSync(join(tmpdir(), "lamp-engine-split-"));
+  const fake = join(folder, "engine");
+  // The é's two bytes go out in two writes, a moment apart.
+  writeFileSync(fake, `#!/bin/sh\nprintf '{"type":"result","result":"caf\\303'\nsleep 0.2\nprintf '\\251 \\360\\237\\237\\242"}\\n'\n`);
+  chmodSync(fake, 0o755);
+  assert.equal(await complete({ which: "claude", tool: fake, prompt: "x" }), "café 🟢");
+  // Through calls.mjs --serve: the stop for 1 comes first, and the call that follows is answered as stopped.
+  writeFileSync(fake, "#!/bin/sh\nsleep 5\necho '{\"type\":\"result\",\"result\":\"late\"}'\n");
+  const run = spawn(process.execPath, [join(import.meta.dirname, "..", "calls.mjs"), "--serve"], { stdio: ["pipe", "pipe", "inherit"] });
+  run.stdin.write(JSON.stringify({ stop: 1 }) + "\n" + JSON.stringify({ id: 1, call: "engineAnswer", given: { engine: "claude", tool: fake, prompt: "x" } }) + "\n");
+  const said = await new Promise((done) => { let out = ""; run.stdout.on("data", (c) => { out += c; if (out.includes("\n")) done(JSON.parse(out.split("\n")[0])); }); });
+  run.stdin.end();
+  assert.equal(said.done?.trouble?.kind, "stopped");
+});

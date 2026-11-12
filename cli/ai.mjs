@@ -108,6 +108,9 @@ export function complete({ system, prompt, schema, seconds = 60, which = engine(
       else if (schema && event.structured_output !== undefined) text = JSON.stringify(event.structured_output);
       else if (typeof event.result === "string") text = event.result;
     };
+    // Read as text across chunks, so a character split between two of them stays whole.
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       rest += chunk;
       const lines = rest.split("\n");

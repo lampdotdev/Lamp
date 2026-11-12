@@ -467,11 +467,19 @@ async function once(name) {
 async function serve() {
   const say = (line) => process.stdout.write(JSON.stringify(line) + "\n");
   const under = new Map();
+  // A stop can overtake the call it's for (Lamp's app cancelled it as it was sent): it's kept, and the call starts stopped.
+  const early = new Set();
   const answer = async (line) => {
     let asked;
     try { asked = JSON.parse(line); } catch { return; }
-    if (asked?.stop !== undefined) return void under.get(asked.stop)?.abort();
+    if (asked?.stop !== undefined) {
+      const stopping = under.get(asked.stop);
+      if (stopping) stopping.abort();
+      else { early.add(asked.stop); if (early.size > 1000) early.delete(early.values().next().value); }
+      return;
+    }
     const id = asked?.id, call = CALLS[asked?.call], stopping = new AbortController();
+    if (early.delete(id)) stopping.abort();
     under.set(id, stopping);
     try {
       if (!call) throw new Error(`lamp has no call named "${asked?.call ?? ""}"`);
