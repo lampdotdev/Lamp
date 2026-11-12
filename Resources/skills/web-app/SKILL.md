@@ -18,7 +18,9 @@ opening comment for the whole list. What it gives:
 - **LampAI**: text, pictures and quick judgments, answered by Lamp on the person's Mac with the AI they set up.
   Every call is a Promise. Text from outside the app goes in `data`, never into the prompt. Where a feature depends
   on it, check `LampAI.status('text')` and, when it can't answer, show its `reason` as it's given: lamp.js words it
-  for where the page is (away from the Mac's Wi‑Fi, Lamp closed, a link on lamp.dev), so don't write your own.
+  for where the page is (away from the Mac's Wi‑Fi, Lamp closed, a link on lamp.dev), so don't write your own. Where it
+  gives `help` (a page away from Lamp), add a link to it beside the reason, "How to turn on AI", so someone who has never
+  heard of Lamp finds out how.
 - **LampAI.act**: the person asks the app to do something in their own words, and the app's own reads and writes do
   it; "Doing things for the person" below, with **LampVoice** and **LampAI.hear** for saying it.
 - **LampStore**: what the app saves, as JSON on the device. Once something is saved, only ever add to it: a new field
