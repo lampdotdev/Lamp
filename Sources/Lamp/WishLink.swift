@@ -379,6 +379,8 @@ enum WishLink {
         if !username.isEmpty { given["username"] = username }
         do {
             let said = try await LampCLI.ask("accountAsk", given.merging(["site": site]) { $1 })
+            // Asked, but the email to confirm it didn't go: nothing to wait for, so it's said, to be tried again.
+            if said["sent"] as? Bool == false { throw Failure(message: "lamp.dev couldn't send the email to confirm your username. Try again in a moment.") }
             return said["username"] as? String ?? username
         } catch let failure as LampCLI.Failure {
             switch failure.status {
@@ -508,6 +510,18 @@ enum WishLink {
 
     @Published private(set) var cards: [String: Card] = [:]
 
+    /// The email's link is opened in a browser, away from Lamp: coming back, a card waiting on it looks again.
+    private var activeObserver: NSObjectProtocol?
+
+    private init() {
+        activeObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                let shared = WishLinkCards.shared
+                for (id, card) in shared.cards { if case .waiting = card.account { shared.findAccount(id: id) } }
+            }
+        }
+    }
+
     func card(for project: LampProject) -> Card? { cards[project.id] }
 
     /// Opens the card in its own window, or brings that window forward.
@@ -602,8 +616,9 @@ enum WishLink {
     }
 
     /// The maker's username, for the card's row: none asks for one, suggested from the name on the card.
-    private func findAccount(_ project: LampProject) {
-        let id = project.id
+    private func findAccount(_ project: LampProject) { findAccount(id: project.id) }
+
+    private func findAccount(id: String) {
         Task {
             guard let found = try? await WishLink.account() else {
                 // None: one from the name on the card, filled in for the person to keep or change.
@@ -612,6 +627,8 @@ enum WishLink {
                 cards[id]?.account = .none(suggested: suggested)
                 return
             }
+            // Confirmed since the card last looked: a link from before can now move, so it's worth releasing again.
+            if found.confirmed == true, case .waiting = cards[id]?.account { cards[id]?.released = false }
             cards[id]?.account = found.confirmed == true ? .signedIn(found.username)
                 : found.confirmed == false ? .waiting(username: found.username, email: found.email ?? "your email")
                 // lamp.dev can't be asked just now: nothing is said about it, and links go as the key has them.
