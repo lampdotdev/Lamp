@@ -14554,7 +14554,7 @@ enum Template {
             let reply = try await post("/ai/decide", [
                 "state": try decisionState(state),
                 "questions": questions.mapValues(\.json),
-            ])
+            ], timeout: 615)
             let answers = reply["answers"] as? [String: [String: Any]] ?? [:]
             return answers.mapValues(LampDecision.init)
         }
@@ -14682,7 +14682,7 @@ enum Template {
                         group.addTask {
                             try Task.checkCancellation()
                             do {
-                                let reply = try await post("/ai/decide", body: request.body)
+                                let reply = try await post("/ai/decide", body: request.body, timeout: 615)
                                 guard let answers = reply["answers"] as? [String: Any], !answers.isEmpty else {
                                     return Outcome(index: request.index, error: "The decision model didn't answer.")
                                 }
@@ -14855,7 +14855,8 @@ enum Template {
                 "images": images.compactMap(encode),
             ]
             if let model { body["model"] = model }
-            let reply = try await post("/ai", body)
+            // As long as Lamp's guard on the call: a real answer is never cut off, however long the model takes.
+            let reply = try await post("/ai", body, timeout: 615)
             guard let text = reply["text"] as? String else { throw Failure(message: "The AI request failed.") }
             return text
         }

@@ -212,6 +212,14 @@ export function models() {
   return { models: listedHere, default: defaultId(which) };
 }
 
+/**
+ * How long a page's request may take: a real answer is never cut off however long the model takes, and the guard only
+ * ends a call that has stopped answering (`MAX_TURN_SECONDS` for a step of `act`, the same here). A page that wants a
+ * quicker answer asks for one (`seconds`), never a longer one.
+ */
+const GUARD_SECONDS = 600;
+const secondsFor = (body) => (typeof body?.seconds === "number" && body.seconds > 0 ? Math.min(body.seconds, GUARD_SECONDS) : GUARD_SECONDS);
+
 /** `/ai`: a text answer, or JSON when asked for it. */
 export async function ask(body) {
   const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
@@ -219,7 +227,7 @@ export async function ask(body) {
   let system = typeof body.system === "string" ? body.system : "";
   if (body.json) system += (system ? "\n\n" : "") + "Answer with JSON only, nothing around it.";
   const which = engine();
-  try { return [200, { text: await complete({ system, prompt, images: body.images, which, model: modelFor(which, body.model) }) }]; }
+  try { return [200, { text: await complete({ system, prompt, images: body.images, which, model: modelFor(which, body.model), seconds: secondsFor(body) }) }]; }
   catch (error) { return [502, { error: error.message }]; }
 }
 
@@ -233,7 +241,7 @@ export async function decide(body) {
   }
   const { system, prompt, schema } = decidePrompt(body.state, questions);
   let text;
-  try { text = await complete({ system, prompt, schema }); } catch (error) { return [502, { error: error.message }]; }
+  try { text = await complete({ system, prompt, schema, seconds: secondsFor(body) }); } catch (error) { return [502, { error: error.message }]; }
   const read = readDecision(text, questions);
   return read.answers ? [200, { answers: read.answers }] : [502, { error: read.problem }];
 }
