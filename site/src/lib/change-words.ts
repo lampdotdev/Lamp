@@ -29,7 +29,7 @@ export function changeWords({ guide, address, key, page, name, app = "chatgpt", 
   const game = name?.trim() ? `"${name.trim()}"` : "the game";
   return [
     `Change ${game}, the existing browser game on my Lamp page (${page}). That page is where it goes: it shows each new version by itself. Send the game only to the game address below; no site-publishing skill, no local server, no separate preview.`,
-    ...(app === "chatgpt" ? ["You need to run commands on this computer for it: if you can't, tell me to switch to Codex in the ChatGPT app, and stop."] : []),
+    ...(app === "chatgpt" ? ["You need to run commands on this computer for it. If you can't in this chat, offer right away to continue in ChatGPT Work, working locally on this computer (Work in the cloud can't reach it). Only if Work isn't available or can't run commands here, tell me to switch to Codex in the ChatGPT app, and stop."] : []),
     `Read the guide first, and follow it: curl -fsS ${guide}`,
     "If you can't read the guide, stop and tell me.",
     `Game address: ${address}`,
@@ -40,7 +40,7 @@ export function changeWords({ guide, address, key, page, name, app = "chatgpt", 
 
 // OpenAI documents this link for the ChatGPT desktop app on the Mac (it kept Codex's scheme): it opens a new chat with
 // the words in the message box and never sends them. It can't choose the chat's mode, which is why the words
-// themselves say to switch to Codex when commands can't run.
+// themselves have a chat that can't run commands offer ChatGPT Work on this computer, and Codex when Work can't.
 export const chatgptLink = (words: string) => `codex://new?prompt=${encodeURIComponent(words)}`;
 
 // Claude Code's own link: it opens Claude Code in a terminal with the words typed in, unsent. Claude Code takes at most

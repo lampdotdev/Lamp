@@ -49,7 +49,9 @@ points to GitHub's releases.
 Use with ChatGPT (`ChatGPTButton.astro`) is there from the start, so nobody has to find the download in the demo first.
 The button is OpenAI's documented `codex://new?prompt=` link: one click opens a new chat in ChatGPT's Mac app with a
 prompt to set up lamp's command line (`cli/README.md`) in its message box, never sent. The link doesn't choose the
-chat's mode, so the prompt says to switch to Codex when it can't run commands. A page can't tell whether the app is
+chat's mode, so the prompt has a chat that can't run commands offer ChatGPT Work by itself, working on the Mac
+(Work in the cloud can't reach it), and says to switch to Codex only when Work can't. The prompt asks before
+installing anything and waits for a yes. A page can't tell whether the app is
 there (Safari calls the address invalid when it isn't), so one small line under the button gets the app or copies
 the prompt, for any agent that runs commands on the Mac; where copying is refused, the prompt appears selected to
 copy by hand. The prompt is written once, in `src/lib/chatgpt.ts`, for the link and the copy alike; it runs
