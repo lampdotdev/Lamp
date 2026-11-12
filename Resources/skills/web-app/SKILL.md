@@ -20,7 +20,10 @@ opening comment for the whole list. What it gives:
   on it, check `LampAI.status('text')` and, when it can't answer, show its `reason` as it's given: lamp.js words it
   for where the page is (away from the Mac's Wi‑Fi, Lamp closed, a link on lamp.dev), so don't write your own. Where it
   gives `help` (a page away from Lamp), add a link to it beside the reason, "How to turn on AI", so someone who has never
-  heard of Lamp finds out how.
+  heard of Lamp finds out how. Where it answers `connect: true` (a page on lamp.dev that hasn't reached this computer
+  yet), also show a small "Connect AI" button that calls `LampAI.connect(capability)` with the same kind of AI you asked
+  `status` about (`LampAI.connect('pictures')` for pictures) and use the answer it gives as `status`'s;
+  never call `connect()` as the page loads, since it makes the browser ask the person.
 - **LampAI.act**: the person asks the app to do something in their own words, and the app's own reads and writes do
   it; "Doing things for the person" below, with **LampVoice** and **LampAI.hear** for saying it.
 - **LampStore**: what the app saves, as JSON on the device. Once something is saved, only ever add to it: a new field

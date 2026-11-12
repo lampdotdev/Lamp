@@ -587,6 +587,26 @@ enum DeviceSupport {
         var ua = (window.navigator && navigator.userAgent) || '';
         return /Safari\//.test(ua) && !/Chrome|Chromium|CriOS|Edg|OPR|Firefox|FxiOS/.test(ua);
       }
+      var SAFARI_AI = 'AI here works in Chrome or in Lamp, or with Lamp\'s command line: lamp play and this page\'s link.';
+
+      // Reaching this computer makes the browser ask the person about it, so a shared page doesn't reach out just to
+      // see whether there's an AI: only once the browser already lets it, the page has paired before, or the person
+      // has asked for it (LampAI.connect, from a button, or a real AI call).
+      var nearbyAsked = false;
+      function nearbyAllowed() {
+        // Connected before in this browser (kept with the page's saved things): the browser has had its say already.
+        if (nearbyAsked || read('nearby.token', null) || read('nearby.connected', false)) return Promise.resolve(true);
+        var permissions = window.navigator && navigator.permissions;
+        if (!permissions || typeof permissions.query !== 'function') return Promise.resolve(false);
+        // Chrome has named this permission more than one way; any that's granted will do, and one it doesn't know is unknown.
+        var names = ['local-network-access', 'loopback-network', 'local-network'];
+        return Promise.all(names.map(function (name) {
+          try {
+            return Promise.resolve(permissions.query({ name: name })).then(function (s) { return !!s && s.state === 'granted'; }, function () { return false; });
+          } catch (e) { return false; }
+        })).then(function (states) { return states.indexOf(true) !== -1; });
+      }
+
       function nearby(path, body, timeout, deadline) {
         var text = JSON.stringify(body);
         function go(t) { return exchange(NEARBY, path, t, text, deadline ? Math.max(1000, deadline - Date.now()) : timeout); }
@@ -609,7 +629,7 @@ enum DeviceSupport {
         return done.then(null, function (e) {
           if (e instanceof Failure) throw e;
           // Safari never lets a page on the web reach this computer this way, so Lamp or lamp ai open here wouldn't help.
-          if (safari()) throw new Failure('AI here works in Chrome or in Lamp, or with Lamp\'s command line: lamp play and this page\'s link.', null, AI_HELP);
+          if (safari()) throw new Failure(SAFARI_AI, null, AI_HELP);
           throw new Failure('AI isn\'t available here. Open Lamp on this computer, or with Lamp\'s command line, run lamp ai.', null, AI_HELP);
         });
       }
@@ -1071,31 +1091,58 @@ enum DeviceSupport {
        * a feature depends on it, and show the feature with its `reason` as it's given rather than words of the app's
        * own, or hiding it or failing at it, and where it gives `help` (a page away from Lamp), a link to it beside the
        * reason: "How to turn on AI". A call that fails for that reason has `needsSetup`, or `help`, set on its error.
+       * On a page shared on lamp.dev that hasn't reached this computer yet, `status` asks nothing and answers
+       * `connect: true`: show a small "Connect AI" button beside its reason that calls `LampAI.connect(capability)` with
+       * the same kind of AI (`connect('pictures')` for pictures), and use what that gives as `status`'s answer. Never
+       * call `connect()` as the page loads.
        */
       var LampAI = {
         Failure: Failure,
 
         /** Whether this kind of AI ('text', 'decisions', 'pictures', 'act' or 'hear') can answer now: { available, reason,
-         *  help }, where `reason` is the short line to show when it can't, written for where the page is, and `help`, when
-         *  it's there, the page that says how to turn AI on, to link to beside it. */
+         *  help, connect }, where `reason` is the short line to show when it can't, written for where the page is, `help`,
+         *  when it's there, the page that says how to turn AI on, to link to beside it, and `connect`, when true, that
+         *  a button calling `LampAI.connect()` would find out (a page on lamp.dev, before it has reached this computer). */
         status: function (capability) {
           var no = function (reason, help) {
             var said = { available: false, reason: reason || 'AI isn\'t set up for this here.' };
             if (help) said.help = help;
             return said;
           };
-          // 'act' is asked of /ai/act itself: available only when this lamp.js has it, the app around the page lets the
-          // route through (an older one answers Not found) and the AI that answers the app can take it. 'hear' the same.
-          if (capability === 'act' || capability === 'hear') {
-            return post('/ai/' + capability, { probe: true }, 10000).then(function (reply) {
-              return reply[capability] === true ? { available: true, reason: '' } : no(reply.reason || reply.why);
+          if (!bridge && shared()) {
+            return nearbyAllowed().then(function (allowed) {
+              if (allowed) return ask(capability);
+              if (safari()) return no(SAFARI_AI, AI_HELP);
+              return { available: false, connect: true, reason: 'Connect to the AI on this computer to use this.', help: AI_HELP };
+            });
+          }
+          return ask(capability);
+          function ask(capability) {
+            // 'act' is asked of /ai/act itself: available only when this lamp.js has it, the app around the page lets the
+            // route through (an older one answers Not found) and the AI that answers the app can take it. 'hear' the same.
+            if (capability === 'act' || capability === 'hear') {
+              return post('/ai/' + capability, { probe: true }, 10000).then(function (reply) {
+                return reply[capability] === true ? { available: true, reason: '' } : no(reply.reason || reply.why);
+              }, function (e) { return no(e && e.message, e && e.help); });
+            }
+            return post('/ai/status', {}, 10000).then(function (reply) {
+              if (reply[capability] === true) return { available: true, reason: '' };
+              var detail = reply.details && reply.details[capability];
+              return no(detail && detail.reason);
             }, function (e) { return no(e && e.message, e && e.help); });
           }
-          return post('/ai/status', {}, 10000).then(function (reply) {
-            if (reply[capability] === true) return { available: true, reason: '' };
-            var detail = reply.details && reply.details[capability];
-            return no(detail && detail.reason);
-          }, function (e) { return no(e && e.message, e && e.help); });
+        },
+
+        /** On a page shared on lamp.dev, reaches the AI on this computer, so the browser asks the person then: call it
+         *  from a button ("Connect AI") shown when `status` answers `connect: true`, never as the page loads. Gives what
+         *  `status` gives for that kind of AI ('text' unless named). Anywhere else it's just `status`. */
+        connect: function (capability) {
+          nearbyAsked = true;
+          return LampAI.status(capability || 'text').then(function (said) {
+            // Reached it (whatever it said of this kind of AI): later visits look without asking first.
+            if (said.available || !said.help) write('nearby.connected', true);
+            return said;
+          });
         },
 
         /** Whether this kind of AI can answer now, as `status` says. */
