@@ -281,6 +281,11 @@ enum AppAI {
     /// The OpenRouter model for Lamp's own text-only calls (an app's name and parts, the next-message
     /// suggestion, a version's title): Sonnet, unless apps' text goes to a model on this Mac. Someone who
     /// chose to stay local gets nil here, so these calls follow that route instead of leaving the Mac.
+    /// The link's id of the page shared on lamp.dev this request is for (`SharedPagesAI`), nil for an app of the
+    /// person's own. A shared page is someone else's code, so Claude Code and Codex answer it sealed, with nothing that
+    /// reads or runs anything on the Mac, whatever it asks for.
+    @TaskLocal static var sharedPage: String?
+
     @MainActor static func helperModel() async -> String? {
         if case .localModel = model.kind { return nil }
         return defaultOpenRouterModel
@@ -583,6 +588,11 @@ enum AppAI {
     static func viaEngine(_ engine: Engine, prompt: String, images: [Image],
                           system: String, model: String, schema: [String: Any]? = nil,
                           timeLimit: TimeInterval? = nil, sealed: Bool = false) async throws -> (String, Double) {
+        let sealed = sealed || sharedPage != nil
+        // Claude Code looks at a picture only by reading its file, which is a tool that reads any file.
+        if sealed, engine == .claude, !images.isEmpty {
+            throw Failure(message: "Pictures from a page shared on lamp.dev can't go to Claude Code. Choose another AI for apps in \(Edition.name).")
+        }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-ai-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -1127,7 +1137,8 @@ enum AppAI {
         if wantsLocal, ImageModels.ready, !editing { return .local }
         if Provider.hasKey { return .openRouter }
         if ImageModels.ready, !editing { return .local }
-        if codexChosen(appText: appText), EngineInstall.path(for: .codex) != nil, EngineSignIn.known[.codex] != false { return .codex }
+        // Never for a page shared on lamp.dev: Codex makes a picture with its own tools (`viaCodexImage`).
+        if sharedPage == nil, codexChosen(appText: appText), EngineInstall.path(for: .codex) != nil, EngineSignIn.known[.codex] != false { return .codex }
         return nil
     }
 
@@ -1230,6 +1241,10 @@ enum AppAI {
     /// Codex makes the picture with its built-in image tool and saves it in a scratch folder; reference
     /// images are attached and named in the prompt. Takes about a minute.
     private static func viaCodexImage(prompt: String, references: [Image], aspectRatio: String?) async throws -> Data {
+        // Codex makes a picture by running its own tools in a folder, which a shared page's request never gets.
+        guard sharedPage == nil else {
+            throw Failure(message: "Pictures for a page shared on lamp.dev can't be made with ChatGPT. Choose another picture AI in \(Edition.name).")
+        }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-image-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }

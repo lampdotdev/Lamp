@@ -1,7 +1,7 @@
 // `lamp ai`: a page shared on lamp.dev uses the person's AI on their computer only once they've allowed that page, and
 // nothing else gets an answer. The AI itself is a stand-in here.
 
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { request } from "node:http";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -13,6 +13,7 @@ process.env.LAMP_DEV_HOME = home;
 const { serveLocalAI, linkOf, allowed } = await import("../local-ai.mjs");
 
 const page = `https://${Buffer.from("CbjuQkzDtz").toString("hex")}.play.lamp.dev`;
+after(() => rmSync(home, { recursive: true, force: true }));
 const other = `https://${Buffer.from("D4vNNnfErs").toString("hex")}.play.lamp.dev`;
 
 test("only a shared page the person allowed has its AI answered", async (t) => {
@@ -28,7 +29,7 @@ test("only a shared page the person allowed has its AI answered", async (t) => {
       return [200, { text: `answered ${body.prompt}` }];
     },
   });
-  t.after(() => { server.close(); rmSync(home, { recursive: true, force: true }); });
+  t.after(() => server.close());
   const port = server.address().port;
   const call = (path, { origin = page, host = `127.0.0.1:${port}`, token, body = {}, method = "POST" } = {}) => new Promise((done, fail) => {
     const headers = { host, origin, "content-type": "application/json" };
@@ -82,4 +83,28 @@ test("only a shared page the person allowed has its AI answered", async (t) => {
   assert.equal(allowed()[other].name, "Harbor  Racer");
   assert.equal((await call("/pair", { origin: other })).reply.token, token);
   assert.equal(asked.length, 2);
+});
+
+test("Lamp's app answers through the same server: it's asked about the page, and gives the AI's answer", async () => {
+  const { CALLS } = await import("../calls.mjs");
+  const stopped = new AbortController(), heard = [];
+  const event = (said) => {
+    heard.push(said);
+    if (said.ask) CALLS.sharedPagesReply({ n: said.ask, yes: true });
+    if (said.answer) CALLS.sharedPagesReply({ n: said.answer, status: 200, reply: { text: `Lamp answered ${said.body.prompt}` } });
+  };
+  const running = CALLS.sharedPages({ port: 47499 }, { stopped: stopped.signal, event });
+  await new Promise((done) => setTimeout(done, 100));
+  const post = (path, body, token) => new Promise((done, fail) => {
+    const headers = { host: "127.0.0.1:47499", origin: page, "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) };
+    const req = request({ port: 47499, path, method: "POST", headers }, (res) => { let text = ""; res.on("data", (c) => (text += c)); res.on("end", () => done(JSON.parse(text))); });
+    req.on("error", fail);
+    req.end(JSON.stringify(body));
+  });
+  const { token } = await post("/pair", { name: "Bricks" });
+  assert.deepEqual(await post("/ai", { prompt: "hi" }, token), { text: "Lamp answered hi" });
+  assert.deepEqual(heard.map((said) => Object.keys(said)[0]), ["ask", "answer"]);
+  assert.equal(heard[0].name, "Bricks");
+  stopped.abort();
+  assert.deepEqual(await running, {});
 });

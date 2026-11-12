@@ -14187,6 +14187,8 @@ final class Store: ObservableObject {
         }
         // The person's own coding agent reaches Lamp through its MCP helper, on a socket of this Lamp's (`OutsideServer`).
         OutsideServer.shared.start()
+        // Pages shared on lamp.dev, played in a browser here, asking for their AI.
+        SharedPagesAI.start()
     }
 
     /// The gateway answers on the local network only while an app is set to open on the person's own phone or
@@ -14832,21 +14834,42 @@ final class Store: ObservableObject {
     }
 
     /// The routes a running app uses: text, pictures, decisions, and using the other apps on the Mac.
-    private func appRequest(_ request: Gateway.Request, for project: LampProject) async -> (Int, [String: Any]) {
+    /// A page shared on lamp.dev asking for its AI, through lamp's command line (`SharedPagesAI`), which has already
+    /// checked the page and that the person allowed it: answered as an app's request is, with no app behind it.
+    func sharedPageAI(path: String, body: [String: Any], page: String) async -> (Int, [String: Any]) {
+        await AppAI.$sharedPage.withValue(page) { await sharedPageRequest(path: path, body: body) }
+    }
+
+    private func sharedPageRequest(path: String, body: [String: Any]) async -> (Int, [String: Any]) {
+        guard SharedPagesAI.routes.contains(path) else { return (404, ["error": "Not found."]) }
+        if !EngineInstall.hasLooked { await EngineInstall.lookForPersonsCopies() }
+        if path == "/ai/status" { return await aiStatus(for: nil) }
+        guard setup.ready || (setup.hasBuilder && setup.hasAgent) else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
+        let data = (try? JSONSerialization.data(withJSONObject: body)) ?? Data("{}".utf8)
+        return await appRequest(Gateway.Request(method: "POST", path: path, headers: [:], body: data), for: nil)
+    }
+
+    /// An app's AI request. With no `project` it's a page shared on lamp.dev (`SharedPagesAI`): Lamp's own choices for
+    /// apps answer it, nothing is counted against an app, and no setup is offered in a chat it doesn't have.
+    private func appRequest(_ request: Gateway.Request, for project: LampProject?) async -> (Int, [String: Any]) {
+        let models = project.map(AppModels.load) ?? AppModels()
         // A sign-in Lamp last found signed out may have been signed in since (from Terminal, say): what's
         // older than a few minutes is checked again before choosing a route, so it can answer again.
         await EngineSignIn.refresh()
-        if request.path == "/ai/computer" { return await useComputer(for: project, request: request.body) }
+        if request.path == "/ai/computer" {
+            guard let project else { return (404, ["error": "Not found"]) }
+            return await useComputer(for: project, request: request.body)
+        }
         // One step of the app's own agent loop (`LampAI.act`): its body has no prompt, so it goes before that check.
         // What the person said, as text (`LampAI.hear`): its body is audio, not a prompt, so it goes before that check too.
         if request.path == "/ai/hear" {
-            let (status, json, cost) = await AppHear.handle(request.body, app: project.id)
-            if cost > 0 { record(project, cost: cost) }
+            let (status, json, cost) = await AppHear.handle(request.body, app: project?.id ?? "shared-\(AppAI.sharedPage ?? "")")
+            if cost > 0, let project { record(project, cost: cost) }
             return (status, json)
         }
         if request.path == "/ai/act" {
-            let (status, json, cost) = await AppAct.step(request.body, appModel: AppModels.load(project).text)
-            if cost > 0 { record(project, cost: cost) }
+            let (status, json, cost) = await AppAct.step(request.body, appModel: models.text)
+            if cost > 0, let project { record(project, cost: cost) }
             return (status, json)
         }
         if request.path == "/ai/decide" {
@@ -14855,10 +14878,9 @@ final class Store: ObservableObject {
                 return (400, ["error": "A decision needs `state` and at least one question."])
             }
             do {
-                let models = AppModels.load(project)
                 let (answers, cost) = try await AppAI.decide(state: state, questions: questions,
                                                              model: models.decision, appText: models.text)
-                record(project, cost: cost)
+                if let project { record(project, cost: cost) }
                 return (200, ["answers": answers])
             } catch let failure as AppAI.Failure {
                 return failed(failure, for: project)
@@ -14877,22 +14899,21 @@ final class Store: ObservableObject {
             }
             if request.path == "/ai/image" {
                 do {
-                    let models = AppModels.load(project)
-                    let (png, cost) = try await AppAI.image(prompt: prompt, references: images,
+                        let (png, cost) = try await AppAI.image(prompt: prompt, references: images,
                                                             aspectRatio: body["aspect_ratio"] as? String,
                                                             model: models.image, appText: models.text)
-                    record(project, cost: cost)
+                    if let project { record(project, cost: cost) }
                     return (200, ["image": png.base64EncodedString(), "media_type": "image/png"])
                 }
             }
             let (text, cost) = try await AppAI.complete(prompt: prompt, images: images,
                                                          system: body["system"] as? String ?? "",
                                                          json: body["json"] as? Bool ?? false,
-                                                         appModel: body["model"] as? String ?? AppModels.load(project).text)
-            record(project, cost: cost)
+                                                         appModel: body["model"] as? String ?? models.text)
+            if let project { record(project, cost: cost) }
             return (200, ["text": text])
         } catch let failure as AppAI.Failure {
-            if failure.cost > 0 { record(project, cost: failure.cost) }   // billed even though it failed
+            if failure.cost > 0, let project { record(project, cost: failure.cost) }   // billed even though it failed
             return failed(failure, for: project)
         } catch {
             return (502, ["error": "Couldn't reach the AI: \(error.localizedDescription)"])
@@ -14901,10 +14922,11 @@ final class Store: ObservableObject {
 
     /// An app's AI call that failed. When it failed because nothing is set up to answer, the app is told
     /// which capability (`needs`, so LampAI can say so) and the person is offered a way in the app's chat.
-    private func failed(_ failure: AppAI.Failure, for project: LampProject) -> (Int, [String: Any]) {
+    private func failed(_ failure: AppAI.Failure, for project: LampProject?) -> (Int, [String: Any]) {
         var reply: [String: Any] = ["error": failure.message]
         if let needs = failure.needs {
             reply["needs"] = needs.rawValue
+            guard let project else { return (502, reply) }
             offerSetup(project, SetupOffer(capability: needs), because: Self.offerReason(needs, for: project))
         }
         return (502, reply)
@@ -14912,18 +14934,18 @@ final class Store: ObservableObject {
 
     /// `LampAI.isAvailable`: which capabilities can answer this app now, so it can leave out or explain a
     /// feature instead of failing at it.
-    private func aiStatus(for project: LampProject) async -> (Int, [String: Any]) {
+    private func aiStatus(for project: LampProject?) async -> (Int, [String: Any]) {
         await EngineSignIn.refresh()
         var reply: [String: Any] = [:]
         var details: [String: Any] = [:]
-        let ready = readyFor(project)
+        let ready = project.map(readyFor) ?? (setup.ready || (setup.hasBuilder && setup.hasAgent))
         for capability in Capability.allCases {
             let resolution = AppAI.resolve(capability, for: project)
             reply[capability.rawValue] = ready && resolution.tier != .none
             details[capability.rawValue] = AppAI.details(resolution)
         }
         // Actions are asked of the same route as `/ai/act`'s probe, so the two never disagree.
-        let act = AppAct.status(appModel: AppModels.load(project).text)
+        let act = AppAct.status(appModel: (project.map(AppModels.load) ?? AppModels()).text)
         reply["act"] = ready && act["available"] as? Bool == true
         details["act"] = act
         if !ready {

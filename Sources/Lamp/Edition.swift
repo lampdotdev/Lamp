@@ -132,6 +132,10 @@ enum Edition {
         return start...(start + 15)
     }
     static let gatewayPort: UInt16 = firstPort
+    /// Whether this Lamp answers pages shared on lamp.dev (`SharedPagesAI`), at the one port the whole computer has for
+    /// them (`NEARBY` in lamp.js, `LOCAL_AI_PORT` in cli/local-ai.mjs). Never a worktree's instance or the tests', which
+    /// would take it from the Lamp the person uses, unless `LAMP_SHARED_PAGES_AI` asks for it to check a change.
+    static let answersSharedPages = instance.isEmpty || ProcessInfo.processInfo.environment["LAMP_SHARED_PAGES_AI"] != nil
     static let localModelPort = Int(firstPort) + 1
     static let mlxPort = Int(firstPort) + 2
     /// Where the chat inside each app's window (`Sidebar`) reaches Lamp, on this Mac only.

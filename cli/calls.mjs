@@ -29,6 +29,11 @@ import { defaultRoute, homeNetwork, neighbours, samsungAt, subnetOn, tvsIn } fro
 import { PUBLISHER, identityName, keptSigner, namesOf, packageOf, versionAfter } from "./msix.mjs";
 import { tile } from "./png.mjs";
 import { Problem } from "./state.mjs";
+import { serveLocalAI } from "./local-ai.mjs";
+
+// Pages shared on lamp.dev asking for their AI, answered by Lamp's app (`sharedPages`): what each is waiting on from it.
+const sharedPagesWaiting = new Map();
+let sharedPagesAsked = 0;
 
 /** A number of seconds a call was given, within what it may take. */
 const seconds = (given, standard, most = 10) => Math.min(Math.max(Number(given) > 0 ? Number(given) : standard, 0.5), most);
@@ -309,6 +314,43 @@ export const CALLS = {
   async neighbours() {
     const route = await defaultRoute();
     return { table: await neighbours(), gateway: route?.gateway ?? null, subnet: route ? subnetOn(route.interface) : null };
+  },
+
+  /**
+   * Answers the AI of pages shared on lamp.dev, played in a browser on this computer, as `lamp ai` does
+   * (local-ai.mjs), for as long as Lamp's app wants it: which pages are let in, and how, is lamp's alone. The person is
+   * asked by Lamp's app, and the AI is Lamp's: each is an event, `{ask: n, id, name}` or `{answer: n, path, body}`,
+   * which Lamp's app answers with `sharedPagesReply`. A problem when something else answers on this computer already.
+   */
+  async sharedPages(given, { stopped, event } = {}) {
+    const fromLamp = (kind, fields) => new Promise((done) => {
+      const n = ++sharedPagesAsked;
+      sharedPagesWaiting.set(n, done);
+      event({ [kind]: n, ...fields });
+    });
+    let server;
+    try {
+      server = await serveLocalAI({
+        ...(Number.isInteger(given.port) ? { port: given.port } : {}),
+        said: () => {},
+        ask: (_question, page) => fromLamp("ask", { id: page.id, name: page.name }).then((reply) => reply.yes === true),
+        answer: (path, body, page) => fromLamp("answer", { path, body, id: page.id }).then((reply) => [Number(reply.status) || 502, reply.reply ?? {}]),
+      });
+    } catch (error) {
+      if (error?.code === "EADDRINUSE") throw new Problem("lamp ai already answers shared pages' AI on this computer");
+      throw error;
+    }
+    await new Promise((done) => (stopped?.aborted ? done() : stopped?.addEventListener("abort", done)));
+    server.close();
+    return {};
+  },
+
+  /** Lamp's app's answer to what `sharedPages` asked it: `{n, yes}` or `{n, status, reply}`. */
+  async sharedPagesReply(given) {
+    const done = sharedPagesWaiting.get(given.n);
+    sharedPagesWaiting.delete(given.n);
+    done?.(given);
+    return {};
   },
 
   /** A search of the home network for one search target, for a few seconds: every answer. */
