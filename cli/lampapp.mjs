@@ -232,9 +232,19 @@ export function exportApp(given, { anyway = false, link = null } = {}) {
     const gone = terms(source).find((path) => !existsSync(join(app, path)));
     if (gone) throw new Problem(`${name} can't be shared: the license of ${source.name} is missing from it. Put ${gone} back.`);
   }
-  const unlicensed = upstream.filter((source) => noLicense(source.license));
-  if (unlicensed.length && !anyway) {
-    throw new Problem(`${name} uses work that came with no license (${unlicensed.map((source) => source.author ? `${source.name} by ${source.author}` : source.name).join(", ")}). Ask the person whether they're comfortable sharing it; --anyway shares it all the same.`);
+  // Work in the app that came with no license: the person is asked once, as Lamp's Share Link asks (`ShareCheck`), and
+  // again only when the app takes in more. What it only fetches as it runs (`live`) isn't passed on, so it isn't asked of.
+  const unlicensed = upstream.filter((source) => noLicense(source.license) && source.live !== true);
+  const named = (source) => (source.author ? `${source.name} by ${source.author}` : source.name);
+  const agreedFile = join(stateOf(folder), "unlicensed-agreed.json");
+  let agreed = [];
+  try { agreed = JSON.parse(readFileSync(agreedFile, "utf8")); } catch {}
+  const asking = unlicensed.filter((source) => !agreed.includes(named(source)));
+  if (asking.length && !anyway) {
+    throw new Problem(`${name} uses work that came with no license (${asking.map(named).join(", ")}). Ask the person whether they're comfortable sharing it; --anyway shares it, and it isn't asked again for these.`);
+  }
+  if (anyway && asking.length) {
+    try { mkdirSync(stateOf(folder), { recursive: true }); writeFileSync(agreedFile, JSON.stringify([...new Set([...agreed, ...unlicensed.map(named)])].sort(), null, 2)); } catch {}
   }
 
   const files = new Map(), from = (path) => readFileSync(join(app, path));

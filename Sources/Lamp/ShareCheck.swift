@@ -119,7 +119,8 @@ enum ShareCheck {
 
     /// The work in the wish that came with no license, which the person is told of before it leaves this Mac.
     static func unlicensed(_ credits: Credits) -> [Credits.Source] {
-        credits.upstream.filter { licence($0.license) == .none }
+        // What the app only fetches as it runs isn't passed on by sharing it.
+        credits.upstream.filter { licence($0.license) == .none && $0.live != true }
     }
 
     /// What the person is told before a wish with work under no license leaves this Mac, or nil when it has none. Its
