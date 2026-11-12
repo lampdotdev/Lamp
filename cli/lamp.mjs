@@ -27,7 +27,7 @@ import { MAX_ARCHIVE, exportApp, unpack } from "./lampapp.mjs";
 import { latestOf } from "./link.mjs";
 import { updateNotice } from "./update.mjs";
 import { editionName, giveTo, givenTo, keepInLamp, keepPictures, lampOwning, lampsKeptLink, reachLamp, takeBack } from "./outside.mjs";
-import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS } from "./dev.mjs";
+import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, LAMP_JS_STAND_IN, lampJS } from "./dev.mjs";
 import { findBrowser, noBrowser } from "./browser.mjs";
 import { allSkills } from "./skills.mjs";
 import { engine } from "./ai.mjs";
@@ -208,10 +208,13 @@ function lampsFilesBeside(root, { game, update = false }) {
       wrote.push(name);
     }
   }
-  if (!existsSync(join(root, "lamp.js")) || update) {
-    writeFileSync(join(root, "lamp.js"), lampJS(game));
+  // Updating, only over Lamp's own: a copy of lamp with only the stand-in (a checkout whose generated files aren't
+  // written) never replaces a page's working lamp.js with it.
+  const js = lampJS(game);
+  if (!existsSync(join(root, "lamp.js")) || (update && js !== LAMP_JS_STAND_IN)) {
+    writeFileSync(join(root, "lamp.js"), js);
     wrote.push("lamp.js");
-  }
+  } else if (update) kept.push("lamp.js");
   wrote.push(...addLibraries(root));
   return { wrote, kept };
 }
