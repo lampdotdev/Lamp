@@ -5,6 +5,11 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.36.1
+
+- An app that asks its AI to do something big, like building a model piece by piece, no longer gives up partway: it
+  takes as long as the work needs, and you can still stop it at any time.
+
 ## 0.36.0
 
 - People playing your shared app can send you ideas with a picture of what they saw. You can answer each one with a
