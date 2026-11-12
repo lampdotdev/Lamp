@@ -167,7 +167,7 @@ export async function serveLocalAI({ port = LOCAL_AI_PORT, ask = askInTerminal()
   return server;
 }
 
-const engineName = () => (engine() === "codex" ? "Codex" : "Claude Code");
+const engineName = () => ({ codex: "Codex", openrouter: "OpenRouter key" })[engine()] ?? "Claude Code";
 
 /** A yes-or-no in the terminal, or always no without one. */
 export function askInTerminal({ input = process.stdin, output = process.stdout } = {}) {

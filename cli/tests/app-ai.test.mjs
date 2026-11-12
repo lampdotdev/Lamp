@@ -184,7 +184,7 @@ test("OpenRouter is asked again when a provider's filter cuts the reply off, and
     { status: 200, body: { choices: [{ finish_reason: "stop", message: { content: "Hello" } }], usage: { cost: 0.02 } } },
   ];
   const fetcher = async (url, request) => { sent.push(request); const next = answers.shift(); return { status: next.status, json: async () => next.body }; };
-  const said = await text({ key: "k", prompt: "Hi", model: "m", json: true, schema: { type: "object" }, fetcher });
+  const said = await text({ key: "k", prompt: "Hi", model: "m", json: true, schema: { type: "object" }, seconds: 24.123456, fetcher });
   assert.deepEqual([said.text, Math.round(said.cost * 100)], ["Hello", 3]);
   assert.equal(sent[0].headers.Authorization, "Bearer k");
   assert.equal(JSON.parse(sent[0].body).response_format.type, "json_schema");

@@ -42,7 +42,8 @@ export async function chat({ key, body, seconds = 120, signal, fetcher = fetch }
   const deadline = Date.now() + seconds * 1000;
   let cost = 0;
   for (let attempt = 0; attempt < 3; attempt++) {
-    const left = deadline - Date.now();
+    // Whole milliseconds: a timer takes nothing finer, and the seconds given may have more.
+    const left = Math.floor(deadline - Date.now());
     if (left < 1000) throw new OpenRouterTrouble("timeout", "This ran out of time.", { cost });
     let answer;
     try {
