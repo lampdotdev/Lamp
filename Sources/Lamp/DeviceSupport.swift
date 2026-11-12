@@ -580,6 +580,10 @@ enum DeviceSupport {
       // without one, so the person is asked only when the page uses it.
       var NEARBY = 'http://127.0.0.1:47423';
       function shared() { return !installed && here.protocol === 'https:' && /\.play\.lamp\.dev$/.test(here.hostname || ''); }
+      function safari() {
+        var ua = (window.navigator && navigator.userAgent) || '';
+        return /Safari\//.test(ua) && !/Chrome|Chromium|CriOS|Edg|OPR|Firefox|FxiOS/.test(ua);
+      }
       function nearby(path, body, timeout, deadline) {
         var text = JSON.stringify(body);
         function go(t) { return exchange(NEARBY, path, t, text, deadline ? Math.max(1000, deadline - Date.now()) : timeout); }
@@ -600,7 +604,10 @@ enum DeviceSupport {
           });
         });
         return done.then(null, function (e) {
-          throw e instanceof Failure ? e : new Failure('AI isn\'t available here. Open Lamp on this computer, or with Lamp\'s command line, run lamp ai.');
+          if (e instanceof Failure) throw e;
+          // Safari never lets a page on the web reach this computer this way, so Lamp or lamp ai open here wouldn't help.
+          if (safari()) throw new Failure('AI here works in Chrome or in Lamp, or with Lamp\'s command line: lamp play and this page\'s link.');
+          throw new Failure('AI isn\'t available here. Open Lamp on this computer, or with Lamp\'s command line, run lamp ai.');
         });
       }
 
