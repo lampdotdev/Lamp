@@ -758,7 +758,9 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       if (method === "PUT") {
         const record = { ...earlier, ...words, ...named, updated: time };
         await kept.replace(record);
+        // Kept: the name is the record's now, whatever the cleanup after it does.
         uploaded = [];
+        claimed = null;
         await kept.removeImages(oldImages);
         await kept.forget(id);
         return reply(200, { id, url: linkOf(url.origin, record) });
@@ -769,6 +771,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
         throw new Error("Id taken");
       }
       uploaded = [];
+      claimed = null;
       return reply(201, { id: wishID, url: linkOf(url.origin, record), secret });
     } catch {
       try { await kept.removeImages(uploaded); } catch {}
