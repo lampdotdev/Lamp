@@ -42,7 +42,7 @@ export function keepAccount(site, account) {
 export function readLink(folder) {
   try { return JSON.parse(readFileSync(linkFileOf(folder), "utf8")); } catch { return null; }
 }
-function writeLink(folder, link) {
+export function writeLink(folder, link) {
   mkdirSync(stateOf(folder), { recursive: true });
   writeFileSync(linkFileOf(folder), JSON.stringify(link, null, 2), { mode: 0o600 });
 }

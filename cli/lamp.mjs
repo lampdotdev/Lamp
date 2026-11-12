@@ -26,7 +26,7 @@ import { macActions, serveMac, writeMacStarter } from "./mac.mjs";
 import { MAX_ARCHIVE, exportApp, unpack } from "./lampapp.mjs";
 import { latestOf } from "./link.mjs";
 import { updateNotice } from "./update.mjs";
-import { editionName, giveTo, givenTo, keepPictures, lampOwning, reachLamp, takeBack } from "./outside.mjs";
+import { editionName, giveTo, givenTo, keepInLamp, keepPictures, lampOwning, lampsKeptLink, reachLamp, takeBack } from "./outside.mjs";
 import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS } from "./dev.mjs";
 import { findBrowser, noBrowser } from "./browser.mjs";
 import { allSkills } from "./skills.mjs";
@@ -34,7 +34,7 @@ import { engine } from "./ai.mjs";
 import { allowed, forgetAllowed, serveLocalAI } from "./local-ai.mjs";
 import { accountFor, keepAccount } from "./share.mjs";
 import { accountName, askAccount } from "./link.mjs";
-import { share, unshare, ideas, finishIdea, answerIdea, makerEmail, readLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
+import { share, unshare, ideas, finishIdea, answerIdea, makerEmail, readLink, writeLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
 import { Runner, allKept, fields, forget, integrationOf, isReady, look as lookForDevices, takesPages } from "./devices.mjs";
 import { placeNamed } from "./place.mjs";
 import { androidAdvice, androidDevices, androidDone, emulatorNamed, emulators, forgetAndroid, installTools, knowsAndroid, toolsThere } from "./android.mjs";
@@ -500,7 +500,11 @@ function lampsLink(folder) {
   try { real = realpathSync(real); } catch {}
   if (readLink(real)) return null;
   const owner = lampOwning(real);
-  return owner ? editionName(owner) : null;
+  if (!owner) return null;
+  // The link Lamp keeps for its app is lamp's to use too, Lamp open or not.
+  const kept = lampsKeptLink(real);
+  if (kept) { writeLink(real, kept); return null; }
+  return editionName(owner);
 }
 
 /** What Lamp's app answered, as lamp says things: how the change went in, its words, and where its pictures are. */
@@ -909,6 +913,15 @@ async function main() {
     // lamp's to share, whatever Lamp is running.
     const project = { folder: (() => { const given = resolve(rest[0] ?? "."); try { return realpathSync(given); } catch { return given; } })() };
     const owner = lampOwning(project.folder), given = owner ? null : givenTo(project.folder);
+    const hasPage = (() => { try { layoutOf(project.folder); return true; } catch { return false; } })();
+    // An app with a page in a Lamp's own folder is lamp's to share, whether that Lamp is open or not, to the link the
+    // Lamp keeps for it, and its Share Link card is told what went (`keepInLamp`). Only what lamp doesn't pack itself
+    // (a Mac app, an iPhone app, a wish of several) goes through Lamp's app.
+    const lampsOwn = owner && hasPage && !options["new-link"];
+    if (lampsOwn && !readLink(project.folder)) {
+      const kept = lampsKeptLink(project.folder);
+      if (kept) writeLink(project.folder, kept);
+    }
     if (!readLink(project.folder) && !options["new-link"] && (owner || given)) {
       const lamp = await reachLamp([owner ?? given]);
       if (lamp) {
@@ -929,7 +942,6 @@ async function main() {
         // would be a second one; a folder only given to it is lamp's to share.
         // lamp shares only a page, so a Mac app given to it waits for Lamp too.
         const older = /has no tool share_link\b/.test(answer.words ?? "");
-        const hasPage = (() => { try { layoutOf(project.folder); return true; } catch { return false; } })();
         if (older && (owner || !hasPage)) throw new Problem(`${lamp.name} is older than this lamp and can't share for it: update ${lamp.name}, then run this again${hasPage ? " (or --new-link to make lamp a link of its own)" : ""}.`);
         if (older) console.log(`${lamp.name} can't share for lamp yet, so lamp shares it with a link of its own.`);
         else if (answer.facts?.taken_on !== false) {
@@ -938,7 +950,7 @@ async function main() {
           return;
         }
       } else if (owner) {
-        throw new Problem(`This is an app of ${editionName(owner)}'s, which shares it with its own link: open ${editionName(owner)}, then run this again (or --new-link to make lamp a link of its own).`);
+        throw new Problem(`${editionName(owner)} packs this kind of app for its link: open ${editionName(owner)}, then run this again.`);
       }
     }
     const layout = layoutOf(rest[0] ?? ".");
@@ -978,6 +990,7 @@ async function main() {
     if (options.by !== undefined) keepSharer(words.by);
     const sent = await share({ layout, words, shape, picture: card.picture ? Buffer.from(card.picture, "base64") : null, said: (line) => console.log(line),
       file: !options["no-file"], anyway: !!options.anyway });
+    if (lampsOwn) keepInLamp(layout.folder, readLink(layout.folder));
     console.log(`${before ? "Sent again to its link" : "Shared"}: ${sent.url}`);
     console.log(`"${words.name}"${words.by ? ` by ${words.by}` : ""}: ${sent.files} files, ${(sent.bytes / 1_000_000).toFixed(1)} MB packed, ${shape === "fill" ? "filling the window" : "on its own stage"}${sent.picture ? ", with a picture of it" : ", with no picture"}${sent.file ? ", and its app file, for anyone to open in Lamp" : ""}${sent.github ? `, with a link to its code on GitHub (${sent.github})` : ""}.`);
     console.log("Anyone with the link can play it and send an idea: lamp ideas shows them. lamp unshare takes it down.");
@@ -990,7 +1003,9 @@ async function main() {
     const { rest } = parse(args, []);
     const lamps = lampsLink(rest[0] ?? ".");
     if (lamps) throw new Problem(`${lamps} keeps this app's link: take it down from its Share Link card (Stop Sharing).`);
-    console.log(`Taken down: ${await unshare(layoutOf(rest[0] ?? ".").folder)}`);
+    const folder = layoutOf(rest[0] ?? ".").folder;
+    console.log(`Taken down: ${await unshare(folder)}`);
+    if (lampOwning(folder)) keepInLamp(folder, null);
     return;
   }
 

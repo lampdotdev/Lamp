@@ -182,11 +182,14 @@ Only when the person asks: a link is public, and anyone who has it can play the 
 
 - Start with `{{lamp}} share --preview`: it says what would go and sends nothing. Show the person, and share only once they
   say so.
-- **An app of Lamp's own** (its folder is in Lamp's, or a link to one; the preview says it's going through Lamp) is
-  shared by Lamp, which must be open, to the link it already has, filled as its Share Link card fills itself: its words,
-  the questions and what's new Lamp writes, its file, its GitHub release. Run `{{lamp}} share` with no words of your own,
-  and give `--line`, `--by`, `--asks "a|b"` or `--notes "What's new|And more"` only for what the person wants changed.
-  Its ideas and taking it down are on Lamp's Share Link card, not `ideas` and `unshare` here.
+- **A web app or game of Lamp's own** (its folder is in Lamp's) is shared here like any other page, whether Lamp is open
+  or not, to the link Lamp already has for it, and `ideas` and `unshare` work on that link too. Run `{{lamp}} share` with
+  no words of your own (it keeps the link's), and give `--line`, `--by` or `--asks "a|b"` only for what the person
+  wants changed.
+- **Any other app of Lamp's** (a Mac or iPhone app, a wish of several; the preview says it's going through Lamp) is
+  shared by Lamp, which must be open, filled as its Share Link card fills itself: its words, the questions and what's new
+  Lamp writes, its file, its GitHub release. Give `--notes "What's new|And more"` and the rest only for what the person
+  wants changed. Its ideas and taking it down are on Lamp's Share Link card.
 - **Any other page:** `{{lamp}} share --words "What it is, in a sentence or a few"` puts it on lamp.dev and answers its
   link. `--line` is a line under its name, `--asks "Found a bug?|What's missing?"` what the box under the page asks
   people, and `--by "Their Name"` who it's by, when they want another name than the one it goes out with (the name they last
