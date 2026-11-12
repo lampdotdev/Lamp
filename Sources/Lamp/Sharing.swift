@@ -632,9 +632,10 @@ enum Sharing {
 
     /// An app file is a few source files and some attachments: anything much bigger isn't one, and a file
     /// that inflates to gigabytes mustn't fill the disk before anyone has seen a review.
-    static let maxArchiveBytes = 64 * 1024 * 1024
-    static let maxUnpackedBytes = 256 * 1024 * 1024
-    static let maxFiles = 2000
+    /// In Resources/share-rules.json (`ShareRules`), which lamp's command line reads too.
+    static let maxArchiveBytes = ShareRules.shared.limits.archiveBytes
+    static let maxUnpackedBytes = ShareRules.shared.limits.unpackedBytes
+    static let maxFiles = ShareRules.shared.limits.files
 
     /// A shared file, or a folder holding a wish as Lamp lays it out on GitHub (a clone of its repository, `RepoImport`).
     static func open(_ file: URL, fetched: RepoArchive.Fetched? = nil) throws -> Package {

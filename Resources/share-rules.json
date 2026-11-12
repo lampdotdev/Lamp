@@ -1,0 +1,64 @@
+{
+  "about": "What a Lamp app file may hold, read by Lamp's app (ShareRules) and lamp's command line (cli/lampapp.mjs) alike, so the two never differ. tokenShapes are keys and tokens whoever's they are: a file holding one isn't shared. licenseFiles are the names a license or notice goes by. limits are what another Lamp opens.",
+  "tokenShapes": [
+    {
+      "pattern": "-----BEGIN [A-Z ]*PRIVATE KEY-----",
+      "what": "a private key"
+    },
+    {
+      "pattern": "\\bsk-(or-v1-|ant-|proj-)?[A-Za-z0-9_\\-]{32,}",
+      "what": "OpenRouter, Anthropic, OpenAI"
+    },
+    {
+      "pattern": "\\bgh[pousr]_[A-Za-z0-9]{36,}",
+      "what": "GitHub"
+    },
+    {
+      "pattern": "\\bgithub_pat_[A-Za-z0-9_]{60,}",
+      "what": "GitHub"
+    },
+    {
+      "pattern": "\\bAKIA[0-9A-Z]{16}\\b",
+      "what": "AWS"
+    },
+    {
+      "pattern": "\\bAIza[0-9A-Za-z_\\-]{35}\\b",
+      "what": "Google"
+    },
+    {
+      "pattern": "\\bxox[abprs]-[A-Za-z0-9\\-]{20,}",
+      "what": "Slack"
+    },
+    {
+      "pattern": "\\b(sk|rk)_live_[A-Za-z0-9]{20,}",
+      "what": "Stripe"
+    }
+  ],
+  "licenseFiles": {
+    "startsWith": [
+      "LICENSE",
+      "LICENCE",
+      "COPYING",
+      "NOTICE",
+      "UNLICENSE"
+    ],
+    "longestExtension": 10,
+    "neverExtensions": [
+      "sh",
+      "command",
+      "app",
+      "js",
+      "py",
+      "rb",
+      "pl",
+      "swift",
+      "html",
+      "htm"
+    ]
+  },
+  "limits": {
+    "files": 2000,
+    "unpackedBytes": 268435456,
+    "archiveBytes": 67108864
+  }
+}
