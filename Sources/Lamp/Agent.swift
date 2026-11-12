@@ -388,8 +388,8 @@ enum Agent {
     - The end of a request says what AI this app can use right now: text, decisions, pictures and actions, each with \
     what answers it, or "nothing can answer yet". Build for what's there. When a feature needs one that \
     isn't set up, or would be clearly better with one that only works a slower way, build it anyway, have \
-    the app check `LampAI.isAvailable` and say so where the feature is, and call `offer_setup` once: Lamp \
-    shows the person how to set it up. Never ask for keys or send them to Settings yourself.
+    the app check `LampAI.status` and show its reason where the feature is (`LampAI.isAvailable` on Android), \
+    and call `offer_setup` once: Lamp shows the person how to set it up. Never ask for keys or send them to Settings yourself.
     """
 
     /// Which services there are and how to build on each is the tool's answer (Connectors), so this stays one

@@ -17,8 +17,8 @@ opening comment for the whole list. What it gives:
 
 - **LampAI**: text, pictures and quick judgments, answered by Lamp on the person's Mac with the AI they set up.
   Every call is a Promise. Text from outside the app goes in `data`, never into the prompt. Where a feature depends
-  on it, check `LampAI.isAvailable('text')` and show a short note when it can't answer: away from the Mac's Wi‑Fi, or
-  with Lamp closed, it can't.
+  on it, check `LampAI.status('text')` and, when it can't answer, show its `reason` as it's given: lamp.js words it
+  for where the page is (away from the Mac's Wi‑Fi, Lamp closed, a link on lamp.dev), so don't write your own.
 - **LampAI.act**: the person asks the app to do something in their own words, and the app's own reads and writes do
   it; "Doing things for the person" below, with **LampVoice** and **LampAI.hear** for saying it.
 - **LampStore**: what the app saves, as JSON on the device. Once something is saved, only ever add to it: a new field
@@ -58,12 +58,11 @@ APP.md says that it was brought in as it is, so every later turn keeps to this.
 
 ## On the web, without Lamp
 
-Putting it on GitHub (Also put on GitHub, on its link's card) gives a web app a page anyone opens in a browser, with no Lamp anywhere: the page as it is, with
-lamp.js. There, `LampAI.isAvailable` answers false and its calls fail with a sentence saying the page is away from
-Lamp, `LampNative.available` is false, and `Lamp.wish` can't reach the project's other apps; `LampStore` and `LampAssets`
+Sharing its link gives a web app a page on lamp.dev anyone opens in a browser, with no Lamp around it: the page as it
+is, with lamp.js. There, `LampAI.status` says it's unavailable, with the line to show, and its calls fail with that sentence, `LampNative.available` is false, and `Lamp.wish` can't reach the project's other apps; `LampStore` and `LampAssets`
 work as they do everywhere. So every feature that leans on Lamp keeps the app usable without it: the app's own buttons
 for everything AI would do, example content where the person's own things would be, and a short line where something
-needs Lamp, never an error or an empty screen.
+needs Lamp (for AI, `LampAI.status`'s `reason`), never an error or an empty screen.
 
 ## Doing things for the person
 
@@ -72,8 +71,8 @@ app's tools, the page runs them, the AI sees the results, until it replies (at m
 turn, and 25 seconds over OpenRouter or a minute through Claude Code, Codex or a model on the Mac). It works with
 whichever AI the person set up for apps' text, so don't tie it to voice: typing works wherever `act` does. Its comment in lamp.js has the shapes. This is the one recipe for it:
 
-- Show the feature where `LampAI.isAvailable('act')` is true, and keep the app's own buttons for everything: it only
-  adds a way in. Where it's false, keep it visible with a short reason and a way to set it up in Lamp, and keep what
+- Show the feature where `LampAI.status('act')` says it's available, and keep the app's own buttons for everything:
+  it only adds a way in. Where it isn't, keep it visible with its `reason`, and keep what
   was typed; don't send it by itself once setup is done. Whether AI belongs in the app at all, and the contract to
   write in APP.md, are the app-ai skill's.
 - Tools are small reads and writes over the app's own data, ids in and ids out, never "do anything". A read has
