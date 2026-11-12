@@ -48,10 +48,13 @@ points to GitHub's releases.
 Use with ChatGPT (`ChatGPTButton.astro`) is there from the start, so nobody has to find the download in the demo first.
 The button is OpenAI's documented `codex://new?prompt=` link: one click opens a new chat in ChatGPT's Mac app with a
 prompt to set up lamp's command line (`cli/README.md`) in its message box, never sent. The link doesn't choose the
-chat's mode, so the prompt says to switch to Codex when it can't run commands. A page can't tell whether the app is
+chat's mode, so the prompt has a chat that can't run commands offer ChatGPT Work by itself, working on the Mac
+(Work in the cloud can't reach it), and says to switch to Codex only when Work can't. The prompt asks before
+installing anything and waits for a yes. A page can't tell whether the app is
 there (Safari calls the address invalid when it isn't), so one small line under the button gets the app or copies
 the prompt, for any agent that runs commands on the Mac; where copying is refused, the prompt appears selected to
-copy by hand. The prompt is written once, in `src/lib/chatgpt.ts`, for the link and the copy alike; it runs
+copy by hand. The prompt is written once, in `src/lib/chatgpt.ts`, for the link and the copy alike, from install steps
+shared with a shared game's Make it myself (`src/lib/lamp-cli-words.ts`); it runs
 `lamp guide` as well as `lamp setup`, since setup writes its skill only where an agent's folder already exists.
 
 A link from a Remix panel or a repository's README (`?ask=`, with `starter=` or `repo=` and `commit=` when it names
@@ -80,7 +83,14 @@ else Email me the link, since it opens with Lamp on a Mac. It's never an empty p
 turning in it as its placeholder and a send button that opens Remix with what's written, or else the change it shows.
 A chevron at the window's right, centered on the band, slides it and the header out of the window together (remembered in that
 browser), the wish growing to the whole window on black, and from the same place brings both back. The change dialog is a plain card on the paper: the change, one line on Lamp, and
-Get Lamp and Open in Lamp (on a Mac). As the page opens the wish fades up and the band after it; the wish's frame is
+Get Lamp and Open in Lamp (on a Mac). For a game that plays on the page and came with its Lamp app file, two tabs
+under the change choose between sending it and Make it myself, which has ChatGPT and Claude Code rows with Open (Claude
+Code asks once for a games folder to open in). Open hands the app one prompt (`src/lib/change-words.ts`): get Lamp's
+command line, asking first, or use one that already lists `unpack`, `open` and `look` (an older one is updated, asking
+first the same way), then download the game's file into a games folder that
+stays, `lamp unpack`, `lamp open`, make the change and `lamp look`, keeping its credits and licenses. The player ends
+with a changed copy open on their own computer; the page and the maker's game don't change. The app works from the
+file, never from the page as it's shown or the wish's words. A game without a file keeps Lamp under sending. As the page opens the wish fades up and the band after it; the wish's frame is
 black until the page in it draws; where less motion is asked for, it's simply there. The ideas page is on the same paper: the categories as plain tabs, the ideas as flat cards with
 a thin edge, and its first-idea section a plain ink card. An opened idea (`WishDialog.astro`) says what it is, that it's an
 idea for Lamp to make (waiting when Lamp opens), and how to get it. What Lamp is asked stays out of sight; only words
