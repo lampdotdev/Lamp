@@ -11,8 +11,8 @@
 // page's.
 //
 // Every route is asked one of two ways and read into the same calls-or-reply: a chat with OpenAI-style tools
-// (OpenRouter, an MLX model whose server takes tools: `chatBody`, `readMessage`), or one prompt whose answer must fit
-// the step's JSON shape (Claude Code, Codex, a GGUF model, an older MLX model: `planPrompt`, `planSchema`, `readPlan`).
+// (OpenRouter: `chatBody`, `readMessage`), or one prompt whose answer must fit the step's JSON shape (Claude Code, Codex:
+// `planPrompt`, `planSchema`, `readPlan`).
 
 export const MAX_TOOLS = 24, MAX_CALLS = 8, MAX_STEPS = 4, MAX_BODY = 256 * 1024, MAX_CHOICES = 4, MAX_CHOICE = 24;
 /** The longest a step may take, whatever its route, before its call is taken to have stopped answering (`ACT_STEP_SECONDS`
@@ -320,8 +320,8 @@ function framing(r, tag) {
 }
 
 /**
- * An OpenAI-style chat with tools, Lamp's `reply` among them, for OpenRouter and an MLX model's server. With `model`,
- * it's OpenRouter's request: `require_parameters` keeps OpenRouter on providers that take tools and `tool_choice` as
+ * An OpenAI-style chat with tools, Lamp's `reply` among them, for OpenRouter, whose `model` it names:
+ * `require_parameters` keeps OpenRouter on providers that take tools and `tool_choice` as
  * given, and the models offered for apps' text take only "auto" and "none" there, so an answer may also be words without
  * a call, which is the reply; a step asked for a reply only says "none".
  */
@@ -369,15 +369,13 @@ export function planSchema(r) {
 
 /**
  * The step as one prompt, for a route that takes text and answers in `planSchema`'s shape: the tools described, then the
- * turn so far, every earlier call and its result fenced as outside text. `schemaInPrompt` says the shape in words too,
- * for a model nothing holds to it.
+ * turn so far, every earlier call and its result fenced as outside text.
  */
-export function planPrompt(r, tag, retry, schemaInPrompt = false) {
+export function planPrompt(r, tag, retry) {
   let { system, user: prompt } = framing(r, tag);
   system += "\n\n" + PLAN;
   if (r.final) system += '\nOnly a reply is possible now: answer {"reply": {...}}.';
   else system += "\n\nThe app's tools:\n" + r.tools.map((tool) => `- ${tool.name}: ${tool.reads ? "Looks up, changes nothing. " : "Changes the app's data. "}${tool.about}\n  Arguments: ${json(toolSchema(tool))}`).join("\n");
-  if (schemaInPrompt) system += "\n\nThe JSON Schema your answer must fit:\n" + json(planSchema(r));
   r.steps.forEach((step, i) => {
     prompt += `\n\nYour answer ${i + 1} called:\n` + json(step.calls.map((c) => ({ name: c.name, args: c.args })));
     prompt += "\nWhat happened, in that order:\n" + fence(tag, json(step.calls.map((c) => ({ ...(step.results[c.id] ?? skipped), name: c.name }))));

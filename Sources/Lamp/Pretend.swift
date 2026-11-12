@@ -14,7 +14,7 @@ import Foundation
 /// - `git`: git, which a Mac without the Command Line Tools doesn't have: a game or a screen is then made with no
 ///   versions, which it gets once git is back (`Versions.hasGit`).
 /// - `watch`: any Apple Watch simulator to open an iPhone app's watch app on, and the watchOS to make one.
-/// - any other word: a command Lamp looks for on the PATH (`uv`, `mflux-generate`, `mlx_lm.server`), and for
+/// - any other word: a command Lamp looks for on the PATH, and for
 ///   `claude` and `codex` the copies in the Claude and ChatGPT apps too, so Lamp uses its own copy (or
 ///   downloads it) as on a Mac without them.
 /// - `bare`: all of the above that a Mac straight out of the box doesn't have.
@@ -23,7 +23,7 @@ import Foundation
 /// which with `tools` runs with no developer folder (`buildEnvironment`), so one that would compile fails as it would
 /// on a bare Mac, and a game or a screen copied from Lamp's player shows it needs none. A release build ignores it.
 enum Pretend {
-    static let bare: Set<String> = ["tools", "xcode", "claude", "codex", "uv", "mflux-generate", "mlx_lm.server"]
+    static let bare: Set<String> = ["tools", "xcode", "claude", "codex"]
     static let installSeconds: TimeInterval = 30
     static let backSeconds: TimeInterval = 8
 

@@ -35,26 +35,16 @@ enum AIContext: Equatable { case mac, phoneAway, icon }
 enum Upgrade: Hashable, Identifiable {
     /// A key for a provider that takes one: OpenRouter's.
     case key(String)
-    /// The picture model on this Mac (the first of `ImageModels.catalog`), with mflux if it's missing.
-    case pictureModel
-    /// The decision model on this Mac (`LocalModels.decisionCatalog`).
-    case decisionModel
     case signIn(Engine)
     /// Drawing each app's icon by hand in Image Playground (`Icons.byHand`): for icon artwork only, and
     /// only on a Mac that has it.
     case drawIcons
-    /// Choosing what answers instead, for one app (`app`, its id) or, with none, for every app in Settings: the
-    /// route's id and how it's named.
-    case useText(route: String, label: String, app: String?)
 
     var id: String {
         switch self {
         case .key(let provider): "key:\(provider)"
-        case .pictureModel: "pictureModel"
-        case .decisionModel: "decisionModel"
         case .signIn(let engine): "signIn:\(engine.rawValue)"
         case .drawIcons: "drawIcons"
-        case .useText(let route, _, let app): "useText:\(route):\(app ?? "")"
         }
     }
 }
@@ -76,7 +66,7 @@ struct Resolution: Equatable {
     let tier: Tier
     /// What answers, as the person would say it ("Sonnet via OpenRouter"); nil when nothing can.
     let answer: String?
-    /// The Providers row doing the work, for its badges: "openrouter", `Builder.localProvider`, "engine:codex"…
+    /// The Providers row doing the work, for its badges: "openrouter", "engine:codex"…
     /// For icon artwork the person draws themselves it's `Icons.byHand`, which is no row there.
     let provider: String?
     /// Why it isn't the best it could be, in a sentence the person can read as it is, without repeating
@@ -101,7 +91,7 @@ extension AppAI {
         let models = project.map(AppModels.load) ?? AppModels()
         switch (capability, context) {
         // Only pictures are asked for an icon; the others are answered as for the app on this Mac.
-        case (.text, .mac), (.text, .icon): return resolveText(choice: models.text, app: project?.id)
+        case (.text, .mac), (.text, .icon): return resolveText(choice: models.text)
         case (.decisions, .mac), (.decisions, .icon): return resolveDecisions(choice: models.decision, text: models.text)
         case (.pictures, .mac): return resolvePictures(choice: models.image, text: models.text)
         case (.pictures, .icon): return resolveIconArt()
@@ -123,23 +113,20 @@ extension AppAI {
 
     // MARK: Each capability
 
-    @MainActor private static func resolveText(choice: String?, app: String? = nil) -> Resolution {
+    @MainActor private static func resolveText(choice: String?) -> Resolution {
         let route = route(for: choice)
         // What was asked for: the app's own choice, else Settings'. A choice that can't answer right now (its
-        // key or model went) is why the route is a stand-in. A model on this Mac that was chosen and then removed
-        // is in no list of routes; it's still what was chosen.
+        // key or sign-in went) is why the route is a stand-in. An id no route has any more (a model on this Mac,
+        // which Lamp no longer runs) is no choice at all.
+        let all = allTextRoutes
         let wanted = (choice ?? UserDefaults.standard.string(forKey: "appModel")).map(canonicalRoute)
-        let missing = wanted.flatMap { id in id == route.id ? nil : AppAct.wanted(id, among: allTextRoutes) }
+            .flatMap { id in all.contains { $0.id == id } ? id : nil }
+        let missing = wanted.flatMap { id in id == route.id ? nil : all.first { $0.id == id } }
         guard route.available else {
-            // Nothing answers. A removed model on this Mac that was chosen is said to be why.
-            let gone = missing.flatMap { route -> String? in
-                guard case .localModel = route.kind else { return nil }
-                return "\(route.name) isn't on this Mac any more. Install it again in Settings, or set up another AI below."
-            }
             return Resolution(capability: .text, tier: .none, answer: nil, provider: nil,
-                              note: gone ?? "Nothing on this Mac can answer apps yet.", upgrades: textUpgrades)
+                              note: "Nothing on this Mac can answer apps yet.", upgrades: textUpgrades)
         }
-        if let missing { return standIn(for: missing, answering: route, app: choice == nil ? nil : app) }
+        if let missing { return standIn(for: missing, answering: route) }
         // A sign-in that answers because nothing was chosen works, but a key is quicker for small calls and
         // goes with an app to a phone. Chosen on purpose, it's what the person wants.
         if wanted == nil, case .engine = route.kind, !Provider.hasKey {
@@ -151,11 +138,7 @@ extension AppAI {
     }
 
     /// A choice that can't answer, with `route` answering in its place: why, and what would bring the choice back.
-    /// For a model on this Mac that was removed, that's installing it again in Settings, or choosing what answers now
-    /// for good: for the app when the choice was the app's own (`app`), else in Settings. The card offers no download
-    /// of its own: what one installs is named by the files in the cache (a repository holding several quants names
-    /// each with its quant), so it can't promise to bring back the very choice that went missing.
-    @MainActor static func standIn(for missing: TextRoute, answering route: TextRoute, app: String?) -> Resolution {
+    @MainActor private static func standIn(for missing: TextRoute, answering route: TextRoute) -> Resolution {
         var upgrades: [Upgrade] = []
         var why = "."
         switch missing.kind {
@@ -165,9 +148,6 @@ extension AppAI {
         case .engine(let engine, _) where engine != .pi && EngineInstall.path(for: engine) != nil:
             upgrades.append(.signIn(engine))
             why = " until you sign in to \(engine.title) again."
-        case .localModel:
-            upgrades.append(.useText(route: route.id, label: route.label, app: app))
-            why = " because it isn't on this Mac any more. Install it again in Settings, or choose another AI for \(app == nil ? "your apps" : "this app")."
         default: break
         }
         return Resolution(capability: .text, tier: .works, answer: route.label, provider: provider(of: route),
@@ -195,7 +175,6 @@ extension AppAI {
         let wants: [Upgrade]
         switch chosen.provider {
         case "text": (why, wants) = ("Nothing can answer apps yet", [])
-        case "local": (why, wants) = ("\(LocalModels.decisionCatalog.first?.name ?? "The decision model") isn't on this Mac yet", [.decisionModel])
         default: (why, wants) = ("\(chosen.label) needs \(keyPhrase(chosen.provider))", [.key(chosen.provider)])
         }
         // What `decide` will use: the choice, else another decision model that can, else text.
@@ -204,7 +183,7 @@ extension AppAI {
                               note: "\(why).", upgrades: wants + textRoute.upgrades.filter { !wants.contains($0) })
         }
         let answer = used.provider == "text" ? byText : used.label
-        let provider = used.provider == "text" ? textRoute.provider : used.provider == "local" ? Builder.localProvider : used.provider
+        let provider = used.provider == "text" ? textRoute.provider : used.provider
         if used.id == chosen.id {
             return Resolution(capability: .decisions, tier: .best, answer: answer, provider: provider, note: nil, upgrades: [])
         }
@@ -215,7 +194,7 @@ extension AppAI {
 
     @MainActor private static func resolvePictures(choice: String?, text: String?) -> Resolution {
         let route = pictureRoute(choice: choice, appText: text)
-        let upgrades: [Upgrade] = [.key("openrouter"), .pictureModel]
+        let upgrades: [Upgrade] = [.key("openrouter")]
         guard let route else {
             return Resolution(capability: .pictures, tier: .none, answer: nil, provider: nil,
                               note: "Nothing on this Mac can make pictures yet.", upgrades: upgrades)
@@ -223,7 +202,6 @@ extension AppAI {
         let answer = imageRouteName(route)
         let provider: String = switch route {
         case .openRouter: "openrouter"
-        case .local: Builder.localProvider
         case .codex: "engine:codex"
         }
         // A cloud model chosen with no key behind it isn't what makes the pictures: something else stands in.
@@ -278,12 +256,11 @@ extension AppAI {
         return "\("AEIOU".contains(name.prefix(1)) ? "an" : "a") \(name) key"
     }
 
-    /// Where a capability's answer is worked out, for an app to tell the person: `onDevice` for a model on this Mac,
-    /// `remote` for a service. A Claude Code or Codex run starts on this Mac but sends what it's given to its company, so
-    /// it's remote too.
+    /// Where a capability's answer is worked out, for an app to tell the person: `remote` for a service. A Claude Code
+    /// or Codex run starts on this Mac but sends what it's given to its company, so it's remote too. (`onDevice`, which
+    /// apps still know, was for models on this Mac.)
     @MainActor static func processing(of provider: String?) -> String {
         guard let provider else { return "unknown" }
-        if provider == Builder.localProvider || provider == "local" { return "onDevice" }
         if provider == "openrouter" || provider.hasPrefix("engine:") { return "remote" }
         return "unknown"
     }
@@ -305,7 +282,6 @@ extension AppAI {
         case .openRouter: "openrouter"
         case .engine(.pi, _): Builder.piProvider
         case .engine(let engine, _): "engine:\(engine.rawValue)"
-        case .localModel(let provider, _): provider
         }
     }
 }
@@ -394,8 +370,7 @@ enum AIStatus {
         // Actions (`LampActSession`, lamp.js's `act`) are the app's text route with one more rule, so they're said apart.
         let act = AppAct.status(appModel: AppModels.load(project).text)
         if act["available"] as? Bool == true {
-            let place = act["where"] as? String == "onDevice" ? "on this Mac" : "sent to a service"
-            lines.append("- Actions: \(act["route"] as? String ?? ""), \(place)")
+            lines.append("- Actions: \(act["route"] as? String ?? ""), sent to a service")
         } else {
             lines.append("- Actions: none, \(act["reason"] as? String ?? "nothing can answer yet")")
         }

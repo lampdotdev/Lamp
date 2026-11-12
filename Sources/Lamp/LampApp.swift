@@ -203,7 +203,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Store.shared.flushDrafts()
             Store.shared.flushChats()
             Store.shared.endTrialsNow()
-            LocalModels.shared.stopServer()
             Adb.stopServer()
         }
     }

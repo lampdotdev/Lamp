@@ -100,7 +100,7 @@ by someone else (the title, the note and the changed code from `pulls/N/files`, 
 
 - **No tools.** It goes only along a way that can't act (`AppAI.toolFree`), never `AppAI.complete`, which can hand
   the call to an engine unsealed:
-  - OpenRouter with the person's key, or a model on this Mac;
+  - OpenRouter with the person's key;
   - Claude Code and Codex only as answers beside a turn run them (`SideAnswer.Run`): a version that run was tested on,
     its sandbox, and a tool tried stopping that version for good, with every run of the engine going, summaries and
     side answers alike, none of which is then shown or kept.

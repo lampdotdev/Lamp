@@ -10,8 +10,7 @@ final class SharedAppReviewTests: XCTestCase {
     override func setUp() { expectNoSharingFoldersLeft() }
     override func tearDown() { folders.forEach { try? FileManager.default.removeItem(at: $0) } }
 
-    private let cloud = ImportReview.Reviewer(name: "a model via OpenRouter", onThisMac: false)
-    private let local = ImportReview.Reviewer(name: "a model via Ollama", onThisMac: true)
+    private let cloud = ImportReview.Reviewer(name: "a model via OpenRouter")
 
     private func review(_ risk: ImportReview.Risk?, by reviewer: ImportReview.Reviewer? = nil, asked: Bool = true,
                         detected: [Sharing.Capability.Level] = []) -> ImportReview {
@@ -24,8 +23,7 @@ final class SharedAppReviewTests: XCTestCase {
     func testOnlyAVouchedLowIsCalledSafe() {
         XCTAssertEqual(review(.low, by: cloud).verdict, .safe)
         XCTAssertEqual(review(.low, by: cloud, detected: [.ordinary]).verdict, .safe)
-        XCTAssertEqual(review(.low, by: local).verdict, .checkedOnThisMac)
-        XCTAssertEqual(review(.low, by: nil).verdict, .checkedOnThisMac)
+        XCTAssertEqual(review(.low, by: nil).verdict, .unvouched)
         XCTAssertEqual(review(nil).verdict, .unchecked)
         XCTAssertEqual(review(nil, asked: false).verdict, .unchecked)
         XCTAssertEqual(review(.medium, by: cloud).verdict, .powerful)
@@ -35,9 +33,9 @@ final class SharedAppReviewTests: XCTestCase {
     }
 
     func testAWarningStandsWhoeverGaveIt() {
-        XCTAssertEqual(review(.high, by: local).verdict, .risky)
-        XCTAssertEqual(review(.medium, by: local).verdict, .powerful)
-        XCTAssertEqual(review(.high, by: local).opening, .anyway)
+        XCTAssertEqual(review(.high, by: nil).verdict, .risky)
+        XCTAssertEqual(review(.medium, by: nil).verdict, .powerful)
+        XCTAssertEqual(review(.high, by: nil).opening, .anyway)
     }
 
     func testReturnOpensOnlyOnAVouchedRatingThatIsntHigh() {
@@ -48,12 +46,11 @@ final class SharedAppReviewTests: XCTestCase {
         XCTAssertEqual(review(.low, by: cloud, detected: [.sensitive]).opening, .anyway)
     }
 
-    func testAModelOnThisMacNeverGivesTheReturnKey() {
+    func testNoReviewerNeverGivesTheReturnKey() {
         for risk in ImportReview.Risk.allCases {
-            XCTAssertNotEqual(review(risk, by: local).opening, .byReturn, "\(risk)")
             XCTAssertNotEqual(review(risk, by: nil).opening, .byReturn, "\(risk)")
         }
-        XCTAssertEqual(review(.low, by: local).opening, .byClick)
+        XCTAssertEqual(review(.low, by: nil).opening, .byClick)
     }
 
     func testNoUsableAnswerTakesADeliberateClick() {
@@ -298,38 +295,6 @@ final class SharedAppReviewTests: XCTestCase {
         XCTAssertLessThanOrEqual(heights.whole + buttons + 48 + 16, 468)
     }
 
-    /// A model on this Mac gets the parts one at a time (each request starts its server, and a second start alongside
-    /// stops the first's); a service gets them at once. Each outcome stays in its part's place either way.
-    func testAModelOnThisMacIsAskedForOnePartAtATime() async {
-        actor Count {
-            var now = 0, most = 0
-            func start() { now += 1; most = max(most, now) }
-            func end() { now -= 1 }
-        }
-        let requests = (0..<4).map { Sharing.reviewRequest(name: "Tally", description: nil, notes: nil, files: [("Part\($0).swift", "let a = \($0)\n")],
-                                                            boundary: "b", batch: ($0, 4)) }
-        func run(_ kind: AppAI.TextRoute.Kind) async -> (most: Int, outcomes: [Sharing.Outcome]) {
-            let count = Count()
-            let route = AppAI.TextRoute(id: "review", label: "test", group: "test", name: "test", kind: kind, available: true)
-            let outcomes = await Sharing.outcomes(of: requests, via: route) { request in
-                await count.start()
-                try await Task.sleep(for: .milliseconds(100))
-                await count.end()
-                let part = request.prompt.contains("Part3.swift") ? "high" : "low"
-                return #"{"summary": "Counts things.", "capabilities": [], "concerns": [], "risk": "\#(part)"}"#
-            }
-            return (await count.most, outcomes)
-        }
-        let local = await run(.localModel(provider: "mlx", model: "test"))
-        XCTAssertEqual(local.most, 1)
-        let online = await run(.openRouter(model: "test"))
-        XCTAssertEqual(online.most, 4)
-        for outcomes in [local.outcomes, online.outcomes] {
-            let risks = outcomes.map { outcome -> ImportReview.Risk? in if case .answer(let answer) = outcome { answer.risk } else { nil } }
-            XCTAssertEqual(risks, [.low, .low, .low, .high])
-        }
-    }
-
     /// An app past the last request Lamp makes for one review.
     private func oversized() throws -> Sharing.Inspection {
         let lines = (Sharing.batchLimit * Sharing.batchCount) / 15 + 1_000
@@ -342,7 +307,7 @@ final class SharedAppReviewTests: XCTestCase {
         XCTAssertEqual(found.batches.count, Sharing.batchCount)
         XCTAssertFalse(found.files.map(\.name).contains("Sources/B.swift"))
         for risk in ImportReview.Risk.allCases {
-            for reviewer in [cloud, local] {
+            for reviewer in [cloud] {
                 var review = ImportReview(inspection: found)
                 review.asked = true
                 review.take(.init(summary: "Counts things.", capabilities: [], concerns: ["Something else."], risk: risk), by: reviewer)
@@ -350,7 +315,7 @@ final class SharedAppReviewTests: XCTestCase {
                 XCTAssertTrue(review.partial, what)
                 XCTAssertEqual(review.concerns, ["Something else."], what)
                 XCTAssertNotEqual(review.verdict, .safe, what)
-                XCTAssertNotEqual(review.verdict, .checkedOnThisMac, what)
+                XCTAssertNotEqual(review.verdict, .unvouched, what)
                 XCTAssertNotEqual(review.opening, .byReturn, what)
                 XCTAssertEqual(review.verdict, risk == .high ? .risky : .partlyChecked, what)
                 XCTAssertEqual(review.opening, risk == .high ? .anyway : .byClick, what)

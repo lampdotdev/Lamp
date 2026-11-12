@@ -1178,8 +1178,7 @@ enum Agent {
     static func environment(prompt: String, files: [String] = [], project: LampProject? = nil, session: String, sessionDir: String, defers: Bool = false) -> [String: String] {
         var env = [
             "LAMP_PI": executable?.path ?? "pi",
-            "LAMP_PROVIDER": Builder.piProvider == Builder.localProvider ? LocalModels.piProvider(for: Builder.piModel)
-                : Builder.piProvider,
+            "LAMP_PROVIDER": Builder.piProvider,
             "LAMP_MODEL": Builder.piModel,
             "LAMP_SESSION": session,
             "LAMP_SESSION_DIR": sessionDir,

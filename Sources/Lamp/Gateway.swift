@@ -234,13 +234,12 @@ final class Gateway: @unchecked Sendable {
 
 /// Runs an in-app AI request with whatever Lamp is connected to.
 enum AppAI {
-    /// Where an app's text AI goes: a model through OpenRouter, the Claude Code or Codex sign-in, or a model
-    /// running on this Mac. Settings and an app's own choice keep the id.
+    /// Where an app's text AI goes: a model through OpenRouter, or the Claude Code or Codex sign-in. Settings and
+    /// an app's own choice keep the id.
     struct TextRoute: Identifiable, Equatable {
         enum Kind: Equatable {
             case openRouter(model: String)
             case engine(Engine, model: String)   // Claude Code or Codex with one of its models
-            case localModel(provider: String, model: String)   // Native Mac AI
         }
         let id: String
         /// The model with what runs it ("Opus via Claude Code"): captions and the per-app panel.
@@ -249,8 +248,8 @@ enum AppAI {
         let group: String
         let name: String
         let kind: Kind
-        /// Whether this route can answer right now: the key, the tool or the model it needs is there.
-        /// Worked out when the list is made, on the main thread, where the local models live.
+        /// Whether this route can answer right now: the key or the tool it needs is there.
+        /// Worked out when the list is made, on the main thread.
         let available: Bool
 
         /// The OpenRouter model that stands in for this route where only OpenRouter can answer (an app on a
@@ -264,12 +263,11 @@ enum AppAI {
             let available: Bool
             switch kind {
             case .openRouter: available = Provider.hasKey
-            // pi builds through OpenRouter or a model on this Mac, each a route of its own.
+            // pi builds through OpenRouter, a route of its own.
             case .engine(.pi, _): available = false
             // Installed, and not known to be signed out: a signed-out sign-in can't answer, and the setup offer
             // should be to sign in rather than to say it's set up.
             case .engine(let engine, _): available = EngineInstall.path(for: engine) != nil && EngineSignIn.known[engine] != false
-            case .localModel(_, let model): available = LocalModels.shared.installed.contains { $0.id == model }
             }
             return TextRoute(id: id, label: "\(name) via \(via ?? group)", group: group, name: name, kind: kind, available: available)
         }
@@ -278,18 +276,16 @@ enum AppAI {
     /// Sonnet through OpenRouter: what Lamp's own calls use when there's a key.
     static var defaultOpenRouterModel: String { anthropicModels.first { $0.id == "sonnet" }!.openRouter }
 
-    /// The OpenRouter model for Lamp's own text-only calls (an app's name and parts, the next-message
-    /// suggestion, a version's title): Sonnet, unless apps' text goes to a model on this Mac. Someone who
-    /// chose to stay local gets nil here, so these calls follow that route instead of leaving the Mac.
     /// The link's id of the page shared on lamp.dev this request is for (`SharedPagesAI`), nil for an app of the
     /// person's own. A shared page is someone else's code: it never gets a route that runs an engine's own tools, which
     /// for now is picture-making through Codex (`viaCodexImage`). Its answers from Claude Code and Codex are sealed as
     /// every app's are (`viaEngine`).
     @TaskLocal static var sharedPage: String?
 
+    /// The OpenRouter model for Lamp's own text-only calls (an app's name and parts, the next-message
+    /// suggestion, a version's title): Sonnet.
     @MainActor static func helperModel() async -> String? {
-        if case .localModel = model.kind { return nil }
-        return defaultOpenRouterModel
+        defaultOpenRouterModel
     }
 
     /// Whether a helper's answer is one of its own prompt's examples handed back, which small models do when
@@ -329,10 +325,6 @@ enum AppAI {
         for model in codexModels {
             routes.append(.make(id: "engine:codex:\(model.id)", group: Engine.codex.title, name: model.label, kind: .engine(.codex, model: model.id)))
         }
-        for model in LocalModels.shared.installed where !LocalModels.isDecisionModel(model.id) {
-            routes.append(.make(id: "local:\(model.id)", group: "Native Mac AI", name: model.name, via: "Native Mac AI on this Mac",
-                                kind: .localModel(provider: Builder.localProvider, model: model.id)))
-        }
         return routes
     }
 
@@ -369,15 +361,11 @@ enum AppAI {
         return routes
     }
 
-    /// The route apps use when nothing was chosen: what builds apps when that's a model on this Mac (someone
-    /// who chose to stay local keeps staying local), else OpenRouter's Sonnet with a key, else the builder's
-    /// own sign-in, else the first thing that can answer.
+    /// The route apps use when nothing was chosen: OpenRouter's Sonnet with a key, else the builder's own
+    /// sign-in, else the first thing that can answer.
     @MainActor static var defaultRoute: TextRoute {
         let routes = allTextRoutes
         func route(_ id: String) -> TextRoute? { routes.first { $0.id == id && $0.available } }
-        if Builder.engine == .pi, Builder.piProvider == Builder.localProvider, let local = route("local:\(Builder.piModel)") {
-            return local
-        }
         if let sonnet = route("sonnet") { return sonnet }
         // The builder's own sign-in: Sonnet through Claude Code (never Haiku unasked), Codex's best model.
         switch Builder.engine {
@@ -385,11 +373,7 @@ enum AppAI {
         case .codex: if let route = route(canonicalRoute("engine:codex")) { return route }
         case .pi: break
         }
-        // Never a model on this Mac by default: it's for those who choose it (here, or pi building with it, above).
-        return routes.first { route in
-            if case .localModel = route.kind { return false }
-            return route.available
-        } ?? routes.first { $0.id == "sonnet" }!
+        return routes.first(where: \.available) ?? routes.first { $0.id == "sonnet" }!
     }
 
     /// The OpenRouter model an app on the person's phone uses away from the Mac, where only OpenRouter can
@@ -407,7 +391,7 @@ enum AppAI {
     }
 
     /// The image model an app on the phone uses away from the Mac: Settings' choice, else the Mac's own
-    /// choice when that's a cloud model, else the first cloud model. The model on this Mac can't travel.
+    /// choice, else the first cloud model.
     @MainActor static var awayImageModel: String {
         let saved = UserDefaults.standard.string(forKey: "awayImageModel") ?? ""
         if Icons.artModels.contains(where: { $0.id == saved }) { return saved }
@@ -420,7 +404,7 @@ enum AppAI {
     }
 
     /// What a phone can decide with on its own, through the OpenRouter key it carries: Jev, or the text model
-    /// it uses away, asked the questions as JSON. The Mac's own model stays here.
+    /// it uses away, asked the questions as JSON.
     static var awayDecisionModels: [(id: String, label: String, provider: String, model: String)] {
         [("openrouter:jev-latest", "Jev", "openrouter", "jev-latest"), ("text", "By text, through the text model above", "text", "")]
     }
@@ -471,10 +455,9 @@ enum AppAI {
     /// window and acting on it, and the text default did it badly: Sonnet through OpenRouter took minutes,
     /// finished wrong and cost dollars a run, where the sign-ins did it right in about a minute. So a
     /// sign-in comes first (the one that builds apps, then the other; Opus through Claude Code, which did
-    /// the task where Sonnet didn't), then the OpenRouter model that did. Someone staying on this Mac's own
-    /// models stays there, and whatever else answers text is the last resort.
+    /// the task where Sonnet didn't), then the OpenRouter model that did, and whatever else answers text is the
+    /// last resort.
     nonisolated static func computerDefault(among routes: [TextRoute], builder: Engine, textDefault: TextRoute, hasKey: Bool) -> TextRoute {
-        if case .localModel = textDefault.kind { return textDefault }
         for engine in builder == .claude ? [Engine.claude, .codex] : [.codex, .claude] {
             let own = routes.first { route in
                 guard route.available, case .engine(engine, let model) = route.kind else { return false }
@@ -567,10 +550,6 @@ enum AppAI {
         case .engine(let engine, let model):
             return try await viaEngine(engine, prompt: prompt, images: images, system: system, model: engineModel ?? model,
                                        schema: json ? schema : nil, timeLimit: timeLimit)
-        case .localModel(_, let model):
-            let base = try await LocalModels.shared.ensureServer(for: model)
-            return try await viaOpenAICompatible("\(base)/v1/chat/completions", key: LocalModels.apiKey,
-                                                 prompt: prompt, images: images, system: system, model: model, schema: json ? schema : nil)
         }
     }
 
@@ -614,7 +593,7 @@ enum AppAI {
 
     /// One answer for Lamp's own reading of text someone else wrote (`SuggestionSummaries`), only along a way that can't
     /// act. Never `complete`, which can hand the call to an engine unsealed. Nil when none of these can answer:
-    /// - OpenRouter with the person's key, or a model on this Mac: text in, text out.
+    /// - OpenRouter with the person's key: text in, text out.
     /// - Claude Code and Codex only through the run proven for answers beside a turn (`SideAnswer.Run`): a version that run
     ///   was tested on, launched with no tools (Claude Code started afresh, `claudeFreshArguments`; Codex with its model's
     ///   catalog entry edited), its own report of what it was given checked before a word is taken (Claude Code's must
@@ -636,7 +615,6 @@ enum AppAI {
         guard model.available else { return false }
         switch model.kind {
         case .openRouter, .engine(.pi, _): return false
-        case .localModel: return true
         case .engine(let engine, _): return answerRoute(engine, model: "") != nil
         }
     }
@@ -650,11 +628,6 @@ enum AppAI {
         guard chosen.available else { return nil }
         switch chosen.kind {
         case .openRouter, .engine(.pi, _): return nil
-        case .localModel(_, let name):
-            let base = try await LocalModels.shared.ensureServer(for: name)
-            let (text, cost) = try await viaOpenAICompatible("\(base)/v1/chat/completions", key: LocalModels.apiKey, prompt: prompt, images: [],
-                                                             system: system, model: name, schema: schema, timeout: 120)
-            return ToolFreeAnswer(text: text, cost: cost)
         case .engine(let engine, let name):
             guard var route = answerRoute(engine, model: fastModel(for: chosen) ?? name) else { return nil }
             // Claude Code takes the system prompt as its own; Codex's proven launch has none, so what it's told goes first
@@ -675,55 +648,13 @@ enum AppAI {
                                 environment: EngineInstall.environment(for: engine))
     }
 
-    /// Chat completion against an OpenAI-compatible endpoint: Lamp's own model servers on this Mac.
-    /// `timeout` is for a caller with a deadline of its own; otherwise a model has time to load first.
-    /// `templateArgs` go to the model's chat template (llama.cpp's `chat_template_kwargs`).
-    static func viaOpenAICompatible(_ endpoint: String, key: String?, prompt: String, images: [Image],
-                                    system: String, model: String, schema: [String: Any]? = nil,
-                                    timeout: TimeInterval = 600, templateArgs: [String: Any]? = nil) async throws -> (String, Double) {
-        var request = URLRequest(url: URL(string: endpoint)!)
-        request.httpMethod = "POST"
-        request.timeoutInterval = timeout
-        if let key { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        var messages: [[String: Any]] = []
-        if !system.trimmed.isEmpty { messages.append(["role": "system", "content": system]) }
-        let content: [[String: Any]] = [["type": "text", "text": prompt]] + images.map {
-            ["type": "image_url", "image_url": ["url": "data:\($0.mediaType);base64,\($0.data)"]]
-        }
-        messages.append(["role": "user", "content": content])
-        var body: [String: Any] = ["model": model, "messages": messages]
-        if let schema { body["response_format"] = ["type": "json_schema", "json_schema": ["name": "answer", "strict": true, "schema": schema]] }
-        if let templateArgs { body["chat_template_kwargs"] = templateArgs }
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-        guard (response as? HTTPURLResponse)?.statusCode == 200,
-              let choices = obj["choices"] as? [[String: Any]],
-              let text = (choices.first?["message"] as? [String: Any])?["content"] as? String else {
-            let message = (obj["error"] as? [String: Any])?["message"] as? String ?? "The local model didn't answer."
-            throw Failure(message: message)
-        }
-        // Reasoning models may wrap their thinking in <think>…</think>; apps only want the answer.
-        let answer = text.replacingOccurrences(of: #"(?s)<think>.*?</think>"#, with: "", options: .regularExpression)
-        return (answer.trimmed, 0)
-    }
-
     // MARK: Decisions (System One models such as Jev)
 
-    /// Where decisions go: Jev through OpenRouter, a decision model on this Mac, or a small text model
-    /// answering as JSON (`decideByText`).
+    /// Where decisions go: Jev through OpenRouter, or a small text model answering as JSON (`decideByText`).
     static let decisionModels: [(id: String, label: String, provider: String, model: String)] = [
         ("openrouter:jev-latest", "Jev via OpenRouter", "openrouter", "jev-latest"),
-        ("local:h2o-lightning-4b", "H2O Lightning 4B on this Mac", "local", "h2o-lightning-4b"),
         ("text", "By text, through what answers apps", "text", ""),
     ]
-
-    /// The decision model on this Mac, as installed (its id for the local server), or nil.
-    @MainActor static func localDecisionModel() -> String? {
-        guard let spec = LocalModels.decisionCatalog.first else { return nil }
-        return LocalModels.shared.installedID(for: spec)
-    }
 
     static var decisionModel: (id: String, label: String, provider: String, model: String) {
         let saved = UserDefaults.standard.string(forKey: "decisionModel") ?? ""
@@ -731,13 +662,12 @@ enum AppAI {
         return decisionModels[0]
     }
 
-    /// Whether a decision model can answer now: its key, or its download for the one on this Mac; by text
-    /// whenever the app's text route (`appText`, else Settings') can.
+    /// Whether a decision model can answer now: its key; by text whenever the app's text route (`appText`,
+    /// else Settings') can.
     @MainActor static func canDecide(with choice: (id: String, label: String, provider: String, model: String),
                                       appText: String? = nil) -> Bool {
         switch choice.provider {
         case "text": route(for: appText).available
-        case "local": localDecisionModel() != nil
         default: KeyStore.key(for: choice.provider) != nil
         }
     }
@@ -748,7 +678,6 @@ enum AppAI {
     @MainActor static func decisionRoute(for appChoice: String?, appText: String? = nil) -> (id: String, label: String, provider: String, model: String)? {
         let wanted = decisionModels.first { $0.id == appChoice } ?? decisionModel
         if canDecide(with: wanted, appText: appText) { return wanted }
-        // Not the model on this Mac unless it's the one chosen: it's for those who choose it.
         return decisionModels.first { $0.provider == "openrouter" && canDecide(with: $0, appText: appText) }
             ?? decisionModels.first { $0.provider == "text" && canDecide(with: $0, appText: appText) }
     }
@@ -759,16 +688,9 @@ enum AppAI {
     static func decide(state: Any, questions: [String: Any],
                        model appChoice: String? = nil, appText: String? = nil) async throws -> ([String: Any], Double) {
         guard let choice = await decisionRoute(for: appChoice, appText: appText) else {
-            let wanted = decisionModels.first { $0.id == appChoice } ?? decisionModel
-            if wanted.provider == "local" {
-                throw Failure(message: "The decision model on this Mac isn't downloaded yet. Get it in Lamp → Settings (⌘,) → AI Providers → Native Mac AI.", needs: .decisions)
-            }
             throw Failure(message: "Decisions need an OpenRouter key. Add one in Lamp → Settings (⌘,) → AI Providers.", needs: .decisions)
         }
         if choice.provider == "text" { return try await decideByText(state: state, questions: questions, appText: appText) }
-        if choice.provider == "local", let id = await localDecisionModel() {
-            return try await decideLocally(state: state, questions: questions, model: id)
-        }
         guard let key = KeyStore.key(for: choice.provider) else {
             // Gone since the route was chosen: the text model answers the same questions in JSON instead.
             return try await decideByText(state: state, questions: questions, appText: appText)
@@ -778,104 +700,6 @@ enum AppAI {
         let done = try await LampCLI.ask("openRouterDecide", ["key": key, "model": choice.model, "state": state, "questions": questions])
         if let answers = done["answers"] as? [String: Any] { return (answers, done["cost"] as? Double ?? 0) }
         throw openRouterFailure(done["trouble"] as? [String: Any] ?? [:], from: Provider.keyProvider(choice.provider)?.name ?? choice.provider)
-    }
-
-    /// The state as the decision models read it: text as it is, anything else as JSON.
-    private static func stateText(_ state: Any) -> String {
-        if let text = state as? String { return text }
-        return (try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys, .fragmentsAllowed]))
-            .map { String(decoding: $0, as: UTF8.self) } ?? "\(state)"
-    }
-
-    /// Each question's options, in order: for a choice the criteria's names (with descriptions); for a
-    /// score the levels, lowest first; for a noul true then false.
-    private static func options(of question: [String: Any]) -> [(name: String, description: String)] {
-        switch question["type"] as? String {
-        case "noul":
-            let criteria = question["criteria"] as? [String: Any] ?? [:]
-            return [("true", criteria["true"] as? String ?? "Yes"), ("false", criteria["false"] as? String ?? "No")]
-        case "score":
-            return (question["criteria"] as? [String] ?? []).map { ($0, "") }
-        default:
-            if let dict = question["criteria"] as? [String: Any] {
-                return dict.keys.sorted().map { ($0, dict[$0] as? String ?? "") }
-            }
-            return (question["criteria"] as? [String] ?? []).map { ($0, "") }
-        }
-    }
-
-    /// A Jev-class model on this Mac, through the local server, the way its serving shim does it: one
-    /// question per forward pass, the record and the lettered options in a chat prompt ending in "Answer:",
-    /// and the probabilities read off the label tokens at that slot (softmax over their log-probabilities
-    /// at the model's temperature), with the shim's confidence and the floor it holds yes/no answers to.
-    static func decideLocally(state: Any, questions: [String: Any], model: String) async throws -> ([String: Any], Double) {
-        let base = try await LocalModels.shared.ensureServer(for: model)
-        let labels = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz").map(String.init)
-        let record = stateText(state)
-        var answers: [String: Any] = [:]
-        for (id, value) in questions {
-            guard let question = value as? [String: Any] else { continue }
-            let options = options(of: question)
-            guard !options.isEmpty, options.count <= labels.count else { throw Failure(message: "The question \"\(id)\" has no options, or too many.") }
-            let lines = options.enumerated().map { index, option in
-                "\(labels[index])) \(option.name)" + (option.description.isEmpty ? "" : ": \(option.description)")
-            }
-            let user = "record: \(record)\nquestion: \(question["instructions"] as? String ?? "")\noptions:\n" + lines.joined(separator: "\n")
-            let prompt = "<|im_start|>system\nYou are a decision engine. You read a record and answer one question about it by choosing exactly one option. Reply with a single letter.<|im_end|>\n"
-                + "<|im_start|>user\n\(user)<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\nAnswer:"
-            var request = URLRequest(url: URL(string: "\(base)/v1/completions")!)
-            request.setValue("Bearer \(LocalModels.apiKey)", forHTTPHeaderField: "Authorization")
-            request.httpMethod = "POST"
-            request.timeoutInterval = 600
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONSerialization.data(withJSONObject: ["model": model, "prompt": prompt, "max_tokens": 1, "temperature": 0,
-                                                                           "logprobs": max(options.count * 2, 20)] as [String: Any])
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-            // The server lists the likeliest tokens at the answer slot: [{token, logprob}] under the first
-            // content entry (or, from older servers, a {token: logprob} dictionary).
-            guard (response as? HTTPURLResponse)?.statusCode == 200, let choice = (obj["choices"] as? [[String: Any]])?.first,
-                  let logprobs = choice["logprobs"] as? [String: Any] else {
-                throw Failure(message: "The decision model on this Mac didn't answer: \((obj["error"] as? [String: Any])?["message"] as? String ?? "no probabilities came back").")
-            }
-            var top: [String: Double] = [:]
-            if let content = (logprobs["content"] as? [[String: Any]])?.first, let list = content["top_logprobs"] as? [[String: Any]] {
-                for entry in list { if let token = entry["token"] as? String, let p = entry["logprob"] as? Double { top[token] = p } }
-            } else if let dict = (logprobs["top_logprobs"] as? [[String: Any]])?.first {
-                for (token, p) in dict { if let p = p as? Double { top[token] = p } }
-            }
-            guard !top.isEmpty else { throw Failure(message: "The decision model on this Mac didn't answer: no probabilities came back.") }
-            // The label's log-probability at the answer slot, with or without the space the tokenizer puts first.
-            var logs: [Double] = []
-            for index in options.indices {
-                let label = labels[index]
-                let found = top.first { $0.key.trimmingCharacters(in: .whitespaces) == label }?.value
-                logs.append(found ?? -30)
-            }
-            let temperature = 0.8
-            let scaled = logs.map { $0 / temperature }
-            let peak = scaled.max() ?? 0
-            let weights = scaled.map { exp($0 - peak) }
-            let total = weights.reduce(0, +)
-            let probabilities = weights.map { $0 / total }
-            let confidence = options.count < 2 ? 1 : (probabilities.max()! - 1 / Double(options.count)) / (1 - 1 / Double(options.count))
-            switch question["type"] as? String {
-            case "noul":
-                var p = probabilities[0]
-                let floor = 0.801   // the shim commits a yes/no it isn't sure of to the floor on its side
-                if max(p, 1 - p) < floor { p = p >= 0.5 ? floor : 1 - floor }
-                answers[id] = ["noul": p]
-            case "score":
-                let score = probabilities.enumerated().reduce(0.0) { $0 + Double($1.offset) * $1.element }
-                answers[id] = ["score": score, "probabilities": Dictionary(uniqueKeysWithValues: probabilities.enumerated().map { (String($0.offset), $0.element) }),
-                               "confidence": confidence]
-            default:
-                let best = probabilities.enumerated().max { $0.element < $1.element }!.offset
-                answers[id] = ["choice": options[best].name, "probabilities": Dictionary(uniqueKeysWithValues: zip(options.map(\.name), probabilities)),
-                               "confidence": confidence]
-            }
-        }
-        return (answers, 0)
     }
 
     /// The small model for quick judgments on the route that will run them: Haiku 5.5 when Claude Code
@@ -917,21 +741,16 @@ enum AppAI {
         return (answers, cost)
     }
 
-    /// Where images come from: OpenRouter's image models with a key; otherwise a picture model on this Mac
-    /// (mflux, from Hugging Face), if one was downloaded; otherwise Codex's own image tool, with a ChatGPT
-    /// sign-in; otherwise nothing, and Lamp asks the first time an app wants a picture. (Apple's on-device Image Playground has no
+    /// Where images come from: OpenRouter's image models with a key; otherwise Codex's own image tool, with a
+    /// ChatGPT sign-in; otherwise nothing, and Lamp asks the first time an app wants a picture. (Apple's on-device Image Playground has no
     /// programmatic API any more: ImageCreator stopped working in macOS 27.)
-    enum ImageRoute { case openRouter, codex, local }
+    enum ImageRoute { case openRouter, codex }
 
-    /// The route for pictures, as far as can be told without asking anything: an explicit choice of the
-    /// model on this Mac (when it's there and the request makes a picture from words), else OpenRouter with a
-    /// key, else the model on this Mac, else Codex when it's chosen and was last known to be signed in.
+    /// The route for pictures, as far as can be told without asking anything: OpenRouter with a key, else Codex
+    /// when it's chosen and was last known to be signed in.
     /// `imageRoute(…)` asks Codex first; this is the one rule both follow, and the one `resolve` reports.
     @MainActor static func pictureRoute(choice: String? = nil, appText: String? = nil, editing: Bool = false) -> ImageRoute? {
-        let wantsLocal = choice == Icons.localArt || (choice == nil && Icons.artModel == Icons.localArt)
-        if wantsLocal, ImageModels.ready, !editing { return .local }
         if Provider.hasKey { return .openRouter }
-        if ImageModels.ready, !editing { return .local }
         // Never for a page shared on lamp.dev: Codex makes a picture with its own tools (`viaCodexImage`).
         if sharedPage == nil, codexChosen(appText: appText), EngineInstall.path(for: .codex) != nil, EngineSignIn.known[.codex] != false { return .codex }
         return nil
@@ -950,7 +769,6 @@ enum AppAI {
 
     /// The route to act on. Codex counts only when it's chosen (above) and signed in (a copy can be
     /// there before anyone has signed in to it: Lamp's, or the one inside the ChatGPT app); that's checked at most every few minutes.
-    /// A model on this Mac makes pictures from words only, so a request that edits existing pictures skips it.
     static func imageRoute(editing: Bool = false, appText: String? = nil, choice: String? = nil) async -> ImageRoute? {
         if codexChosen(appText: appText), EngineInstall.path(for: .codex) != nil {
             let last = await MainActor.run { EngineSignIn.checked[.codex] }
@@ -967,28 +785,19 @@ enum AppAI {
         switch route {
         case .openRouter: "OpenRouter"
         case .codex: "ChatGPT, with your sign-in"
-        case .local: "\(ImageModels.chosen?.name ?? "a model") on this Mac"
         }
     }
 
     /// The failure an app gets when nothing can make images: Lamp shows a card asking for a key or a download.
-    static let noImageRoute = "Making images needs an OpenRouter key, or a picture model on this Mac. Add one in Lamp → Settings (⌘,)."
+    static let noImageRoute = "Making images needs an OpenRouter key. Add one in Lamp → Settings (⌘,)."
 
     /// Creates or edits an image. `references` are input images to edit or combine. Returns PNG data and
     /// the cost in USD (0 through Codex).
     static func image(prompt: String, references: [Image], aspectRatio: String?,
                       model appChoice: String? = nil, appText: String? = nil) async throws -> (Data, Double) {
-        // Someone who picked the Mac's own model over the cloud ones gets it, key or no key (`pictureRoute`).
-        let wantsLocal = (appChoice == Icons.localArt || (appChoice == nil && Icons.artModel == Icons.localArt)) && ImageModels.ready
-        if wantsLocal, !references.isEmpty {
-            throw Failure(message: "\(ImageModels.chosen?.name ?? "The model on this Mac") makes pictures from words and can't edit one. Pick a cloud image model in Lamp → Settings → AI for this.")
-        }
         switch await imageRoute(editing: !references.isEmpty, appText: appText, choice: appChoice) {
         case .openRouter: break
         case .codex: return (try await viaCodexImage(prompt: prompt, references: references, aspectRatio: aspectRatio), 0)
-        case .local:
-            let (width, height) = localSize(aspectRatio)
-            return (try await ImageModels.generate(prompt: prompt, width: width, height: height), 0)
         case nil: throw Failure(message: noImageRoute, needs: .pictures)
         }
         // Sent by lamp's command line (`openRouterImage`, cli/openrouter.mjs); what comes back is checked here as a picture.
@@ -1002,19 +811,6 @@ enum AppAI {
             throw Failure(message: "The image model didn't return a picture.")
         }
         return (decoded, done["cost"] as? Double ?? 0)
-    }
-
-    /// Pixel sizes for the local models (multiples of 16, about a megapixel).
-    private static func localSize(_ aspectRatio: String?) -> (Int, Int) {
-        switch aspectRatio {
-        case "16:9": (1024, 576)
-        case "9:16": (576, 1024)
-        case "4:3": (1024, 768)
-        case "3:4": (768, 1024)
-        case "3:2": (1024, 688)
-        case "2:3": (688, 1024)
-        default: (1024, 1024)
-        }
     }
 
     /// Codex makes the picture with its built-in image tool and saves it in a scratch folder; reference

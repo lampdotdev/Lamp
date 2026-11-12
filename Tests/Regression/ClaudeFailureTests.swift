@@ -26,10 +26,10 @@ final class ClaudeFailureTests: XCTestCase {
         XCTAssertEqual(Provider.friendlyError("Connection error.", from: "OpenRouter"), ErrorMessages.connectionFailed)
     }
 
-    func testARefusedProviderIsntTheLocalServer() {
+    func testARefusedConnectionIsSaidPlainly() {
         XCTAssertEqual(Provider.friendlyError("API Error: Unable to connect to API (ECONNREFUSED)", from: "Claude Code"),
                        ErrorMessages.connectionFailed)
         XCTAssertEqual(Provider.friendlyError("connect ECONNREFUSED 127.0.0.1:8000", from: "OpenRouter"),
-                       ErrorMessages.localServerUnreachable)
+                       ErrorMessages.connectionFailed)
     }
 }

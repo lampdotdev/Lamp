@@ -325,8 +325,6 @@ struct SetupView: View {
             all.append((engine.rawValue, engine.title,
                         "Uses your \(engine.title) sign-in, for building and for the AI inside your apps."))
         }
-        all.append(("local", "A model on this Mac",
-                    "Free and private: a model Lamp downloads and runs here. Smaller models build simpler apps."))
         return all
     }
 
@@ -375,18 +373,12 @@ struct SetupView: View {
                         if let keyProblem {
                             Label(keyProblem, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
                         }
-                    case "claude", "codex":
+                    default:
                         let engine: Engine = choice == "claude" ? .claude : .codex
                         EngineUseRow(engine: engine, status: status(of: engine)) {
                             use(engine)
                         } cancelSignIn: {
                             EngineSignIn.cancelSignIn(engine)
-                        }
-                    default:
-                        Button("Choose a Model…") {
-                            // Settings can't come in front of the sheet, which floats over the app.
-                            later()
-                            openSettings(tab: "providers", sheet: Builder.localProvider)
                         }
                     }
                 }
@@ -454,7 +446,6 @@ struct SetupView: View {
             KeyStore.setOpenRouterKey(candidate)
             key = ""
             Builder.engine = .pi
-            Builder.piProvider = "openrouter"
             await store.recheckSetup()
         }
     }
@@ -539,7 +530,7 @@ struct SettingsView: View {
         }
         .frame(width: 560)
         .onAppear {
-            if tab == "local" { tab = "providers" }   // Local Models is now Native Mac AI, under Providers
+            if tab == "local" { tab = "providers" }   // where an earlier Lamp's models on this Mac were
             if !(["building", "apps", "providers", "memory"] + (ExperimentalSettings.hasAny ? ["experimental"] : [])).contains(tab) { tab = "building" }
         }
     }
@@ -742,10 +733,10 @@ extension View {
 /// Which agent, provider and model build apps.
 struct BuildingSettings: View {
     @EnvironmentObject private var store: Store
-    @ObservedObject private var local = LocalModels.shared
     @ObservedObject private var downloads = EngineDownloads.shared
     @AppStorage("engine") private var engine = Engine.pi.rawValue
-    @AppStorage("piProvider") private var provider = "openrouter"
+    /// What pi builds through: OpenRouter, its one provider.
+    private let provider = Builder.piProvider
     @AppStorage("settingsTab") private var tab = "building"
     @AppStorage("notify") private var notify = true
     @AppStorage("commandApproval") private var approval = CommandApproval.risky.rawValue
@@ -850,17 +841,14 @@ struct BuildingSettings: View {
     /// OpenRouter, once its key is added in Settings → AI Providers, or while it builds even if its key was removed.
     private var openRouterAdded: Bool {
         _ = revision
-        return Provider.hasKey || (selectedEngine == .pi && provider != Builder.localProvider)
+        return Provider.hasKey || selectedEngine == .pi
     }
 
-    /// The provider menu's last item switches to the Providers tab instead of choosing a provider.
+    /// The menu's last item switches to the Providers tab instead of choosing a model.
     private static let configure = Icons.configureProviders
-    private var providerChoice: Binding<String> {
-        Binding(get: { provider }, set: { if $0 == Self.configure { tab = "providers" } else { provider = $0 } })
-    }
 
     /// One menu for what builds apps, as Settings → Apps lists what answers inside them: the models under
-    /// what runs them (Claude Code, Codex, OpenRouter, Native Mac AI). OpenRouter's long list is the suggested
+    /// what runs them (Claude Code, Codex, OpenRouter). OpenRouter's long list is the suggested
     /// models and the current one, with "Other model…" opening the search.
     private struct TextChoice: Identifiable { let id: String; let label: String }
     private struct TextGroup: Identifiable { let title: String; let items: [TextChoice]; var id: String { title } }
@@ -884,10 +872,6 @@ struct BuildingSettings: View {
             items.append(TextChoice(id: "pi-other:openrouter", label: "Other model…"))
             groups.append(TextGroup(title: Provider.openRouter, items: items))
         }
-        var onMac = local.installed.filter { !LocalModels.isDecisionModel($0.id) }
-            .map { TextChoice(id: "pi:\(Builder.localProvider):\($0.id)", label: $0.name) }
-        if onMac.isEmpty { onMac.append(TextChoice(id: "pi-other:\(Builder.localProvider)", label: "No models yet")) }
-        groups.append(TextGroup(title: "Native Mac AI", items: onMac))
         return groups
     }
 
@@ -910,17 +894,11 @@ struct BuildingSettings: View {
                 otherModel = false
                 downloads.start(which)
             case "pi":
-                // The model is saved under its provider before the provider changes, so the change reads it back.
-                Builder.piProvider = parts[1]
                 Builder.piModel = parts[2]
-                // A GGUF model picked to run here: what runs it comes now, rather than with the first request.
-                if parts[1] == Builder.localProvider, LocalModels.model(parts[2])?.format == .gguf { LocalModels.shared.getServer() }
-                provider = parts[1]
                 model = parts[2]
                 engine = Engine.pi.rawValue
                 otherModel = false
             case "pi-other":
-                provider = parts[1]
                 engine = Engine.pi.rawValue
                 otherModel = true
             default: break
@@ -950,8 +928,8 @@ struct BuildingSettings: View {
                 }
                 agentFix
                 if selectedEngine == .pi {
-                    // Keys are managed in Providers; only ask here if the chosen provider has lost its key.
-                    if provider != Builder.localProvider, !Provider.hasKey {
+                    // Keys are managed in Providers; only ask here if OpenRouter has lost its key.
+                    if !Provider.hasKey {
                         KeyRow(provider: Provider.openRouterProvider) { revision += 1; recheck() }
                     }
                     if otherModel { ModelPicker(provider: provider, model: $model, revision: revision) }
@@ -1002,7 +980,6 @@ struct BuildingSettings: View {
         .onChange(of: engine) { recheck() }
         .onAppear { downloads.start(selectedEngine) }   // chosen before Lamp kept its own copy
         .task(id: signInCheck) { await checkSignIn() }
-        .onChange(of: provider) { model = Builder.piModel; recheck() }
         .onChange(of: model) { Builder.piModel = model; recheck() }
         .onAppear { revision += 1 }   // keys may have changed in the Providers tab
     }
@@ -1017,7 +994,6 @@ struct BuildingSettings: View {
 struct AppsSettings: View {
     @EnvironmentObject private var store: Store
     @AppStorage("appModel") private var appModel = AppAI.defaultRoute.id
-    @ObservedObject private var local = LocalModels.shared
     @AppStorage("settingsTab") private var settingsTab = "building"
     @AppStorage("settingsSheet") private var settingsSheet = ""
     @AppStorage("imageModel") private var imageModel = Icons.artModels[0].id
@@ -1075,11 +1051,10 @@ struct AppsSettings: View {
         .task { await sharedPages.load() }
     }
 
-    /// The decision models that can answer now: those with their key, the one on this Mac once it's
-    /// downloaded, and the text model when something answers apps.
+    /// The decision models that can answer now: those with their key, and the text model when something
+    /// answers apps.
     private var decisionChoices: [(id: String, label: String, provider: String, model: String)] {
         _ = revision
-        _ = local.installed
         return AppAI.decisionModels.filter { AppAI.canDecide(with: $0) }
     }
 }
@@ -1434,11 +1409,10 @@ struct ComputerUseSettings: View {
     }
 }
 
-/// Claude, ChatGPT, OpenRouter and Native Mac AI in one list, each with its state. Double-click one to see its
-/// models, sign in, or change its key.
+/// Claude, ChatGPT and OpenRouter in one list, each with its state. Double-click one to sign in or change its
+/// key.
 struct ProvidersSettings: View {
     @EnvironmentObject private var store: Store
-    @ObservedObject private var local = LocalModels.shared
     @AppStorage("settingsSheet") private var pendingSheet = ""   // set by the setup screen
     @State private var selection: String?
     @State private var showing: ProviderDetail?
@@ -1448,9 +1422,9 @@ struct ProvidersSettings: View {
     @ObservedObject private var downloads = EngineDownloads.shared
 
     /// Every provider, in the welcome's order: the sign-ins (downloaded or not, since this is where Building's
-    /// Configure providers… leads), the key, then the models on this Mac.
+    /// Configure providers… leads), then the key.
     private var providers: [String] {
-        [Engine.claude, .codex].map { "engine:\($0.rawValue)" } + Provider.keyProviders.map(\.id) + [Builder.localProvider]
+        [Engine.claude, .codex].map { "engine:\($0.rawValue)" } + Provider.keyProviders.map(\.id)
     }
 
     /// One row: logo, name and state. What each is used for is chosen, and shown, in Building and Apps.
@@ -1472,14 +1446,14 @@ struct ProvidersSettings: View {
                     if id.hasPrefix("engine:") {
                         Button("Sign In…") { showing = ProviderDetail(id) }
                     } else {
-                        Button(Provider.keyProvider(id) == nil ? "Show Models…" : "Edit…") { showing = ProviderDetail(id) }
+                        Button("Edit…") { showing = ProviderDetail(id) }
                     }
                     if let provider = Provider.keyProvider(id), KeyStore.key(for: id) != nil {
                         Button("Remove Key…", role: .destructive) { removing = provider }
                     }
                 }
             } primaryAction: { ids in
-                showing = ids.first.map(ProviderDetail.init)
+                showing = ids.first.flatMap(ProviderDetail.init)
             }
             .onDeleteCommand { removing = selection.flatMap(Provider.keyProvider).flatMap { KeyStore.key(for: $0.id) == nil ? nil : $0 } }
             .scrollDisabled(true)
@@ -1496,7 +1470,6 @@ struct ProvidersSettings: View {
         .sheet(item: $showing) { detail in
             switch detail {
             case .key(let provider): ProviderSheet(provider: provider) { changed() }
-            case .local: LocalAISheet()
             case .engine(let engine): EngineSheet(engine: engine, signedIn: signedIn[engine] ?? nil) { refreshSignIns() }
             }
         }
@@ -1517,7 +1490,6 @@ struct ProvidersSettings: View {
         .onChange(of: downloads.revision) { refreshSignIns() }
         .onReceive(NotificationCenter.default.publisher(for: KeyStore.changed)) { _ in revision += 1 }
         .onChange(of: pendingSheet) { openPending() }
-        .task { local.refresh() }
     }
 
     private func refreshSignIns() {
@@ -1539,17 +1511,10 @@ struct ProvidersSettings: View {
             default: return "Checking…"
             }
         }
-        if id == Builder.localProvider {
-            guard !local.installed.isEmpty else { return "No models yet" }
-            let bytes = local.installed.reduce(Int64(0)) { $0 + $1.bytes }
-            return "\(Self.models(local.installed.count)) · \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))"
-        }
         _ = revision
         guard KeyStore.key(for: id) != nil else { return "Not added" }
         return KeyStore.usesKeychain ? "Key in Keychain" : "Key saved"
     }
-
-    private static func models(_ count: Int) -> String { count == 1 ? "1 model" : "\(count) models" }
 
     private func openPending() {
         guard !pendingSheet.isEmpty else { return }
@@ -1566,25 +1531,23 @@ struct ProvidersSettings: View {
 /// What double-clicking a provider opens.
 private enum ProviderDetail: Identifiable {
     case key(PiProvider)
-    case local
     case engine(Engine)
 
-    init(_ id: String) {
+    /// Nil for a provider Lamp no longer has (the models on this Mac, which a sheet asked for by an earlier Lamp can name).
+    init?(_ id: String) {
         if id.hasPrefix("engine:"), let engine = Engine(rawValue: String(id.dropFirst(7))) { self = .engine(engine) }
         else if let provider = Provider.keyProvider(id) { self = .key(provider) }
-        else { self = .local }
+        else { return nil }
     }
 
     var id: String {
         switch self {
         case .key(let provider): provider.id
-        case .local: Builder.localProvider
         case .engine(let engine): "engine:\(engine.rawValue)"
         }
     }
 
     static func name(_ id: String) -> String {
-        if id == Builder.localProvider { return "Native Mac AI" }
         if id.hasPrefix("engine:"), let engine = Engine(rawValue: String(id.dropFirst(7))) { return engine.title }
         return Provider.keyProvider(id)?.name ?? id
     }
@@ -1807,9 +1770,6 @@ struct ProviderLogo: View {
             if id == "lamp" {
                 Image(systemName: "wand.and.sparkles")
                     .font(.system(size: size * 0.45, weight: .semibold)).foregroundStyle(.black)
-            } else if id == Builder.localProvider {
-                Image(systemName: "desktopcomputer")
-                    .font(.system(size: size * 0.5)).foregroundStyle(.black.opacity(0.75))
             } else if id.hasPrefix("engine:") {
                 Image(systemName: id == "engine:claude" ? "asterisk" : "terminal")
                     .font(.system(size: size * 0.5)).foregroundStyle(.black.opacity(0.75))
@@ -1883,12 +1843,11 @@ struct KeyRow: View {
     }
 }
 
-/// Searchable model list for a provider (OpenRouter's, from pi's catalog, or the models on this Mac).
+/// Searchable model list for a provider (OpenRouter's, from pi's catalog).
 struct ModelPicker: View {
     let provider: String
     @Binding var model: String
     let revision: Int
-    @ObservedObject private var local = LocalModels.shared
     @State private var models: [String] = []
     @State private var search = ""
     @State private var loading = false
@@ -1904,35 +1863,28 @@ struct ModelPicker: View {
                 Text(model.isEmpty ? "None chosen" : model).foregroundStyle(model.isEmpty ? .orange : .primary)
                     .lineLimit(1).truncationMode(.middle)
             }
-            if provider == Builder.localProvider && local.installed.isEmpty {
-                Text("No models downloaded yet. Double-click Native Mac AI in AI Providers to get one.").font(.caption).foregroundStyle(.secondary)
-            } else {
-                TextField("Search models", text: $search)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { if filtered.isEmpty && !search.trimmed.isEmpty { model = search.trimmed } }
-                List(filtered, id: \.self, selection: Binding(get: { model }, set: { if let value = $0 { model = value } })) {
-                    Text($0).tag($0)
-                }
-                .frame(height: 150)
-                .overlay {
-                    if loading { ProgressView().controlSize(.small) }
-                    else if filtered.isEmpty {
-                        Text(search.isEmpty ? "No models found" : "Press Return to use “\(search.trimmed)”")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
+            TextField("Search models", text: $search)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { if filtered.isEmpty && !search.trimmed.isEmpty { model = search.trimmed } }
+            List(filtered, id: \.self, selection: Binding(get: { model }, set: { if let value = $0 { model = value } })) {
+                Text($0).tag($0)
+            }
+            .frame(height: 150)
+            .overlay {
+                if loading { ProgressView().controlSize(.small) }
+                else if filtered.isEmpty {
+                    Text(search.isEmpty ? "No models found" : "Press Return to use “\(search.trimmed)”")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
-        .task(id: "\(provider)-\(revision)-\(local.installed.count)") { await load() }
+        .task(id: "\(provider)-\(revision)") { await load() }
     }
 
     private func load() async {
         loading = true
         defer { loading = false }
-        switch provider {
-        case Builder.localProvider: models = local.installed.filter { !LocalModels.isDecisionModel($0.id) }.map(\.id)
-        default: models = await Agent.listModels()
-        }
+        models = await Agent.listModels()
         if provider == "openrouter" {   // suggested models first
             let suggested = Provider.models.map(\.id)
             models = suggested + models.filter { !suggested.contains($0) }
@@ -1940,232 +1892,3 @@ struct ModelPicker: View {
         if model.isEmpty, let first = models.first { model = first }
     }
 }
-
-/// Native Mac AI: models on this Mac (shared with Local and the Hugging Face cache), plus downloads.
-private struct LocalAISheet: View {
-    @EnvironmentObject private var store: Store
-    @AppStorage("decisionModel") private var decisionModel = AppAI.decisionModel.id
-    @Environment(\.dismiss) private var dismiss
-    @ObservedObject private var local = LocalModels.shared
-    @ObservedObject private var images = ImageModels.shared
-    @ObservedObject private var tools = PythonTools.shared
-    @State private var repo = ""
-    @State private var custom: [LocalModelSpec] = []
-    @State private var adding = false
-    @State private var addError: String?
-
-    private var downloadable: [LocalModelSpec] {
-        (LocalModels.catalog + LocalModels.decisionCatalog + custom).filter { !local.isInstalled($0) }
-    }
-
-    /// Tall enough for a good look at the list, short enough to leave the screen around it.
-    private var listHeight: CGFloat {
-        min(560, ((NSScreen.main?.visibleFrame.height ?? 800) - 320).rounded())
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ProviderHeader(id: Builder.localProvider,
-                           detail: "Private and offline. Slower and less capable than the best cloud models, especially for whole apps.")
-                .padding(20)
-            Divider()
-            Form {
-                Section {
-                    if local.installed.isEmpty {
-                        Text("No models yet. Download one below.").foregroundStyle(.secondary)
-                    }
-                    ForEach(local.installed) { installedRow($0) }
-                } header: { Text("On this Mac") } footer: {
-                    Text("Shared with Local and other tools through the Hugging Face cache.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-
-                Section {
-                    ForEach(downloadable) { downloadRow($0) }
-                    HStack {
-                        TextField("owner/Model-GGUF or a Hugging Face link", text: $repo)
-                        Button("Add") { add() }.disabled(repo.trimmed.isEmpty || adding)
-                    }
-                    if adding { ProgressView().controlSize(.small) }
-                    if let addError { Text(addError).font(.caption).foregroundStyle(.red) }
-                } header: { Text("Download") } footer: {
-                    Text("This Mac has \(LocalModels.ramGB) GB of memory. Any model repo in GGUF form works: Lamp picks the version that fits a Mac best, with image support when the model has it.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-
-                Section {
-                    if !ImageModels.hasMflux {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("mflux").font(.headline)
-                                Text("Runs picture models. A one-time install of about 1.3 GB.")
-                                    .font(.caption).foregroundStyle(.secondary)
-                                if let error = tools.errors[.mflux] { Text(error).font(.caption).foregroundStyle(.red) }
-                            }
-                            Spacer()
-                            if tools.installing.contains(.mflux) { ProgressView().controlSize(.small) }
-                            else { Button("Install") { Task { await tools.install(.mflux) } } }
-                        }
-                    }
-                    ForEach(ImageModels.catalog) { imageRow($0) }
-                } header: { Text("Pictures") } footer: {
-                    Text(ImageModels.ready
-                         ? "Apps' pictures and icon artwork are made here with \(images.chosen?.name ?? "the chosen model") when there's no OpenRouter key. About 10–30 seconds a picture."
-                         : "Pictures made on this Mac, free and private, when there's no OpenRouter key. Slower than the cloud models, and they can't edit existing pictures.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-
-                Section {
-                    LabeledContent("Model servers") {
-                        HStack {
-                            Text(local.serverRunning || local.mlxModel != nil ? "Running" : "Start when needed").foregroundStyle(.secondary)
-                            if local.serverRunning || local.mlxModel != nil { Button("Stop") { local.stopServer() } }
-                        }
-                    }
-                } header: { Text("Servers") } footer: {
-                    Text("Models in GGUF form run on Lamp's own server; MLX models run on mlx-lm, which Lamp installs when one needs it.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            .formStyle(.grouped)
-            .frame(height: listHeight)
-            Divider()
-            HStack {
-                Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
-            }
-            .padding(20)
-        }
-        .frame(width: 560)
-        .task { local.refresh() }
-    }
-
-    private func installedRow(_ model: InstalledModel) -> some View {
-        // A decision model answers apps' decisions and can't build: its Use chooses it for decisions.
-        let decides = LocalModels.isDecisionModel(model.id)
-        _ = decisionModel   // read so In use follows Use for Decisions
-        let inUse = decides ? AppAI.decisionRoute(for: nil)?.provider == "local"
-                            : Builder.engine == .pi && Builder.piProvider == Builder.localProvider && Builder.piModel == model.id
-        let needsMLX = model.format == .mlx && LocalModels.mlxServerPath == nil
-        let needsServer = model.format == .gguf && !local.serverInstalled
-        return HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text(model.name).font(.headline)
-                    Text(model.format == .mlx ? "MLX" : "GGUF").font(.caption2).padding(.horizontal, 5)
-                        .background(.quaternary, in: Capsule())
-                    if inUse { Text("In use").font(.caption).padding(.horizontal, 6).background(.green.opacity(0.2), in: Capsule()) }
-                }
-                Text("\(ByteCountFormatter.string(fromByteCount: model.bytes, countStyle: .file)) · \(model.source)\(model.vision ? " · sees images" : "")")
-                    .font(.caption).foregroundStyle(.secondary)
-                if needsMLX { Text("Needs a one-time install before it can run.").font(.caption).foregroundStyle(.orange) }
-                if needsMLX, let error = tools.errors[.mlx] { Text(error).font(.caption).foregroundStyle(.red) }
-                if needsServer { Text("Needs a one-time download before it can run.").font(.caption).foregroundStyle(.orange) }
-                if needsServer, let error = local.errors[LocalModels.serverID] { Text(error).font(.caption).foregroundStyle(.red) }
-            }
-            Spacer()
-            if needsMLX {
-                if tools.installing.contains(.mlx) { ProgressView().controlSize(.small) }
-                else { Button("Install") { installMLX() } }
-            } else if needsServer {
-                if let progress = local.progress[LocalModels.serverID] {
-                    ProgressView(value: progress).frame(width: 90)
-                    Button("Cancel") { local.cancel(LocalModels.serverID) }
-                } else {
-                    Button("Download") { local.getServer() }
-                }
-            } else if !inUse {
-                if decides {
-                    Button("Use for Decisions") {
-                        if let local = AppAI.decisionModels.first(where: { $0.provider == "local" }) { decisionModel = local.id }
-                    }
-                } else {
-                    Button("Use") { use(model.id) }
-                }
-            }
-            if model.deletable { Button("Delete", role: .destructive) { local.delete(model.id) } }
-        }
-    }
-
-    private func downloadRow(_ spec: LocalModelSpec) -> some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(spec.name).font(.headline)
-                Text(spec.blurb).font(.caption).foregroundStyle(.secondary)
-                let tight = spec.minRAMGB > LocalModels.ramGB
-                Text(String(format: "%.1f GB download · needs %d GB memory%@", spec.sizeGB, spec.minRAMGB,
-                            tight ? " (more than this Mac has)" : ""))
-                    .font(.caption).foregroundStyle(tight ? .orange : .secondary)
-                if let error = local.errors[spec.id] { Text(error).font(.caption).foregroundStyle(.red) }
-            }
-            Spacer()
-            if let progress = local.progress[spec.id] {
-                ProgressView(value: progress).frame(width: 90)
-                Button("Cancel") { local.cancel(spec.id) }
-            } else {
-                Button("Download") { local.download(spec) }
-            }
-        }
-    }
-
-    private func imageRow(_ spec: ImageModelSpec) -> some View {
-        let installed = ImageModels.isInstalled(spec)
-        let inUse = installed && images.chosen?.id == spec.id
-        let tight = spec.minRAMGB > LocalModels.ramGB
-        return HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text(spec.name).font(.headline)
-                    if inUse { Text("In use").font(.caption).padding(.horizontal, 6).background(.green.opacity(0.2), in: Capsule()) }
-                }
-                Text(spec.blurb).font(.caption).foregroundStyle(.secondary)
-                Text(String(format: "%.1f GB · needs %d GB memory%@", spec.sizeGB, spec.minRAMGB, tight ? " (more than this Mac has)" : ""))
-                    .font(.caption).foregroundStyle(tight ? .orange : .secondary)
-                if let error = local.errors["image:" + spec.id] { Text(error).font(.caption).foregroundStyle(.red) }
-            }
-            Spacer()
-            if let progress = local.progress["image:" + spec.id] {
-                ProgressView(value: progress).frame(width: 90)
-                Button("Cancel") { local.cancel("image:" + spec.id) }
-            } else if installed {
-                if !inUse { Button("Use") { images.choose(spec) } }
-                Button("Delete", role: .destructive) { images.delete(spec) }
-            } else {
-                Button("Download") { images.download(spec) }
-            }
-        }
-    }
-
-    /// What MLX models run on. Afterwards the model can build, so the setup check is run again.
-    private func installMLX() {
-        Task {
-            await tools.install(.mlx)
-            await store.recheckSetup()
-        }
-    }
-
-    private func use(_ id: String) {
-        Builder.engine = .pi
-        Builder.piProvider = Builder.localProvider
-        Builder.piModel = id
-        local.objectWillChange.send()
-        Task { await store.recheckSetup() }
-    }
-
-    private func add() {
-        adding = true
-        addError = nil
-        Task {
-            defer { adding = false }
-            do {
-                let spec = try await local.spec(forRepo: repo)
-                if !custom.contains(spec) && !LocalModels.catalog.contains(where: { $0.repo == spec.repo }) { custom.append(spec) }
-                repo = ""
-                local.download(spec)
-            } catch {
-                addError = ErrorMessages.reason(error)
-            }
-        }
-    }
-}
-

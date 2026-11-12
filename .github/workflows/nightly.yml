@@ -53,7 +53,7 @@ jobs:
             echo "VERSION=" >> $GITHUB_ENV
           fi
 
-      - name: Cache pi and llama.cpp downloads
+      - name: Cache pi downloads
         if: env.VERSION != ''
         uses: actions/cache@v4
         with:
@@ -138,7 +138,7 @@ jobs:
             echo "Removing $old"
             gh release delete-asset nightly "$old" --yes || true
           done
-          # What each nightly fetches when it's needed (its prebuilt starters, llama.cpp) stays far longer than its DMG:
+          # What each nightly fetches when it's needed (its prebuilt starters) stays far longer than its DMG:
           # an installed nightly pins those files for as long as it runs, while a DMG only has to outlast update offers.
           # The newest 20 versions' are kept, each version named at the end of its files.
           gh release view nightly --json assets \

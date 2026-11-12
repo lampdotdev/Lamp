@@ -1496,6 +1496,7 @@ final class Store: ObservableObject {
     private init() {
         root = Edition.supportFolder.appendingPathComponent("Apps")
         Migration.fromForge()
+        Migration.modelServersRemoved()
         Integrations.dropShippedCopies()
         AppsLink.ensure()
         // The keys are read off the main thread first; what needs them (pi's auth file, the setup check, the
@@ -1536,7 +1537,6 @@ final class Store: ObservableObject {
         // when Lamp keeps its engines current, before it decides whether it needs its own copy of one.
         EngineDownloads.shared.startKeepingCurrent()
         Task {
-            LocalModels.shared.refresh()
             await recheckSetup()
         }
     }
@@ -6148,22 +6148,13 @@ final class Store: ObservableObject {
         let engine = Builder.engine
         // What builds this turn, as it starts, for the titles of its steps after it (`StepTitles`).
         let titleRoute = StepTitles.TurnRoute.current
-        if engine == .pi && Builder.piProvider == Builder.localProvider {
-            do {
-                try await LocalModels.shared.ensureServer(for: Builder.piModel)
-            } catch {
-                log(project, .error, error.localizedDescription)
-                return false
-            }
-        }
         let started = Date()
         var cost = 0.0
         var failure: String?
-        // Guard against runaway agents: stop after the same step 6 times in a row, whatever builds; and after 150 steps
-        // in one turn for a model on this Mac, which can loop without repeating itself exactly. Claude Code, Codex and
-        // the cloud's models take far more than that on a big request (a city moved somewhere else) and get there, so
-        // theirs is only a backstop.
-        let stepLimit = engine == .pi && Builder.piProvider == Builder.localProvider ? 150 : 500
+        // Guard against runaway agents: stop after the same step 6 times in a row, and after 500 steps in one turn. Claude
+        // Code, Codex and the cloud's models take hundreds of steps on a big request (a city moved somewhere else) and
+        // get there, so the step limit is only a backstop.
+        let stepLimit = 500
         var lastTool = ""
         // Set when Lamp itself stopped the model (either guard): its reason stands through what the process still
         // prints and through its exit, and is told whatever its words.
@@ -6239,7 +6230,7 @@ final class Store: ObservableObject {
             run.env["LAMP_SIDE_RECEIPT"] = record
             turn.ownReplyGiven = true
         }
-        turn.sideRoute = SideAnswer.route(env: run.env, engine: engine, local: Builder.piProvider == Builder.localProvider, keyProvider: Builder.piProvider,
+        turn.sideRoute = SideAnswer.route(env: run.env, engine: engine, keyProvider: Builder.piProvider,
                                           configFolder: EngineInstall.configFolder(engine).path, environment: EngineInstall.environment(for: engine))
         // Held strongly: it lives only while the engine runs. (A weak capture here, in a closure kept in a
         // variable rather than passed straight to `Shell.run`, came back nil and dropped every line.)
@@ -14982,7 +14973,7 @@ final class Store: ObservableObject {
     }
 
     /// Why the card is there when the person asked for it themselves: what the resolution says is wrong, when
-    /// something answers in a way that isn't what was chosen (a removed model on this Mac). Nil for the usual reasons.
+    /// something answers in a way that isn't what was chosen (a sign-in that went). Nil for the usual reasons.
     static func askedReason(_ capability: Capability, _ resolution: Resolution, app: String) -> String? {
         guard resolution.tier == .works, let note = resolution.note else { return nil }
         return "\(app) can't use the AI chosen for it. \(note)"

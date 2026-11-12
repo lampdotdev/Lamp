@@ -86,7 +86,7 @@ else { status = result.summary }
 ```
 
 - Show the feature where `await LampAI.status(.act)` says it's available, with what answers and where its `processing`
-  is (`remote` for a service, Claude Code and Codex included; `onDevice` for a model on this Mac). When it isn't, keep
+  is (`remote` for a service, Claude Code and Codex included). When it isn't, keep
   the feature visible with its `reason` and a "Set up in Lamp" button (`LampAI.openSetup(for: .act)`), or "Open Lamp" /
   "Update Lamp" when `setup` says so; keep the typed draft, and every manual control working. Check again when the app
   comes back to the front, and never send the draft by itself after setup. Available is no guarantee: show the actual

@@ -200,8 +200,7 @@ A capability given to one engine must be given to all of them that can take it, 
     and no `additional_tools` item in `input`; then run it for real, told to use its tools, and see no tool item. Codex can
     write only `installation_id`, and reads only that and `auth.json`, from its folder.
 
-  Every engine's version is asked before each run, except pi's, which is inside Lamp. It's skipped for a model on this Mac,
-  and for answers to cards, files, what was pointed at, requests sent again, a turn that has asked, paused or waits on an
+  Every engine's version is asked before each run, except pi's, which is inside Lamp. It's skipped for answers to cards, files, what was pointed at, requests sent again, a turn that has asked, paused or waits on an
   approval, and a second message while one is being answered. Five starts per builder's turn at most, however they end,
   and nothing is retried. An answer that fails rests that engine for two minutes. A tool that ran, which no launch allows,
   stops that version for good on this Mac and cancels every run of the engine still going, beside a turn or for a summary
@@ -273,23 +272,20 @@ A capability given to one engine must be given to all of them that can take it, 
   because the `result` line says the same; pi's and Codex's parsers have only their failure events to read.
 - **Models**: each engine has its own model list and picker (`Builder.engineModel`); never default to Haiku.
   Lamp's providers are Claude Code, ChatGPT Codex, OpenRouter (pi builds through it; its key is the only one
-  Lamp keeps, `Provider.keyProviders`) and Native Mac AI (`LocalModels`: Lamp's own model servers, never another
-  app's such as Ollama). Don't add another provider without asking: fewer choices in setup was the point.
-  Where an app's text AI goes is an `AppAI.TextRoute` (an OpenRouter model, the Claude Code or Codex sign-in,
-  or a model on this Mac), listed by `AppAI.textRoutes` for the pickers in
+  Lamp keeps, `Provider.keyProviders`). Lamp runs no models on the Mac itself, its own or another
+  app's. Don't add another provider without asking: fewer choices in setup was the point.
+  Where an app's text AI goes is an `AppAI.TextRoute` (an OpenRouter model, or the Claude Code or Codex sign-in),
+  listed by `AppAI.textRoutes` for the pickers in
   Settings → Apps, and dispatched by kind in `AppAI.dispatch`. The default
-  (`AppAI.defaultRoute`) is the local model that builds apps when there is one, else Sonnet through
-  OpenRouter with a key, else the builder's own sign-in. Settings → AI Providers lists each provider and
+  (`AppAI.defaultRoute`) is Sonnet through OpenRouter with a key, else the builder's own sign-in. A saved choice no
+  route has any more (a model on this Mac, from an earlier Lamp) reads as no choice. Settings → AI Providers lists each provider and
   sign-in with its state, not what it's used for: that's in the menus that choose it. Decisions
   (`AppAI.decisionModels`, `AppAI.decide`) go to Jev
-  through OpenRouter, to a Jev-class model on this Mac (`LocalModels.decisionCatalog`, run on the
-  llama-server (fetched when first needed, `LlamaInstall`); `decideLocally` does what the model's serving shim does: one forward pass per
-  question, probabilities read off the label tokens at the "Answer:" slot), or by text through what answers
-  apps (`decideByText`, told and read by `cli/app-ai.mjs`). A decision model is never offered for text or building (`LocalModels.isDecisionModel`).
+  through OpenRouter, or by text through what answers apps (`decideByText`, told and read by `cli/app-ai.mjs`).
 - **What answers apps, and offering better** (`Sources/Lamp/Capabilities.swift`): `AppAI.resolve(capability,
   for: app, in: .mac | .phoneAway)` is the one answer to "what answers text / decisions / pictures for this
   app, how well (`Resolution.Tier`: none, works, best), and what would make it better (`Upgrade`: a key, a
-  download, a sign-in)". Settings → Apps' menus and Not Ready rows, the notes under an app's
+  sign-in)". Settings → Apps' menus and Not Ready rows, the notes under an app's
   pickers, the sharing review, the keys a phone takes away (`keysForPhone`) and the agent's status line
   all read it; don't work any of that out again elsewhere. A failure for want of setup carries
   `AppAI.Failure.needs`; the gateway passes it to the app (`LampAI.Failure.needsSetup`, and
@@ -314,8 +310,7 @@ A capability given to one engine must be given to all of them that can take it, 
   `AppAct` keeps only the route, its time and asking it. Every text route answers: OpenRouter with tools,
   `require_parameters` and `tool_choice` "auto" ("none" for the reply-only step), so words without a call are the
   reply; Claude Code and Codex with one sealed run per step held to the step's JSON shape (`--json-schema`,
-  `--output-schema`); a GGUF model through `response_format`; an MLX model with its server's tool calling where it has
-  a parser for the model, else asked for the shape in words. A question back may carry `choices` from `reply` (two to
+  `--output-schema`). A question back may carry `choices` from `reply` (two to
   four short plain-text answers, checked in app-ai.mjs and again in lamp.js); words without a call carry none.
   `LampAI.isAvailable('act')` asks `/ai/act` itself (`probe`), so it's true only when lamp.js has `act`, the app around
   the page lets the route through and the app's route can take it.

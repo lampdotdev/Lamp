@@ -35,7 +35,6 @@ enum Migration {
         settings()
         keys()
 
-        imageMarkers()
         let apps = home.appendingPathComponent("Library/Application Support/Lamp/Apps")
         // A wish a newer Lamp laid out is past this migration, and isn't this Lamp's to rewrite or commit.
         for dir in (try? fm.contentsOfDirectory(at: apps, includingPropertiesForKeys: nil)) ?? [] where NewerWish.read(at: dir) == nil {
@@ -93,13 +92,33 @@ enum Migration {
         UserDefaults.standard.set(true, forKey: done)
     }
 
-    /// Picture models downloaded before the rename carry the old completion marker.
-    private static func imageMarkers() {
+    /// Lamp no longer runs models on this Mac. What it kept only for them in its own support folder goes, once: the
+    /// model server it downloaded, the links its server read models through, its own copy of uv, and the model
+    /// servers it registered with its own pi. The models themselves stay: those in the shared Hugging Face cache are
+    /// other tools' too, and those in its own Models folder are the person's downloads.
+    static func modelServersRemoved() {
+        let done = "modelServersRemoved"
+        guard !UserDefaults.standard.bool(forKey: done) else { return }
         let fm = FileManager.default
-        for repoDir in (try? fm.contentsOfDirectory(at: LocalModels.hubDir, includingPropertiesForKeys: nil)) ?? [] {
-            let old = repoDir.appendingPathComponent("forge-complete"), new = repoDir.appendingPathComponent("lamp-complete")
-            if fm.fileExists(atPath: old.path), !fm.fileExists(atPath: new.path) { try? fm.moveItem(at: old, to: new) }
+        for leftover in ["llama", "Router", "Tools/uv"] {
+            try? fm.removeItem(at: Edition.supportFolder.appendingPathComponent(leftover))
         }
+        let models = URL(fileURLWithPath: Agent.configDir).appendingPathComponent("models.json")
+        if let data = try? Data(contentsOf: models),
+           var config = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           var providers = config["providers"] as? [String: Any] {
+            providers["forge-local"] = nil
+            providers["forge-mlx"] = nil
+            if providers.isEmpty && config.count == 1 {
+                try? fm.removeItem(at: models)
+            } else {
+                config["providers"] = providers
+                if let out = try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys]) {
+                    try? out.write(to: models, options: .atomic)
+                }
+            }
+        }
+        UserDefaults.standard.set(true, forKey: done)
     }
 
     /// One app: its `.forge` folder becomes `.lamp` (and stays out of version control), and its own code is

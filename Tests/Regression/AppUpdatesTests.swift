@@ -152,7 +152,7 @@ final class AppUpdatesTests: XCTestCase {
     func testAnUpdatesReviewDoesNotSpeakOfASender() {
         for verdict in ["risky", "partly"] {
             let review = ImportReview(summary: "A game.", capabilities: [], concerns: [], risk: verdict == "risky" ? .high : .low,
-                                      reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true, detected: [],
+                                      reviewer: ImportReview.Reviewer(name: "Sonnet"), asked: true, detected: [],
                                       partial: verdict == "partly")
             let lines = ImportReviewCard.considerations(review, prepared: true).map(\.text)
             XCTAssertFalse(lines.isEmpty, verdict)

@@ -584,7 +584,7 @@ final class MixTests: XCTestCase {
         var fine = ImportReview(summary: "A coin.", capabilities: [], concerns: [], detected: [])
         fine.risk = .low
         fine.asked = true
-        fine.reviewer = ImportReview.Reviewer(name: "A model", onThisMac: false)
+        fine.reviewer = ImportReview.Reviewer(name: "A model")
         XCTAssertEqual(fine.opening, .byReturn)
 
         let store = Store(testingAt: yours.root.appendingPathComponent("Apps"))
@@ -658,7 +658,7 @@ final class MixTests: XCTestCase {
         var fine = ImportReview(summary: "A coin.", capabilities: [], concerns: [], detected: [])
         fine.risk = .low
         fine.asked = true
-        fine.reviewer = ImportReview.Reviewer(name: "A model", onThisMac: false)
+        fine.reviewer = ImportReview.Reviewer(name: "A model")
 
         let store = Store(testingAt: yours.root.appendingPathComponent("Apps"))
         store.projects = [yours.project]
@@ -780,7 +780,7 @@ final class MixTests: XCTestCase {
             var fine = ImportReview(summary: "A coin.", capabilities: [], concerns: [], detected: [])
             fine.risk = .low
             fine.asked = true
-            fine.reviewer = ImportReview.Reviewer(name: "A model", onThisMac: false)
+            fine.reviewer = ImportReview.Reviewer(name: "A model")
             return fine
         }
         var risky = ImportReview(summary: "Sends what it reads.", capabilities: [], concerns: ["Sends your files away"], detected: [])

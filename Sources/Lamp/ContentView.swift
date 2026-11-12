@@ -746,7 +746,7 @@ struct ImportReviewCard: View {
         case .checkedInParts:
             list.append(Consideration(text: prepared ? "AI checked its code in parts. Update only if you trust where the app came from"
                                                      : "AI checked its code in parts. Open only if you trust the sender", weight: .caution))
-        case .checkedOnThisMac: list.append(Consideration(text: "Nothing worrying found, but not by a check Lamp can vouch for", weight: .caution))
+        case .unvouched: list.append(Consideration(text: "Nothing worrying found, but not by a check Lamp can vouch for", weight: .caution))
         case .unchecked: list.append(Consideration(text: "Not checked by AI", weight: .warning, detail: review.note))
         case .safe: break
         }

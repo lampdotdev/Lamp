@@ -423,12 +423,12 @@ export const CALLS = {
 
   /**
    * What a step's route is asked: `way` "chat" is a chat with tools (`{body}`, OpenRouter's own when `model` names one),
-   * "plan" one prompt held to the step's shape (`{system, prompt, schema}`), and "words" one with the shape said in it.
+   * and "plan" one prompt held to the step's shape (`{system, prompt, schema}`).
    */
   async actAsk(given) {
     const step = given.step, tag = text(given, "tag"), retry = typeof given.retry === "string" ? given.retry : null;
     if (given.way === "chat") return { body: chatBody(step, tag, retry, typeof given.model === "string" ? given.model : undefined) };
-    return { ...planPrompt(step, tag, retry, given.way === "words"), schema: planSchema(step) };
+    return { ...planPrompt(step, tag, retry), schema: planSchema(step) };
   },
 
   /** A step's answer read and checked: `message` from a chat with tools, or `plan`'s text. `{answer}` or `{problem}`. */

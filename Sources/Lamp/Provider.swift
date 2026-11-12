@@ -47,7 +47,7 @@ enum Provider {
 
     /// The OpenRouter model used to review shared apps and as the default builder.
     static var model: String {
-        if Builder.engine == .pi, Builder.piProvider == "openrouter", !Builder.piModel.isEmpty { return Builder.piModel }
+        if Builder.engine == .pi, !Builder.piModel.isEmpty { return Builder.piModel }
         return defaultModel
     }
 
@@ -88,7 +88,7 @@ enum Provider {
 
     /// What went wrong with a call, as far as the person can do something about it.
     enum FailureKind: Equatable {
-        case authentication, quota, busy, connection, unreachable, outdated, other
+        case authentication, quota, busy, connection, outdated, other
 
         init?(status: Int, code: String?) {
             switch status {
@@ -108,7 +108,6 @@ enum Provider {
         case .quota: ErrorMessages.quotaExceeded(name)
         case .busy: ErrorMessages.providerBusy
         case .connection: ErrorMessages.connectionFailed
-        case .unreachable: ErrorMessages.localServerUnreachable
         case .outdated: "\(name) needs updating: \(raw.prefix(160))"
         case .other: ErrorMessages.aiFailed(String(raw.prefix(160)))
         }
@@ -126,13 +125,9 @@ enum Provider {
         if text.contains("429") || text.contains("rate limit") {
             return .busy
         }
-        // Before the local server's check: an engine's "Unable to connect to API (ECONNREFUSED)" is about its
-        // provider, which no setting of the local server would help.
-        if text.contains("unable to connect") || text.contains("connection error") {
+        if text.contains("unable to connect") || text.contains("connection error")
+            || text.contains("connection refused") || text.contains("econnrefused") {
             return .connection
-        }
-        if text.contains("connection refused") || text.contains("econnrefused") {
-            return .unreachable
         }
         if text.contains("requires a newer version") || text.contains("upgrade") {
             return .outdated

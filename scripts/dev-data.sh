@@ -7,8 +7,7 @@
 #
 # Everything is copied, never moved: the installed Lamp isn't touched. Lamp Dev rebuilds each copied app
 # the first time it opens it (the dev build's apps have their own bundle ids, so they sit beside the
-# originals). The built apps in ~/Applications/Lamp Apps aren't copied for that reason, and neither are
-# downloaded models, which both Lamps find in the shared Hugging Face cache.
+# originals). The built apps in ~/Applications/Lamp Apps aren't copied for that reason.
 set -euo pipefail
 
 replace=0

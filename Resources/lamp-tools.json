@@ -436,7 +436,7 @@
   {
     "name": "offer_setup",
     "label": "Offer setup",
-    "description": "Shows the person a card in the chat offering to set up a kind of AI this app can't use yet, or can use only a slower way: a key, a download, or a sign-in, which they choose. The end of a request says what the app has. Call it once, when a feature you're building needs it or would be clearly better with it, instead of mentioning keys or settings in your reply; build the feature anyway, so it works once it's set up. Not when it's already set up, or the person said Not Now.",
+    "description": "Shows the person a card in the chat offering to set up a kind of AI this app can't use yet, or can use only a slower way: a key or a sign-in, which they choose. The end of a request says what the app has. Call it once, when a feature you're building needs it or would be clearly better with it, instead of mentioning keys or settings in your reply; build the feature anyway, so it works once it's set up. Not when it's already set up, or the person said Not Now.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {

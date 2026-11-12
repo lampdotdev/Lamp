@@ -1,8 +1,7 @@
 # Offering a better setup
 
-Lamp works with whatever it has: a builder's sign-in, a model on this Mac, nothing at all. Some things work
-much better, or only work, with something more: an OpenRouter key, a model downloaded to this Mac, a
-sign-in. This is how Lamp tells the person so, in the chat and in Settings, and how to add a new case.
+Lamp works with whatever it has: a builder's sign-in, nothing at all. Some things work much better, or only
+work, with something more: an OpenRouter key, a sign-in. This is how Lamp tells the person so, in the chat and in Settings, and how to add a new case.
 
 ## When to offer
 
@@ -50,13 +49,13 @@ It is built like the build card above it in the chat, so the chat reads as one t
 - **Header:** a 44pt tile with the capability's symbol on the accent color (never the app's icon: this is
   Lamp asking, not the app), a headline, a status line under it, and **Not Now** on the right.
 - **Body,** under a divider: one row per upgrade, best first. Each row has a symbol, a title, a line of detail,
-  and a small standard button on the right ("Add Key…", "Download", "Sign In…", "Open…"). A key is typed in
+  and a small standard button on the right ("Add Key…", "Sign In…", "Open…"). A key is typed in
   place: the row opens a field with Cancel and Save (Return saves), and a link to get one. Progress replaces
-  the button while something downloads.
+  the button while something is under way.
 - **States:** offered; *works for now* (a last line says what's filling in); *all set* (the body folds
   away and the status line says what answers now, with a green check); *not now* (the body folds away and
   the status line says where to find it later). The card re-resolves when a key changes
-  (`KeyStore.changed`) or a download finishes, so it never needs a refresh.
+  (`KeyStore.changed`) or a sign-in finishes, so it never needs a refresh.
 - **Settings** uses the same rows with `compact: true`: shorter detail, and a key opens its provider's sheet
   rather than a field. An upgrade every capability wants is offered once, under them all. Orange is only for
   `.none`; a `.works` note is secondary text, since nothing is broken.
@@ -71,10 +70,10 @@ what happened, what each option is, and what it costs.
 - **Status line (the reason):** what just happened and what to do, in two sentences, naming the app: "Recipe
   Box just tried to make a picture, but nothing on this Mac can draw yet. Set up one of the ways below and it
   will work the next time." The agent's reason names the feature: "Recipe Box can draw a picture of each dish."
-- **Each option:** the title says the action ("Add an OpenRouter key", "Download a picture model to this
-  Mac"). The detail explains the thing and its cost in plain words: what OpenRouter is, that a download is
-  free and private and how big it is, that a sign-in uses a plan they already have.
-- **Say what's true now.** "All set. Pictures are now made by FLUX.2 klein 4B on this Mac." "No problem. You
+- **Each option:** the title says the action ("Add an OpenRouter key", "Sign in to Codex"). The detail
+  explains the thing and its cost in plain words: what OpenRouter is, that a sign-in uses a plan they already
+  have.
+- **Say what's true now.** "All set. Pictures are now made by Nano Banana 2." "No problem. You
   can set this up any time in Lamp's Settings, under AI Providers."
 - **Don't:** use "provider", "route", "endpoint", "API" (except a product's own name for it), "LLM",
   "inference"; blame the person; say "just" about anything they have to do; repeat in the status line what a

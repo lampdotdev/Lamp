@@ -79,19 +79,10 @@ enum Icons {
         ("google/gemini-3.1-flash-lite-image", "Nano Banana 2 Lite (fastest, cheapest)"),
     ]
 
-    /// The id that means the picture model on this Mac, offered alongside the cloud models once one is installed.
-    static let localArt = "local"
-
-    /// What the pickers offer: the cloud models, and the Mac's own model when there is one.
-    static var imageChoices: [(id: String, label: String)] {
-        guard ImageModels.ready, let name = ImageModels.chosen?.name else { return artModels }
-        return artModels + [(localArt, "\(name) on this Mac (free, private)")]
-    }
-
-    /// The choices that can make pictures now: the cloud models with a key, the Mac's own once it's in. With
-    /// none, Codex may still draw (`AppAI.imageRoute`), with no model to choose.
+    /// The choices that can make pictures now: the cloud models with a key. With none, Codex may still draw
+    /// (`AppAI.imageRoute`), with no model to choose.
     @MainActor static var usableChoices: [(id: String, label: String)] {
-        imageChoices.filter { $0.id == localArt ? ImageModels.ready : Provider.hasKey }
+        Provider.hasKey ? artModels : []
     }
 
     /// The image model for pictures inside apps (Settings → Apps → Image generation).
@@ -184,8 +175,8 @@ enum Icons {
     }
 
     private static func choice(_ key: String) -> String {
+        // A saved choice that's no longer offered (the picture model on this Mac, which Lamp no longer runs) is no choice.
         let saved = UserDefaults.standard.string(forKey: key) ?? ""
-        if saved == localArt, ImageModels.ready { return localArt }
         return artModels.contains { $0.id == saved } ? saved : artModels[0].id
     }
 
