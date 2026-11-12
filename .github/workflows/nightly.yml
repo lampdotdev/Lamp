@@ -118,14 +118,17 @@ jobs:
           # the release whole and the feed never pairs a signature with another file; the newest three stay, since the
           # feed is cached for a quarter of an hour and an update window may stay open longer, and each names the DMG
           # it signed (updates/api/appcast.js), which must still be there to verify.
-          # What this nightly fetches when it's needed (dist/assets: llama.cpp, named by its version) goes up with its DMG.
+          # What this nightly fetches when it's needed (dist/assets, named by its version), if anything, goes up with its DMG.
+          # The assets may be none at all (no starters prebuilt), so an empty folder adds nothing rather than a literal *.
+          shopt -s nullglob
+          assets=(dist/assets/*)
           git push -f origin "$GITHUB_SHA:refs/tags/nightly"
           if gh release view nightly >/dev/null 2>&1; then
-            gh release upload nightly "dist/Lamp-Nightly-$VERSION.dmg" dist/assets/* --clobber
+            gh release upload nightly "dist/Lamp-Nightly-$VERSION.dmg" "${assets[@]}" --clobber
             gh release upload nightly dist/sparkle.json --clobber
             gh release edit nightly --prerelease --title "Lamp Nightly $VERSION" --notes-file dist/notes.md
           else
-            gh release create nightly "dist/Lamp-Nightly-$VERSION.dmg" dist/sparkle.json dist/assets/* \
+            gh release create nightly "dist/Lamp-Nightly-$VERSION.dmg" dist/sparkle.json "${assets[@]}" \
               --prerelease --title "Lamp Nightly $VERSION" --notes-file dist/notes.md
           fi
           gh release view nightly --json assets \
