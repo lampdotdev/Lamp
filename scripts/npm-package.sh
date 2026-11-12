@@ -27,6 +27,7 @@ rm -f "$stage/cli/lamps/.gitignore" && : > "$stage/cli/lamps/.npmignore"
 mv "$stage/cli/lamps/mac-starter/.gitignore" "$stage/cli/lamps/mac-starter/gitignore"
 cp site/lib/shared-wishes.js site/lib/quota.js "$stage/site/lib/"
 for folder in GameKit WebLibraries WebHost Devices skills; do cp -R "Resources/$folder" "$stage/Resources/$folder"; done
+cp Resources/share-rules.json "$stage/Resources/"
 cp Resources/THIRD_PARTY_NOTICES.md "$stage/"
 cp LICENSE "$stage/LICENSE"
 cp cli/README.md "$stage/README.md"

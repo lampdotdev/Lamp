@@ -215,16 +215,8 @@ enum ShareCheck {
     }
 
     /// Shapes of keys and tokens whoever's they are: a private key, and the prefixes services give their keys.
-    static let tokenShapes: [NSRegularExpression] = [
-        #"-----BEGIN [A-Z ]*PRIVATE KEY-----"#,
-        #"\bsk-(or-v1-|ant-|proj-)?[A-Za-z0-9_\-]{32,}"#,      // OpenRouter, Anthropic, OpenAI
-        #"\bgh[pousr]_[A-Za-z0-9]{36,}"#,                        // GitHub
-        #"\bgithub_pat_[A-Za-z0-9_]{60,}"#,
-        #"\bAKIA[0-9A-Z]{16}\b"#,                                // AWS
-        #"\bAIza[0-9A-Za-z_\-]{35}\b"#,                          // Google
-        #"\bxox[abprs]-[A-Za-z0-9\-]{20,}"#,                     // Slack
-        #"\b(sk|rk)_live_[A-Za-z0-9]{20,}"#,                     // Stripe
-    ].map { try! NSRegularExpression(pattern: $0) }
+    /// Written in Resources/share-rules.json (`ShareRules`), which lamp's command line reads too.
+    static let tokenShapes: [NSRegularExpression] = ShareRules.shared.tokenShapes.map { try! NSRegularExpression(pattern: $0.pattern) }
 
     /// The files in `folder` (as staged to go) that hold one of `known` or something shaped like a key, by their path in it.
     /// Every file is read, whatever its size, in pieces that overlap by more than any key is long, so a key across two

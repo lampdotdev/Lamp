@@ -331,10 +331,11 @@ struct Credits: Codable, Equatable {
         let upper = name.uppercased()
         let ext = (name as NSString).pathExtension.lowercased()
         // An extension is a format ("LICENSE.md") or the license's own name ("COPYING.LESSER", "LICENSE.APACHE2"): short,
-        // letters and digits, never a kind of file that runs.
-        return ["LICENSE", "LICENCE", "COPYING", "NOTICE", "UNLICENSE"].contains(where: upper.hasPrefix)
-            && ext.count <= 10 && ext.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
-            && !["sh", "command", "app", "js", "py", "rb", "pl", "swift", "html", "htm"].contains(ext)
+        // letters and digits, never a kind of file that runs. The names are in Resources/share-rules.json (`ShareRules`).
+        let rules = ShareRules.shared.licenseFiles
+        return rules.startsWith.contains(where: upper.hasPrefix)
+            && ext.count <= rules.longestExtension && ext.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
+            && !rules.neverExtensions.contains(ext)
     }
 
     /// Lamp's own folder in an app (its versions, its chat, what an update's copy reads, someone else's files among it)

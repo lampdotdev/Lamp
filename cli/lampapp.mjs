@@ -6,11 +6,13 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { inflateRawSync } from "node:zlib";
-import { Problem, manifestOf, projectOf, stateOf } from "./state.mjs";
+import { Problem, RESOURCES, manifestOf, projectOf, stateOf } from "./state.mjs";
 import { LIMITS, nameOf, zipOf } from "./share.mjs";
 
-// What another Lamp accepts in a file (`Sharing.maxFiles`, `maxUnpackedBytes`, `maxArchiveBytes`).
-export const MAX_FILES = 2000, MAX_UNPACKED = 256 * 1024 * 1024, MAX_ARCHIVE = 64 * 1024 * 1024;
+// What a Lamp app file may hold, written once in Resources/share-rules.json, which Lamp's app reads too (`ShareRules`):
+// the sizes another Lamp opens, the names a license goes by, and the shapes of keys a shared file never carries.
+const RULES = JSON.parse(readFileSync(join(RESOURCES, "share-rules.json"), "utf8"));
+export const MAX_FILES = RULES.limits.files, MAX_UNPACKED = RULES.limits.unpackedBytes, MAX_ARCHIVE = RULES.limits.archiveBytes;
 
 /**
  * The files of a zip, by path: each a regular file's bytes, in the folder it names. A path that leaves the folder, a
@@ -93,17 +95,15 @@ const SERVED_HIDDEN = new Set([".nojekyll", ".well-known"]);
 const SWIFT_LAMPS = new Set(["LampSupport.swift", "LampScene.swift", "LampWidgetSupport.swift", "LampShareSupport.swift"]);
 
 // Shapes of keys and tokens whoever's they are (`ShareCheck.tokenShapes`).
-const TOKEN_SHAPES = [
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----/, /\bsk-(or-v1-|ant-|proj-)?[A-Za-z0-9_\-]{32,}/, /\bgh[pousr]_[A-Za-z0-9]{36,}/, /\bgithub_pat_[A-Za-z0-9_]{60,}/,
-  /\bAKIA[0-9A-Z]{16}\b/, /\bAIza[0-9A-Za-z_\-]{35}\b/, /\bxox[abprs]-[A-Za-z0-9\-]{20,}/, /\b(sk|rk)_live_[A-Za-z0-9]{20,}/,
-];
+const TOKEN_SHAPES = RULES.tokenShapes.map((shape) => new RegExp(shape.pattern));
 
 /** A license text by its name (`Credits.isLicenceFile`): LICENSE, LICENCE, COPYING, NOTICE or UNLICENSE, never code. */
 export function isLicenceFile(path) {
   if (typeof path !== "string" || !path || path.startsWith("/") || path.split("/").some((part) => !part || part === ".." || part === ".")) return false;
   const name = path.split("/").pop(), dot = name.lastIndexOf("."), ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
-  return ["LICENSE", "LICENCE", "COPYING", "NOTICE", "UNLICENSE"].some((start) => name.toUpperCase().startsWith(start))
-    && ext.length <= 10 && /^[a-z0-9]*$/.test(ext) && !["sh", "command", "app", "js", "py", "rb", "pl", "swift", "html", "htm"].includes(ext);
+  const rules = RULES.licenseFiles;
+  return rules.startsWith.some((start) => name.toUpperCase().startsWith(start))
+    && ext.length <= rules.longestExtension && /^[a-z0-9]*$/.test(ext) && !rules.neverExtensions.includes(ext);
 }
 
 /**
