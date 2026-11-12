@@ -31,6 +31,15 @@ import { tile } from "./png.mjs";
 import { Problem } from "./state.mjs";
 import { serveLocalAI } from "./local-ai.mjs";
 import { EngineTrouble, complete } from "./ai.mjs";
+import { OpenRouterTrouble, chat as openRouterChat, text as openRouterText } from "./openrouter.mjs";
+
+/** OpenRouter's answer, or what kept it from one, as Lamp's app reads it. */
+async function openRouter(asking) {
+  try { return await asking(); } catch (error) {
+    if (!(error instanceof OpenRouterTrouble)) throw error;
+    return { trouble: { kind: error.kind, message: error.message, status: error.status, reply: error.reply, cost: error.cost } };
+  }
+}
 import { Refused as StepRefused, chatBody, decidePrompt, planPrompt, planSchema, readDecision, readMessage, readPlan, readStep } from "./app-ai.mjs";
 
 // Pages shared on lamp.dev asking for their AI, answered by Lamp's app (`sharedPages`): what each is waiting on from it.
@@ -316,6 +325,21 @@ export const CALLS = {
   async neighbours() {
     const route = await defaultRoute();
     return { table: await neighbours(), gateway: route?.gateway ?? null, subnet: route ? subnetOn(route.interface) : null };
+  },
+
+  /**
+   * A text answer from OpenRouter for an app's AI (`AppAI.viaOpenRouter`), with the person's `key`, given on the input
+   * like everything else and kept nowhere: `prompt`, `images`, `system`, `model`, `json`, `schema`. `{text, cost}`, or
+   * `{trouble: {kind, message, status, reply, cost}}`.
+   */
+  async openRouterText(given, { stopped } = {}) {
+    return openRouter(() => openRouterText({ key: text(given, "key"), prompt: text(given, "prompt"), images: given.images, system: given.system ?? "",
+      model: text(given, "model"), json: given.json === true, schema: given.schema ?? undefined, seconds: seconds(given.seconds, 120, 600), signal: stopped }));
+  },
+
+  /** One chat completion from OpenRouter, its request as `body` (`actAsk`'s): `{message, cost}`, or `{trouble}`. */
+  async openRouterChat(given, { stopped } = {}) {
+    return openRouter(() => openRouterChat({ key: text(given, "key"), body: given.body ?? {}, seconds: seconds(given.seconds, 60, 600), signal: stopped }));
   },
 
   /**

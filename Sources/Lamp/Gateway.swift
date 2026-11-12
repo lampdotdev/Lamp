@@ -1101,52 +1101,26 @@ enum AppAI {
         return data
     }
 
+    /// A text answer from OpenRouter with the person's key, sent by lamp's command line (`openRouterText`,
+    /// cli/openrouter.mjs), which `lamp dev` and `lamp ai` send with too: with `json`, a JSON object with room for a long
+    /// one, fitting `schema` when there is one, and asked again when a provider's content filter cuts the reply off.
     private static func viaOpenRouter(prompt: String, images: [Image], system: String,
                                       model: String, json: Bool = false, schema: [String: Any]? = nil) async throws -> (String, Double) {
-        var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 120
-        request.setValue("Bearer \(KeyStore.openRouterKey ?? "")", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Lamp", forHTTPHeaderField: "X-Title")
-        var messages: [[String: Any]] = []
-        if !system.trimmed.isEmpty { messages.append(["role": "system", "content": system]) }
-        let content: [[String: Any]] = [["type": "text", "text": prompt]] + images.map {
-            ["type": "image_url", "image_url": ["url": "data:\($0.mediaType);base64,\($0.data)"]]
-        }
-        messages.append(["role": "user", "content": content])
-        var body: [String: Any] = ["model": model, "messages": messages, "usage": ["include": true]]
-        if json {
-            // Structured output: the model must return a JSON object, and gets room for a long one (a plan
-            // with scripts in it can run to thousands of tokens; a cut-off reply is what breaks apps).
-            // With a schema, the object must also fit it.
-            body["response_format"] = schema.map { ["type": "json_schema", "json_schema": ["name": "answer", "strict": true, "schema": $0]] }
-                ?? ["type": "json_object"]
-            body["max_tokens"] = 16_000
-        }
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        var given: [String: Any] = ["key": KeyStore.openRouterKey ?? "", "prompt": prompt, "system": system, "model": model, "json": json,
+                                    "images": images.map { ["media_type": $0.mediaType, "data": $0.data] }]
+        if let schema { given["schema"] = schema }
+        let done = try await LampCLI.ask("openRouterText", given)
+        if let text = done["text"] as? String { return (text, done["cost"] as? Double ?? 0) }
+        throw openRouterFailure(done["trouble"] as? [String: Any] ?? [:])
+    }
 
-        // Anthropic's safety classifier sometimes refuses an ordinary request (finish_reason "content_filter",
-        // empty reply, HTTP 200): about 1 in 20 identical benign requests in others' measurements, and more
-        // under bursts. It's random, so asking again gets the answer.
-        var cost = 0.0
-        for attempt in 0..<3 {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            let choice = (obj["choices"] as? [[String: Any]])?.first
-            cost += (obj["usage"] as? [String: Any])?["cost"] as? Double ?? 0
-            guard status == 200, let choice else {
-                throw Failure(message: Provider.friendlyError(status: status, reply: obj, from: Provider.openRouter))
-            }
-            let text = (choice["message"] as? [String: Any])?["content"] as? String ?? ""
-            if choice["finish_reason"] as? String == "content_filter" {
-                if attempt < 2 { try await Task.sleep(for: .milliseconds(400 << attempt)); continue }
-                throw Failure(message: "The AI provider's content filter cut the reply off. Try rewording the request.")
-            }
-            return (text, cost)
+    /// What kept OpenRouter from answering, as the app is told it, with what it cost all the same.
+    static func openRouterFailure(_ trouble: [String: Any]) -> Failure {
+        let cost = trouble["cost"] as? Double ?? 0
+        if trouble["kind"] as? String == "refused", let status = trouble["status"] as? Int, status > 0 {
+            return Failure(message: Provider.friendlyError(status: status, reply: trouble["reply"] as? [String: Any] ?? [:], from: Provider.openRouter), cost: cost)
         }
-        throw Failure(message: "The AI didn't answer.")
+        return Failure(message: trouble["message"] as? String ?? "The AI didn't answer.", cost: cost)
     }
 
     static func stripFences(_ text: String) -> String {

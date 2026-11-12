@@ -10,7 +10,7 @@
 //   lamp use [folder] …   try it: a key, a click, some typing
 //   lamp stop [folder]    stop running it
 //   lamp share [folder]   a link on lamp.dev to play it, and lamp ideas for what people send back
-//   lamp ai               the AI of pages shared on lamp.dev, played here, from the person's own Claude Code or Codex
+//   lamp ai               the AI of pages shared on lamp.dev, played here, from the person's own Claude Code, Codex or OpenRouter key
 //   lamp devices          the person's devices; lamp open --on xbox, or --on android, puts a page on one
 //   lamp setup            teach the coding agents on this computer to work this way
 //   lamp skills           Lamp's guidance for each kind of work; lamp skill <name> reads one
@@ -130,8 +130,9 @@ Mac app Lamp made in Swift, built and run on this Mac.
       sends new ideas and replies to your own address too (once you confirm it), and you can answer from there.
   lamp ai [--forget]
       Answer the AI of pages shared on lamp.dev, played in a browser on this computer, with your own Claude Code
-      or Codex, until stopped. Lamp does the same while it's open, with the AI you set up there. Each page asks here once, and you allow it or not. --forget takes back every
-      page allowed, so each asks again.
+      or Codex, or OpenRouter with your key in OPENROUTER_API_KEY, until stopped. Lamp does the same while it's
+      open, with the AI you set up there. Each page asks here once, and you allow it or not. --forget takes back
+      every page allowed, so each asks again.
   lamp setup [--remove]   Teach Claude Code and Codex on this computer to work this way (a skill for each).
   lamp guide              What that skill says, for any other agent.
   lamp skills [word]      Lamp's guidance for each kind of work, those about a word; lamp skill <name> reads one.
@@ -951,13 +952,13 @@ async function main() {
     const { options } = parse(args, []);
     if (options.forget) { forgetAllowed(); console.log("Every shared page asks again before it uses your AI here."); return; }
     const which = engine();
-    if (!which) throw new Problem("AI here needs Claude Code or Codex on this computer, signed in.");
+    if (!which) throw new Problem("AI here needs Claude Code or Codex on this computer, signed in, or an OpenRouter key in OPENROUTER_API_KEY.");
     try { await serveLocalAI(); } catch (error) {
       if (error?.code === "EADDRINUSE") throw new Problem("Lamp, or lamp ai in another terminal, already answers shared pages' AI on this computer.");
       throw error;
     }
     const allowedNow = Object.values(allowed());
-    console.log(`Answering the AI of pages shared on lamp.dev with your ${which === "codex" ? "Codex" : "Claude Code"}, as they're played in a browser on this computer. Ctrl-C stops.`);
+    console.log(`Answering the AI of pages shared on lamp.dev with your ${which === "codex" ? "Codex" : which === "openrouter" ? "OpenRouter key" : "Claude Code"}, as they're played in a browser on this computer. Ctrl-C stops.`);
     if (allowedNow.length) console.log(`Allowed: ${allowedNow.map((page) => (page.name ? `"${page.name}"` : `lamp.dev/w/${page.id}`)).join(", ")}.`);
     await new Promise(() => {});
   }

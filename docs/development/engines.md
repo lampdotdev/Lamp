@@ -326,6 +326,11 @@ A capability given to one engine must be given to all of them that can take it, 
   approvals. Pictures go with the request, in Claude Code's stream-json input and as Codex's `-i` attachments, never
   through a tool that reads files. The engine is never run with `BUN_BE_BUN`, which the runtime around lamp sets and
   would make Claude Code, itself built on Bun, act as Bun.
+- **OpenRouter answering apps** (`AppAI.viaOpenRouter`, `AppAct.openRouterStep`): sent by lamp's command line
+  (`openRouterText`, `openRouterChat`, cli/openrouter.mjs) with the person's key from Lamp's Keychain on the call's
+  input, kept nowhere there; a provider's content-filter cut-off is asked again twice within the request's time, and
+  each attempt's cost comes back to be recorded. `lamp dev` and `lamp ai` send the same way with `OPENROUTER_API_KEY`.
+  Pictures made through OpenRouter and decisions through its decision model are still sent by Lamp's app.
 - **Shared pages' AI** (`SharedPagesAI`, `Store.sharedPageAI`): a page shared on lamp.dev, played in a browser on the
   Mac, asks one port of the computer's own (`NEARBY` in lamp.js). Which pages are let in is lamp's command line's
   (cli/local-ai.mjs, also `lamp ai`); Lamp keeps its `sharedPages` call running and is asked only for the person's yes
