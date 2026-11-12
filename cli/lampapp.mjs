@@ -9,6 +9,7 @@ import { inflateRawSync } from "node:zlib";
 import { Problem, RESOURCES, manifestOf, projectOf, stateOf } from "./state.mjs";
 import { LIMITS, nameOf, zipOf } from "./share.mjs";
 import { isID } from "../site/lib/shared-wishes.js";
+import { ignoredFor } from "./ignore.mjs";
 
 // What a Lamp app file may hold, written once in Resources/share-rules.json, which Lamp's app reads too (`ShareRules`):
 // the sizes another Lamp opens, the names a license goes by, and the shapes of keys a shared file never carries.
@@ -245,7 +246,9 @@ export function exportApp(given, { anyway = false, link = null } = {}) {
     // page is Web/ in the file and whose own files beside it go as themselves.
     // A site stays one at every export, whether its page is at the folder's top or (unpacked) in Web/.
     site = kind === "web-app" && (manifest?.site === true || !project.lamps);
-    for (const path of filesUnder(project.root, "", { hidden: (path) => site && SERVED_HIDDEN.has(path), skip: (path) => path === "node_modules" || (!project.lamps && (wishFolder ? path === ".lamp-wish" || path === "LAMP-LICENSE.txt" : WISH_FILES.has(path))) })) {
+    // What the folder's .lampignore keeps to this computer stays out of the file, as it does of the page.
+    const ignored = ignoredFor(project.root, folder);
+    for (const path of filesUnder(project.root, "", { hidden: (path) => site && SERVED_HIDDEN.has(path), skip: (path) => path === "node_modules" || ignored(path) || (!project.lamps && (wishFolder ? path === ".lamp-wish" || path === "LAMP-LICENSE.txt" : WISH_FILES.has(path))) })) {
       if (!lamps(path)) files.set(`Web/${path}`, readFileSync(join(project.root, path)));
     }
     if (project.lamps || wishFolder) {
