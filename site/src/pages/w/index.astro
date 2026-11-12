@@ -7,7 +7,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
   A wish shared as a link (lamp.dev/w/<id>): a page for playing it. The wish fills the window, playing when Lamp sent
   its page, else its picture (or icon) with what it does and how to get it, under a header with its name and who it's by. Making one's own is kept to a slim band at
   the foot that reads as a prompt box, with the changes Lamp suggests turning in it, and can be put away; Lamp itself
-  is only a quiet "Made with Lamp" in the header and a line in the dialog Remix opens. It's on the site's paper and ink, in its
+  is only a quiet "Made with Lamp" at the foot, beside the box where there's room, and a line in the dialog Remix opens.
+  The header's one button is Make it your own, for a game that plays here and came with its file. It's on the site's paper and ink, in its
   type, with thin rules and nothing more, so nothing competes with the wish; put away, the bars leave the wish on black,
   as a game is best seen. The site is static and the wish is only known when the page is asked for, so this is built
   empty and the server puts the wish in as #shared-wish (lib/shared-wish-page.js).
@@ -32,8 +33,10 @@ import { DOWNLOAD_URL } from "../../lib/download";
           <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" /></svg>
         </a>
       </div>
+      <!-- A copy of one's own, to change: the app's file unpacked on the person's computer by their own app (the Make it
+           yourself tab, with nothing written yet). There only when the game plays here and came with its file. -->
       <div class="flex shrink-0 items-center gap-4 text-sm">
-        <a href="/" class="rounded-md font-mono text-[13px] text-muted-ink hover:text-tape focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tape/50">Made with Lamp</a>
+        <button type="button" data-make-own hidden class="h-8 cursor-pointer rounded-md border border-tape/20 px-3 text-sm font-semibold whitespace-nowrap hover:bg-tape/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tape/50">Make it your own</button>
       </div>
     </header>
     </div>
@@ -78,7 +81,9 @@ import { DOWNLOAD_URL } from "../../lib/download";
          and the header away together (remembered in this browser), leaving only the wish, and from the same place
          brings both back. -->
     <div data-bar data-remix-band class="bar bar-bottom">
-    <aside class="remix-band h-16 border-t border-tape/15 bg-paper" aria-label="Make a change">
+    <aside class="remix-band relative h-16 border-t border-tape/15 bg-paper" aria-label="Make a change">
+      <!-- Credit at the foot, where there's room beside the box: on a narrow screen the box has the whole band. -->
+      <a href="/" class="absolute top-1/2 left-6 hidden -translate-y-1/2 rounded-md font-mono text-[13px] text-muted-ink hover:text-tape focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tape/50 lg:block">Made with Lamp</a>
       <form data-prompt class="mx-auto flex h-full max-w-[44rem] items-center gap-3 py-3 pr-14 pl-3 sm:pl-6 lg:px-6">
         <!-- The box's questions and its button say what it's for; its label is for screen readers. -->
         <label for="change" class="sr-only">How would you make this better?</label>
@@ -693,6 +698,28 @@ import { DOWNLOAD_URL } from "../../lib/download";
       pointOpen();
       dialog.showModal();
       confirmSend.focus();
+    });
+    // Make it your own: the dialog on its Make it yourself tab with nothing written, so the person's app makes the copy
+    // and then asks them what to change (lib/change-words.ts).
+    const makeOwn = $<HTMLButtonElement>("[data-make-own]");
+    makeOwn.hidden = !canMake;
+    makeOwn.addEventListener("click", () => {
+      draft += 1;
+      fromBar = "";
+      shot = null;
+      shotBox.hidden = true;
+      sentIdea = false;
+      ideaText.value = "";
+      // Nothing to write yet: the person's app asks them what to change once their copy is open.
+      ideaText.placeholder = "What to change first, if you know";
+      confirm.hidden = false;
+      sentText.hidden = true;
+      notifyNote.textContent = "";
+      track("make_own_copy", { idea: wish.name, place: "shared" });
+      showTab("make");
+      pointOpen();
+      dialog.showModal();
+      ideaText.focus();
     });
     // The ideas this browser sent to this link, by number and token, for a later visit to ask what became of them (only
     // theirs, nothing else). Kept here alone: there's no account, and nothing of them goes anywhere but this link's site.
