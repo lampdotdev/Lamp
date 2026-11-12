@@ -15282,14 +15282,19 @@ enum Template {
         private let send: ([String: Any], TimeInterval) async throws -> [String: Any]
         /// The longest a request may take, when the app wants a quick answer; nil for no limit.
         let seconds: Double?
+        /// How much of one read goes back to the AI, in bytes: room for an app's real state in one step, since paging
+        /// through it costs steps a request needs for its work.
+        let resultBytes: Int
 
         /// `seconds` limits each request's time, for a feature that should answer quickly; leave it out for no limit.
+        /// `resultBytes` raises how much of a read the AI sees (32 KB unless given, 256 KB at most).
         /// `send` stands in for Lamp in a test; leave it out.
-        init(about: String = "", tools: [LampActTool], seconds: Double? = nil,
+        init(about: String = "", tools: [LampActTool], seconds: Double? = nil, resultBytes: Int? = nil,
              send: (([String: Any], TimeInterval) async throws -> [String: Any])? = nil) {
             self.about = about
             self.tools = tools
             self.seconds = seconds.map { max(1, $0) }
+            self.resultBytes = min(max(resultBytes ?? 32_768, 1024), 262_144)
             self.send = send ?? { body, timeout in try await LampAI.post("/ai/act", body, timeout: timeout) }
         }
 
@@ -15446,7 +15451,7 @@ enum Template {
                 onStep(.reading(tool.name))
                 do {
                     let value = try await tool.perform(args(call), callInfo(call, key: ""))
-                    results[id] = ["id": id, "ok": true, "value": Self.cut(value)]
+                    results[id] = ["id": id, "ok": true, "value": Self.cut(value, max: resultBytes)]
                 } catch {
                     results[id] = ["id": id, "ok": false, "error": Self.words(error)]
                 }
@@ -15505,13 +15510,13 @@ enum Template {
 
         private static func words(_ error: Error) -> String { (error as? LampAI.Failure)?.message ?? error.localizedDescription }
 
-        /// At most 4 KB of a read goes back to the AI, cut with a note.
-        private static func cut(_ value: Any) -> Any {
+        /// At most `max` bytes of a read go back to the AI, cut with a note.
+        private static func cut(_ value: Any, max: Int) -> Any {
             guard JSONSerialization.isValidJSONObject([value]), let data = try? JSONSerialization.data(withJSONObject: [value]) else {
                 return ["note": "The result couldn't be read."]
             }
-            guard data.count > 4096 else { return value }
-            return ["cut": String(String(decoding: data, as: UTF8.self).prefix(4000)), "note": "Cut short: ask for less."]
+            guard data.count > max else { return value }
+            return ["cut": String(decoding: data.prefix(max - 96), as: UTF8.self), "note": "Cut short: ask for less."]
         }
 
         private static func canonical(_ value: Any) -> String {

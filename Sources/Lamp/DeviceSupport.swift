@@ -854,15 +854,19 @@ enum DeviceSupport {
       // given ACT_STEP_SECONDS, which only a call that has stopped answering reaches. An app that wants a quicker turn
       // asks for one (`limits: { seconds }`); steps and writes it may only lower.
       var ACT_LIMITS = { steps: 4, writes: 6 };
+      // How much of one read goes back to the model: room for a real app's state (a 184-piece model, a week's calendar)
+      // in one step, since paging through it costs steps a turn needs for its work. An app with more raises it
+      // (`limits: { result }`), up to ACT_RESULT_MAX.
+      var ACT_RESULT = 32768, ACT_RESULT_MAX = 262144;
       var ACT_STEP_SECONDS = 600;
       var actRan = {};      // turn id -> call key -> the result a write gave, while this copy of the page is open
       function actId() { return 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
       function isList(v) { return Object.prototype.toString.call(v) === '[object Array]'; }
-      /** At most 4 KB of a result goes back to the model, cut with a note. */
-      function actValue(value) {
+      /** At most `max` characters of a result go back to the model, cut with a note. */
+      function actValue(value, max) {
         var json = jsonState(value === undefined ? null : value), text;
         try { text = JSON.stringify(json); } catch (e) { return { note: 'The result couldn\'t be read.' }; }
-        if (text && text.length > 4096) return { cut: text.slice(0, 4000), note: 'Cut short: ask for less.' };
+        if (text && text.length > max) return { cut: text.slice(0, max - 96), note: 'Cut short: ask for less.' };
         return json;
       }
       /** The page's own check of a call before it runs: a tool it declared, its arguments an object with nothing
@@ -885,6 +889,8 @@ enum DeviceSupport {
           limits[k] = Math.max(1, Math.min(asked, ACT_LIMITS[k]));
         });
         var asked = o.limits && typeof o.limits.seconds === 'number' && o.limits.seconds > 0 ? o.limits.seconds : null;
+        var resultMax = o.limits && typeof o.limits.result === 'number' && o.limits.result > 0
+          ? Math.min(Math.max(1024, Math.floor(o.limits.result)), ACT_RESULT_MAX) : ACT_RESULT;
         var id = o.turn || actId();
         if (!actRan[id]) {
           var kept = Object.keys(actRan);
@@ -934,7 +940,7 @@ enum DeviceSupport {
             }).then(function (value) {
               if (value === NOT_RUN) return;
               out.reads.push({ name: c.name, args: c.args });
-              results[c.id] = { id: c.id, ok: true, value: actValue(value) };
+              results[c.id] = { id: c.id, ok: true, value: actValue(value, resultMax) };
             }, function (e) { results[c.id] = { id: c.id, ok: false, error: refused(e) }; });
           })).then(function () {
             var stopped = null;
@@ -971,7 +977,7 @@ enum DeviceSupport {
                 var running;
                 try { running = Promise.resolve(tool.run(c.args, call)); } catch (e) { running = Promise.reject(e); }
                 return running.then(function (value) {
-                  var kept = actValue(value);
+                  var kept = actValue(value, resultMax);
                   ran[key] = kept;
                   var entry = { name: c.name, args: c.args, result: value };
                   if (value && typeof value === 'object' && value.partly) entry.partly = String(value.partly);
