@@ -7,7 +7,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
   A wish shared as a link (lamp.dev/w/<id>): a page for playing it. The wish fills the window, playing when Lamp sent
   its page, else its picture (or icon) with what it does and how to get it, under a header with its name and who it's by. Making one's own is kept to a slim band at
   the foot that reads as a prompt box, with the changes Lamp suggests turning in it, and can be put away; Lamp itself
-  is only a quiet "Made with Lamp" at the foot, beside the box where there's room, and a line in the dialog Remix opens.
+  is only its mark and name, quiet at the foot beside the box where there's room ("Made with Lamp" on hover), and a line in the dialog Remix opens.
   The header's one button is Make it your own, for a game that plays here and came with its file. It's on the site's paper and ink, in its
   type, with thin rules and nothing more, so nothing competes with the wish; put away, the bars leave the wish on black,
   as a game is best seen. The site is static and the wish is only known when the page is asked for, so this is built
@@ -82,8 +82,9 @@ import { DOWNLOAD_URL } from "../../lib/download";
          brings both back. -->
     <div data-bar data-remix-band class="bar bar-bottom">
     <aside class="remix-band relative h-16 border-t border-tape/15 bg-paper" aria-label="Make a change">
-      <!-- Credit at the foot, where there's room beside the box: on a narrow screen the box has the whole band. -->
-      <a href="/" class="absolute top-1/2 left-6 hidden -translate-y-1/2 rounded-md font-mono text-[13px] text-muted-ink hover:text-tape focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tape/50 lg:block">Made with Lamp</a>
+      <!-- Credit at the foot, where there's room beside the box: Lamp's mark and its name, saying the rest on hover. On a
+           narrow screen the box has the whole band. -->
+      <a href="/" title="Made with Lamp" aria-label="Made with Lamp" class="absolute top-1/2 left-6 hidden -translate-y-1/2 items-center gap-1.5 rounded-md font-mono text-[13px] text-muted-ink hover:text-tape focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tape/50 lg:flex"><img src="/favicon.png" alt="" width="16" height="16" class="size-4" />Lamp</a>
       <form data-prompt class="mx-auto flex h-full max-w-[44rem] items-center gap-3 py-3 pr-14 pl-3 sm:pl-6 lg:px-6">
         <!-- The box's questions and its button say what it's for; its label is for screen readers. -->
         <label for="change" class="sr-only">How would you make this better?</label>
