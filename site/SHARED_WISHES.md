@@ -12,8 +12,8 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   the link's page, filling the room between its header and the bar under it, as the app's window fills a Mac's: a game's
   controls reach its edges and its scene, drawn on a fixed stage, is fitted inside with black around it where the
   shapes differ. The `shape` Lamp sends with the link (`Publish.pageShape`) stays in the page's JSON but no longer sizes
-  the frame. With a button for full screen, so whoever opens the link tries it
-  first. Lamp sends the page with the wish's file (`WishLink.playablePage`: the page Lamp puts on
+  the frame. Full screen is the browser's own, with the page's chevron putting its header and box away, so whoever
+  opens the link tries it first. Lamp sends the page with the wish's file (`WishLink.playablePage`: the page Lamp puts on
   GitHub Pages, what it saves kept under the link), zipped, in parts to `api/wish-file.js` with `what=page`; the site
   unpacks it (`readPage`: index.html at its root, never a link or a path that steps up, at most 3,000 files) into Blob,
   each version in a folder of its own, and drops the last one. Blob hands HTML out as a download and refuses frames, so

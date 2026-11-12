@@ -57,14 +57,6 @@ import { DOWNLOAD_URL } from "../../lib/download";
         </button>
       </div>
       <div data-play hidden class="play-frame relative overflow-hidden bg-black">
-        <button
-          type="button"
-          data-fullscreen
-          aria-label="Full screen"
-          class="absolute top-3 right-3 z-10 grid size-8 cursor-pointer place-items-center rounded-md bg-black/40 text-white/90 backdrop-blur hover:bg-black/60 focus-visible:outline-2 focus-visible:outline-white"
-        >
-          <svg aria-hidden="true" viewBox="0 0 16 16" class="size-4 fill-none stroke-current stroke-[1.5] [stroke-linecap:round] [stroke-linejoin:round]"><path data-enter d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" /><path data-exit hidden d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5" /></svg>
-        </button>
       </div>
       <!-- An app that doesn't play here (a Mac app, or one too big to play): its picture as it is, else its icon large,
            with what it does and how to get it under it, so the page is never empty. -->
@@ -508,19 +500,6 @@ import { DOWNLOAD_URL } from "../../lib/download";
         try { frame.contentWindow?.postMessage({ lamp: "picture", n }, new URL(wish.play!).origin); } catch { answer(null); }
       });
       frame.src = wish.play;
-      // The same button takes the wish out of full screen, and shows which way it goes.
-      const button = $<HTMLButtonElement>("[data-fullscreen]");
-      button.addEventListener("click", () => {
-        (document.fullscreenElement === stage ? document.exitFullscreen() : stage.requestFullscreen?.())?.catch?.(() => {});
-        focusPlay();
-      });
-      document.addEventListener("fullscreenchange", () => {
-        const full = document.fullscreenElement === stage;
-        button.setAttribute("aria-label", full ? "Exit full screen" : "Full screen");
-        button.querySelector<SVGPathElement>("[data-enter]")!.toggleAttribute("hidden", full);
-        button.querySelector<SVGPathElement>("[data-exit]")!.toggleAttribute("hidden", !full);
-        focusPlay();
-      });
     } else {
       // Not played here: what it looks like (its picture, else its icon), what it does, and how to get it. Lamp opens
       // it on a Mac; anywhere else, the link goes to their Mac by email.
