@@ -283,7 +283,7 @@ export function exportApp(given, { anyway = false, link = null } = {}) {
     if (attached > MAX_ARCHIVE - 8 * 1024 * 1024) throw new Problem(`${name} is too big to share: its pictures and other files come to over ${Math.floor((MAX_ARCHIVE - 8 * 1024 * 1024) / 1_000_000)} MB`);
     files.set(path, from(path));
   }
-  if (existsSync(join(app, "APP.md"))) files.set("APP.md", from("APP.md"));
+  if (keep("APP.md") && existsSync(join(app, "APP.md"))) files.set("APP.md", from("APP.md"));
   // What the app declares; the Lamp that opens the file checks each of it again as it reads it.
   let declares = false;
   try {
@@ -294,7 +294,7 @@ export function exportApp(given, { anyway = false, link = null } = {}) {
   // icon.png at the top of a page lamp made is the page's, which went with it.
   for (const icon of ["icon.json", "icon-glass.json", "icon-art.png", "icon.png"]) {
     if (icon === "icon.png" && project.kind === "page" && !project.lamps && !wishFolder) continue;
-    if (existsSync(join(app, icon))) files.set(icon, from(icon));
+    if (keep(icon) && existsSync(join(app, icon))) files.set(icon, from(icon));
   }
   const releases = releasesOf(app);
   if (releases.length) files.set("releases.json", Buffer.from(JSON.stringify(releases, null, 2)));
