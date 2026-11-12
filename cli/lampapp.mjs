@@ -210,46 +210,12 @@ function identityOf(folder) {
 }
 
 /**
- * The app in the folder as a Lamp app file (`Sharing.export`), as bytes, with its name: its own files as its kind
- * travels (a page's in Web/, a Mac app's Swift in Sources/ and its widget's and share extension's), Assets/, APP.md and
- * what it declares, its credits with this app added to the chain it came by, each license they name, its icon's design,
- * and lamp-app.json, which says what it is. Never Lamp's own files, which the Mac that opens it writes, nor anything
- * hidden. Refused when a license its credits name is gone, when something in it is shaped like a key, or when it's
- * more than another Lamp opens. Work its credits give no license for goes only with `anyway`: its author may not want
- * it passed on. `link` is the lamp.dev link the file goes up with (`share`), which this app's place in the chain carries,
- * so a copy of it shared on can say which link it came from (`sourceLinkOf`).
+ * The app's own files as a Lamp app file carries them, by their path in the file (`Web/…`, `Sources/…`, `Assets/…`,
+ * `APP.md`): what `exportApp` packs, and what `lamp compare` holds two copies of an app side by side by, so Lamp's own
+ * files, hidden ones and what the folder's .lampignore names count in neither. With its kind, whether it's a site, and
+ * what a Mac app has beside its code.
  */
-export function exportApp(given, { anyway = false, link = null } = {}) {
-  const project = projectOf(given), folder = project.folder, manifest = manifestOf(folder);
-  // Where the app's own record is (its credits, licenses, notes, files and the Swift beside its page): the folder, or
-  // for a site laid out as Lamp puts one on GitHub, `.lamp-wish/` beside the page (`StaticSite.layOut`).
-  const wishFolder = existsSync(join(folder, ".lamp-wish", "lamp-app.json")), app = wishFolder ? join(folder, ".lamp-wish") : folder;
-  const credits = (() => { try { return JSON.parse(readFileSync(join(app, "credits.json"), "utf8")); } catch { return {}; } })();
-  const upstream = Array.isArray(credits?.upstream) ? credits.upstream.filter((source) => source && typeof source.name === "string") : [];
-  const terms = (source) => [source.licenseFile, ...(Array.isArray(source.noticeFiles) ? source.noticeFiles : [])].filter((path) => typeof path === "string");
-  const name = String((typeof manifest?.name === "string" && manifest.name.trim()) || (project.kind === "page" ? nameOf(project) : basename(folder))).replace(/[\r\n/:]+/g, " ").trim().slice(0, 60) || "App";
-  for (const source of upstream) {
-    const gone = terms(source).find((path) => !existsSync(join(app, path)));
-    if (gone) throw new Problem(`${name} can't be shared: the license of ${source.name} is missing from it. Put ${gone} back.`);
-  }
-  // Work in the app that came with no license: the person is asked once, as Lamp's Share Link asks (`ShareCheck`), and
-  // again only when the app takes in more. What it only fetches as it runs (`live`) isn't passed on, so it isn't asked of.
-  const unlicensed = upstream.filter((source) => noLicense(source.license) && source.live !== true);
-  const named = (source) => (source.author ? `${source.name} by ${source.author}` : source.name);
-  // Agreed to by the work itself, as Lamp keeps it (`ShareCheck.fingerprint`): its name, address and commit, so another
-  // work under the same name is asked about again.
-  const work = (source) => [source.name, source.url ?? "", source.commit ?? ""].join("\u001f");
-  const agreedFile = join(stateOf(folder), "unlicensed-agreed.json");
-  let agreed = [];
-  try { agreed = JSON.parse(readFileSync(agreedFile, "utf8")); } catch {}
-  const asking = unlicensed.filter((source) => !agreed.includes(work(source)));
-  if (asking.length && !anyway) {
-    throw new Problem(`${name} uses work that came with no license (${asking.map(named).join(", ")}). Ask the person whether they're comfortable sharing it; --anyway shares it, and it isn't asked again for these.`);
-  }
-  if (anyway && asking.length) {
-    try { mkdirSync(stateOf(folder), { recursive: true }); writeFileSync(agreedFile, JSON.stringify([...new Set([...agreed, ...unlicensed.map(work)])].sort(), null, 2)); } catch {}
-  }
-
+function ownFiles({ project, folder, manifest, app, wishFolder, name }) {
   const files = new Map(), from = (path) => readFileSync(join(app, path));
   // The folder's .lampignore covers the app's own files too (its code beside the page, Assets/), as they are from the
   // folder's top; a wish's own copy in .lamp-wish/ isn't the folder's, so its rules don't reach in there.
@@ -297,6 +263,62 @@ export function exportApp(given, { anyway = false, link = null } = {}) {
     files.set(path, from(path));
   }
   if (keep("APP.md") && existsSync(join(app, "APP.md"))) files.set("APP.md", from("APP.md"));
+  return { files, kind, site, flags, keep, from };
+}
+
+/**
+ * The app's own files in a folder, by their path in its Lamp app file, as `ownFiles` reads them: what a share would carry
+ * of it, for holding it beside another copy (`lamp compare`). Nothing is written.
+ */
+export function appFilesOf(given) {
+  const project = projectOf(given), folder = project.folder, manifest = manifestOf(folder);
+  const wishFolder = existsSync(join(folder, ".lamp-wish", "lamp-app.json")), app = wishFolder ? join(folder, ".lamp-wish") : folder;
+  const name = String((typeof manifest?.name === "string" && manifest.name.trim()) || basename(folder)).trim().slice(0, 60) || "App";
+  return ownFiles({ project, folder, manifest, app, wishFolder, name }).files;
+}
+
+/**
+ * The app in the folder as a Lamp app file (`Sharing.export`), as bytes, with its name: its own files as its kind
+ * travels (a page's in Web/, a Mac app's Swift in Sources/ and its widget's and share extension's), Assets/, APP.md and
+ * what it declares, its credits with this app added to the chain it came by, each license they name, its icon's design,
+ * and lamp-app.json, which says what it is. Never Lamp's own files, which the Mac that opens it writes, nor anything
+ * hidden. Refused when a license its credits name is gone, when something in it is shaped like a key, or when it's
+ * more than another Lamp opens. Work its credits give no license for goes only with `anyway`: its author may not want
+ * it passed on. `link` is the lamp.dev link the file goes up with (`share`), which this app's place in the chain carries,
+ * so a copy of it shared on can say which link it came from (`sourceLinkOf`).
+ */
+export function exportApp(given, { anyway = false, link = null } = {}) {
+  const project = projectOf(given), folder = project.folder, manifest = manifestOf(folder);
+  // Where the app's own record is (its credits, licenses, notes, files and the Swift beside its page): the folder, or
+  // for a site laid out as Lamp puts one on GitHub, `.lamp-wish/` beside the page (`StaticSite.layOut`).
+  const wishFolder = existsSync(join(folder, ".lamp-wish", "lamp-app.json")), app = wishFolder ? join(folder, ".lamp-wish") : folder;
+  const credits = (() => { try { return JSON.parse(readFileSync(join(app, "credits.json"), "utf8")); } catch { return {}; } })();
+  const upstream = Array.isArray(credits?.upstream) ? credits.upstream.filter((source) => source && typeof source.name === "string") : [];
+  const terms = (source) => [source.licenseFile, ...(Array.isArray(source.noticeFiles) ? source.noticeFiles : [])].filter((path) => typeof path === "string");
+  const name = String((typeof manifest?.name === "string" && manifest.name.trim()) || (project.kind === "page" ? nameOf(project) : basename(folder))).replace(/[\r\n/:]+/g, " ").trim().slice(0, 60) || "App";
+  for (const source of upstream) {
+    const gone = terms(source).find((path) => !existsSync(join(app, path)));
+    if (gone) throw new Problem(`${name} can't be shared: the license of ${source.name} is missing from it. Put ${gone} back.`);
+  }
+  // Work in the app that came with no license: the person is asked once, as Lamp's Share Link asks (`ShareCheck`), and
+  // again only when the app takes in more. What it only fetches as it runs (`live`) isn't passed on, so it isn't asked of.
+  const unlicensed = upstream.filter((source) => noLicense(source.license) && source.live !== true);
+  const named = (source) => (source.author ? `${source.name} by ${source.author}` : source.name);
+  // Agreed to by the work itself, as Lamp keeps it (`ShareCheck.fingerprint`): its name, address and commit, so another
+  // work under the same name is asked about again.
+  const work = (source) => [source.name, source.url ?? "", source.commit ?? ""].join("\u001f");
+  const agreedFile = join(stateOf(folder), "unlicensed-agreed.json");
+  let agreed = [];
+  try { agreed = JSON.parse(readFileSync(agreedFile, "utf8")); } catch {}
+  const asking = unlicensed.filter((source) => !agreed.includes(work(source)));
+  if (asking.length && !anyway) {
+    throw new Problem(`${name} uses work that came with no license (${asking.map(named).join(", ")}). Ask the person whether they're comfortable sharing it; --anyway shares it, and it isn't asked again for these.`);
+  }
+  if (anyway && asking.length) {
+    try { mkdirSync(stateOf(folder), { recursive: true }); writeFileSync(agreedFile, JSON.stringify([...new Set([...agreed, ...unlicensed.map(work)])].sort(), null, 2)); } catch {}
+  }
+
+  const { files, kind, site, flags, keep, from } = ownFiles({ project, folder, manifest, app, wishFolder, name });
   // What the app declares; the Lamp that opens the file checks each of it again as it reads it.
   let declares = false;
   try {
