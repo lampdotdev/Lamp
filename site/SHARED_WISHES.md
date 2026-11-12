@@ -25,7 +25,8 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   line and how to get it.
 - The page (`/w/<id>`, `src/pages/w/index.astro` filled by `lib/shared-wish-page.js`, served by `api/wish-page.js`
   through a rewrite in `vercel.json`): a page of the wish's own, for playing it, plain, on the site's paper and ink (the wish between thin-ruled bars, on black once they're put away),
-  with Lamp only a quiet "Made with Lamp" in the header beside the wish's icon, name and who it's by. The wish fills the
+  with Lamp only its mark and name, quiet at the foot, and the header the wish's icon, name and who it's by, with Make it your
+  own on the right for a game that plays there and came with its file. The wish fills the
   rest of the window: a page that plays fills it, and a picture is only as big as it is (it's of the Mac window). Making one's own is a slim band
   at the foot, slid out of the window with the header by a chevron in the window's corner, which brings both back from the same
   place (remembered in that browser): a prompt box with
