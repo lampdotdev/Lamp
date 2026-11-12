@@ -29,7 +29,7 @@ export class Refused extends Error {
 /** JSON with every object's keys in order, as the model is shown it: the same request reads the same each time. */
 export function json(value) {
   const sorted = (v) => (Array.isArray(v) ? v.map(sorted) : v && typeof v === "object"
-    ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sorted(v[k])])) : v);
+    ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sorted(Object.getOwnPropertyDescriptor(v, k).value)])) : v);
   return value === undefined ? "null" : JSON.stringify(sorted(value)) ?? "null";
 }
 
@@ -150,8 +150,8 @@ const validDay = (s) => {
   return d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3];
 };
 const validMoment = (s) => {
-  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/.exec(s);
-  return !!m && validDay(m[1]) && +m[2] < 24 && +m[3] < 60 && +m[4] < 60;
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:Z|[+-](\d{2}):?(\d{2}))$/.exec(s);
+  return !!m && validDay(m[1]) && +m[2] < 24 && +m[3] < 60 && +m[4] < 60 && (m[6] === undefined || (+m[6] < 24 && +m[7] < 60));
 };
 
 /** Why a value doesn't fit an argument's shape, or null. */
@@ -411,17 +411,18 @@ const levelsOf = (question) => (Array.isArray(question?.criteria) ? question.cri
 export function decidePrompt(state, questions) {
   const object = (properties) => ({ type: "object", properties, required: Object.keys(properties).sort(), additionalProperties: false });
   const number = { type: "number" };
-  const answers = {};
+  // Question ids are the app's own words, any at all: kept as entries, so one called __proto__ is a question too.
+  const answers = [];
   for (const [id, question] of Object.entries(questions)) {
-    if (question?.type === "noul") answers[id] = object({ noul: number });
+    if (question?.type === "noul") answers.push([id, object({ noul: number })]);
     else if (question?.type === "choice") {
       const options = optionsOf(question).sort();
-      answers[id] = object({ choice: { type: "string", enum: options }, probabilities: object(Object.fromEntries(options.map((o) => [o, number]))), confidence: number });
+      answers.push([id, object({ choice: { type: "string", enum: options }, probabilities: object(Object.fromEntries(options.map((o) => [o, number]))), confidence: number })]);
     } else if (question?.type === "score") {
-      answers[id] = object({ score: number, probabilities: object(Object.fromEntries(Array.from({ length: levelsOf(question) }, (_, i) => [String(i), number]))), confidence: number });
+      answers.push([id, object({ score: number, probabilities: object(Object.fromEntries(Array.from({ length: levelsOf(question) }, (_, i) => [String(i), number]))), confidence: number })]);
     }
   }
-  return { system: DECIDE, prompt: `State:\n${typeof state === "string" ? JSON.stringify(state) : json(state)}\n\nQuestions:\n${json(questions)}`, schema: object(answers) };
+  return { system: DECIDE, prompt: `State:\n${json(state)}\n\nQuestions:\n${json(questions)}`, schema: object(Object.fromEntries(answers)) };
 }
 
 const clamp = (value) => (typeof value === "number" && Number.isFinite(value) ? Math.min(Math.max(value, 0), 1) : null);
@@ -434,14 +435,15 @@ const normalized = (probabilities) => {
 export function readDecision(text, questions) {
   const raw = readJSON(text);
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { problem: "The model's decision wasn't valid JSON." };
-  const answers = {};
+  const answers = [];
+  const own = (object, key) => (Object.hasOwn(object, key) ? object[key] : undefined);
   for (const [id, question] of Object.entries(questions)) {
     if (!question || typeof question !== "object" || typeof question.type !== "string") continue;
-    const given = raw[id] && typeof raw[id] === "object" ? raw[id] : {};
+    const given = own(raw, id) && typeof own(raw, id) === "object" ? own(raw, id) : {};
     if (question.type === "noul") {
       const p = clamp(given.noul);
       if (p === null) return { problem: `The model didn't answer "${id}".` };
-      answers[id] = { noul: p };
+      answers.push([id, { noul: p }]);
     } else if (question.type === "choice") {
       const options = optionsOf(question);
       let probabilities = Object.fromEntries(Object.entries(given.probabilities ?? {}).filter(([k, v]) => options.includes(k) && clamp(v) !== null).map(([k, v]) => [k, clamp(v)]));
@@ -449,7 +451,7 @@ export function readDecision(text, questions) {
       if (!choice) return { problem: `The model didn't pick an option for "${id}".` };
       if (!Object.keys(probabilities).length) probabilities = { [choice]: 1 };
       probabilities = normalized(probabilities);
-      answers[id] = { choice, probabilities, confidence: clamp(given.confidence) ?? probabilities[choice] ?? 1 };
+      answers.push([id, { choice, probabilities, confidence: clamp(given.confidence) ?? own(probabilities, choice) ?? 1 }]);
     } else if (question.type === "score") {
       // One normalized distribution is the truth; the score is derived from it, so the two can't disagree. The model's
       // own score only stands in when it gave no usable probabilities.
@@ -459,10 +461,10 @@ export function readDecision(text, questions) {
       else if (typeof given.score === "number" && Number.isFinite(given.score)) probabilities = { [String(Math.round(Math.min(Math.max(given.score, 0), top)))]: 1 };
       else return { problem: `The model didn't rate "${id}".` };
       const score = Object.entries(probabilities).reduce((sum, [k, p]) => sum + Number(k) * p, 0);
-      answers[id] = { score, probabilities, confidence: clamp(given.confidence) ?? Math.max(...Object.values(probabilities)) };
+      answers.push([id, { score, probabilities, confidence: clamp(given.confidence) ?? Math.max(...Object.values(probabilities)) }]);
     } else {
       return { problem: `Unknown question type "${question.type}".` };
     }
   }
-  return { answers };
+  return { answers: Object.fromEntries(answers) };
 }

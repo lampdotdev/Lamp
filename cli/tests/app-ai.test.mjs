@@ -14,7 +14,8 @@ const recorded = (folder, file) => JSON.parse(readFileSync(join(fixtures, folder
 
 const groceries = { name: "groceries", about: "The shopping list.", reads: true, args: {} };
 const addGrocery = { name: "addGrocery", about: "Put something on the list.",
-  args: { name: { type: "string" }, qty: { type: "integer", min: 1, max: 99, optional: true }, store: { type: "string", oneOf: ["grocer", "costco"], optional: true } } };
+  args: { name: { type: "string" }, qty: { type: "integer", min: 1, max: 99, optional: true }, store: { type: "string", oneOf: ["grocer", "costco"], optional: true },
+    when: { type: "datetime", optional: true } } };
 const step = (extra = {}) => readStep(JSON.stringify({ request: "Add milk", tools: [groceries, addGrocery], ...extra }));
 const refusal = (body) => { try { readStep(JSON.stringify(body)); return null; } catch (error) { return error.message; } };
 const earlier = (n) => ({ calls: [{ id: `s${n}c1`, name: "groceries", args: {} }], results: [{ id: `s${n}c1`, ok: true, value: [] }] });
@@ -53,10 +54,12 @@ test("calls that don't fit are asked again, never handed on", () => {
     [call("addGrocery", '{"name":"milk","aisle":"Dairy"}')],
     [call("addGrocery", "{}")],
     [call("addGrocery", '{"name":"milk","store":"market"}')],
+    [call("addGrocery", '{"name":"milk","when":"2026-11-12T12:00:00+99:99"}')],
     [call("removeEverything", "{}")],
     [call("addGrocery", '{"name":"milk"}'), call("reply", '{"text":"Done","ask":false}')],
     Array.from({ length: MAX_CALLS + 1 }, () => call("groceries", "{}")),
   ]) assert.ok(readMessage({ tool_calls: calls }, r).problem, JSON.stringify(calls));
+  assert.ok(readMessage({ tool_calls: [call("addGrocery", '{"name":"milk","when":"2026-11-12T12:00:00+05:30"}')] }, r).answer, "a real offset");
   const last = step({ steps: [earlier(1), earlier(2), earlier(3)] });
   assert.match(readMessage({ tool_calls: [call("groceries", "{}")] }, last).problem, /Only `reply`/);
 });
@@ -118,4 +121,8 @@ test("a decision by a text model is held to its questions and read into answers"
   assert.equal(read.answers.size.choice, "big");
   assert.equal(read.answers.mood.score, 2);
   assert.match(readDecision('{"urgent": {}}', questions).problem, /urgent/);
+  // Any id is a question's, even one an object holds specially.
+  const odd = JSON.parse('{"__proto__": {"type": "noul"}}');
+  assert.deepEqual(decidePrompt({}, odd).schema.required, ["__proto__"]);
+  assert.deepEqual(Object.keys(readDecision('{"__proto__": {"noul": 0.5}}', odd).answers), ["__proto__"]);
 });
