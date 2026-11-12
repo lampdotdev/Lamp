@@ -29,7 +29,7 @@ import { defaultRoute, homeNetwork, neighbours, samsungAt, subnetOn, tvsIn } fro
 import { PUBLISHER, identityName, keptSigner, namesOf, packageOf, versionAfter } from "./msix.mjs";
 import { tile } from "./png.mjs";
 import { Problem } from "./state.mjs";
-import { serveLocalAI } from "./local-ai.mjs";
+import { allowed as pagesAllowed, forgetPage, serveLocalAI } from "./local-ai.mjs";
 import { EngineTrouble, complete } from "./ai.mjs";
 import { OpenRouterTrouble, chat as openRouterChat, decide as openRouterDecide, image as openRouterImage, text as openRouterText } from "./openrouter.mjs";
 
@@ -433,6 +433,18 @@ export const CALLS = {
     }
     await new Promise((done) => (stopped?.aborted ? done() : stopped?.addEventListener("abort", done)));
     server.close();
+    return {};
+  },
+
+  /** The pages shared on lamp.dev allowed to use the AI here, for Settings: `{pages: [{origin, id, name, at}]}`, newest first. */
+  async sharedPagesAllowed() {
+    return { pages: Object.entries(pagesAllowed()).map(([origin, page]) => ({ origin, id: page.id, name: page.name, at: page.at }))
+      .sort((a, b) => String(b.at).localeCompare(String(a.at))) };
+  },
+
+  /** Takes back one page's leave to use the AI here (`origin`): it asks again the next time. */
+  async sharedPagesForget(given) {
+    forgetPage(text(given, "origin"));
     return {};
   },
 

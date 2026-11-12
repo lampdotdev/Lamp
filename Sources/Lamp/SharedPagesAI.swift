@@ -1,3 +1,4 @@
+import SwiftUI
 import AppKit
 import Foundation
 
@@ -47,5 +48,57 @@ enum SharedPagesAI {
         alert.addButton(withTitle: "Allow")
         alert.addButton(withTitle: "Don’t Allow")
         return alert.runModal() == .alertFirstButtonReturn
+    }
+}
+
+/// Settings → Apps: the pages shared on lamp.dev allowed to use the person's AI on this Mac, each with Remove, which
+/// has it ask again the next time. The list is the computer's, kept by lamp's command line, so it's the same whether
+/// Lamp or `lamp ai` answered (`sharedPagesAllowed`, `sharedPagesForget`). Shown only once a page has been allowed;
+/// the tab reads the list as it appears (`load`), since an empty section is never drawn to read it itself.
+@MainActor final class SharedPagesAllowed: ObservableObject {
+    struct Page: Identifiable, Equatable {
+        let origin: String, id: String, name: String, at: Date?
+    }
+    @Published private(set) var pages: [Page] = []
+
+    func load() async {
+        guard let done = try? await LampCLI.ask("sharedPagesAllowed", [:]) else { return }
+        let fraction = ISO8601DateFormatter()
+        fraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        pages = (done["pages"] as? [[String: Any]] ?? []).compactMap { raw in
+            guard let origin = raw["origin"] as? String, let id = raw["id"] as? String else { return nil }
+            let at = (raw["at"] as? String).flatMap { fraction.date(from: $0) ?? ISO8601DateFormatter().date(from: $0) }
+            return Page(origin: origin, id: id, name: raw["name"] as? String ?? "", at: at)
+        }
+    }
+
+    func remove(_ page: Page) async {
+        _ = try? await LampCLI.ask("sharedPagesForget", ["origin": page.origin])
+        await load()
+    }
+}
+
+struct SharedPagesSection: View {
+    @ObservedObject var allowed: SharedPagesAllowed
+
+    var body: some View {
+        if !allowed.pages.isEmpty {
+            Section("Shared pages using your AI") {
+                ForEach(allowed.pages) { page in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(page.name.isEmpty ? "lamp.dev/w/\(page.id)" : page.name)
+                            if let at = page.at {
+                                Text("Allowed \(at.formatted(date: .abbreviated, time: .omitted))")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .help("lamp.dev/w/\(page.id)")
+                        Spacer()
+                        Button("Remove") { Task { await allowed.remove(page) } }
+                    }
+                }
+            }
+        }
     }
 }

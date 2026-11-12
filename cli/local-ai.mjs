@@ -39,6 +39,14 @@ function keep(all) {
 /** Forgets every page let in: each asks again. */
 export function forgetAllowed() { if (existsSync(keptFile())) rmSync(keptFile()); }
 
+/** Forgets one page let in, by its origin: it asks again the next time it uses the AI. */
+export function forgetPage(origin) {
+  const all = allowed();
+  if (!(origin in all)) return;
+  delete all[origin];
+  if (Object.keys(all).length) keep(all); else forgetAllowed();
+}
+
 /** The link a shared page's origin plays, by its id, or null for any other origin. */
 export function linkOf(origin) {
   let url;
