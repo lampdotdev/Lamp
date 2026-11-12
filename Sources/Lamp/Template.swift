@@ -15556,13 +15556,14 @@ enum Template {
                 if let stopped { miss(stopped, skipped: true); continue }
                 if let bad = tool.problem(given) { miss(bad); continue }
                 let key = Self.prefix(op) + Self.hash(tool.name + "|" + Self.canonical(given))
-                // The same change asked again in this request gets its first result, and doesn't run again: one that
+                // The same change asked again in this request is pointed to its first result, and doesn't run again: one that
                 // failed while it ran may have done part of it, so it isn't tried again by itself either.
                 if let kept = ran[key] {
                     if let failed = kept as? [String: Any], let reason = failed["failedWhileRunning"] as? String {
                         miss("Already tried in this request, and it didn't go through: \(reason)")
                     } else {
-                        results[id] = ["id": id, "ok": true, "repeat": true, "value": kept]
+                        // Its result is in an earlier step, which every request carries: pointed to, not sent again.
+                        results[id] = ["id": id, "ok": true, "repeat": true, "value": ["note": "Already done in this request: its result is in an earlier step."]]
                     }
                     continue
                 }

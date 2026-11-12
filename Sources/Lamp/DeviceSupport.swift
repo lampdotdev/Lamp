@@ -988,7 +988,8 @@ enum DeviceSupport {
               if (bad) return fail(bad);
               var key = 'k' + hash(id + '|' + c.name + '|' + canonical(c.args));
               // The same change asked again in this turn gets its first result, and doesn't run again.
-              if (ran.hasOwnProperty(key)) { results[c.id] = { id: c.id, ok: true, repeat: true, value: ran[key] }; return next(i + 1); }
+              // Its result is in an earlier step, which every request carries: pointed to, not sent again.
+              if (ran.hasOwnProperty(key)) { results[c.id] = { id: c.id, ok: true, repeat: true, value: { note: 'Already done in this request: its result is in an earlier step.' } }; return next(i + 1); }
               if (writes >= limits.writes) return fail('Over this turn\'s limit of ' + limits.writes + ' changes.');
               var call = { turn: id, key: key, step: step, id: c.id };
               return Promise.resolve().then(function () { return tool.check ? tool.check(c.args, call) : null; }).then(function (problem) {
