@@ -157,7 +157,9 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
   // What the coding agent said it's changing (`lamp changing`), for the card each page shows as a change goes in: the
   // changes saved in the few minutes after say it, then it's let go.
   let changing = null;
-  const changingWords = () => (changing && Date.now() - changing.at < 180_000 ? { words: changing.words } : {});
+  // What's changing, as the agent last said it: it stands for every save after it, until it says something new or half an
+  // hour has gone by.
+  const changingWords = () => (changing && Date.now() - changing.at < 30 * 60_000 ? { words: changing.words } : {});
 
   function broadcast(changed, removed) {
     gen += 1;

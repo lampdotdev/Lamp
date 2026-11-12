@@ -497,18 +497,26 @@ function letGo(layout, lamp, answer) {
   return true;
 }
 
+/** What the agent last said it's changing in a folder Lamp's app has (`lamp changing`), for half an hour after. */
+function changingFor(folder) {
+  try {
+    const said = JSON.parse(readFileSync(join(stateOf(folder), "changing.json"), "utf8"));
+    return typeof said.words === "string" && Date.now() - said.at < 30 * 60_000 ? { words: said.words } : {};
+  } catch { return {}; }
+}
+
 /**
  * Asks Lamp's app to put what the folder holds into the app (`reopen`: opened again for it), and says how it went.
  * False when Lamp no longer has the folder: the caller runs its own copy instead.
  */
 async function applyInLamp(layout, lamp, { reopen = false } = {}) {
   try {
-    let answer = await lamp.call("apply_change", { path: layout.folder, ...(reopen ? { reopen: true } : {}) });
+    let answer = await lamp.call("apply_change", { path: layout.folder, ...(reopen ? { reopen: true } : {}), ...changingFor(layout.folder) });
     if (letGo(layout, lamp, answer)) return false;
     // Lamp started again since the last apply: it asks for a look at the app as it is first, and then takes the change.
     if (answer.facts?.restarted) {
       await lamp.call("look_at_app", { path: layout.folder });
-      answer = await lamp.call("apply_change", { path: layout.folder, ...(reopen ? { reopen: true } : {}) });
+      answer = await lamp.call("apply_change", { path: layout.folder, ...(reopen ? { reopen: true } : {}), ...changingFor(layout.folder) });
     }
     // Nothing new to put in brings no picture: the app as it is now, which the person may have used since, is looked at.
     if (!answer.pictures.length && ["unchanged", "held"].includes(answer.outcome)) {
@@ -551,8 +559,8 @@ async function devInLamp(layout, lamp) {
     try {
       lamp = lamp ?? (await reachLamp([givenTo(layout.folder)]));
       if (!lamp) { print(`${editionName(givenTo(layout.folder))} isn't running: the change goes in once it is and the next save is made.`); return; }
-      let answer = await lamp.call("apply_change", { path: layout.folder });
-      if (answer.facts?.restarted) { await lamp.call("look_at_app", { path: layout.folder }); answer = await lamp.call("apply_change", { path: layout.folder }); }
+      let answer = await lamp.call("apply_change", { path: layout.folder, ...changingFor(layout.folder) });
+      if (answer.facts?.restarted) { await lamp.call("look_at_app", { path: layout.folder }); answer = await lamp.call("apply_change", { path: layout.folder, ...changingFor(layout.folder) }); }
       if (letGo(layout, lamp, answer)) { stopWatching(false); return; }
       // A folder that changed while Lamp built it is applied again by the next save, or now when it's said so.
       // A folder that changed while Lamp built it goes in again now, saved or not.
@@ -1084,7 +1092,15 @@ async function main() {
     const folder = named ? args[0] : ".";
     const words = (named ? args.slice(1) : args).join(" ").trim();
     if (!words) throw new Problem('changing takes what you\'re about to change, in a few words: lamp changing "Rain on the roads"');
-    const live = await running(projectOf(folder).folder);
+    const layout = projectOf(folder);
+    // For a folder Lamp's app has, it goes with the next apply_change (`changingFor`), and its card says it.
+    if (givenTo(layout.folder)) {
+      mkdirSync(stateOf(layout.folder), { recursive: true });
+      writeFileSync(join(stateOf(layout.folder), "changing.json"), JSON.stringify({ words, at: Date.now() }));
+      console.log("The app says so as the change goes in.");
+      return;
+    }
+    const live = await running(layout.folder);
     if (!live) { console.log("lamp dev isn't running for this folder: nothing shows it."); return; }
     await ask(live, "changing", { words });
     console.log("The page says so as the change goes in.");

@@ -1170,6 +1170,8 @@ final class Store: ObservableObject {
         var artCost = 0.0                   // what make_art's pictures cost, for the turn's summary
         var request: String?                // the user's words, for the command classifiers
         var messages: [String] = []         // each queued message this turn took, as sent, from the moment it took them
+        /// What's changing, as the person's own coding agent said it for the card (`apply_change`'s `words`).
+        var saying: String?
         /// Where the app was when the turn began: a request the agent takes while it works was sent from there too.
         var sentFrom: String?
         /// The chat lines of the requests the agent took while it worked (`handOver`), which go with the turn's
@@ -1236,10 +1238,11 @@ final class Store: ObservableObject {
     private var turns: [String: Turn] = [:]
 
     /// What's changing in the open app, for the card that says so on it (`AppTransition`): the request the turn under
-    /// way took last, in the person's own words, on one line and cut short. Nil with no turn (a Reload, a change from
-    /// outside), when the card says only that it's updating.
+    /// way took last, in the person's own words, or what the person's own coding agent said it's changing
+    /// (`apply_change`'s `words`), on one line and cut short. Nil with no turn (a Reload) or no words, when the card
+    /// says only that it's updating.
     func changeWords(for project: LampProject) -> String? {
-        guard let turn = turns[project.id], let said = turn.messages.last ?? turn.request else { return nil }
+        guard let turn = turns[project.id], let said = turn.saying ?? turn.messages.last ?? turn.request else { return nil }
         let line = said.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         guard !line.isEmpty else { return nil }
         return line.count > 120 ? String(line.prefix(119)).trimmingCharacters(in: .whitespaces) + "…" : line
