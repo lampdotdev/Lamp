@@ -333,9 +333,17 @@ export function cloudStore(env, fetcher = fetch) {
     },
     async remove(id) { await command(["DEL", key(id), ideasKey(id), makerKey(id), copiesKey(id)]); },
     /** The links shared from copies of a link (each record's `from`), by id: a copy taken down since is let go when listed. */
-    async addCopy(id, copy) { await command(["SADD", copiesKey(id), copy]); },
-    async copies(id) { const ids = await command(["SMEMBERS", copiesKey(id)]); return Array.isArray(ids) ? ids : []; },
-    async removeCopy(id, copy) { await command(["SREM", copiesKey(id), copy]); },
+    /** Kept by when each was last shared, so the newest come first however many there are. */
+    async addCopy(id, copy, at = Date.now()) { await command(["ZADD", copiesKey(id), String(at), copy]); },
+    async copies(id, count = 200) { const ids = await command(["ZREVRANGE", copiesKey(id), "0", String(count - 1)]); return Array.isArray(ids) ? ids : []; },
+    async copyCount(id) { const n = await command(["ZCARD", copiesKey(id)]); return Number(n) || 0; },
+    async removeCopy(id, copy) { await command(["ZREM", copiesKey(id), copy]); },
+    /** Several records at once, in one round trip, null for one that's gone. */
+    async getMany(ids) {
+      if (!ids.length) return [];
+      const texts = await command(["MGET", ...ids.map(key)]);
+      return (Array.isArray(texts) ? texts : []).map((text) => (typeof text === "string" ? JSON.parse(text) : null));
+    },
     /** A maker's account by its username: `{ name, email, created }`, or null. */
     async account(name) { const text = await command(["GET", accountKey(name)]); return typeof text === "string" ? JSON.parse(text) : null; },
     async accountForEmail(email) { const name = await command(["GET", accountEmailKey(email)]); return typeof name === "string" ? name : null; },
@@ -617,9 +625,11 @@ export function memoryStore() {
       return true;
     },
     async remove(id) { records.delete(id); ideas.delete(id); makers.delete(id); copies.delete(id); },
-    async addCopy(id, copy) { if (!copies.has(id)) copies.set(id, new Set()); copies.get(id).add(copy); },
-    async copies(id) { return [...(copies.get(id) ?? [])]; },
+    async addCopy(id, copy, at = Date.now()) { if (!copies.has(id)) copies.set(id, new Map()); copies.get(id).set(copy, at); },
+    async copies(id, count = 200) { return [...(copies.get(id) ?? new Map())].sort((a, b) => b[1] - a[1]).slice(0, count).map(([copy]) => copy); },
+    async copyCount(id) { return copies.get(id)?.size ?? 0; },
     async removeCopy(id, copy) { copies.get(id)?.delete(copy); },
+    async getMany(ids) { return ids.map((id) => (records.has(id) ? structuredClone(records.get(id)) : null)); },
     async maker(id) { return makers.has(id) ? structuredClone(makers.get(id)) : null; },
     async setMaker(id, value) { if (value) makers.set(id, structuredClone(value)); else makers.delete(id); },
     async makerStep(id, key, step) {
@@ -714,11 +724,13 @@ const bearer = (request) => /^Bearer (\S+)$/.exec(request.headers.get("authoriza
  * is refused, and nothing a request holds is logged.
  */
 /**
- * A copy of a link was shared (`from`): kept among the link's copies, and its maker told by email at the address that
- * confirmed their account (or the link's own maker address), once. Never fails the share: a copy is kept either way.
+ * A copy of a link was shared (`from`): kept among the link's copies at every share, so one missing from the index (shared
+ * before it, or a write that failed) comes back, and moved up as the newest; its maker told by email at the address that
+ * confirmed their account (or the link's own maker address) only the first time (`first`). Never fails the share.
  */
-async function copied(kept, from, copy, origin, { env, fetcher }) {
+async function copied(kept, from, copy, origin, { env, fetcher, first }) {
   try { await kept.addCopy(from, copy.id); } catch {}
+  if (!first) return;
   try {
     const source = await kept.get(from);
     if (!source) return;
@@ -736,8 +748,11 @@ async function copied(kept, from, copy, origin, { env, fetcher }) {
 /** The copies of a link as its page lists them, newest first; one taken down since is let go. */
 export async function copiesOf(kept, id, origin) {
   const found = [];
-  for (const copy of (await kept.copies(id)).slice(0, 200)) {
-    const record = await kept.get(copy);
+  // The newest 200, by when each was last shared, read in one round trip.
+  const ids = await kept.copies(id, 200);
+  const records = await kept.getMany(ids);
+  for (const [i, copy] of ids.entries()) {
+    const record = records[i];
     if (!record || record.from !== id) { try { await kept.removeCopy(id, copy); } catch {} continue; }
     found.push({ url: linkOf(origin, record), name: record.name, by: record.owner || record.by || "", updated: record.updated ?? record.created ?? null });
   }
@@ -829,7 +844,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       if (method === "PUT") {
         const record = { ...earlier, ...words, ...named, updated: time };
         await kept.replace(record);
-        if (from && earlier?.from !== from) await copied(kept, from, record, url.origin, { env, fetcher });
+        if (record.from) await copied(kept, record.from, record, url.origin, { env, fetcher, first: !!from && earlier?.from !== from });
         // Kept: the name is the record's now, whatever the cleanup after it does.
         uploaded = [];
         claimed = null;
@@ -844,7 +859,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       }
       uploaded = [];
       claimed = null;
-      if (from) await copied(kept, from, record, url.origin, { env, fetcher });
+      if (from) await copied(kept, from, record, url.origin, { env, fetcher, first: true });
       return reply(201, { id: wishID, url: linkOf(url.origin, record), secret });
     } catch {
       try { await kept.removeImages(uploaded); } catch {}
@@ -1351,7 +1366,7 @@ export async function findWish(id, { env = process.env, fetcher = fetch, store, 
     } catch {}
   }
   // How many copies of it people shared, for the page's "copies" (the list itself is asked for when opened).
-  if (wish && origin) { try { wish.copies = (await kept.copies(id)).length; } catch {} }
+  if (wish && origin) { try { wish.copies = await kept.copyCount(id); } catch {} }
   return wish;
 }
 
