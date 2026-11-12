@@ -594,7 +594,8 @@ enum DeviceSupport {
       // has asked for it (LampAI.connect, from a button, or a real AI call).
       var nearbyAsked = false;
       function nearbyAllowed() {
-        if (nearbyAsked || read('nearby.token', null)) return Promise.resolve(true);
+        // Connected before in this browser (kept with the page's saved things): the browser has had its say already.
+        if (nearbyAsked || read('nearby.token', null) || read('nearby.connected', false)) return Promise.resolve(true);
         var permissions = window.navigator && navigator.permissions;
         if (!permissions || typeof permissions.query !== 'function') return Promise.resolve(false);
         // Chrome has named this permission more than one way; any that's granted will do, and one it doesn't know is unknown.
@@ -1136,7 +1137,11 @@ enum DeviceSupport {
          *  `status` gives for that kind of AI ('text' unless named). Anywhere else it's just `status`. */
         connect: function (capability) {
           nearbyAsked = true;
-          return LampAI.status(capability || 'text');
+          return LampAI.status(capability || 'text').then(function (said) {
+            // Reached it (whatever it said of this kind of AI): later visits look without asking first.
+            if (said.available || !said.help) write('nearby.connected', true);
+            return said;
+          });
         },
 
         /** Whether this kind of AI can answer now, as `status` says. */
