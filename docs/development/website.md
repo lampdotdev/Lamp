@@ -84,7 +84,7 @@ of its own, so nothing competes with the wish. A header has the wish's name and 
 darker words until opened, opening what's new), and on the right Make it your own (for a game that plays there and came
 with its file: the dialog's Make it yourself tab with nothing written, so the person's own app makes the copy and asks
 what to change), then the thing someone made fills the rest of the window: a playing page all of it, as the app's window does on a
-Mac (a game's scene fitted inside with black around it where the shapes differ), a picture only as big as it is. Lamp's mark and "Lamp", in the lighter ink ("Made with Lamp" on hover), sit at the foot beside the change box on a wide window, and not at all on a
+Mac (a game's scene fitted inside with black around it where the shapes differ), a picture only as big as it is. Lamp's mark, the one the site's header has (`LampLockup`, "Made with Lamp" on hover), sits at the foot beside the change box on a wide window, and not at all on a
 narrow one, where the box has the band. What a playing page does isn't on the page (it's in
 the link's preview). One that doesn't play there (a Mac app, or one too big to play) shows its picture, or else its icon
 large, with its line under it and how to get it: Open in Lamp in ink beside Get Lamp in outline on a Mac, and anywhere
