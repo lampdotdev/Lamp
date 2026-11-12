@@ -15581,11 +15581,15 @@ enum Template {
                     // Done is done, even if the turn was cancelled while it ran: it's kept and shown.
                     var value = receipt.details.filter { JSONSerialization.isValidJSONObject([$0.value]) }
                     value["summary"] = receipt.summary
-                    ran[key] = value
+                    // What the AI is shown of it draws on the request's allowance as a read does, since every later
+                    // step carries it again; the receipt keeps it whole for the app.
+                    let shown = Self.cut(value, max: Swift.max(1024, Swift.min(resultBytes, op.resultsLeft)))
+                    op.resultsLeft = Swift.max(0, op.resultsLeft - ((try? JSONSerialization.data(withJSONObject: [shown]))?.count ?? 0))
+                    ran[key] = shown
                     let done = LampActDone(tool: tool.name, key: key, receipt: receipt)
                     out.done.append(done)
                     receipts.append(done)
-                    results[id] = ["id": id, "ok": true, "value": value]
+                    results[id] = ["id": id, "ok": true, "value": shown]
                     onStep(.changed(done))
                 } catch {
                     ran[key] = ["failedWhileRunning": Self.words(error)]

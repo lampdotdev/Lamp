@@ -202,7 +202,14 @@ export function models() {
   const which = engine();
   if (!which) return { models: [], default: null, reason: missing };
   if (which === "codex") return { models: [{ id: CODEX, name: "ChatGPT's default model via Codex", available: true }], default: CODEX };
-  return { models: APP_MODELS.map((m) => ({ id: m.id, name: `${m.name} via ${named(which)}`, available: true })), default: defaultId(which) };
+  const listedHere = APP_MODELS.map((m) => ({ id: m.id, name: `${m.name} via ${named(which)}`, available: true }));
+  // A model LAMP_AI_MODEL names that isn't one of Lamp's is what a page naming none gets: it's offered too, as the
+  // default, so choosing the default answers the same as choosing nothing.
+  const wanted = process.env.LAMP_AI_MODEL || "";
+  if (wanted && !APP_MODELS.some((m) => m.id === wanted || m.openRouter === wanted)) {
+    return { models: [{ id: wanted, name: `${wanted} via ${named(which)}`, available: true }, ...listedHere], default: wanted };
+  }
+  return { models: listedHere, default: defaultId(which) };
 }
 
 /** `/ai`: a text answer, or JSON when asked for it. */
