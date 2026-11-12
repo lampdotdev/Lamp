@@ -212,6 +212,28 @@ export const linkFor = (origin, id, name) => {
  */
 export const linkOf = (origin, record) => (record?.owner && record?.app ? `${origin}/${record.owner}/${record.app}` : linkFor(origin, record.id, record.name));
 
+/**
+ * A browser signed in to an account: the email's link, opened in it, leaves a key of its own in this cookie, which only
+ * lamp.dev reads (HttpOnly, and Lax, so another site's form never sends it). Ideas sent from it are by that username.
+ */
+export const ACCOUNT_COOKIE = "lamp_account";
+export const cookieKey = (request) => new RegExp(`(?:^|;\\s*)${ACCOUNT_COOKIE}=([A-Za-z0-9_-]{43})(?:;|$)`).exec(request.headers.get("cookie") || "")?.[1] ?? null;
+export const signInCookie = (key, url) => `${ACCOUNT_COOKIE}=${key}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${new URL(url).protocol === "https:" ? "; Secure" : ""}`;
+export const signOutCookie = (url) => `${ACCOUNT_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${new URL(url).protocol === "https:" ? "; Secure" : ""}`;
+
+/**
+ * Asks someone who sent an idea with their address to confirm it, by email: its link signs their browser in to the
+ * address's account, or makes one with a username they choose. Emails about their ideas go only to a confirmed
+ * address (`writeToSender`), so nobody hears about an idea that someone else typed their address into.
+ */
+export async function askToConfirm(kept, { email, name, app, origin, env, fetcher }) {
+  const token = randomBytes(16).toString("hex");
+  await kept.waitForAccount(token, { email, browser: true, ...(name ? { suggested: name } : {}), at: new Date().toISOString() });
+  const link = `${origin}/api/accounts?confirm=${token}`;
+  return sendMail(env, fetcher, { to: [email], subject: `Confirm your email to hear back about ${app}`,
+    text: `You sent an idea for ${app} on Lamp. To hear back about it, confirm your email here:\n\n${link}\n\nIf you didn't send it, you can ignore this email.` });
+}
+
 /** The account a share's key (`X-Lamp-Account`) belongs to, by its username, or null. */
 export async function accountOf(kept, key) {
   if (typeof key !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(key) || !kept.accountForKey) return null;
@@ -817,6 +839,8 @@ const newMessageID = (env) => `<idea.${randomBytes(12).toString("hex")}@${mailDo
 export async function writeToSender(kept, wishID, idea, record, link, { env = process.env, fetcher = fetch, kind = "in", said, origin, once } = {}) {
   const key = env.RESEND_API_KEY, from = env.LAMP_IDEAS_FROM;
   if (!key || !from || !idea.email) return false;
+  // Only an address its owner has confirmed (one with an account) hears back.
+  if (!kept.accountForEmail || !(await kept.accountForEmail(idea.email.toLowerCase()))) return false;
   let subject = idea.subject || (kind === "in" ? `Your idea is in ${record.name}` : `About your idea for ${record.name}`);
   let box = idea.mailbox;
   if (!box) {
@@ -1015,7 +1039,14 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
       if (method === "POST") {
         const token = randomBytes(12).toString("base64url");
         // The picture goes to the store first, at an address with a random part, and goes again if the idea can't.
-        const { picture: shot, ...words } = idea;
+        const { picture: shot, ...given } = idea;
+        // From a signed-in browser, it's by that username, and its news goes to the account's address. Otherwise an
+        // address not yet confirmed is asked to be, once the idea is kept.
+        let words = given, confirming = false;
+        const user = await accountOf(kept, cookieKey(request));
+        const account = user ? await kept.account(user) : null;
+        if (account) words = { ...given, name: user, user, email: account.email };
+        else if (given.email) confirming = !(await kept.accountForEmail(given.email.toLowerCase()));
         const at = shot ? await kept.putImage(id, "idea", shot) : null;
         let number = null;
         const added = { ...words, ...(at ? { picture: at } : {}), token, at: now().toISOString() };
@@ -1027,7 +1058,9 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
           const maker = await kept.maker(id);
           if (maker?.confirmed) await writeToMaker(kept, id, { ...added, n: number }, record, linkOf(url.origin, record), { env, fetcher, origin: url.origin, maker, once: `maker-${id}-${number}` });
         } catch {}
-        return reply(201, { n: number, token });
+        let confirm = false;
+        if (confirming) { try { confirm = await askToConfirm(kept, { email: words.email, name: words.name, app: record.name, origin: url.origin, env, fetcher }); } catch {} }
+        return reply(201, { n: number, token, ...(user ? { user } : {}), ...(confirm ? { confirm: true } : {}) });
       }
       // The sender's own ideas, asked by number and token from their browser: what became of each, and the maker's
       // last word to them, nothing else.

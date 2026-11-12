@@ -433,6 +433,7 @@ test("a link's page plays only from the play host, framed by the site, and Remix
 test("the maker and an idea's sender talk by email, the replies kept on the idea's thread", async () => {
   const { createHmac } = await import("node:crypto");
   const store = memoryStore();
+  await store.createAccount({ name: "someone", email: "someone@example.com" });
   const { id, secret } = await (await send(createShareHandler({ store, limited: false }), "POST", { ...share, by: "Alex" })).json();
   const secretKey = Buffer.from("a webhook's own secret").toString("base64");
   const env = { RESEND_API_KEY: "re_test", LAMP_IDEAS_FROM: "Lamp <ideas@lamp.dev>", LAMP_IDEAS_REPLY_DOMAIN: "reply.lamp.dev", RESEND_WEBHOOK_SECRET: `whsec_${secretKey}` };
@@ -515,6 +516,7 @@ test("the maker and an idea's sender talk by email, the replies kept on the idea
 test("the maker can have ideas and replies at their own address, and answer them from it", async () => {
   const { createHmac } = await import("node:crypto");
   const store = memoryStore();
+  await store.createAccount({ name: "someone", email: "someone@example.com" });
   const { id, secret } = await (await send(createShareHandler({ store, limited: false }), "POST", { ...share, by: "Alex" })).json();
   const secretKey = Buffer.from("a webhook's own secret").toString("base64");
   const env = { RESEND_API_KEY: "re_test", LAMP_IDEAS_FROM: "Lamp <ideas@lamp.dev>", LAMP_IDEAS_REPLY_DOMAIN: "reply.lamp.dev", RESEND_WEBHOOK_SECRET: `whsec_${secretKey}` };
@@ -619,6 +621,7 @@ test("a link's questions go to its page, and only as questions within the limits
 
 test("ideas reach the link's maker, and only the maker reads them", async () => {
   const store = memoryStore();
+  await store.createAccount({ name: "someone", email: "someone@example.com" });   // only a confirmed address hears back
   const { id, secret } = await (await send(createShareHandler({ store, limited: false }), "POST", share)).json();
   const ideas = createIdeasHandler({ store, limited: false });
   const post = (body, at = id) => ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${at}`, {
