@@ -357,6 +357,53 @@ enum WishLink {
         return Maker(email: said["email"] as? String, confirmed: said["confirmed"] as? Bool ?? false, sent: said["sent"] as? Bool)
     }
 
+    /// The maker's username on lamp.dev, which their links go under once the address confirms it. One for Lamp and
+    /// `lamp account` alike: lamp's command line keeps it, and sends its key with every share.
+    struct Account: Equatable, Sendable {
+        var username: String
+        var email: String?
+        /// Nil when lamp.dev can't be asked just now.
+        var confirmed: Bool?
+    }
+
+    /// The maker's account as it is, or nil with none. Thrown only when lamp's command line can't be asked.
+    static func account() async throws -> Account? {
+        guard let said = try await ask("account", [:])["account"] as? [String: Any], let username = said["username"] as? String else { return nil }
+        return Account(username: username, email: said["email"] as? String, confirmed: said["confirmed"] as? Bool)
+    }
+
+    /// Asks lamp.dev for `username` with `email`, which it emails a link to confirm; with no username, signs in to the
+    /// address's own. The username asked for, as the site has it.
+    static func askAccount(username: String, email: String) async throws -> String {
+        var given: [String: Any] = ["email": email]
+        if !username.isEmpty { given["username"] = username }
+        do {
+            let said = try await LampCLI.ask("accountAsk", given.merging(["site": site]) { $1 })
+            return said["username"] as? String ?? username
+        } catch let failure as LampCLI.Failure {
+            switch failure.status {
+            case 409: throw Failure(message: "lamp.dev/\(username) is someone else's. Try another username.")
+            case 400: throw Failure(message: email.contains("@") && email.contains(".")
+                ? "A username is 2 to 30 lowercase letters, numbers and dashes." : "That email address doesn't look right.")
+            case 429: throw Failure(message: "lamp.dev has had too many of these for now. Try again later.")
+            case nil where failure.kind == "unreachable": throw Failure(message: "Lamp couldn't reach lamp.dev. Try again in a moment.")
+            default: throw Failure(message: "lamp.dev couldn't take this username right now. Try again in a moment.")
+            }
+        }
+    }
+
+    /// Forgets the account waiting for its email, so another can be asked for.
+    static func forgetAccount() async {
+        _ = try? await ask("accountForget", [:])
+    }
+
+    /// A username from the maker's name ("Sam Rivera" → "sam-rivera"), as the card suggests one.
+    static func suggestedUsername(from name: String) -> String {
+        let folded = name.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil).lowercased()
+        let words = folded.split { !($0.isASCII && ($0.isLetter || $0.isNumber)) }
+        return String(words.joined(separator: "-").prefix(30)).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+    }
+
     /// Takes the link down: the page says the wish isn't shared any more. A link the site no longer has is down already.
     static func remove(_ shared: Shared) async throws {
         _ = try await ask("linkRemove", secret(shared))
@@ -416,6 +463,14 @@ enum WishLink {
         /// Putting the wish on GitHub the first time, with this release, while Also put on GitHub is ticked: nil for a
         /// wish that's on GitHub (`gitHub`) or can't be updated from here (`gitHubNote`).
         var firstPush: GitHubRelease.FirstPush?
+        /// The maker's username on lamp.dev, asked as the card opens.
+        var account: WishLinkCard.Account = .unknown
+
+        /// A link from before the maker's username (lamp.dev/w/…), which a release moves under it.
+        var moves: Bool {
+            guard case .signedIn = account, let shared else { return false }
+            return shared.url.path.hasPrefix("/w/")
+        }
 
         /// What the link would show with what's on the card.
         var words: WishLink.Words {
@@ -431,7 +486,7 @@ enum WishLink {
         /// something to say about what's new.
         var changed: Bool {
             // Just released, only what the link shows differing (a picture taken again, say) asks for another.
-            shared?.shown != words || !released && (values.includeFile || !values.notes.trimmed.isEmpty || values.putOnGitHub)
+            shared?.shown != words || !released && (values.includeFile || !values.notes.trimmed.isEmpty || values.putOnGitHub || moves)
         }
         /// What's on the card can go now: nothing is sending, and every place it would go is shown and settled.
         var canShare: Bool {
@@ -490,6 +545,7 @@ enum WishLink {
             cards[project.id]?.icon = icon
         }
         findGitHub(project)
+        findAccount(project)
         if shared != nil {
             Task {
                 let lines = await WishReleases.write(for: project)
@@ -543,6 +599,34 @@ enum WishLink {
                 cards[id]?.values.putOnGitHub = false
             }
         }
+    }
+
+    /// The maker's username, for the card's row: none asks for one, suggested from the name on the card.
+    private func findAccount(_ project: LampProject) {
+        let id = project.id
+        Task {
+            guard let found = try? await WishLink.account() else {
+                // None: one from the name on the card, filled in for the person to keep or change.
+                let suggested = WishLink.suggestedUsername(from: cards[id]?.values.by ?? "")
+                if cards[id]?.values.username.isEmpty == true { cards[id]?.values.username = suggested }
+                cards[id]?.account = .none(suggested: suggested)
+                return
+            }
+            cards[id]?.account = found.confirmed == true ? .signedIn(found.username)
+                : found.confirmed == false ? .waiting(username: found.username, email: found.email ?? "your email")
+                // lamp.dev can't be asked just now: nothing is said about it, and links go as the key has them.
+                : .unknown
+        }
+    }
+
+    /// Change: the username waiting for its email is forgotten, and the card asks again.
+    func changeAccount(_ project: LampProject) {
+        let id = project.id
+        guard case .waiting(let username, let email) = cards[id]?.account else { return }
+        cards[id]?.values.username = username
+        cards[id]?.values.email = email == "your email" ? "" : email
+        cards[id]?.account = .none(suggested: username)
+        Task { await WishLink.forgetAccount() }
     }
 
     /// Looks for the repository again, once the wish brought in its changes (`BringIn.accept`): the card then offers to
@@ -675,6 +759,18 @@ enum WishLink {
         let source = card.picture
         let iconSource = card.icon
         Task {
+            // A username asked for on the card is asked of lamp.dev first: one it turns down (taken, say) shares nothing,
+            // so the person can choose another. The link goes as before until the email's link is opened.
+            if case .none = card.account, card.values.email.trimmed.contains("@") {
+                let email = card.values.email.trimmed
+                do {
+                    let username = try await WishLink.askAccount(username: card.values.username.trimmed, email: email)
+                    cards[project.id]?.account = .waiting(username: username, email: email)
+                } catch {
+                    cards[project.id]?.stage = .failed(Self.problem(error))
+                    return
+                }
+            }
             do {
                 let (picture, icon) = await Task.detached(priority: .userInitiated) {
                     (source.flatMap(NSImage.init(data:)).flatMap(WishLink.jpeg), WishLink.iconPNG(iconSource))
