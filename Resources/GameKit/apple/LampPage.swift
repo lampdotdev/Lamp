@@ -129,11 +129,13 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
             }
             return LampControllers.answer(stop: stop, reply)
         }
-        Self.ask(url, body: call["body"] as? String) { status, body in replyHandler(["status": status, "body": body], nil) }
+        // The page's own wait for an answer (a status check's few seconds, an action step's ten minutes at most).
+        let timeout = min(max((call["timeout"] as? NSNumber)?.doubleValue ?? 240_000, 1_000), 600_000) / 1000
+        Self.ask(url, body: call["body"] as? String, timeout: timeout) { status, body in replyHandler(["status": status, "body": body], nil) }
     }
 
-    private static func ask(_ url: URL, body: String?, done: @escaping @MainActor @Sendable (Int, String) -> Void) {
-        var request = URLRequest(url: url, timeoutInterval: 240)
+    private static func ask(_ url: URL, body: String?, timeout: TimeInterval, done: @escaping @MainActor @Sendable (Int, String) -> Void) {
+        var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "POST"
         request.setValue("Bearer " + LampInstall.token, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
