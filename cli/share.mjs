@@ -8,7 +8,8 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { deflateRawSync } from "node:zlib";
 import { NOTES_FILE, Problem, stateOf } from "./state.mjs";
 import { ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS, LIBRARIES } from "./dev.mjs";
@@ -19,6 +20,23 @@ import { exportApp } from "./lampapp.mjs";
 export { siteOrigin };
 
 const linkFileOf = (folder) => join(stateOf(folder), "link.json");
+
+
+/**
+ * The maker's account on a site, as lamp keeps it (`lamp account`): `{ username, key }`, the key sent with every share
+ * so a link goes under the username (lamp.dev/<username>/<app>). Kept with lamp's state, never in a folder.
+ */
+const accountsFile = () => join(process.env.LAMP_DEV_HOME || join(homedir(), ".lamp", "dev"), "account.json");
+export function accountFor(site = siteOrigin()) {
+  try { const kept = JSON.parse(readFileSync(accountsFile(), "utf8"))[site]; return kept?.key ? kept : null; } catch { return null; }
+}
+export function keepAccount(site, account) {
+  let all = {};
+  try { all = JSON.parse(readFileSync(accountsFile(), "utf8")) || {}; } catch {}
+  all[site] = account;
+  mkdirSync(dirname(accountsFile()), { recursive: true });
+  writeFileSync(accountsFile(), JSON.stringify(all, null, 2), { mode: 0o600 });
+}
 
 /** The folder's link, as it was last shared: its address, its secret and the words it went out with. */
 export function readLink(folder) {
@@ -178,7 +196,7 @@ export async function share({ layout, words, picture = null, shape = "fill", sit
   let earlier = readLink(layout.folder);
   if (earlier && earlier.site !== site) earlier = null;
   // A file an earlier share sent stays on the record until it's taken away, so a retry after a failed removal tries again.
-  let link = { site, ...(await publishLink({ site, body, earlier })), ...words, shape, ...(earlier?.file ? { file: true } : {}) };
+  let link = { site, ...(await publishLink({ site, body, earlier, account: accountFor(site)?.key })), ...words, shape, ...(earlier?.file ? { file: true } : {}) };
   // Kept before the page goes up: a link whose page didn't make it is still this folder's to send again or take down.
   writeLink(layout.folder, link);
 

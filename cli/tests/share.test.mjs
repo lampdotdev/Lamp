@@ -10,15 +10,21 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createShareHandler, createFileHandler, createIdeasHandler, createPlayHandler, memoryStore } from "../../site/lib/shared-wishes.js";
+import { createAccountHandler } from "../../site/lib/accounts.js";
 
 const home = mkdtempSync(join(tmpdir(), "lamp-share-test-"));
 process.env.LAMP_DEV_HOME = join(home, "state");
 process.env.LAMP_BROWSER = "";
-const { share, unshare, ideas, finishIdea, readLink, githubRepoOf } = await import("../share.mjs");
+const { share, unshare, ideas, finishIdea, readLink, githubRepoOf, keepAccount } = await import("../share.mjs");
+const { askAccount, accountName } = await import("../link.mjs");
 const { layoutOf } = await import("../state.mjs");
 
 const store = memoryStore();
+// The emails the site sends, kept to read their links.
+const mail = [];
 const handlers = {
+  "/api/accounts": createAccountHandler({ store, limited: false, env: { RESEND_API_KEY: "test", LAMP_IDEAS_FROM: "Lamp <ideas@lamp.dev>" },
+    fetcher: async (url, request) => { mail.push(JSON.parse(request.body)); return new Response("{}"); } }),
   "/api/wishes": createShareHandler({ store, limited: false }),
   "/api/wish-file": createFileHandler({ store, limited: false }),
   "/api/wish-ideas": createIdeasHandler({ store, limited: false, env: {} }),
@@ -31,7 +37,7 @@ const site = createServer(async (incoming, outgoing) => {
   if (!handler) { outgoing.writeHead(404); outgoing.end(); return; }
   const chunks = [];
   for await (const chunk of incoming) chunks.push(chunk);
-  const headers = Object.fromEntries(["authorization", "content-type", "origin"].filter((name) => incoming.headers[name]).map((name) => [name, incoming.headers[name]]));
+  const headers = Object.fromEntries(["authorization", "content-type", "origin", "x-lamp-account"].filter((name) => incoming.headers[name]).map((name) => [name, incoming.headers[name]]));
   const answer = await handler(new Request(url, { method: incoming.method, headers, body: chunks.length ? Buffer.concat(chunks) : undefined }));
   outgoing.writeHead(answer.status, Object.fromEntries(answer.headers));
   outgoing.end(Buffer.from(await answer.arrayBuffer()));
@@ -127,4 +133,17 @@ test("Lamp's app shares a wish's link, sends its file, reads it back, and takes 
   assert.equal((await CALLS.linkLatest({ site: origin, id: link.id })).latest, null);
   const again = await CALLS.linkPublish({ site: origin, body, earlier: link });
   assert.notEqual(again.id, link.id, "a link that was taken down is made again");
+});
+
+test("with an account, a link goes under its maker's username, and moves there at its next share", async () => {
+  const before = readLink(layout.folder) ?? (await share({ layout, words, shape: 1.7778 }), readLink(layout.folder));
+  assert.match(before.url, /\/w\//);
+  const asked = await askAccount({ site: origin, username: "alex-kim", email: "alex@example.com" });
+  keepAccount(origin, { username: asked.username, key: asked.key });
+  assert.equal(await accountName({ site: origin, key: asked.key }), null, "not until the email's link is opened");
+  await fetch(/https?:\S+confirm=[0-9a-f]+/.exec(mail.at(-1).text)[0].replace(/^https?:\/\/[^/]+/, origin));
+  assert.equal(await accountName({ site: origin, key: asked.key }), "alex-kim");
+  const again = await share({ layout, words, shape: 1.7778 });
+  assert.equal(again.url, `${origin}/alex-kim/harbor-racer`);
+  await unshare(layout.folder);
 });

@@ -71,7 +71,7 @@ export const isID = (id) => typeof id === "string" && id.length === ID_LENGTH &&
 
 /** The secret that lets the sharer's Lamp change or remove the link. Only its hash is kept here. */
 export const newSecret = () => randomBytes(32).toString("base64url");
-const hashSecret = (secret) => createHash("sha256").update(secret).digest("hex");
+export const hashSecret = (secret) => createHash("sha256").update(secret).digest("hex");
 function secretMatches(secret, hash) {
   if (typeof secret !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(secret) || typeof hash !== "string") return false;
   const a = Buffer.from(hashSecret(secret), "hex"), b = Buffer.from(hash, "hex");
@@ -169,6 +169,7 @@ export const shown = (record) => record && ({
   id: record.id, name: record.name, by: record.by ?? "", line: record.line, words: record.words, ideas: record.ideas ?? [], asks: record.asks ?? [], shape: record.shape ?? null,
   releases: record.releases ?? [], picture: record.picture, icon: record.icon, file: record.file ?? null, updated: record.updated, github: record.github ?? null,
   page: record.page ? { version: record.page.version } : null,
+  ...(record.owner && record.app ? { owner: record.owner, app: record.app } : {}),
 });
 
 /** Every file kept for a record: its pictures, the wish's file and any parts of one still being sent. */
@@ -204,6 +205,28 @@ export const linkFor = (origin, id, name) => {
   const slug = slugFor(name);
   return `${origin}/w/${id}${slug ? `-${slug}` : ""}`;
 };
+
+/**
+ * The link a wish is known by: its maker's username and the app's name (`/matt-rubens/bricks`) once its maker has an
+ * account, else the old kind (`linkFor`), which still opens it and sends anyone to the new one.
+ */
+export const linkOf = (origin, record) => (record?.owner && record?.app ? `${origin}/${record.owner}/${record.app}` : linkFor(origin, record.id, record.name));
+
+/** The account a share's key (`X-Lamp-Account`) belongs to, by its username, or null. */
+export async function accountOf(kept, key) {
+  if (typeof key !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(key) || !kept.accountForKey) return null;
+  return kept.accountForKey(hashSecret(key));
+}
+
+/** A name for the app under its maker's username, free or already this link's: its own, then -2, -3… */
+async function claimAppName(kept, owner, name, id) {
+  const base = slugFor(name) || "app";
+  for (let n = 1; n < 100; n++) {
+    const app = n === 1 ? base : `${base}-${n}`;
+    if (await kept.claimApp(owner, app, id)) return app;
+  }
+  throw new Error("No name free");
+}
 
 /** The wish's id in its link's last part, whatever name follows it after a dash. Null when it doesn't start with one. */
 export const wishIDFrom = (part) => {
@@ -245,6 +268,12 @@ export function cloudStore(env, fetcher = fetch) {
   const ideasKey = (id) => `lamp:shared-wish:{${scope}}:ideas:${id}`;
   const mailKey = (box) => `lamp:shared-wish:{${scope}}:idea-mail:${box}`;
   const makerKey = (id) => `lamp:shared-wish:{${scope}}:maker:${id}`;
+  // Makers' accounts: a username, its confirmed email, the keys their Lamps hold, and the apps under it by name.
+  const accountKey = (name) => `lamp:shared-wish:{${scope}}:account:${name}`;
+  const accountEmailKey = (email) => `lamp:shared-wish:{${scope}}:account-email:${email.toLowerCase()}`;
+  const accountByKeyKey = (hash) => `lamp:shared-wish:{${scope}}:account-key:${hash}`;
+  const accountWaitingKey = (token) => `lamp:shared-wish:{${scope}}:account-waiting:${token}`;
+  const appKey = (name, app) => `lamp:shared-wish:{${scope}}:app:${name}:${app}`;
   const command = async (args) => {
     const response = await fetcher(db.url, {
       method: "POST", redirect: "error", signal: AbortSignal.timeout(3000),
@@ -277,6 +306,28 @@ export function cloudStore(env, fetcher = fetch) {
         "1", key(after.id), JSON.stringify(before), JSON.stringify(after)])) === "OK";
     },
     async remove(id) { await command(["DEL", key(id), ideasKey(id), makerKey(id)]); },
+    /** A maker's account by its username: `{ name, email, created }`, or null. */
+    async account(name) { const text = await command(["GET", accountKey(name)]); return typeof text === "string" ? JSON.parse(text) : null; },
+    async accountForEmail(email) { const name = await command(["GET", accountEmailKey(email)]); return typeof name === "string" ? name : null; },
+    async accountForKey(hash) { const name = await command(["GET", accountByKeyKey(hash)]); return typeof name === "string" ? name : null; },
+    /** Makes the account, and its address its own, together: false when either is someone's already. */
+    async createAccount(account) {
+      return (await command(["EVAL", `if redis.call('EXISTS', KEYS[1]) == 1 or redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
+        redis.call('SET', KEYS[1], ARGV[1]) redis.call('SET', KEYS[2], ARGV[2]) return 1`,
+        "2", accountKey(account.name), accountEmailKey(account.email), JSON.stringify(account), account.name])) === 1;
+    },
+    async addAccountKey(hash, name) { await command(["SET", accountByKeyKey(hash), name]); },
+    /** What waits on an email's confirmation, a day at most; let go once it's done, so a try that fails can be tried again. */
+    async waitForAccount(token, waiting) { await command(["SET", accountWaitingKey(token), JSON.stringify(waiting), "EX", "86400"]); },
+    async accountWaiting(token) { const text = await command(["GET", accountWaitingKey(token)]); return typeof text === "string" ? JSON.parse(text) : null; },
+    async doneWaiting(token) { await command(["DEL", accountWaitingKey(token)]); },
+    /** Claims an app's name under a username for a link: false when another link has it. */
+    async claimApp(name, app, id) {
+      return (await command(["EVAL", `local had = redis.call('GET', KEYS[1]) if had and had ~= ARGV[1] then return 0 end
+        redis.call('SET', KEYS[1], ARGV[1]) return 1`, "1", appKey(name, app), id])) === 1;
+    },
+    async appID(name, app) { const id = await command(["GET", appKey(name, app)]); return typeof id === "string" ? id : null; },
+    async releaseApp(name, app) { await command(["DEL", appKey(name, app)]); },
     /** The maker's own address for a link's ideas, as `{ email, confirmed, key }`, or null. */
     async maker(id) { const text = await command(["GET", makerKey(id)]); return typeof text === "string" ? JSON.parse(text) : null; },
     async setMaker(id, value) { await command(value ? ["SET", makerKey(id), JSON.stringify(value)] : ["DEL", makerKey(id)]); },
@@ -508,9 +559,25 @@ function remember(url, bytes) {
 /** Kept in memory, for `npm run dev` and the tests: pictures as data: URLs, so nothing else needs serving. */
 export function memoryStore() {
   const records = new Map(), pages = new Map(), ideas = new Map(), mailboxes = new Map(), makers = new Map();
+  const accounts = new Map(), emails = new Map(), keys = new Map(), waiting = new Map(), apps = new Map();
   return {
     limiter: null,
     records,
+    accounts,
+    async account(name) { return accounts.has(name) ? structuredClone(accounts.get(name)) : null; },
+    async accountForEmail(email) { return emails.get(email.toLowerCase()) ?? null; },
+    async accountForKey(hash) { return keys.get(hash) ?? null; },
+    async createAccount(account) {
+      if (accounts.has(account.name) || emails.has(account.email.toLowerCase())) return false;
+      accounts.set(account.name, structuredClone(account)); emails.set(account.email.toLowerCase(), account.name); return true;
+    },
+    async addAccountKey(hash, name) { keys.set(hash, name); },
+    async waitForAccount(token, value) { waiting.set(token, structuredClone(value)); },
+    async accountWaiting(token) { return waiting.has(token) ? structuredClone(waiting.get(token)) : null; },
+    async doneWaiting(token) { waiting.delete(token); },
+    async claimApp(name, app, id) { const had = apps.get(`${name}/${app}`); if (had && had !== id) return false; apps.set(`${name}/${app}`, id); return true; },
+    async appID(name, app) { return apps.get(`${name}/${app}`) ?? null; },
+    async releaseApp(name, app) { apps.delete(`${name}/${app}`); },
     async get(id) { return records.has(id) ? structuredClone(records.get(id)) : null; },
     async create(record) { if (records.has(record.id)) return false; records.set(record.id, structuredClone(record)); return true; },
     async replace(record) { if (!records.has(record.id)) return false; records.set(record.id, structuredClone(record)); return true; },
@@ -621,13 +688,17 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
     const origin = request.headers.get("origin");
     if (origin && origin !== url.origin) return reply(403, { error: "origin_not_allowed" });
     const id = url.searchParams.get("id");
-    if (method !== "POST" && !isID(id)) return reply(404, { error: "not_found" });
-    // Asked by the Lamps that follow this link: public, as the page is, and cheap (one read, no quota).
+    const user = url.searchParams.get("user"), app = url.searchParams.get("app");
+    const byName = method === "GET" && !id && typeof user === "string" && typeof app === "string" && /^[a-z0-9-]{1,60}$/.test(user) && /^[a-z0-9-]{1,60}$/.test(app);
+    if (method !== "POST" && !isID(id) && !byName) return reply(404, { error: "not_found" });
+    // Asked by the Lamps that follow this link: public, as the page is, and cheap (one read, no quota). By its id, or
+    // by its maker's username and its name there.
     if (method === "GET") {
       let kept;
       try { kept = store ?? cloudStore(env, fetcher); } catch { return reply(503, { error: "service_unavailable" }); }
       try {
-        const record = await kept.get(id);
+        const found = byName ? await kept.appID(user, app) : id;
+        const record = found ? await kept.get(found) : null;
         return record ? reply(200, latest(record)) : reply(404, { error: "not_found" });
       } catch { return reply(503, { error: "service_unavailable" }); }
     }
@@ -652,14 +723,18 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       if (retry > 0) return reply(429, { error: "rate_limited" }, { "Retry-After": String(retry) });
     }
 
-    let uploaded = [];
+    let uploaded = [], claimed = null;
     try {
       const earlier = method === "POST" ? null : await kept.get(id);
       if (method !== "POST" && (!earlier || !secretMatches(bearer(request), earlier.secret))) return reply(404, { error: "not_found" });
+      // Whose it is: a share sent with its maker's account key (their Lamp sends it) goes under their username, and an
+      // old link sent again with one goes there from then on. One without a key is shared as links always were.
+      const owner = method === "DELETE" ? null : await accountOf(kept, request.headers.get("x-lamp-account"));
       const oldImages = [earlier?.picture?.url, earlier?.icon?.url].filter(Boolean);
       if (method === "DELETE") {
         const ideaShots = ideaPictures(await kept.ideas(id).catch(() => []));
         await kept.remove(id);
+        if (earlier.owner && earlier.app) await kept.releaseApp(earlier.owner, earlier.app);
         await kept.removeImages([...blobsOf(earlier), ...ideaShots]);
         await kept.forget(id);
         return reply(204);
@@ -675,21 +750,32 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       const time = now().toISOString();
       const words = { name: share.name, by: share.by, line: share.line, words: share.words, ideas: share.ideas, asks: share.asks, shape: share.shape, github: share.github,
         ...(share.releases ? { releases: share.releases } : {}), picture: picture || null, icon: icon || null };
+      // Its name under the account stays what it was first given, whatever the app is called later.
+      const named = earlier?.owner ? { owner: earlier.owner, app: earlier.app }
+        : owner ? { owner, app: await claimAppName(kept, owner, words.name, wishID) } : {};
+      // A name claimed for this share now, let go again if the record can't be kept.
+      if (!earlier?.owner && named.owner) claimed = named;
       if (method === "PUT") {
-        await kept.replace({ ...earlier, ...words, updated: time });
+        const record = { ...earlier, ...words, ...named, updated: time };
+        await kept.replace(record);
+        // Kept: the name is the record's now, whatever the cleanup after it does.
         uploaded = [];
+        claimed = null;
         await kept.removeImages(oldImages);
         await kept.forget(id);
-        return reply(200, { id, url: linkFor(url.origin, id, words.name) });
+        return reply(200, { id, url: linkOf(url.origin, record) });
       }
       const secret = newSecret();
-      if (!(await kept.create({ id: wishID, ...words, secret: hashSecret(secret), created: time, updated: time }))) {
+      const record = { id: wishID, ...words, ...named, secret: hashSecret(secret), created: time, updated: time };
+      if (!(await kept.create(record))) {
         throw new Error("Id taken");
       }
       uploaded = [];
-      return reply(201, { id: wishID, url: linkFor(url.origin, wishID, words.name), secret });
+      claimed = null;
+      return reply(201, { id: wishID, url: linkOf(url.origin, record), secret });
     } catch {
       try { await kept.removeImages(uploaded); } catch {}
+      try { if (claimed) await kept.releaseApp(claimed.owner, claimed.app); } catch {}
       return reply(503, { error: "service_unavailable" });
     }
   };
@@ -775,7 +861,7 @@ export async function writeToSender(kept, wishID, idea, record, link, { env = pr
 }
 
 /** Sends one email through Resend; false, and nothing sent, without Resend or when it refuses. */
-async function sendMail(env, fetcher, message, once) {
+export async function sendMail(env, fetcher, message, once) {
   if (!env.RESEND_API_KEY || !env.LAMP_IDEAS_FROM) return false;
   try {
     const response = await fetcher("https://api.resend.com/emails", {
@@ -939,7 +1025,7 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
         // To the maker's own address too, if they gave one: the idea is kept whether or not that goes.
         try {
           const maker = await kept.maker(id);
-          if (maker?.confirmed) await writeToMaker(kept, id, { ...added, n: number }, record, linkFor(url.origin, id, record.name), { env, fetcher, origin: url.origin, maker, once: `maker-${id}-${number}` });
+          if (maker?.confirmed) await writeToMaker(kept, id, { ...added, n: number }, record, linkOf(url.origin, record), { env, fetcher, origin: url.origin, maker, once: `maker-${id}-${number}` });
         } catch {}
         return reply(201, { n: number, token });
       }
@@ -976,7 +1062,7 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
         }
         return reply(200, { ideas: all.filter((one) => !one.status || one.waiting).map(shownToMaker) });
       }
-      const link = linkFor(url.origin, id, record.name);
+      const link = linkOf(url.origin, record);
       const write = (to, kind, said, once) => writeToSender(kept, id, to, record, link, { env, fetcher, kind, said, origin: url.origin, once });
       const said = note ? { by: "maker", text: note, at: now().toISOString(), mid: newMessageID(env) } : null;
       if (method === "PATCH") {
@@ -1144,7 +1230,7 @@ export function createIdeaMailHandler({ env = process.env, fetcher = fetch, stor
         const mid = typeof mail.message_id === "string" && /^<[^<>\s]+>$/.test(mail.message_id) ? mail.message_id : undefined;
         const record = await kept.get(found.id);
         if (!record) continue;
-        const link = linkFor(origin, found.id, record.name);
+        const link = linkOf(origin, record);
         // The email as Resend received it, which a webhook sent again names the same, keeps it from going on twice.
         const via = `resend:${mail.email_id}`;
         if (fromMaker) {

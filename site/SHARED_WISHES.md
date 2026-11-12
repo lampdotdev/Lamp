@@ -66,6 +66,19 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   with the secret takes it down. Lamp keeps the secret in its own folder (`Wish Links.json`, readable only by the
   user), never in the app's. Lamp's side is `cli/link.mjs`, which Lamp's app asks (`WishLink`) and `lamp share` uses; it reads the limits from here.
 
+
+## Usernames
+
+A maker's links go under their username once they have one: `lamp.dev/<username>/<app>` (`linkOf`). An account is a
+username and the email that confirmed it, nothing else, and there are no passwords (`lib/accounts.js`, `/api/accounts`).
+Lamp, or `lamp account`, asks for one with a username and an email: the site answers a key the asker keeps and emails a
+link (through Resend, as ideas' emails go), and once that's opened the key is the account's. Asked again with an address
+that has an account, it's a sign-in, and that Lamp gets a key of its own. A share sent with a key (`X-Lamp-Account`)
+goes under its username: a new link by the app's name there (`-2` and on when the name's taken), and an old link sent
+again moves there, keeping that name whatever the app is called later. The old address (`/w/<id>-<name>`) sends anyone
+to the new one (301). A share with no key is made as before, at `/w/`. The page plays from the same per-link play host
+either way. Usernames are 2 to 30 lowercase letters, digits and dashes, never one of the site's own words (`w`, `api`,
+`ideas` and the rest, `RESERVED`), and `/:user/:app` is the last of the site's routes, so a page of its own always wins.
 ## Setup (one time)
 
 In the **lamp** Vercel project:

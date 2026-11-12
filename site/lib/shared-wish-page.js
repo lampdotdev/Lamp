@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { cacheTags, findWish, isID, linkFor, playOrigin as playOriginFor, wishIDFrom } from "./shared-wishes.js";
+import { cacheTags, cloudStore, findWish, isID, linkOf, playOrigin as playOriginFor, wishIDFrom } from "./shared-wishes.js";
+import { isUsername } from "./accounts.js";
 
 // The page a shared wish's link opens (lamp.dev/w/<id>): a page of its own (src/pages/w/index.astro) with the wish
 // itself as big as the window allows, playing when Lamp sent its page, else its picture, under its name, and a slim
@@ -28,7 +29,7 @@ export function builtWishPage() {
 
 /** What X, iMessage and Slack read for the link's preview, in place of the built page's own. */
 function previewTags(wish, origin) {
-  const link = linkFor(origin, wish.id, wish.name);
+  const link = linkOf(origin, wish);
   const card = `${origin}/w/${wish.id}/card.png?v=${encodeURIComponent(wish.updated ?? "")}`;
   // Only the app: the preview shows lamp.dev beside it already.
   const title = wish.name;
@@ -126,9 +127,21 @@ export function createPageHandler({ env = process.env, fetcher = fetch, store, t
   return async (request) => {
     if (request.method !== "GET" && request.method !== "HEAD") return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
     const url = new URL(request.url);
-    // The link's last part: the id, and the wish's name after it only for reading.
-    const id = wishIDFrom(url.searchParams.get("id"));
+    // The link's last part: the id, and the wish's name after it only for reading; or its maker's username and its name
+    // under it (`/matt-rubens/bricks`).
+    let id = wishIDFrom(url.searchParams.get("id"));
+    const user = url.searchParams.get("user"), app = url.searchParams.get("app");
+    if (!id && isUsername(user) && /^[a-z0-9-]{1,60}$/.test(app ?? "")) {
+      try { id = await (store ?? cloudStore(env, fetcher)).appID(user, app); } catch { id = null; }
+    }
     const wish = id ? await findWish(id, { env, fetcher, store }) : null;
+    // An old link to a wish whose maker has an account goes to the name it's known by now.
+    if (wish?.owner && url.searchParams.get("id")) {
+      // What the link carries for the page (a change to ask for) goes with it; only how it was found doesn't.
+      const kept = new URLSearchParams([...url.searchParams].filter(([name]) => !["id", "user", "app"].includes(name)));
+      const location = linkOf(url.origin, wish) + (kept.size ? `?${kept}` : "");
+      return new Response(null, { status: 301, headers: { Location: location, "Cache-Control": "public, max-age=0, s-maxage=60" } });
+    }
     const page = wish && wishPage(await template(url.origin), wish, { origin: url.origin, playOrigin: playOrigin(url, id) });
     if (!page) {
       const nonce = randomBytes(16).toString("base64");

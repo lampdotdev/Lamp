@@ -190,7 +190,10 @@ Only when the person asks: a link is public, and anyone who has it can play the 
 - **Any other page:** `{{lamp}} share --words "What it is, in a sentence or a few"` puts it on lamp.dev and answers its
   link. `--line` is a line under its name, `--asks "Found a bug?|What's missing?"` what the box under the page asks
   people, and `--by "Their Name"` who it's by, when they want another name than the one it goes out with (the name they last
-  gave, or Lamp's, or their name on this computer, which the share says). A page that's logging errors
+  gave, or Lamp's, or their name on this computer, which the share says). A link goes under the person's username on
+  lamp.dev (`lamp.dev/<username>/<app>`) once they have one: the first time you share, ask them which username they want
+  and their email, and run `{{lamp}} account <username> --email <theirs>`; they confirm it from the email, and the link
+  moves there at its next share. `{{lamp}} account` says which they're signed in as. A page that's logging errors
   isn't shared until they're put right. Again, after changes, it sends the page as it is now to the same link, with the
   same words unless you give new ones.
 - `{{lamp}} ideas` lists what people playing it have sent, each with the address of a picture of the app as they saw

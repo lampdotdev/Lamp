@@ -22,6 +22,9 @@ const REFUSALS = {
   rate_limited: "the site has taken as many as it takes for now: try again in a while",
   service_unavailable: "the site can't keep it just now: try again in a moment",
   not_found: "the link is no longer there",
+  invalid_username: "a username is 2 to 30 lowercase letters, digits and dashes, starting and ending with a letter or digit, and not one of the site's own words",
+  username_taken: "that username is someone else's: choose another",
+  invalid_email: "that isn't an email address the site can write to",
 };
 
 /** The site couldn't be reached at all: offline, or the site is down. */
@@ -32,9 +35,10 @@ export class Unreachable extends Problem {}
  * a little later each time, when the site can't be reached or can't answer just now; any other is sent once. A refusal
  * carries the status the site gave it. No redirect is followed: a link's secret goes to the site and nowhere else.
  */
-export async function call(method, url, { secret, json, bytes, tries = 1, seconds = 120 } = {}) {
+export async function call(method, url, { secret, account, json, bytes, tries = 1, seconds = 120 } = {}) {
   const headers = {
     ...(secret ? { authorization: `Bearer ${secret}` } : {}),
+    ...(account ? { "x-lamp-account": account } : {}),
     ...(json ? { "content-type": "application/json" } : bytes ? { "content-type": "application/octet-stream" } : {}),
   };
   for (let attempt = 0; ; attempt++) {
@@ -65,18 +69,34 @@ function onSite(site, address) {
  * name, line, words, who it's by, the questions its page asks, its shape, picture and icon). A link the site no longer
  * has is made again. Answers its id, its address and its secret.
  */
-export async function publishLink({ site = siteOrigin(), body, earlier }) {
+export async function publishLink({ site = siteOrigin(), body, earlier, account }) {
   if (earlier) {
     try {
-      const { said } = await call("PUT", `${site}/api/wishes?id=${encodeURIComponent(earlier.id)}`, { secret: earlier.secret, json: body });
+      const { said } = await call("PUT", `${site}/api/wishes?id=${encodeURIComponent(earlier.id)}`, { secret: earlier.secret, account, json: body });
       // A change keeps the link; its address follows the name, so a rename shows in it (the old one still works).
       return { id: earlier.id, url: onSite(site, said.url) ?? earlier.url ?? null, secret: earlier.secret };
     } catch (error) { if (error.status !== 404) throw error; }
   }
-  const { said } = await call("POST", `${site}/api/wishes`, { json: body });
+  const { said } = await call("POST", `${site}/api/wishes`, { account, json: body });
   const url = onSite(site, said.url);
   if (typeof said.id !== "string" || typeof said.secret !== "string" || !url) throw new Problem("the site's answer couldn't be read");
   return { id: said.id, url, secret: said.secret };
+}
+
+/**
+ * Asks for a maker's account (`username` and `email`), or with an address that has one, to sign in to it: answers
+ * `{ username, key, existing, sent }`. The key is the account's once the email's link is opened.
+ */
+export async function askAccount({ site = siteOrigin(), username, email }) {
+  const { said } = await call("POST", `${site}/api/accounts`, { json: { ...(username ? { username } : {}), email } });
+  if (typeof said.key !== "string" || typeof said.username !== "string") throw new Problem("the site's answer couldn't be read");
+  return said;
+}
+
+/** The username a key is an account's, once the email's link was opened; null before. */
+export async function accountName({ site = siteOrigin(), key }) {
+  const { said } = await call("GET", `${site}/api/accounts`, { secret: key, seconds: 20 });
+  return typeof said.username === "string" ? said.username : null;
 }
 
 /**
@@ -84,14 +104,15 @@ export async function publishLink({ site = siteOrigin(), body, earlier }) {
  * file's address, only from where the site keeps them. Null when it can't be asked, or is gone. Asks with nothing of
  * the person's.
  */
-export async function latestOf({ site = siteOrigin(), id }) {
+export async function latestOf({ site = siteOrigin(), id, user, app }) {
   let said;
-  try { ({ said } = await call("GET", `${site}/api/wishes?id=${encodeURIComponent(id)}`)); } catch { return null; }
+  const asked = id ? `id=${encodeURIComponent(id)}` : `user=${encodeURIComponent(user)}&app=${encodeURIComponent(app)}`;
+  try { ({ said } = await call("GET", `${site}/api/wishes?${asked}`)); } catch { return null; }
   if (said.format !== 1 || !Number.isInteger(said.version)) return null;
   let file = null;
   try { const url = new URL(said.file); if (url.protocol === "https:" || (url.protocol === "data:" && new URL(site).protocol === "http:")) file = url.href; } catch {}
   const by = typeof said.by === "string" ? said.by.trim().slice(0, LIMITS.by) : "";
-  return { name: typeof said.name === "string" ? said.name : null, by: by || null, version: said.version, file };
+  return { id: typeof said.id === "string" ? said.id : id ?? null, name: typeof said.name === "string" ? said.name : null, by: by || null, version: said.version, file };
 }
 
 const fileAddress = (site, id, more = "") => `${site}/api/wish-file?id=${encodeURIComponent(id)}${more}`;

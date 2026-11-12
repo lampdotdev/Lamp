@@ -32,6 +32,8 @@ import { findBrowser, noBrowser } from "./browser.mjs";
 import { allSkills } from "./skills.mjs";
 import { engine } from "./ai.mjs";
 import { allowed, forgetAllowed, serveLocalAI } from "./local-ai.mjs";
+import { accountFor, keepAccount } from "./share.mjs";
+import { accountName, askAccount } from "./link.mjs";
 import { share, unshare, ideas, finishIdea, answerIdea, makerEmail, readLink, nameOf, siteOrigin, LIMITS } from "./share.mjs";
 import { Runner, allKept, fields, forget, integrationOf, isReady, look as lookForDevices, takesPages } from "./devices.mjs";
 import { placeNamed } from "./place.mjs";
@@ -130,6 +132,10 @@ Mac app Lamp made in Swift, built and run on this Mac.
       page and in that email; they can answer it by email. "reply" says something more, and "done" leaves
       their answer without one. --earlier lists those seen to, to look back on or answer again. "email"
       sends new ideas and replies to your own address too (once you confirm it), and you can answer from there.
+  lamp account [username] [--email you@example.com]
+      Your account on lamp.dev, which your links go under (lamp.dev/<username>/<app>): with a username and an email,
+      asks for it, and an email's link confirms it; with only your email, signs in to the one you have. On its own,
+      says which you're signed in as.
   lamp play <link> [--to folder] [--newest]
       Play an app shared on lamp.dev on this computer: its file, unpacked into a folder of its own in
       ~/Lamp Games (or where --to says), run and opened as lamp dev runs any page, so its AI is answered here in any
@@ -976,6 +982,7 @@ async function main() {
     console.log(`"${words.name}"${words.by ? ` by ${words.by}` : ""}: ${sent.files} files, ${(sent.bytes / 1_000_000).toFixed(1)} MB packed, ${shape === "fill" ? "filling the window" : "on its own stage"}${sent.picture ? ", with a picture of it" : ", with no picture"}${sent.file ? ", and its app file, for anyone to open in Lamp" : ""}${sent.github ? `, with a link to its code on GitHub (${sent.github})` : ""}.`);
     console.log("Anyone with the link can play it and send an idea: lamp ideas shows them. lamp unshare takes it down.");
     if (words.by && options.by === undefined) console.log(`It says it's by ${words.by}; --by "Another Name" changes that, for this link and the next.`);
+    if (/\/w\//.test(sent.url)) console.log(`${lampCommand()} account <username> --email you@example.com gives your links lamp.dev/<username>/<app>, this one at its next share.`);
     return;
   }
 
@@ -987,10 +994,35 @@ async function main() {
     return;
   }
 
+  if (command === "account") {
+    const { options, rest } = parse(args, ["email"]);
+    const site = siteOrigin();
+    if (options.email === undefined) {
+      const kept = accountFor(site);
+      if (!kept) { console.log(`No account yet: ${lampCommand()} account <username> --email you@example.com asks for one.`); return; }
+      const name = await accountName({ site, key: kept.key });
+      console.log(name ? `Signed in as ${name}: your links go under ${new URL(site).host}/${name}.`
+        : `Waiting for you to open the link in the email for ${kept.username}. Until then, links are shared as before.`);
+      return;
+    }
+    const asked = await askAccount({ site, username: rest[0], email: String(options.email) });
+    keepAccount(site, { username: asked.username, key: asked.key });
+    console.log(`${asked.existing ? `Signing in as ${asked.username}` : `Asking for ${asked.username}`}: open the link in the email sent to ${options.email} to confirm it.`
+      + (asked.sent === false ? " (The site couldn't send it just now: ask again in a moment.)" : ""));
+    return;
+  }
+
   if (command === "play") {
     const { options, rest } = parse(args, ["to"]);
-    const id = /(?:^|\/w\/)([A-Za-z0-9]{10})(?:-|$|\/|\?|#)/.exec(rest[0] ?? "")?.[1];
-    if (!id) throw new Problem("play takes a link to an app shared on lamp.dev: lamp play https://lamp.dev/w/AbCdEf1234-its-name");
+    let id = /(?:^|\/w\/)([A-Za-z0-9]{10})(?:-|$|\/|\?|#)/.exec(rest[0] ?? "")?.[1];
+    // A link by its maker's username and its name there (lamp.dev/<username>/<app>): its id, asked of the site.
+    let latest;
+    if (!id) {
+      const named = /^https?:\/\/[^/]+\/([a-z0-9-]{1,60})\/([a-z0-9-]{1,60})\/?(?:[?#]|$)/.exec(rest[0] ?? "");
+      if (named) { latest = await latestOf({ user: named[1], app: named[2] }); id = latest?.id ?? null; }
+      if (named && !id) throw new Problem("that link isn't on lamp.dev, or it has been taken down");
+    }
+    if (!id) throw new Problem("play takes a link to an app shared on lamp.dev: lamp play https://lamp.dev/matt-rubens/bricks");
     // Which folder each link was played into, so playing it again picks up where it was, saves and all: a file of its
     // own for each link, so two links played at once never write over each other's.
     const playedFile = join(process.env.LAMP_DEV_HOME || join(homedir(), ".lamp", "dev"), "played", id);
@@ -1000,7 +1032,7 @@ async function main() {
     let folder = !options.newest && recorded && (!wanted || wanted === recorded) && existsSync(join(recorded, "lamp-app.json")) ? recorded : null;
     if (folder) console.log(`Playing the copy in ${folder}. --newest takes the link's latest version instead.`);
     else {
-      const latest = await latestOf({ id });
+      latest ??= await latestOf({ id });
       if (!latest) throw new Problem("that link isn't on lamp.dev, or it has been taken down");
       if (!latest.file) throw new Problem(`"${latest.name ?? "That app"}" was shared without its file, so it plays only on lamp.dev`);
       const answer = await fetch(latest.file);
