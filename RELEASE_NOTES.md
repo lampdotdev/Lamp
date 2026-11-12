@@ -5,6 +5,22 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.36.0
+
+- People playing your shared app can send you ideas with a picture of what they saw. You can answer each one with a
+  note, and talk it over by email.
+- A shared app's page links to its GitHub repository, and players can make their own change with ChatGPT or Claude
+  Code from the page.
+- Shared apps use your AI while you play them on your Mac, with Lamp open. You allow each one once, and can take it
+  back in Settings → Apps.
+- Lamp's command line comes with Lamp: Install Command-Line Tool… in the Lamp menu puts `lamp` in Terminal. With it
+  you can make, run, share and play apps without Lamp's window, including `lamp play` for anyone's shared link.
+- Your own Claude Code or Codex can drive Lamp.
+- Suggested changes open in a panel on the desk, with a summary and a trial before you take them.
+- A small card shows what's changing while an app takes a change, in place of the rainbow.
+- Claude Code and Codex answer apps with no access to your files, whatever an app asks.
+- Big games on a shared link load faster and more reliably.
+
 ## 0.35.0
 
 - Share's main button is New Release now, with Copy as a small button beside the link. Once you've released, the
