@@ -5,7 +5,7 @@
 // is. The app works from the file the maker shared (the same one Lamp's app opens), never from the page as it's
 // shown nor from the wish's words, so the copy is the game itself, its credits and licenses with it. One copy for the
 // link of each app, so both carry the same words.
-import { ASK_TO_INSTALL, CHECK_NODE, FOLLOW_GUIDE, INSTALL, RUN_HERE_CHATGPT, numbered } from "./lamp-cli-words.ts";
+import { ASK_TO_INSTALL, ASK_TO_UPDATE, CHECK_NODE, FOLLOW_GUIDE, INSTALL, RUN_HERE_CHATGPT, numbered } from "./lamp-cli-words.ts";
 
 /** The AI apps Make it myself opens with its words. */
 export type ChangeApp = "chatgpt" | "claude";
@@ -36,10 +36,14 @@ export function changeWords({ name, page, file, app = "chatgpt", idea = "" }: Ch
   const lamp = "/Applications/Lamp.app/Contents/Resources/cli/lamp";
   const steps = [
     ...(app === "chatgpt" ? [RUN_HERE_CHATGPT] : []),
-    `Check whether Lamp's command-line tools already work here: run lamp guide (or ${lamp} guide, the copy inside the Lamp Mac app). If either prints the guide, use that one for every lamp command below, skip installing, and go on from "Read what lamp guide prints".`,
-    ASK_TO_INSTALL,
+    // What a lamp needs for the steps below, checked by what it lists rather than a version number, since the copy
+    // inside the Lamp Mac app and one from npm are numbered apart.
+    `Check whether Lamp's command-line tools are already here: run lamp help (or ${lamp} help, the copy inside the Lamp Mac app). One is new enough if it lists lamp unpack, lamp open and lamp look. If one is, use it for every lamp command below, skip installing and updating, run lamp guide, and go on from "Read what lamp guide prints".`,
+    `${ASK_TO_UPDATE} An old copy inside the Lamp Mac app doesn't count: if that's the only one, go on as if lamp weren't installed.`,
+    "If lamp isn't installed at all: " + ASK_TO_INSTALL[0].toLowerCase() + ASK_TO_INSTALL.slice(1),
     CHECK_NODE,
     INSTALL,
+    "Then check that lamp help lists lamp unpack, lamp open and lamp look. If it still doesn't (an older lamp may come first on this computer), stop and tell me.",
     FOLLOW_GUIDE,
     app === "chatgpt"
       ? `Work in my games folder, ${CHATGPT_FOLDER} (make it if it isn't there). Keep everything you make in it.`

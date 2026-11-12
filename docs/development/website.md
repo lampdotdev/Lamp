@@ -86,7 +86,8 @@ browser), the wish growing to the whole window on black, and from the same place
 Get Lamp and Open in Lamp (on a Mac). For a game that plays on the page and came with its Lamp app file, two tabs
 under the change choose between sending it and Make it myself, which has ChatGPT and Claude Code rows with Open (Claude
 Code asks once for a games folder to open in). Open hands the app one prompt (`src/lib/change-words.ts`): get Lamp's
-command line, asking first, or use one that already works, then download the game's file into a games folder that
+command line, asking first, or use one that already lists `unpack`, `open` and `look` (an older one is updated, asking
+first the same way), then download the game's file into a games folder that
 stays, `lamp unpack`, `lamp open`, make the change and `lamp look`, keeping its credits and licenses. The player ends
 with a changed copy open on their own computer; the page and the maker's game don't change. The app works from the
 file, never from the page as it's shown or the wish's words. A game without a file keeps Lamp under sending. As the page opens the wish fades up and the band after it; the wish's frame is

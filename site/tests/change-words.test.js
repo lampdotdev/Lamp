@@ -24,19 +24,34 @@ test("each app's link carries the words exactly", () => {
 test("the words ask before installing, then unpack, open, change and look, in that order", () => {
   const words = changeWords({ ...HANDOFF, idea: "add a timer" });
   const at = (part) => { const i = words.indexOf(part); assert.ok(i >= 0, part); return i; };
-  assert.ok(at("offer right away to continue in ChatGPT Work") < at("already work here"));
-  assert.ok(at("already work here") < at("Would you like me to install"));
+  assert.ok(at("offer right away to continue in ChatGPT Work") < at("already here"));
+  assert.ok(at("already here") < at("Would you like me to install"));
   assert.ok(at("Wait for my explicit yes") < at("node --version"));
-  assert.ok(at("node --version") < at("npm install -g @lampdotdev/lamp, then lamp setup, then lamp guide"));
+  assert.ok(at("node --version") < at("npm install -g @lampdotdev/lamp@latest, then lamp setup, then lamp guide"));
   assert.ok(at("lamp guide prints") < at(`curl -fsSL -o "Pong.lampapp" "${HANDOFF.file}"`));
-  assert.ok(at('lamp unpack "Pong.lampapp"') < at("lamp open"));
-  assert.ok(at("lamp open") < at("lamp look"));
+  assert.ok(at('lamp unpack "Pong.lampapp"') < at("Open my copy with lamp open"));
+  assert.ok(at("Open my copy with lamp open") < at("check it with lamp look"));
   at("~/Lamp Games");
   at("credits.json");
   at("don't copy the game from its web page or remake it from its description");
   at(HANDOFF.page);
   at("My request: add a timer");
   assert.match(changeWords(HANDOFF), /My request: none yet\.[\s\S]*Ask me what to change/, "no request: the app asks");
+});
+
+// A lamp that's there but older than unpack, open and look is updated, and only after the person says yes, as an
+// install is; a working one is used as it is.
+test("an old lamp is updated only after asking, and a new enough one is used as it is", () => {
+  for (const app of ["chatgpt", "claude"]) {
+    const words = changeWords({ ...HANDOFF, app });
+    const at = (part) => { const i = words.indexOf(part); assert.ok(i >= 0, `${app}: ${part}`); return i; };
+    assert.ok(at("lamp help") < at("lists lamp unpack, lamp open and lamp look"));
+    assert.ok(at("skip installing and updating") < at("too old for this"));
+    assert.ok(at("too old for this") < at("Would you like me to update Lamp's command-line tools?"));
+    assert.ok(at("Would you like me to update") < at("Wait for my explicit yes before updating anything"));
+    assert.ok(at("Wait for my explicit yes before updating anything") < at("npm install -g @lampdotdev/lamp@latest"), "the yes comes before npm runs");
+    assert.ok(at("npm install -g @lampdotdev/lamp@latest") < at("If it still doesn't"));
+  }
 });
 
 test("Claude Code works in the folder it's opened in and is never told about ChatGPT", () => {

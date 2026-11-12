@@ -13,9 +13,13 @@ export const RUN_HERE_CHATGPT = "You need to run commands on this computer for t
 
 export const ASK_TO_INSTALL = "Explain that Lamp's command-line tools would be installed on this computer (the command-line tools only, not the Lamp Mac app) and that setup can add Lamp instructions for future AI chats. Ask me: \"Would you like me to install and set up Lamp's command-line tools?\" Wait for my explicit yes before running any installation or setup commands. If I decline or haven't answered, stop.";
 
+// A lamp that's already installed can be older than the commands a prompt goes on to use: updating it is installing
+// software too, so it's asked for the same way, and the same install command (`@latest`) does it.
+export const ASK_TO_UPDATE = "If lamp is installed but too old for this, explain that Lamp's command-line tools on this computer need updating first. Ask me: \"Would you like me to update Lamp's command-line tools?\" Wait for my explicit yes before updating anything. If I decline or haven't answered, stop.";
+
 export const CHECK_NODE = "Check that Node.js 20 or later and npm are installed (node --version, npm --version). If either is missing, or Node is older than 20, tell me how to get a current version and stop. Don't install them yourself.";
 
-export const INSTALL = "Only after I say yes, run npm install -g @lampdotdev/lamp, then lamp setup, then lamp guide. Check that each one worked before running the next. If one fails, stop and tell me what went wrong.";
+export const INSTALL = "Only after I say yes, run npm install -g @lampdotdev/lamp@latest, then lamp setup, then lamp guide. Check that each one worked before running the next. If one fails, stop and tell me what went wrong.";
 
 export const FOLLOW_GUIDE = "Read what lamp guide prints and follow it for the rest of this chat. If lamp setup didn't add Lamp's skill for future chats, tell me.";
 
