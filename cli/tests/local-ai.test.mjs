@@ -21,7 +21,12 @@ test("only a shared page the person allowed has its AI answered", async (t) => {
   const server = await serveLocalAI({
     port: 0, said: () => {},
     ask: async (question) => { asked.push(question); return yes; },
-    answer: async (path, body) => [200, path === "/ai/status" ? { text: true } : { text: `answered ${body.prompt}` }],
+    answer: async (path, body) => {
+      if (path === "/ai/status") return [200, { text: true }];
+      if (body.probe) return [200, { act: true }];
+      await new Promise((done) => setTimeout(done, 20));
+      return [200, { text: `answered ${body.prompt}` }];
+    },
   });
   t.after(() => { server.close(); rmSync(home, { recursive: true, force: true }); });
   const port = server.address().port;
@@ -49,7 +54,10 @@ test("only a shared page the person allowed has its AI answered", async (t) => {
 
   // What there is is said before anyone's asked; using it isn't.
   assert.deepEqual((await call("/ai/status")).reply, { text: true });
+  assert.deepEqual((await call("/ai/act", { body: { probe: true } })).reply, { act: true });
   assert.equal((await call("/ai", { body: { prompt: "hi" } })).status, 401);
+  // A probe is only a probe where it asks no model.
+  assert.equal((await call("/ai", { body: { prompt: "hi", probe: true } })).status, 401);
   assert.equal(asked.length, 0);
 
   // Said no: not asked again while it runs.
@@ -66,6 +74,10 @@ test("only a shared page the person allowed has its AI answered", async (t) => {
   assert.deepEqual((await call("/ai", { origin: other, token, body: { prompt: "hi" } })).reply, { text: "answered hi" });
   assert.equal((await call("/ai", { origin: page, token, body: { prompt: "hi" } })).status, 401);
   assert.equal((await call("/ai", { origin: other, token: "wrong", body: { prompt: "hi" } })).status, 401);
+  assert.equal((await call("/ai", { origin: other, token: "é".repeat(token.length), body: { prompt: "hi" } })).status, 401);
+  // Many at once, as LampAI.decideEach asks: each waits its turn and is answered.
+  const many = await Promise.all(Array.from({ length: 12 }, (_, n) => call("/ai", { origin: other, token, body: { prompt: String(n) } })));
+  assert.deepEqual(many.map((one) => one.reply.text), Array.from({ length: 12 }, (_, n) => `answered ${n}`));
   // Kept for the next run, and asked for again it's the same.
   assert.equal(allowed()[other].name, "Harbor  Racer");
   assert.equal((await call("/pair", { origin: other })).reply.token, token);

@@ -50,14 +50,29 @@ export function linkOf(origin) {
   return /^[A-Za-z0-9]{10}$/.test(id) ? id : null;
 }
 
-const same = (a, b) => typeof a === "string" && typeof b === "string" && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+const same = (a, b) => {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  const x = Buffer.from(a), y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+};
 
 /**
  * Answers shared pages' AI until it's closed. `ask(question)` puts a yes-or-no to the person and resolves true for yes;
  * by default it's the terminal's, and without a terminal nothing is let in. Resolves to the server once it listens.
  */
 export async function serveLocalAI({ port = LOCAL_AI_PORT, ask = askInTerminal(), answer = answerAI, said = console.log } = {}) {
-  const busy = new Map(), refused = new Set(), waiting = new Map();
+  const busy = new Map(), queued = new Map(), refused = new Set(), waiting = new Map();
+  // A few of a page's requests run at once and the rest wait their turn, since lamp.js asks many at a time
+  // (`LampAI.decideEach`) and takes a refusal as that item's answer.
+  const turn = (origin) => {
+    if ((busy.get(origin) || 0) < AT_ONCE) { busy.set(origin, (busy.get(origin) || 0) + 1); return Promise.resolve(); }
+    return new Promise((go) => queued.set(origin, [...(queued.get(origin) || []), go]));
+  };
+  const done = (origin) => {
+    const next = queued.get(origin)?.shift();
+    if (next) next();
+    else busy.set(origin, busy.get(origin) - 1);
+  };
   // One question at a time in the terminal; a page that asks again while it's waiting gets the same answer, and one
   // the person said no to isn't asked about again while this runs.
   let asking = Promise.resolve();
@@ -127,22 +142,23 @@ export async function serveLocalAI({ port = LOCAL_AI_PORT, ask = askInTerminal()
       return token ? reply(200, { token }) : reply(403, { error: "Not allowed on this computer." });
     }
     if (!ROUTES.has(url.pathname)) return reply(404, { error: "Not found." });
-    // What there is to answer with, asked before anyone is let in.
-    const asksNothing = url.pathname === "/ai/status" || body?.probe === true;
-    if (!asksNothing) {
-      const kept = allowed()[origin];
-      const given = String(request.headers.authorization || "").replace(/^Bearer\s+/i, "");
-      if (!kept || !same(given, kept.token)) return reply(401, { error: "This page isn't allowed to use the AI here yet." });
-      if ((busy.get(origin) || 0) >= AT_ONCE) return reply(429, { error: "The AI is still answering this page. Try again in a moment." });
+    // What there is to answer with, asked before anyone is let in: only the routes whose probe asks no model.
+    const asksNothing = url.pathname === "/ai/status" || (body?.probe === true && (url.pathname === "/ai/act" || url.pathname === "/ai/hear"));
+    if (asksNothing) {
+      const [status, answered] = await answer(url.pathname, { probe: true });
+      return reply(status, answered);
     }
-    busy.set(origin, (busy.get(origin) || 0) + 1);
+    const kept = allowed()[origin];
+    const given = String(request.headers.authorization || "").replace(/^Bearer\s+/i, "");
+    if (!kept || !same(given, kept.token)) return reply(401, { error: "This page isn't allowed to use the AI here yet." });
+    await turn(origin);
     try {
       const [status, answered] = await answer(url.pathname, body);
       reply(status, answered);
     } catch (error) {
       reply(502, { error: error?.message || "The AI didn't answer." });
     } finally {
-      busy.set(origin, busy.get(origin) - 1);
+      done(origin);
     }
   });
   await new Promise((done, fail) => { server.once("error", fail); server.listen(port, "127.0.0.1", () => { server.off("error", fail); done(); }); });
