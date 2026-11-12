@@ -1006,7 +1006,7 @@ async function main() {
       return;
     }
     const asked = await askAccount({ site, username: rest[0], email: String(options.email) });
-    keepAccount(site, { username: asked.username, key: asked.key });
+    keepAccount(site, { username: asked.username, key: asked.key, email: String(options.email) });
     console.log(`${asked.existing ? `Signing in as ${asked.username}` : `Asking for ${asked.username}`}: open the link in the email sent to ${options.email} to confirm it.`
       + (asked.sent === false ? " (The site couldn't send it just now: ask again in a moment.)" : ""));
     return;

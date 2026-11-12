@@ -1006,6 +1006,18 @@ enum Gallery {
         wishLink("New link, with questions", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish,
                                                          asks: "Found a folder it got wrong?\nA place on your Mac it should look at?\nWhat would make it easier to read?")),
         wishLink("New link, nothing to take again", retake: false),
+        wishLink("New link, asks for a username", values: .init(name: "Disk Map", by: "Sam Rivera", line: diskMapLine, words: diskMapWish,
+                                                                username: "sam-rivera"),
+                 account: .none(suggested: "sam-rivera")),
+        wishLink("New link, username typed", values: .init(name: "Disk Map", by: "Sam Rivera", line: diskMapLine, words: diskMapWish,
+                                                           username: "sam-rivera", email: "sam@example.com"),
+                 account: .none(suggested: "sam-rivera")),
+        wishLink("Username taken", values: .init(name: "Disk Map", by: "Sam Rivera", line: diskMapLine, words: diskMapWish,
+                                                 username: "sam", email: "sam@example.com"),
+                 stage: .failed("lamp.dev/sam is someone else's. Try another username."), account: .none(suggested: "sam-rivera")),
+        wishLink("Shared, username waiting for its email", link: true, copied: true,
+                 account: .waiting(username: "sam-rivera", email: "sam@example.com")),
+        wishLink("Signed in, link moves under the username", link: true, changed: true, account: .signedIn("sam-rivera")),
         wishLink("Sharing", stage: .sending),
         wishLink("Couldn't share", stage: .failed("Lamp couldn't reach lamp.dev. Try again in a moment.")),
         wishLink("App itself can't go", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includeFile: true),
@@ -1094,7 +1106,8 @@ enum Gallery {
                                  stage: WishLinkCard.Stage = .editing, link: Bool = false, copied: Bool = false,
                                  changed: Bool = false, canIncludeFile: Bool = false, noLicense: String? = nil, writingNotes: Bool = false,
                                  gitHub: Bool = false, gitHubBehind: Bool = false, gitHubNote: String? = nil, gitHubStage: WishLinkCard.GitHubStage? = nil,
-                                 checkingGitHub: Bool = false, setup: WishLinkCard.GitHubSetup? = nil, width: CGFloat? = 440) -> Entry {
+                                 checkingGitHub: Bool = false, setup: WishLinkCard.GitHubSetup? = nil, account: WishLinkCard.Account = .unknown,
+                                 width: CGFloat? = 440) -> Entry {
         Entry(group: "Share Link", name: name) {
             let folder = Starters.folder?.appendingPathComponent("diskmap")
             let card = WishLinkCard(
@@ -1106,6 +1119,7 @@ enum Gallery {
                 writingNotes: writingNotes, gitHub: gitHub ? "someone/disk-map" : nil, gitHubNote: gitHubNote, gitHubStage: gitHubStage,
                 checkingGitHub: checkingGitHub, retryGitHub: { if case .failed = gitHubStage, !gitHubBehind { return {} } else { return nil } }(),
                 gitHubBehind: gitHubBehind ? "someone/disk-map" : nil, bringIn: gitHubBehind ? {} : nil, gitHubSetup: setup,
+                account: account, changeAccount: {},
                 share: {}, copy: {}, stop: {}, close: {}, width: width)
             return AnyView(card
                 .background(Paper.page, in: RoundedRectangle(cornerRadius: 16))

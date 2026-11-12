@@ -24,7 +24,8 @@ import { fileURLToPath } from "node:url";
 import { Away, OffNetwork, Refused, Rejected, Runner, StillWorking, answersOn, bonjour, pinsAt, searchNetwork, send, ssdp } from "./devices.mjs";
 import { adbCommand, connectTo, deviceListing, deviceProperties, displaySizeOf, dumpIn, installApk, installTools, launchApp, makeEmulator, pairWith, processIn, processOf,
   rowsOf, saveState, screenItems, screenshotOf, tellApp, toolsThere, useLamps } from "./android.mjs";
-import { Unreachable, ideasOf, latestOf, makerOf, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile } from "./link.mjs";
+import { accountFor, keepAccount } from "./share.mjs";
+import { Unreachable, accountName, askAccount, ideasOf, latestOf, makerOf, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile } from "./link.mjs";
 import { defaultRoute, homeNetwork, neighbours, samsungAt, subnetOn, tvsIn } from "./network.mjs";
 import { PUBLISHER, identityName, keptSigner, namesOf, packageOf, versionAfter } from "./msix.mjs";
 import { tile } from "./png.mjs";
@@ -169,7 +170,43 @@ export const CALLS = {
    */
   async linkPublish(given) {
     const earlier = given.earlier && typeof given.earlier.id === "string" ? given.earlier : null;
-    return publishLink({ site: siteOf(given), body: given.body ?? {}, earlier, account: typeof given.account === "string" ? given.account : undefined });
+    // Sent with the maker's account key, the one `lamp account` keeps, unless the call names another: the link goes
+    // under their username once it's confirmed.
+    const site = siteOf(given);
+    return publishLink({ site, body: given.body ?? {}, earlier, account: typeof given.account === "string" ? given.account : accountFor(site)?.key });
+  },
+
+  /**
+   * The maker's account on `site`, as lamp keeps it: `account` null with none, else its username, the address that
+   * confirms it, and `confirmed` (null when the site can't be asked just now).
+   */
+  async account(given) {
+    const site = siteOf(given);
+    const kept = accountFor(site);
+    if (!kept) return { account: null };
+    let name;
+    try { name = await accountName({ site, key: kept.key }); } catch { return { account: { username: kept.username, email: kept.email ?? null, confirmed: null } }; }
+    // An address signing in to its account learns the username only once it's confirmed.
+    if (name && name !== kept.username) keepAccount(site, { ...kept, username: name });
+    return { account: { username: name ?? kept.username, email: kept.email ?? null, confirmed: !!name } };
+  },
+
+  /**
+   * Asks `site` for an account (`username`, `email`), or with an address alone, to sign in to the one it has; the key is
+   * kept as `lamp account` keeps it, and works once the email's link is opened. Its username and whether the email went.
+   */
+  async accountAsk(given) {
+    const site = siteOf(given);
+    const email = text(given, "email");
+    const asked = await askAccount({ site, username: typeof given.username === "string" && given.username ? given.username : undefined, email });
+    keepAccount(site, { username: asked.username, key: asked.key, email });
+    return { username: asked.username ?? null, existing: !!asked.existing, sent: asked.sent !== false };
+  },
+
+  /** Forgets the maker's account on `site` here (the one waiting for a mistyped address, say). */
+  async accountForget(given) {
+    keepAccount(siteOf(given), undefined);
+    return {};
   },
 
   /** What a followed link has now, asked with nothing of the person's; `latest` null when it can't be asked or is gone. */
