@@ -129,10 +129,14 @@ import { DOWNLOAD_URL } from "../../lib/download";
             <img data-shot-picture alt="The app as it is now" />
             <label><input type="checkbox" data-shot-keep checked /> Include this picture</label>
           </div>
-          <label for="idea-name" class="remix-popup-label">Your name <span class="remix-popup-optional">(optional)</span></label>
-          <input id="idea-name" data-idea-name class="remix-popup-input" type="text" autocomplete="name" maxlength="60" placeholder="Your name" />
-          <label for="notify-email" class="remix-popup-label">Email me about it <span class="remix-popup-optional">(optional)</span></label>
-          <input id="notify-email" data-notify-email class="remix-popup-input" type="email" autocomplete="email" placeholder="Your email" />
+          <!-- Signed in to lamp.dev in this browser: the idea is by their username, in place of a name and an address. -->
+          <p data-signed-in hidden class="remix-popup-note">Sending as <b data-signed-in-name></b> · <button type="button" data-sign-out class="underline">Sign out</button></p>
+          <div data-who>
+            <label for="idea-name" class="remix-popup-label">Your name <span class="remix-popup-optional">(optional)</span></label>
+            <input id="idea-name" data-idea-name class="remix-popup-input" type="text" autocomplete="name" maxlength="60" placeholder="Your name" />
+            <label for="notify-email" class="remix-popup-label">Email me about it <span class="remix-popup-optional">(optional)</span></label>
+            <input id="notify-email" data-notify-email class="remix-popup-input" type="email" autocomplete="email" placeholder="Your email" />
+          </div>
           <div class="remix-popup-rows"><button type="submit" data-confirm-send class="shared-button">Send</button></div>
         </form>
         <p data-sent-text hidden class="remix-popup-to"></p>
@@ -750,17 +754,31 @@ import { DOWNLOAD_URL } from "../../lib/download";
       if (typeof me.name === "string") $<HTMLInputElement>("[data-idea-name]").value = me.name;
       if (typeof me.email === "string") $<HTMLInputElement>("[data-notify-email]").value = me.email;
     } catch {}
+    // Signed in to lamp.dev in this browser (the link in a confirmation email was opened here): ideas go by that
+    // username, with no name or address to give.
+    let signedIn = "";
+    const showSignedIn = (name: string) => {
+      signedIn = name;
+      $<HTMLElement>("[data-signed-in-name]").textContent = name;
+      $<HTMLElement>("[data-signed-in]").hidden = !name;
+      $<HTMLElement>("[data-who]").hidden = !!name;
+    };
+    fetch("/api/accounts", { signal: AbortSignal.timeout(8000) }).then((response) => response.ok ? response.json() : null)
+      .then((said) => { if (typeof said?.username === "string") showSignedIn(said.username); }).catch(() => {});
+    $<HTMLButtonElement>("[data-sign-out]").addEventListener("click", () => {
+      fetch("/api/accounts", { method: "DELETE" }).then((response) => { if (response.ok) showSignedIn(""); }).catch(() => {});
+    });
     // Confirmed: the idea goes to the maker (`/api/wish-ideas`), who sees it in Lamp with the name if one was given,
     // and the address kept by the site.
     confirm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const idea = ideaText.value.trim();
-      const email = $<HTMLInputElement>("[data-notify-email]").value.trim();
-      const name = $<HTMLInputElement>("[data-idea-name]").value.trim();
+      const email = signedIn ? "" : $<HTMLInputElement>("[data-notify-email]").value.trim();
+      const name = signedIn ? "" : $<HTMLInputElement>("[data-idea-name]").value.trim();
       if (!idea || confirmSend.disabled) return ideaText.focus();
       const mine = draft, written = fromBar;
       confirmSend.disabled = true;
-      let sent = false;
+      let sent = false, confirming = false;
       try {
         const response = await fetch(`/api/wish-ideas?id=${encodeURIComponent(wish.id)}`, {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -769,9 +787,11 @@ import { DOWNLOAD_URL } from "../../lib/download";
         });
         sent = response.status === 201;
         if (sent) {
-          remember((await response.json()) as { n: number; token: string }, idea);
+          const said = (await response.json()) as { n: number; token: string; confirm?: boolean };
+          confirming = said.confirm === true;
+          remember(said, idea);
           // Kept in this browser for their next idea, and nowhere else.
-          try { localStorage.setItem(ME, JSON.stringify({ name, email })); } catch {}
+          if (!signedIn) { try { localStorage.setItem(ME, JSON.stringify({ name, email })); } catch {} }
         }
         if (!sent && response.status === 400 && email && mine === draft) { notifyNote.textContent = "Check the email address."; confirmSend.disabled = false; return; }
       } catch {}
@@ -790,7 +810,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
       sentText.textContent = idea;
       sentText.hidden = false;
       confirm.hidden = true;
-      notifyNote.textContent = email ? "We'll email you when it's in, or with an answer." : "";
+      notifyNote.textContent = confirming ? "Check your email and confirm it to hear back."
+        : email || signedIn ? "We'll email you when it's in, or with an answer." : "";
       $<HTMLElement>("[data-own-lead]").textContent = "Want it sooner? Lamp can make it for you now. It's free on your Mac and works with your ChatGPT or Claude plan.";
     });
     $<HTMLButtonElement>("[data-remix-close]").addEventListener("click", () => dialog.close());

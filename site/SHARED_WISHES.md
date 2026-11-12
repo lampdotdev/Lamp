@@ -85,6 +85,15 @@ state, by site), and Lamp's app asks through it (the `account`, `accountAsk` and
 shared from either goes under the same username. Lamp's Share Link card asks for one while there's none, filled in from
 the name on the card and taken only with an email; without one the link goes out as before. While the email waits the
 card says so, with Change for a mistyped address, and once it's confirmed a link from before moves at its next release.
+
+A browser is signed in only by pressing the button on an idea's confirm page (never by opening a link, which anyone
+could be sent to): a key of its own in an HttpOnly, SameSite=Lax cookie (`ACCOUNT_COOKIE`), which `GET /api/accounts`
+reads and `DELETE` clears. An idea sent from a signed-in browser is by
+its username (`user`, and the name the maker sees), and its news goes to the account's address. Someone who sends an
+idea with an address that has no account is emailed a link to confirm it (`askToConfirm`): the page it opens shows a
+button, so nothing is used up by a mail scanner, and pressing it signs the browser in to the address's account or
+makes one with the username they choose (suggested from the name they gave). Emails about an idea go only to an
+address with an account (`writeToSender`), so nobody hears about an idea someone else typed their address into.
 ## Setup (one time)
 
 In the **lamp** Vercel project:

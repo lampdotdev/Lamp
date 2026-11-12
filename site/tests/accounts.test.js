@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createAccountHandler, isUsername } from "../lib/accounts.js";
-import { createShareHandler, memoryStore } from "../lib/shared-wishes.js";
+import { createIdeasHandler, createShareHandler, memoryStore } from "../lib/shared-wishes.js";
 import { createPageHandler } from "../lib/shared-wish-page.js";
 
 const env = { RESEND_API_KEY: "test", LAMP_IDEAS_FROM: "Lamp <ideas@lamp.dev>" };
@@ -78,4 +78,43 @@ test("an account is a username confirmed by email, and links shared with its key
   assert.equal(moved.url, "https://lamp.dev/matt-rubens/tide-clock");
   const renamed = await (await share({ ...words, name: "Harbor Clock" }, { id: plain.id, secret: plain.secret })).json();
   assert.equal(renamed.url, "https://lamp.dev/matt-rubens/tide-clock");
+});
+
+test("someone who sends an idea with their address confirms it to hear back, and their browser sends by their username", async () => {
+  const store = memoryStore(), mail = [];
+  const fetcher = async (url, request) => { mail.push(JSON.parse(request.body)); return new Response("{}", { status: 200 }); };
+  const accounts = createAccountHandler({ env, fetcher, store, limited: false });
+  const { id, secret } = await (await createShareHandler({ store, limited: false })(new Request("https://lamp.dev/api/wishes", { method: "POST",
+    headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Bricks", line: "Build.", words: "Build." }) }))).json();
+  const ideas = createIdeasHandler({ env, fetcher, store, limited: false });
+  const idea = (body, cookie) => ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}`, { method: "POST",
+    headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) }));
+  const answer = (n) => ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${n}`, { method: "PATCH",
+    headers: { "content-type": "application/json", authorization: `Bearer ${secret}` }, body: JSON.stringify({ note: "Done!" }) }));
+
+  // Not yet confirmed: asked to be, and nothing else goes to the address.
+  const first = await (await idea({ text: "More bricks", name: "Sam Rivera", email: "sam@example.com" })).json();
+  assert.equal(first.confirm, true);
+  assert.match(mail.at(-1).subject, /Confirm your email to hear back about Bricks/);
+  assert.equal((await (await answer(first.n)).json()).notified, false);
+  // The link shows a button, with a username from their name, and uses nothing up until it's pressed.
+  const link = /https:\S+confirm=[0-9a-f]+/.exec(mail.at(-1).text)[0];
+  const shown = await accounts(new Request(link));
+  assert.match(await shown.text(), /value="sam-rivera"/);
+  const press = (username) => accounts(new Request(link, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: `username=${username}` }));
+  assert.equal((await press("api")).status, 400, "the site's own words aren't usernames");
+  const done = await press("sam-rivera");
+  assert.equal(done.status, 200);
+  const cookie = done.headers.get("set-cookie").split(";")[0];
+  assert.equal((await press("sam-rivera")).status, 410, "the link works once");
+
+  // Confirmed: answers reach them, and their browser is signed in, so its ideas are by the username.
+  assert.equal((await (await answer(first.n)).json()).notified, true);
+  assert.equal((await (await accounts(new Request("https://lamp.dev/api/accounts", { headers: { cookie } }))).json()).username, "sam-rivera");
+  const second = await (await idea({ text: "Even more" }, cookie)).json();
+  assert.deepEqual([second.user, second.confirm], ["sam-rivera", undefined]);
+  const seen = await (await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}`, { headers: { authorization: `Bearer ${secret}` } }))).json();
+  const byUser = seen.ideas.find((one) => one.n === second.n);
+  assert.deepEqual([byUser.user, byUser.name, byUser.wantsNews], ["sam-rivera", "sam-rivera", true]);
+  assert.equal((await accounts(new Request("https://lamp.dev/api/accounts", { method: "DELETE" }))).headers.get("set-cookie").includes("Max-Age=0"), true);
 });
