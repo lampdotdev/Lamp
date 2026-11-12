@@ -1023,6 +1023,7 @@ struct AppsSettings: View {
     @AppStorage("imageModel") private var imageModel = Icons.artModels[0].id
     @AppStorage("decisionModel") private var decisionModel = AppAI.decisionModel.id
     @State private var revision = 0   // bumps after key changes so the view re-reads KeyStore
+    @StateObject private var sharedPages = SharedPagesAllowed()
 
     var body: some View {
         Form {
@@ -1067,9 +1068,11 @@ struct AppsSettings: View {
             // Only for someone with an iPhone or iPad app: nothing else goes on a phone.
             if store.everyApp.contains(where: { $0.hasIOS }) { PhoneAwaySection(revision: revision) }
             ComputerUseSettings()
+            SharedPagesSection(allowed: sharedPages)
         }
         .settingsPane()
         .onAppear { revision += 1 }   // keys may have changed in the Providers tab
+        .task { await sharedPages.load() }
     }
 
     /// The decision models that can answer now: those with their key, the one on this Mac once it's
