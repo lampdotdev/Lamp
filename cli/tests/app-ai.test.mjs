@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MAX_CALLS, chatBody, decidePrompt, planPrompt, planSchema, readDecision, readMessage, readPlan, readStep } from "../app-ai.mjs";
+import { MAX_CALLS, MAX_STEPS, chatBody, decidePrompt, planPrompt, planSchema, readDecision, readMessage, readPlan, readStep } from "../app-ai.mjs";
 
 const fixtures = join(import.meta.dirname, "..", "..", "Tests", "Fixtures");
 const recorded = (folder, file) => JSON.parse(readFileSync(join(fixtures, folder, file), "utf8"));
@@ -29,9 +29,13 @@ test("a step's tools are Lamp's to check: reply is Lamp's, names and ids are onc
   assert.match(refusal({ request: "x", tools: [{ name: "x", args: { a: { type: "string", pattern: ".*" } } }] }), /`pattern`/);
   assert.ok(refusal({ request: "x", tools: [{ name: "x", args: { a: { type: "integer", oneOf: ["1"] } } }] }));
   assert.ok(refusal({ request: "x", tools: [{ name: "x", args: { a: { type: "list" } } }] }));
-  assert.equal(step({ steps: [earlier(1), earlier(2)] }).final, false);
-  assert.equal(step({ steps: [earlier(1), earlier(2), earlier(3)] }).final, true);
-  assert.ok(refusal({ request: "x", tools: [groceries], steps: [earlier(1), earlier(2), earlier(3), earlier(4)] }));
+  // The page keeps its own step limit by saying which step is its last; past what any app may raise it to, Lamp does.
+  const behind = (n) => Array.from({ length: n }, (_, i) => earlier(i + 1));
+  assert.equal(step({ steps: behind(3) }).final, false);
+  assert.equal(step({ steps: behind(3), final: true }).final, true);
+  assert.equal(step({ steps: behind(MAX_STEPS - 1) }).final, true);
+  assert.ok(refusal({ request: "x", tools: [groceries], steps: behind(MAX_STEPS) }));
+  assert.equal(step({ model: "opus" }).model, "opus");
 });
 
 test("OpenRouter's recorded answers become one checked call with Lamp's own id, then the reply", () => {
@@ -60,7 +64,7 @@ test("calls that don't fit are asked again, never handed on", () => {
     Array.from({ length: MAX_CALLS + 1 }, () => call("groceries", "{}")),
   ]) assert.ok(readMessage({ tool_calls: calls }, r).problem, JSON.stringify(calls));
   assert.ok(readMessage({ tool_calls: [call("addGrocery", '{"name":"milk","when":"2026-11-12T12:00:00+05:30"}')] }, r).answer, "a real offset");
-  const last = step({ steps: [earlier(1), earlier(2), earlier(3)] });
+  const last = step({ steps: [earlier(1), earlier(2), earlier(3)], final: true });
   assert.match(readMessage({ tool_calls: [call("groceries", "{}")] }, last).problem, /Only `reply`/);
 });
 
@@ -71,7 +75,7 @@ test("OpenRouter is asked with the tools and Lamp's reply, for providers that ta
   assert.deepEqual(sent.tools.map((t) => t.function.name), ["groceries", "addGrocery", "reply"]);
   assert.ok(sent.tools[2].function.parameters.properties.choices);
   assert.match(sent.messages[1].content, /<outside-text-1>[\s\S]*eggs/);
-  assert.equal(chatBody(step({ steps: [earlier(1), earlier(2), earlier(3)] }), "t", null, "m").tool_choice, "none");
+  assert.equal(chatBody(step({ steps: [earlier(1), earlier(2), earlier(3)], final: true }), "t", null, "m").tool_choice, "none");
 });
 
 test("a question's choices are kept only as a short plain set", () => {

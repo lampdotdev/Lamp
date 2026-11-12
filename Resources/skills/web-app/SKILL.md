@@ -75,7 +75,9 @@ needs Lamp (for AI, `LampAI.status`'s `reason`), never an error or an empty scre
 
 `LampAI.act(request, { about, context, tools, history, onStep })` runs a short loop: the AI picks calls among the
 app's tools, the page runs them, the AI sees the results, until it replies (at most 4 AI calls and 6 writes a
-turn, and no time limit unless the app sets one with `limits: { seconds }`, for a feature that should answer quickly; each read gives the AI up to 32 KB of its result, and an app whose state is bigger raises it with `limits: { result }`, up to 256 KB, rather than having the AI page through it). It works with
+turn, and no time limit unless the app sets one with `limits: { seconds }`, for a feature that should answer quickly; each read gives the AI up to 32 KB of its result, and an app whose state is bigger raises it with `limits: { result }`, up to 256 KB, rather than having the AI page through it). An app that builds something real in one request (a model of many pieces, a week's plan) raises
+`limits: { steps, writes }`, up to 40 steps and 320 writes; a tool that takes a list of items makes each write go
+further. It works with
 whichever AI the person set up for apps' text, so don't tie it to voice: typing works wherever `act` does. Its comment in lamp.js has the shapes. This is the one recipe for it:
 
 - Show the feature where `LampAI.status('act')` says it's available, and keep the app's own buttons for everything:
@@ -99,6 +101,11 @@ whichever AI the person set up for apps' text, so don't tie it to voice: typing 
   is hidden.
 - `about` says what the app is and its rules for asking back: which person, which day and time, which of two things
   that both fit.
+- Where the person might want another AI for the app's asking, `LampAI.models()` lists what their setup can answer it
+  with: a small picker beside the Ask button with only the `available` ones and `default` chosen, left out when
+  there's one or none; the chosen id goes as `model` to `act` and `ask`. Keep the choice with the app's saved things,
+  and go back to `default` when it's no longer listed. On a page shared on lamp.dev it answers `connect: true` until
+  the person connects, as `status` does.
 
 Saying it instead of typing it: where the app around the page has a microphone (`LampVoice.status()`, which never
 prompts: the Mac, iPhone and iPad, Android and Android TV, a TV remote's microphone included) and Lamp can transcribe

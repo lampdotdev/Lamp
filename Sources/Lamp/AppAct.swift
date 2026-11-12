@@ -18,8 +18,8 @@ enum AppAct {
 
     struct Failure: Error, Equatable { let status: Int; let message: String }
 
-    /// A step as lamp's command line checked it (`actStep`): what the other calls take, and `final`, `seconds` and
-    /// `route` for this side.
+    /// A step as lamp's command line checked it (`actStep`): what the other calls take, and `final`, `seconds`, `route`
+    /// and `model` for this side.
     typealias Request = [String: Any]
 
     static func parse(_ data: Data) async throws -> Request {
@@ -81,6 +81,8 @@ enum AppAct {
         }
         let r: Request
         do { r = try await parse(data) } catch let failure as Failure { return (failure.status, ["error": failure.message], 0) } catch { return (500, ["error": error.localizedDescription], 0) }
+        // The model the app asked for, when it can answer; else the app's own choice (`AppAI.textChoice`).
+        let chosen = AppAI.textChoice(asked: r["model"] as? String, app: appModel)
         let route: AppAI.TextRoute
         if let pinned = r["route"] as? String {
             // Read the way a saved choice is: Codex's route is named for its first model once Codex has listed them,
@@ -91,7 +93,7 @@ enum AppAct {
             }
             route = same
         } else {
-            switch firstRoute(appModel: appModel) {
+            switch firstRoute(appModel: chosen) {
             case .success(let first): route = first
             case .failure(let failure): return (failure.status, ["error": failure.message], 0)
             }

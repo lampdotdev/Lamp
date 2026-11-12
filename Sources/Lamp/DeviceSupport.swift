@@ -618,7 +618,7 @@ enum DeviceSupport {
           });
         }
         var kept = read('nearby.token', null);
-        var done = path === '/ai/status' || (body && body.probe === true) ? go(kept) : (kept ? Promise.resolve(kept) : allow()).then(function (t) {
+        var done = path === '/ai/status' || path === '/ai/models' || (body && body.probe === true) ? go(kept) : (kept ? Promise.resolve(kept) : allow()).then(function (t) {
           return go(t).then(function (answer) {
             if (answer.status !== 401) return answer;
             // Taken back on the computer: ask once more.
@@ -852,8 +852,12 @@ enum DeviceSupport {
 
       // A turn has no time limit of its own: a real answer is never cut off, however long the model takes. Each step is
       // given ACT_STEP_SECONDS, which only a call that has stopped answering reaches. An app that wants a quicker turn
-      // asks for one (`limits: { seconds }`); steps and writes it may only lower.
+      // asks for one (`limits: { seconds }`). Steps and writes are few unless the app says otherwise, so a request that
+      // goes wrong ends soon and changes little; an app that builds something real raises them (`limits: { steps,
+      // writes }`) up to ACT_LIMITS_MAX: 40 steps, as many as Lamp takes in one turn (`MAX_STEPS` in lamp's app-ai.mjs),
+      // and as many writes as 40 steps of 8 calls can hold.
       var ACT_LIMITS = { steps: 4, writes: 6 };
+      var ACT_LIMITS_MAX = { steps: 40, writes: 320 };
       // How much of one read goes back to the model: room for a real app's state (a 184-piece model, a week's calendar)
       // in one step, since paging through it costs steps a turn needs for its work. An app with more raises it
       // (`limits: { result }`), up to ACT_RESULT_MAX.
@@ -898,8 +902,8 @@ enum DeviceSupport {
         var o = options || {}, tools = o.tools || {};
         var limits = {};
         ['steps', 'writes'].forEach(function (k) {
-          var asked = o.limits && typeof o.limits[k] === 'number' ? o.limits[k] : ACT_LIMITS[k];
-          limits[k] = Math.max(1, Math.min(asked, ACT_LIMITS[k]));
+          var asked = o.limits && typeof o.limits[k] === 'number' && o.limits[k] > 0 ? Math.floor(o.limits[k]) : ACT_LIMITS[k];
+          limits[k] = Math.max(1, Math.min(asked, ACT_LIMITS_MAX[k]));
         });
         var asked = o.limits && typeof o.limits.seconds === 'number' && o.limits.seconds > 0 ? o.limits.seconds : null;
         var resultMax = o.limits && typeof o.limits.result === 'number' && o.limits.result > 0
@@ -984,7 +988,8 @@ enum DeviceSupport {
               if (bad) return fail(bad);
               var key = 'k' + hash(id + '|' + c.name + '|' + canonical(c.args));
               // The same change asked again in this turn gets its first result, and doesn't run again.
-              if (ran.hasOwnProperty(key)) { results[c.id] = { id: c.id, ok: true, repeat: true, value: ran[key] }; return next(i + 1); }
+              // Its result is in an earlier step, which every request carries: pointed to, not sent again.
+              if (ran.hasOwnProperty(key)) { results[c.id] = { id: c.id, ok: true, repeat: true, value: { note: 'Already done in this request: its result is in an earlier step.' } }; return next(i + 1); }
               if (writes >= limits.writes) return fail('Over this turn\'s limit of ' + limits.writes + ' changes.');
               var call = { turn: id, key: key, step: step, id: c.id };
               return Promise.resolve().then(function () { return tool.check ? tool.check(c.args, call) : null; }).then(function (problem) {
@@ -1121,6 +1126,11 @@ enum DeviceSupport {
        * `connect: true`: show a small "Connect AI" button beside its reason that calls `LampAI.connect(capability)` with
        * the same kind of AI (`connect('pictures')` for pictures), and use what that gives as `status`'s answer. Never
        * call `connect()` as the page loads.
+       *
+       * Which AI answers is the person's choice in Lamp. An app may offer them another for its own asking: `LampAI.models()`
+       * lists what their setup can answer it with now. Show a small picker beside the app's Ask button with only the
+       * available ones and `default` chosen, and send the chosen id as `model` to `ask` and `act`. Leave the picker out
+       * when there's one or none to choose from.
        */
       var LampAI = {
         Failure: Failure,
@@ -1174,15 +1184,70 @@ enum DeviceSupport {
         /** Whether this kind of AI can answer now, as `status` says. */
         isAvailable: function (capability) { return LampAI.status(capability).then(function (s) { return s.available; }); },
 
+        /** The models the person's setup can answer this app with now, asked of no model: { models: [{ id, name,
+         *  available, reason }], default, reason, help, connect }. `default` is the id that answers when a call names no
+         *  `model`; the ids are what `ask` and `act` take as `model`, and one that can't answer when it's sent is
+         *  answered as no choice, never refused. With none to offer, `models` is empty and `reason` says why; on a page
+         *  shared on lamp.dev that hasn't reached this computer yet it asks nothing and answers `connect: true`, as
+         *  `status` does: ask again once `connect` has. Keep the person's choice with the app's saved things, and go back
+         *  to `default` when it's no longer listed as available.
+         *
+         *     LampAI.models().then(function (m) {
+         *       var usable = m.models.filter(function (x) { return x.available; });
+         *       picker.hidden = usable.length < 2;
+         *       picker.innerHTML = usable.map(function (x) { return '<option value="' + x.id + '">' + x.name + '</option>'; }).join('');
+         *       picker.value = m.default;
+         *     });
+         *     LampAI.ask(question, { model: picker.value });
+         */
+        models: function () {
+          var none = function (reason, help) {
+            var said = { models: [], default: null, reason: reason || 'AI isn\'t set up for this here.' };
+            if (help) said.help = help;
+            return said;
+          };
+          if (!bridge && shared()) {
+            return nearbyAllowed().then(function (allowed) {
+              if (allowed) return listed();
+              if (safari()) return none(SAFARI_AI, AI_HELP);
+              return { models: [], default: null, connect: true, reason: 'Connect to the AI on this computer to use this.', help: AI_HELP };
+            });
+          }
+          return listed();
+          function listed() {
+            return post('/ai/models', {}, 10000).then(function (reply) {
+              var models = (isList(reply.models) ? reply.models : []).filter(function (m) {
+                return m && typeof m.id === 'string' && m.id;
+              }).map(function (m) {
+                var one = { id: m.id, name: typeof m.name === 'string' && m.name ? m.name : m.id, available: m.available === true };
+                if (!one.available && typeof m.reason === 'string') one.reason = m.reason;
+                return one;
+              });
+              var fallback = models.filter(function (m) { return m.available && m.id === reply.default; })[0];
+              if (!models.length) return none(reply.reason);
+              return { models: models, default: fallback ? fallback.id : null, reason: '' };
+            }, function (e) {
+              // A Lamp from before models were listed doesn't know the route.
+              var words = e && e.message;
+              return none(/^Not found\.?$/.test(words || '') ? 'Choosing the AI needs a newer Lamp.' : words, e && e.help);
+            });
+          }
+        },
+
         /** options: data (text from outside the app, for the AI to work on, not obey), images (pictures to look at),
          *  system, json (true asks for JSON and gives back the parsed value: describe its exact shape in the prompt),
-         *  model (Lamp's id: "sonnet", "opus", "haiku", "claude-fable-5-2"). */
+         *  model (an id `LampAI.models()` lists, such as "sonnet", "opus", "haiku", "claude-fable-5-2"). */
         ask: function (prompt, options) { return call(prompt, options); },
 
         /**
          * Does what the person asks, in their own words, with the app's own reads and writes: the model picks calls,
-         * the page runs them, the model sees what happened, until it replies (at most 4 model calls and 6 writes a turn,
-         * with no time limit unless the app sets one with `limits: { seconds }`; Cancel ends it at once). Check `LampAI.isAvailable('act')` first; keep the app's buttons for everything.
+         * the page runs them, the model sees what happened, until it replies; Cancel ends it at once. Check
+         * `LampAI.isAvailable('act')` first; keep the app's buttons for everything. A turn takes at most 4 model calls
+         * and 6 writes and has no time limit; `limits` changes that for an app that needs it: `steps` (up to 40) and
+         * `writes` (up to 320) for one that builds something real in a turn, many changes at a time, `seconds` for a
+         * feature that should answer quickly, and `result` (bytes, 32 KB unless raised, up to 256 KB) for how much of a
+         * read the model sees. A limit that isn't a positive number keeps its default. `model` names which AI answers,
+         * as `ask`'s does; the whole turn stays on it.
          *
          *     var turn = LampAI.act('Add milk', {
          *       about: 'A family dashboard: the calendar, chores and the shopping list.',
@@ -1195,6 +1260,8 @@ enum DeviceSupport {
          *                       run: function (args, call) { return add(args, call.key); } }
          *       },
          *       history: [{ said: 'Who did it?', heard: 'Maya' }],             // the last 3 exchanges, kept by the app
+         *       limits: { steps: 20, writes: 200 },                            // optional: see above
+         *       model: picker.value,                                           // optional: an id from LampAI.models()
          *       onStep: function (s) { … }                                     // { kind, name, args[, result] }
          *     });
          *     turn.result.then(function (r) { r.reply; r.ask; r.choices; r.done; r.failed; r.skipped; r.stopped; });

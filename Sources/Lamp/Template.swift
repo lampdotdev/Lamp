@@ -3524,6 +3524,10 @@ enum Template {
             if path == "/ai/act" {
                 throw LampAI.Failure(message: "Couldn't reach Lamp, and asking the app to do things needs it. Try again on the same Wi‑Fi as the Mac.")
             }
+            // Away, the phone answers with the one model it carries: nothing to choose among.
+            if path == "/ai/models" {
+                return ["models": [Any](), "reason": "Choosing the AI needs Lamp: use the app on the same Wi‑Fi as the Mac."]
+            }
             fputs("LampAI \(path): Lamp isn't reachable, using the key kept on this phone\n", stderr)
             switch path {
             case "/ai":
@@ -14452,6 +14456,11 @@ enum Template {
     /// To have the app do what the person asks in their own words, give `LampAI.act` (or a `LampActSession`) the app's
     /// own reads and checked writes: the AI chooses among them, the app checks and runs each, and the result says what
     /// was done from the tools' receipts.
+    ///
+    /// Which AI answers is the person's choice in Lamp. An app may offer them another for its own asking:
+    /// `await LampAI.models()` lists what their setup can answer it with now. Show a small Picker beside the app's Ask
+    /// button with only the `available` ones and `defaultID` chosen, and pass the chosen id as `model:` to `ask` and to a
+    /// `LampActSession`. Leave the picker out when there's one or none to choose from.
     enum LampAI {
         struct Failure: LocalizedError {
             let message: String
@@ -14470,7 +14479,8 @@ enum Template {
         }
 
         /// `data` is text from outside the app (an email, a web page, a file) for the AI to work on, not obey.
-        /// `model` overrides the app's text model for one call, by Lamp's id ("sonnet", "opus", "haiku", "claude-fable-5-2").
+        /// `model` overrides the app's text model for one call, by an id `LampAI.models()` lists ("sonnet", "opus", "haiku",
+        /// "claude-fable-5-2", …); one that can't answer now is answered as no choice, never refused.
         static func ask(_ prompt: String, data: String? = nil, images: [LampImage] = [],
                         system: String? = nil, model: String? = nil) async throws -> String {
             try await call(prompt: prompt, data: data, images: images, system: system, json: false, model: model)
@@ -14931,6 +14941,27 @@ enum Template {
 
     // MARK: - Doing things for the person
 
+    /// A model an app may offer the person (`LampAI.models()`): `id` is what `ask(model:)` takes, `name` what to show.
+    struct LampAIModel: Identifiable, Equatable {
+        let id: String
+        let name: String
+        /// Whether it can answer now; one that can't isn't worth offering.
+        let available: Bool
+        /// Why it can't, when it can't.
+        let reason: String?
+    }
+
+    /// What the person's setup can answer an app with now (`LampAI.models()`).
+    struct LampAIModels {
+        var models: [LampAIModel] = []
+        /// The one that answers a call naming no model; nil when nothing can answer.
+        var defaultID: String?
+        /// Why there's nothing to choose from, when there isn't.
+        var reason: String?
+        /// The ones to show in a picker.
+        var available: [LampAIModel] { models.filter(\.available) }
+    }
+
     /// How one kind of AI stands for this app now, as Lamp sees it (`LampAI.status`).
     struct LampAIStatus {
         /// Where the AI works out its answer, for telling the person where their words go. A Claude Code or Codex
@@ -14986,12 +15017,41 @@ enum Template {
             }
         }
 
+        /// The models the person's setup can answer this app with now, asked of no model, so it's cheap to call as a
+        /// view appears. The ids are what `ask(model:)` and `LampActSession(model:)` take. Keep the person's choice with
+        /// the app's saved things, and go back to `defaultID` when it's no longer listed as available.
+        ///
+        ///     let choices = await LampAI.models()
+        ///     if choices.available.count > 1 {
+        ///         Picker("AI", selection: $model) { ForEach(choices.available) { Text($0.name).tag(Optional($0.id)) } }
+        ///     }
+        ///     // model starts as choices.defaultID; then: try await LampAI.ask(question, model: model)
+        static func models() async -> LampAIModels {
+            let reply: [String: Any]
+            do { reply = try await post("/ai/models", [:], timeout: 10) } catch {
+                // A Lamp from before models were listed doesn't know the route.
+                let words = (error as? Failure)?.message ?? ""
+                return LampAIModels(reason: words.hasPrefix("Not found") ? "Choosing the AI needs a newer Lamp."
+                                    : (words.isEmpty ? "Lamp isn't open, or can't be reached from here." : words))
+            }
+            let models = (reply["models"] as? [[String: Any]] ?? []).compactMap { m -> LampAIModel? in
+                guard let id = m["id"] as? String, !id.isEmpty else { return nil }
+                let available = m["available"] as? Bool ?? false
+                return LampAIModel(id: id, name: (m["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? id, available: available,
+                                   reason: available ? nil : m["reason"] as? String)
+            }
+            let fallback = reply["default"] as? String
+            return LampAIModels(models: models, defaultID: models.contains { $0.id == fallback && $0.available } ? fallback : nil,
+                                reason: models.isEmpty ? (reply["reason"] as? String ?? "AI isn't set up in Lamp yet.") : nil)
+        }
+
         /// The person asks the app to do something in their own words, and the app's own tools do it: a few reads and
         /// checked writes over its data, chosen by the AI, run by the app. `LampActSession` has the details; this starts a
         /// request in `session`, or in a session of its own when there's none to keep (no questions back can be answered then).
+        /// `model` is for that session of its own, as `LampActSession(model:)` takes it.
         @MainActor static func act(request: String, about: String = "", context: (any Encodable)? = nil, tools: [LampActTool],
-                                   session: LampActSession? = nil, onStep: ((LampActStep) -> Void)? = nil) -> LampActTurn {
-            (session ?? LampActSession(about: about, tools: tools)).ask(request, context: context, onStep: onStep)
+                                   session: LampActSession? = nil, model: String? = nil, onStep: ((LampActStep) -> Void)? = nil) -> LampActTurn {
+            (session ?? LampActSession(about: about, tools: tools, model: model)).ask(request, context: context, onStep: onStep)
         }
 
         fileprivate static var actPresent: String { present }
@@ -15247,13 +15307,22 @@ enum Template {
     /// its `run` makes it. Reads run first, then changes one at a time, each checked right before it runs; a change that
     /// fails skips the rest of that step. The same change asked twice in a request runs once. A request may take 4 AI
     /// steps between questions, 6 changes in all and 3 questions back, with no time limit unless the app sets one
-    /// (`seconds:`): a real answer is never cut off. Each step stops only when a call has stopped answering
-    /// (`stepSeconds`). Asking something new, cancelling or closing ends it.
+    /// (`seconds:`): a real answer is never cut off. An app that builds something real in one request raises `steps:`
+    /// (up to 40) and `writes:` (up to 320); a value that isn't positive keeps the default. `model:` names which AI
+    /// answers, an id from `LampAI.models()`. Each step stops only when a call has stopped answering (`stepSeconds`).
+    /// Asking something new, cancelling or closing ends it.
     @MainActor final class LampActSession {
+        /// A request's steps and changes unless the app raises them: few, so a request that goes wrong ends soon and
+        /// changes little.
         static let maxSteps = 4
         static let maxWrites = 6
+        /// The most an app may raise them to: as many steps as Lamp takes in one turn (`MAX_STEPS` in lamp's app-ai.mjs),
+        /// and as many changes as that many steps of 8 calls can hold (`ACT_LIMITS_MAX` in lamp.js).
+        static let mostSteps = 40
+        static let mostWrites = 320
         static let maxQuestions = 3
         /// What a session keeps of its changes; past this it stops taking changes and says so, rather than forget them.
+        /// A session whose requests may make more keeps ten requests' worth (`receiptLimit`).
         static let maxReceipts = 60
         /// How long one step may take before its call is taken to have stopped answering.
         static let stepSeconds: Double = 600
@@ -15288,16 +15357,28 @@ enum Template {
         /// How much of one read goes back to the AI, in bytes: room for an app's real state in one step, since paging
         /// through it costs steps a request needs for its work.
         let resultBytes: Int
+        /// The AI steps a request may take between questions, and the changes it may make in all.
+        let stepLimit: Int
+        let writeLimit: Int
+        /// Which AI answers, by an id `LampAI.models()` lists; nil for the app's own.
+        let model: String?
+        private var receiptLimit: Int { max(Self.maxReceipts, writeLimit * 10) }
 
         /// `seconds` limits each request's time, for a feature that should answer quickly; leave it out for no limit.
         /// `resultBytes` raises how much of a read the AI sees (32 KB unless given, 256 KB at most).
+        /// `steps` and `writes` raise a request's AI steps (4 unless given, 40 at most) and changes (6, 320 at most).
+        /// `model` names which AI answers, an id from `LampAI.models()`; leave it out for the app's own.
         /// `send` stands in for Lamp in a test; leave it out.
         init(about: String = "", tools: [LampActTool], seconds: Double? = nil, resultBytes: Int? = nil,
+             steps: Int? = nil, writes: Int? = nil, model: String? = nil,
              send: (([String: Any], TimeInterval) async throws -> [String: Any])? = nil) {
             self.about = about
             self.tools = tools
             self.seconds = seconds.map { max(1, $0) }
             self.resultBytes = min(max(resultBytes ?? 32_768, 1024), 262_144)
+            self.stepLimit = min(steps.flatMap { $0 > 0 ? $0 : nil } ?? Self.maxSteps, Self.mostSteps)
+            self.writeLimit = min(writes.flatMap { $0 > 0 ? $0 : nil } ?? Self.maxWrites, Self.mostWrites)
+            self.model = model.flatMap { $0.isEmpty ? nil : $0 }
             self.send = send ?? { body, timeout in try await LampAI.post("/ai/act", body, timeout: timeout) }
         }
 
@@ -15381,7 +15462,8 @@ enum Template {
                                            "tools": tools.map(\.declared), "steps": steps, "seconds": Int(left)]
                 if let context { body["context"] = context }
                 if let route { body["route"] = route }
-                if steps.count >= Self.maxSteps - 1 { body["final"] = true }
+                if let model { body["model"] = model }
+                if steps.count >= stepLimit - 1 { body["final"] = true }
                 onStep(.thinking)
                 let answer: [String: Any]
                 do { answer = try await send(body, left) } catch {
@@ -15408,7 +15490,7 @@ enum Template {
                         return results[id] ?? ["id": id, "ok": false, "skipped": "Not run."]
                     }])
                     if out.stopped != nil { break }
-                    if steps.count >= Self.maxSteps { out.stopped = .steps; break }
+                    if steps.count >= stepLimit { out.stopped = .steps; break }
                     continue
                 }
                 out.reply = answer["reply"] as? String ?? ""
@@ -15474,18 +15556,19 @@ enum Template {
                 if let stopped { miss(stopped, skipped: true); continue }
                 if let bad = tool.problem(given) { miss(bad); continue }
                 let key = Self.prefix(op) + Self.hash(tool.name + "|" + Self.canonical(given))
-                // The same change asked again in this request gets its first result, and doesn't run again: one that
+                // The same change asked again in this request is pointed to its first result, and doesn't run again: one that
                 // failed while it ran may have done part of it, so it isn't tried again by itself either.
                 if let kept = ran[key] {
                     if let failed = kept as? [String: Any], let reason = failed["failedWhileRunning"] as? String {
                         miss("Already tried in this request, and it didn't go through: \(reason)")
                     } else {
-                        results[id] = ["id": id, "ok": true, "repeat": true, "value": kept]
+                        // Its result is in an earlier step, which every request carries: pointed to, not sent again.
+                        results[id] = ["id": id, "ok": true, "repeat": true, "value": ["note": "Already done in this request: its result is in an earlier step."]]
                     }
                     continue
                 }
-                if op.writes >= Self.maxWrites { miss("Over this request's limit of \(Self.maxWrites) changes."); out.stopped = .limit; out.error = "That's more changes than one request can make. Ask for the rest separately."; return results }
-                if receipts.count >= Self.maxReceipts { miss("This conversation has made as many changes as it can keep track of."); out.stopped = .limit; out.error = "Close this and start again to make more changes."; return results }
+                if op.writes >= writeLimit { miss("Over this request's limit of \(writeLimit) changes."); out.stopped = .limit; out.error = "That's more changes than one request can make. Ask for the rest separately."; return results }
+                if receipts.count >= receiptLimit { miss("This conversation has made as many changes as it can keep track of."); out.stopped = .limit; out.error = "Close this and start again to make more changes."; return results }
                 let info = callInfo(call, key: key)
                 let problem: String?
                 do { problem = try await tool.check?(given, info) } catch { problem = Self.words(error) }
@@ -15499,11 +15582,15 @@ enum Template {
                     // Done is done, even if the turn was cancelled while it ran: it's kept and shown.
                     var value = receipt.details.filter { JSONSerialization.isValidJSONObject([$0.value]) }
                     value["summary"] = receipt.summary
-                    ran[key] = value
+                    // What the AI is shown of it draws on the request's allowance as a read does, since every later
+                    // step carries it again; the receipt keeps it whole for the app.
+                    let shown = Self.cut(value, max: Swift.max(1024, Swift.min(resultBytes, op.resultsLeft)))
+                    op.resultsLeft = Swift.max(0, op.resultsLeft - ((try? JSONSerialization.data(withJSONObject: [shown]))?.count ?? 0))
+                    ran[key] = shown
                     let done = LampActDone(tool: tool.name, key: key, receipt: receipt)
                     out.done.append(done)
                     receipts.append(done)
-                    results[id] = ["id": id, "ok": true, "value": value]
+                    results[id] = ["id": id, "ok": true, "value": shown]
                     onStep(.changed(done))
                 } catch {
                     ran[key] = ["failedWhileRunning": Self.words(error)]

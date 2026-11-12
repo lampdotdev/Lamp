@@ -69,7 +69,11 @@ create or edit pictures, use `LampAI.makeImage(...)`, `LampAI.editImage(...)` or
 things up and writes that change them, each a few lines over the app's data and its ordinary commands. The AI proposes
 calls, Lamp checks their shapes, the app's `check` says whether that exact change is allowed now, and its `run` makes it
 and returns a receipt. Lamp keeps the loop, its limits (4 AI steps between questions, 6 changes a request, 3 questions
-back, the route's time), cancellation, questions back and the receipts.
+back, the route's time), cancellation, questions back and the receipts. An app that builds something real in one
+request raises `steps:` (up to 40) and `writes:` (up to 320) on its session. Where the person might want another AI for
+the app's asking, `await LampAI.models()` lists what their setup can answer it with: a small Picker beside the Ask
+button with only the `available` ones and `defaultID` chosen, left out when there's one or none, its id passed as
+`model:` to `ask` and the session.
 
 ```swift
 struct Rename: Decodable { let id: String; let name: String }

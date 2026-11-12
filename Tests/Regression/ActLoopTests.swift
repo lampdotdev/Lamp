@@ -96,6 +96,11 @@ final class ActLoopTests: XCTestCase {
         settle(c)
         XCTAssertEqual(value(c, "requests.map(function (r) { return !!r.body.final; })") as? [Bool], [false, false, false, true])
         XCTAssertEqual(value(c, "outcome.reply") as? String, "Here.")
+        // An app that raises its steps gets them, and the model it named goes with every step.
+        c.evaluateScript("requests = []; answers = [1, 2, 3, 4, 5].map(function (n) { return { calls: [call('s' + n + 'c1', 'groceries')] }; }).concat([{ reply: 'Built.' }]); go('x', { limits: { steps: 6 }, model: 'opus' });")
+        settle(c)
+        XCTAssertEqual(value(c, "requests.map(function (r) { return !!r.body.final; })") as? [Bool], [false, false, false, false, false, true])
+        XCTAssertEqual(value(c, "requests[5].body.model") as? String, "opus")
     }
 
     func testAnAnswerAfterACancelRunsNothing() throws {

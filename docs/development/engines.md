@@ -302,7 +302,10 @@ A capability given to one engine must be given to all of them that can take it, 
   route's id, which the page sends back so the whole turn stays on one route. Nothing is kept between steps, so a step
   holds only what one request can: tool names and shapes (`reply` is Lamp's own), unique call ids, at most eight calls
   per answer checked against their shapes (a call that doesn't fit is asked for again once, then answered as a reply
-  that says it couldn't), and a reply-only step once three are behind it. The turn's writes, its deadline and cancel are
+  that says it couldn't), and a reply-only step on the turn's last (`final`, which the page sends; Lamp holds every turn
+  to 40 steps, `MAX_STEPS` in cli/app-ai.mjs). A turn takes 4 steps and 6 writes unless the app raises them
+  (`limits: { steps, writes }` in lamp.js, `LampActSession(steps:writes:)`), up to 40 and 320, the most 40 steps of
+  eight calls can hold. The turn's writes, its deadline and cancel are
   the page's: it runs reads together and writes one after another, each `check`ed right before it runs, stops at the
   deadline in every layer (the step's request, `send`'s retries) and drops an answer that comes after a cancel.
   What the model is told and how its answer is read and checked is in one place, `cli/app-ai.mjs`, which Lamp's app
@@ -314,6 +317,15 @@ A capability given to one engine must be given to all of them that can take it, 
   four short plain-text answers, checked in app-ai.mjs and again in lamp.js); words without a call carry none.
   `LampAI.isAvailable('act')` asks `/ai/act` itself (`probe`), so it's true only when lamp.js has `act`, the app around
   the page lets the route through and the app's route can take it.
+- **An app's own model choice** (`LampAI.models()` in lamp.js and LampSupport, `/ai/models`): what the person's setup
+  can answer the app with now, asked of no model: Lamp's app lists every text route by its id with whether it can
+  answer and which answers the app when it names none (`AppAI.modelChoices`); `lamp dev` and `lamp ai` list Lamp's
+  Anthropic ids through Claude Code or OpenRouter, or Codex's default (`models` in cli/ai.mjs). The ids are what `ask`
+  and `act` take as `model`; one that can't answer is answered as the app's own choice, never refused
+  (`AppAI.textChoice`, `modelFor` in cli/ai.mjs). Decisions take no `model`: they go to the decision model, or the
+  fast model of the app's text route. Every host that passes `/ai/status` passes `/ai/models` too (the TV preview,
+  `LampPageGateway` on Apple devices and Android, `SharedPagesAI`, cli/local-ai.mjs), and a shared page asks it
+  without pairing, as it asks `status`; before the person connects, lamp.js answers `connect: true` without asking.
 - **Claude Code and Codex answering apps** (`AppAI.viaEngine`): run by lamp's command line (`engineAnswer` in
   cli/calls.mjs, `complete` in cli/ai.mjs, which `lamp dev` and `lamp ai` use too), with the copy and its settings
   Lamp chose (`EngineInstall.path(for:)`, `EngineInstall.environment(for:)`). Every run is sealed: Claude Code
