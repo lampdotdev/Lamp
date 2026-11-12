@@ -242,6 +242,10 @@ rm -rf "$APP/Contents/Resources/cli" && mkdir -p "$APP/Contents/Resources/cli/la
 # only Lamp's code makes are written once the app can run, below (`CLIFiles`).
 cp -R cli/skill "$APP/Contents/Resources/cli/skill" && cp cli/lamps/lamp-controllers.js "$APP/Contents/Resources/cli/lamps/"
 install -m 755 cli/lamp.sh "$APP/Contents/Resources/cli/lamp"
+# lamp's version as npm numbers it (scripts/cli-version.sh), so the launcher can tell a newer lamp fetched from npm from
+# this app's own (update.mjs).
+cli_version="$(scripts/cli-version.sh "$APP_VERSION")"
+sed -i '' "s/\"version\": *\"[^\"]*\"/\"version\": \"$cli_version\"/" "$APP/Contents/Resources/cli/package.json"
 # and the site's limits for a shared link, which lamp reads from beside it as the site does (cli/link.mjs)
 rm -rf "$APP/Contents/Resources/site" && mkdir -p "$APP/Contents/Resources/site/lib" && cp site/lib/shared-wishes.js site/lib/quota.js "$APP/Contents/Resources/site/lib/"
 # What the app runs of it has to load from the bundle as it is: a file one of its modules reads as it loads, left out

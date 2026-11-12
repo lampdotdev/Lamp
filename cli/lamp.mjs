@@ -25,7 +25,7 @@ import { Problem, RESOURCES, layoutOf, manifestOf, projectOf, stateOf, running, 
 import { macActions, serveMac, writeMacStarter } from "./mac.mjs";
 import { MAX_ARCHIVE, exportApp, unpack } from "./lampapp.mjs";
 import { latestOf } from "./link.mjs";
-import { updateNotice } from "./update.mjs";
+import { updateNotice, versionLine } from "./update.mjs";
 import { editionName, giveTo, givenTo, keepInLamp, keepPictures, lampOwning, lampsKeptLink, reachLamp, takeBack } from "./outside.mjs";
 import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS } from "./dev.mjs";
 import { findBrowser, noBrowser } from "./browser.mjs";
@@ -645,6 +645,7 @@ async function devInLamp(layout, lamp) {
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (!command || command === "--help" || command === "-h" || command === "help") { console.log(USAGE); return; }
+  if (command === "--version" || command === "-v" || command === "version") { console.log(versionLine()); return; }
 
   if (command === "new") {
     const { options, rest } = parse(args, ["name"]);

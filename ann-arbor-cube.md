@@ -1,0 +1,8 @@
+Add the Cube: Tony Rosenthal's "Endover" (1968) on Regents Plaza, between the Michigan Union and the Fleming Administration Building, and make it spin the way students spin it on the way to class.
+
+1. The sculpture: a black steel cube about 2.4 m (8 ft) on a side, standing on one corner on a short pivot post, its faces cut with the shallow round recesses and panels the real one has (check its OpenStreetMap node and photos for its exact spot, size and faces, and get them right). Painted steel up close: a slightly worn satin black, scuffed bright at the corners and edges people push, a little dirt low down. It sits on the plaza's paving, set on the ground's height like everything else.
+2. Spinning it: on foot, walking into one of its faces and holding forward pushes it round about its upright axis, a heavy turn that builds slowly, keeps going after the player lets go and slows over a few turns with a low grinding rumble from the pivot. The jump button on foot beside it gives it a hard shove. People walking past give it a push now and then, the way students do, so it's often turning when the player arrives.
+3. It's solid but never comes loose: it's a collider the shape of the cube, and a car, bike or anything else that hits it bounces off the way they do off a wall, but a glancing hit sets it spinning (faster the harder and more off-center the hit) with a deep metallic clang. It never tips, moves or comes off its pivot.
+4. Put the Cube in Teleport (on foot, facing it from the Union's side) and give it a label on the map.
+
+Keep the frame rate where it is (check before and after), and add the Cube to APP.md.

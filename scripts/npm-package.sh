@@ -6,7 +6,8 @@
 # the device integrations and the skills, `RESOURCES`), with the licenses that go with them.
 #   scripts/npm-package.sh 0.4.0              writes build/npm/lampdotdev-lamp-0.4.0.tgz
 #   scripts/npm-package.sh 0.4.0 --publish    and publishes it (npm signed in to the lampdotdev organization, or the
-#                                             release workflow, its trusted publisher)
+#                                             release workflow, its trusted publisher), as `latest`, or with NPM_TAG
+#                                             set, under that tag (NPM_TAG=nightly by hand)
 set -euo pipefail
 cd "${0:A:h}/.."
 version="${1:?the version to give the package, e.g. 0.4.0}"
@@ -51,5 +52,5 @@ mkdir -p build/npm
 npm pack "$stage" --silent --pack-destination "$PWD/build/npm" >/dev/null
 echo "Packed build/npm/lampdotdev-lamp-$version.tgz ($(du -h "build/npm/lampdotdev-lamp-$version.tgz" | cut -f1))"
 if [[ "${2:-}" == --publish ]]; then
-  npm publish "build/npm/lampdotdev-lamp-$version.tgz" --access public
+  npm publish "build/npm/lampdotdev-lamp-$version.tgz" --access public --tag "${NPM_TAG:-latest}"
 fi

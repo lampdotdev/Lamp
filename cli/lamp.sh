@@ -10,4 +10,14 @@ if [[ -z "${LAMP_APP:-}" ]]; then
   bundle="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$here/../../Info.plist" 2>/dev/null || true)"
   [[ -n "$bundle" ]] && export LAMP_APP="$bundle"
 fi
-exec "$here/../pi/pi" --no-install --no-env-file "$here/lamp.mjs" "$@"
+# A newer lamp fetched from npm (update.mjs) runs in this one's place, while it's newer than this app's: ~/.lamp/cli/use
+# names it, with the app version it was fetched for, so an app that has updated since runs its own again.
+script="$here/lamp.mjs"
+bundled="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$here/package.json" 2>/dev/null | head -1)"
+export LAMP_LAUNCHER=1 LAMP_BUNDLED_VERSION="$bundled"
+use="${LAMP_DEV_HOME:+${LAMP_DEV_HOME:h}}"; use="${use:-$HOME/.lamp}/cli/use"
+if [[ -z "${LAMP_NO_UPDATE_CHECK:-}" && -n "$bundled" && -r "$use" ]]; then
+  lines=("${(@f)$(<"$use")}")
+  [[ "${lines[1]}" == "$bundled" && -f "${lines[2]}/cli/lamp.mjs" ]] && script="${lines[2]}/cli/lamp.mjs"
+fi
+exec "$here/../pi/pi" --no-install --no-env-file "$script" "$@"
