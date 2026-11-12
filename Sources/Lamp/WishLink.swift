@@ -329,7 +329,6 @@ enum WishLink {
 
     /// Lets an idea go from the link. `built`: it's in, and the site first writes to whoever asked to hear back; answers
     /// whether it did. `note`, if the maker wrote one, goes to the sender: in that email, and on the link's page.
-    @discardableResult
     static func removeIdea(_ number: Int, built: Bool, note: String? = nil, for shared: Shared) async throws -> Bool {
         var given: [String: Any] = ["n": number, "built": built]
         if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty { given["note"] = note }
@@ -338,7 +337,6 @@ enum WishLink {
 
     /// Says something more about an idea, emailed to its sender if they gave an address; answers whether it was. With
     /// no note, only that the maker has seen to their answer.
-    @discardableResult
     static func replyIdea(_ number: Int, note: String?, for shared: Shared) async throws -> Bool {
         var given: [String: Any] = ["n": number]
         if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty { given["note"] = note }
