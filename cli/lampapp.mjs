@@ -274,7 +274,15 @@ export function appFilesOf(given) {
   const project = projectOf(given), folder = project.folder, manifest = manifestOf(folder);
   const wishFolder = existsSync(join(folder, ".lamp-wish", "lamp-app.json")), app = wishFolder ? join(folder, ".lamp-wish") : folder;
   const name = String((typeof manifest?.name === "string" && manifest.name.trim()) || basename(folder)).trim().slice(0, 60) || "App";
-  return ownFiles({ project, folder, manifest, app, wishFolder, name }).files;
+  const files = ownFiles({ project, folder, manifest, app, wishFolder, name }).files;
+  // What the app declares and its icon go with it too (as `exportApp` adds them): a feature taken from a copy may need
+  // its capability, so a difference there is one to see.
+  const ignored = app === folder ? ignoredIn(folder) : () => false;
+  for (const extra of ["capabilities.json", "icon.json", "icon-glass.json", "icon-art.png", "icon.png"]) {
+    if (extra === "icon.png" && project.kind === "page" && !project.lamps && !wishFolder) continue;
+    if (!files.has(extra) && !ignored(extra) && existsSync(join(app, extra))) files.set(extra, readFileSync(join(app, extra)));
+  }
+  return files;
 }
 
 /**
