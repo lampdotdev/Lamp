@@ -373,7 +373,7 @@ export const CALLS = {
    */
   async openRouterText(given, { stopped } = {}) {
     return openRouter(() => openRouterText({ key: text(given, "key"), prompt: text(given, "prompt"), images: given.images, system: given.system ?? "",
-      model: text(given, "model"), json: given.json === true, schema: given.schema ?? undefined, seconds: seconds(given.seconds, 120, 600), signal: stopped }));
+      model: text(given, "model"), json: given.json === true, schema: given.schema ?? undefined, seconds: seconds(given.seconds, 600, 600), signal: stopped }));
   },
 
   /** One chat completion from OpenRouter, its request as `body` (`actAsk`'s): `{message, cost}`, or `{trouble}`. */
@@ -384,7 +384,7 @@ export const CALLS = {
   /** Decisions from OpenRouter's decision model (`AppAI.decide`): `key`, `model`, `state`, `questions`. `{answers, cost}` or `{trouble}`. */
   async openRouterDecide(given, { stopped } = {}) {
     return openRouter(() => openRouterDecide({ key: text(given, "key"), model: text(given, "model"), state: given.state, questions: given.questions ?? {},
-      seconds: seconds(given.seconds, 60, 120), signal: stopped }));
+      seconds: seconds(given.seconds, 600, 600), signal: stopped }));
   },
 
   /** A picture from OpenRouter (`AppAI.image`): `key`, `model`, `prompt`, `references`, `aspectRatio`. `{image, cost}` or `{trouble}`. */
@@ -403,7 +403,7 @@ export const CALLS = {
       return { text: await complete({ which: text(given, "engine"), tool: typeof given.tool === "string" && given.tool ? given.tool : undefined,
         env: given.env && typeof given.env === "object" ? given.env : {}, system: typeof given.system === "string" ? given.system : "",
         prompt: text(given, "prompt"), schema: given.schema ?? undefined, model: typeof given.model === "string" ? given.model : "",
-        images: Array.isArray(given.images) ? given.images : [], seconds: seconds(given.seconds, 300, 600), signal: stopped }) };
+        images: Array.isArray(given.images) ? given.images : [], seconds: seconds(given.seconds, 600, 600), signal: stopped }) };
     } catch (error) {
       if (error instanceof EngineTrouble) return { trouble: { kind: error.kind, message: error.message } };
       throw error;

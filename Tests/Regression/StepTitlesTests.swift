@@ -215,7 +215,7 @@ final class StepTitlesTests: XCTestCase {
                                          via: route("engine:claude:haiku", .engine(.claude, model: "haiku")), timeLimit: 2)
             XCTFail("a stuck engine answered")
         } catch {
-            XCTAssertEqual(error.localizedDescription, "\(Engine.claude.title) took too long to answer.")
+            XCTAssertEqual(error.localizedDescription, "Claude Code took too long to answer.")
         }
         XCTAssertLessThan(Date().timeIntervalSince(began), 20)
     }

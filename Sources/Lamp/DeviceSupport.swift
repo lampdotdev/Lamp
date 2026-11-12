@@ -634,6 +634,10 @@ enum DeviceSupport {
         });
       }
 
+      // How long the page waits for an answer: as long as Lamp's guard on the call (10 minutes), or the page's own limit,
+      // with a little more for the answer to come back.
+      function AI_WAIT(seconds) { return (typeof seconds === 'number' && seconds > 0 ? Math.min(seconds, 600) : 600) * 1000 + 15000; }
+
       function post(path, body, timeout, deadline) {
         timeout = timeout || 240000;
         var done;
@@ -818,7 +822,9 @@ enum DeviceSupport {
         return encode(o.images).then(function (images) {
           var body = { prompt: text, system: rules.filter(function (r) { return r; }).join('\n\n'), json: !!o.json, images: images };
           if (o.model) body.model = o.model;
-          return post('/ai', body);
+          // No limit of the page's own unless it asks for one: Lamp's guard ends only a call that stopped answering.
+          if (typeof o.seconds === 'number' && o.seconds > 0) body.seconds = o.seconds;
+          return post('/ai', body, AI_WAIT(body.seconds));
         }).then(function (reply) {
           if (typeof reply.text !== 'string') throw new Failure('The AI request failed.');
           if (!o.json) return reply.text;
@@ -1331,7 +1337,7 @@ enum DeviceSupport {
         },
         /** Asks several questions about the same thing in one request. Answers come back under the same keys. */
         decide: function (about, questions) {
-          return post('/ai/decide', { state: decisionState(about), questions: questions }).then(function (reply) {
+          return post('/ai/decide', { state: decisionState(about), questions: questions }, AI_WAIT()).then(function (reply) {
             var answers = {};
             for (var key in (reply.answers || {})) if (reply.answers.hasOwnProperty(key)) answers[key] = decision(reply.answers[key]);
             return answers;
@@ -1369,7 +1375,7 @@ enum DeviceSupport {
               finish(i, answers);
               return Promise.resolve();
             }
-            return post('/ai/decide', { state: decisionState(state), questions: questions }).then(function (reply) {
+            return post('/ai/decide', { state: decisionState(state), questions: questions }, AI_WAIT()).then(function (reply) {
               var answers = {};
               for (var k in (reply.answers || {})) if (reply.answers.hasOwnProperty(k)) answers[k] = decision(reply.answers[k]);
               if (key) saved[key] = { answers: reply.answers, until: now + o.remember * 1000 };

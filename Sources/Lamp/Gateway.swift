@@ -533,7 +533,10 @@ enum AppAI {
         if let via { chosen = via } else { chosen = await route(for: appModel) }
         var system = system
         if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
-        var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen, engineModel: engineModel, schema: schema, timeLimit: timeLimit)
+        // One budget for the whole request, its second try included: the 10-minute guard unless the caller asks for less,
+        // so whoever waits on the answer (an app's page waits the guard and a little more) gets the repair too.
+        let deadline = Date().addingTimeInterval(min(timeLimit ?? guardSeconds, guardSeconds))
+        var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen, engineModel: engineModel, schema: schema, timeLimit: deadline.timeIntervalSinceNow)
         guard json else { return (text, cost) }
         // A JSON reply that doesn't parse (cut off, or wrapped in prose) is useless to the app: ask once more,
         // through the same provider, saying so, before giving up. Both attempts are billed, so the cost goes
@@ -541,8 +544,10 @@ enum AppAI {
         var reply = stripFences(text)
         if !isJSON(reply) {
             let again = "\(prompt)\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only."
+            let left = deadline.timeIntervalSinceNow
+            guard left > 5 else { throw Failure(message: "The AI's reply wasn't valid JSON, and there was no time left to ask again.", cost: cost) }
             do {
-                let (retry, more) = try await dispatch(prompt: again, images: images, system: system, json: true, model: model, chosen: chosen, engineModel: engineModel, schema: schema, timeLimit: timeLimit)
+                let (retry, more) = try await dispatch(prompt: again, images: images, system: system, json: true, model: model, chosen: chosen, engineModel: engineModel, schema: schema, timeLimit: left)
                 cost += more
                 reply = stripFences(retry)
             } catch let failure as Failure {
@@ -557,6 +562,10 @@ enum AppAI {
         return (reply, cost)
     }
 
+    /// The longest a request may take, whatever its route, before it's taken to have stopped answering: a real answer is
+    /// never cut off sooner (`MAX_TURN_SECONDS` in lamp's app-ai.mjs, the same for `act`).
+    static let guardSeconds: TimeInterval = 600
+
     /// One request along the route: `model` names an OpenRouter model to use instead of the route's own, for
     /// Lamp's own calls (the icon judge, suggestions) when there's a key; `engineModel` likewise names the
     /// model for Claude Code or Codex (the fast one for decisions by text).
@@ -564,12 +573,12 @@ enum AppAI {
                                  chosen: TextRoute, engineModel: String? = nil, schema: [String: Any]? = nil,
                                  timeLimit: TimeInterval? = nil) async throws -> (String, Double) {
         if let model, Provider.hasKey {
-            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json, schema: schema)
+            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json, schema: schema, seconds: timeLimit)
         }
         switch chosen.kind {
         case .openRouter(let model):
             guard Provider.hasKey else { throw Failure(message: noTextRoute, needs: .text) }
-            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json, schema: schema)
+            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json, schema: schema, seconds: timeLimit)
         case .engine(.pi, _):
             throw Failure(message: noTextRoute, needs: .text)
         case .engine(let engine, let model):
@@ -886,10 +895,12 @@ enum AppAI {
     /// cli/openrouter.mjs), which `lamp dev` and `lamp ai` send with too: with `json`, a JSON object with room for a long
     /// one, fitting `schema` when there is one, and asked again when a provider's content filter cuts the reply off.
     private static func viaOpenRouter(prompt: String, images: [Image], system: String,
-                                      model: String, json: Bool = false, schema: [String: Any]? = nil) async throws -> (String, Double) {
+                                      model: String, json: Bool = false, schema: [String: Any]? = nil,
+                                      seconds: TimeInterval? = nil) async throws -> (String, Double) {
         var given: [String: Any] = ["key": KeyStore.openRouterKey ?? "", "prompt": prompt, "system": system, "model": model, "json": json,
                                     "images": images.map { ["media_type": $0.mediaType, "data": $0.data] }]
         if let schema { given["schema"] = schema }
+        if let seconds { given["seconds"] = max(1, seconds) }
         let done = try await LampCLI.ask("openRouterText", given)
         if let text = done["text"] as? String { return (text, done["cost"] as? Double ?? 0) }
         throw openRouterFailure(done["trouble"] as? [String: Any] ?? [:])
