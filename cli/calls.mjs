@@ -30,6 +30,7 @@ import { PUBLISHER, identityName, keptSigner, namesOf, packageOf, versionAfter }
 import { tile } from "./png.mjs";
 import { Problem } from "./state.mjs";
 import { serveLocalAI } from "./local-ai.mjs";
+import { Refused as StepRefused, chatBody, decidePrompt, planPrompt, planSchema, readDecision, readMessage, readPlan, readStep } from "./app-ai.mjs";
 
 // Pages shared on lamp.dev asking for their AI, answered by Lamp's app (`sharedPages`): what each is waiting on from it.
 const sharedPagesWaiting = new Map();
@@ -314,6 +315,42 @@ export const CALLS = {
   async neighbours() {
     const route = await defaultRoute();
     return { table: await neighbours(), gateway: route?.gateway ?? null, subnet: route ? subnetOn(route.interface) : null };
+  },
+
+  /**
+   * A step of an app's `LampAI.act` as the page sent it (`text`, its JSON), checked: `{step}`, the step as the other
+   * act calls take it, or `{refused: {status, error}}` for the page.
+   */
+  async actStep(given) {
+    try { return { step: readStep(text(given, "text")) }; } catch (error) {
+      if (error instanceof StepRefused) return { refused: { status: error.status, error: error.message } };
+      throw error;
+    }
+  },
+
+  /**
+   * What a step's route is asked: `way` "chat" is a chat with tools (`{body}`, OpenRouter's own when `model` names one),
+   * "plan" one prompt held to the step's shape (`{system, prompt, schema}`), and "words" one with the shape said in it.
+   */
+  async actAsk(given) {
+    const step = given.step, tag = text(given, "tag"), retry = typeof given.retry === "string" ? given.retry : null;
+    if (given.way === "chat") return { body: chatBody(step, tag, retry, typeof given.model === "string" ? given.model : undefined) };
+    return { ...planPrompt(step, tag, retry, given.way === "words"), schema: planSchema(step) };
+  },
+
+  /** A step's answer read and checked: `message` from a chat with tools, or `plan`'s text. `{answer}` or `{problem}`. */
+  async actRead(given) {
+    return given.message !== undefined ? readMessage(given.message, given.step) : readPlan(String(given.plan ?? ""), given.step);
+  },
+
+  /** A decision asked of a text model: `{system, prompt, schema}`. */
+  async decideAsk(given) {
+    return decidePrompt(given.state, given.questions ?? {});
+  },
+
+  /** A text model's decision read: `{answers}` or `{problem}`. */
+  async decideRead(given) {
+    return readDecision(String(given.text ?? ""), given.questions ?? {});
   },
 
   /**

@@ -326,7 +326,10 @@ does. A problem says its kind where Lamp's app acts on which it was: a device th
   search for one target; `probe`, whether a device is there now, as a setup step's check asks; `run`, `open`, `putBack` and `check`, an
   integration's sequences and a setup's checks on one device, with the values Lamp's app fills in (what the person
   typed, from its own store, on the call's input) and, while a call waits on the device, an event that says so; `network`, the sweep
-  of this computer's subnet and every Bonjour service (cli/mdns.mjs); and `neighbours`, the gateway and subnet now.
+  of this computer's subnet and every Bonjour service (cli/mdns.mjs); and `neighbours`, the gateway and subnet now. An app's own AI is told and read here too (cli/app-ai.mjs, which `lamp dev`'s answers use as well): `actStep`,
+  `actAsk` and `actRead`, a step of `LampAI.act` checked, what its route is asked and its answer read (`AppAct`); and
+  `decideAsk` and `decideRead`, a decision answered by a text model (`AppAI.decideByText`). Which route answers and
+  asking it stay in Lamp's app, with its keys and its models.
   Two things stay in Lamp's app, since only it can see them: whether macOS lets Lamp look at all, which is
   Network.framework's to say (`DeviceProbe.localNetworkDenied`), and the neighbor table, which macOS shows only to a
   process it lets on the local network, and the runtime Lamp carries isn't one (`Neighbours`). Moving a
