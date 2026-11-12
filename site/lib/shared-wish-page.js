@@ -137,7 +137,10 @@ export function createPageHandler({ env = process.env, fetcher = fetch, store, t
     const wish = id ? await findWish(id, { env, fetcher, store }) : null;
     // An old link to a wish whose maker has an account goes to the name it's known by now.
     if (wish?.owner && url.searchParams.get("id")) {
-      return new Response(null, { status: 301, headers: { Location: linkOf(url.origin, wish), "Cache-Control": "public, max-age=0, s-maxage=60" } });
+      // What the link carries for the page (a change to ask for) goes with it; only how it was found doesn't.
+      const kept = new URLSearchParams([...url.searchParams].filter(([name]) => !["id", "user", "app"].includes(name)));
+      const location = linkOf(url.origin, wish) + (kept.size ? `?${kept}` : "");
+      return new Response(null, { status: 301, headers: { Location: location, "Cache-Control": "public, max-age=0, s-maxage=60" } });
     }
     const page = wish && wishPage(await template(url.origin), wish, { origin: url.origin, playOrigin: playOrigin(url, id) });
     if (!page) {

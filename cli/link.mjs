@@ -104,14 +104,15 @@ export async function accountName({ site = siteOrigin(), key }) {
  * file's address, only from where the site keeps them. Null when it can't be asked, or is gone. Asks with nothing of
  * the person's.
  */
-export async function latestOf({ site = siteOrigin(), id }) {
+export async function latestOf({ site = siteOrigin(), id, user, app }) {
   let said;
-  try { ({ said } = await call("GET", `${site}/api/wishes?id=${encodeURIComponent(id)}`)); } catch { return null; }
+  const asked = id ? `id=${encodeURIComponent(id)}` : `user=${encodeURIComponent(user)}&app=${encodeURIComponent(app)}`;
+  try { ({ said } = await call("GET", `${site}/api/wishes?${asked}`)); } catch { return null; }
   if (said.format !== 1 || !Number.isInteger(said.version)) return null;
   let file = null;
   try { const url = new URL(said.file); if (url.protocol === "https:" || (url.protocol === "data:" && new URL(site).protocol === "http:")) file = url.href; } catch {}
   const by = typeof said.by === "string" ? said.by.trim().slice(0, LIMITS.by) : "";
-  return { name: typeof said.name === "string" ? said.name : null, by: by || null, version: said.version, file };
+  return { id: typeof said.id === "string" ? said.id : id ?? null, name: typeof said.name === "string" ? said.name : null, by: by || null, version: said.version, file };
 }
 
 const fileAddress = (site, id, more = "") => `${site}/api/wish-file?id=${encodeURIComponent(id)}${more}`;

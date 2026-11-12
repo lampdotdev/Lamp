@@ -42,7 +42,7 @@ export function createAccountHandler({ env = process.env, fetcher = fetch, store
       if (token !== null) {
         if (!/^[0-9a-f]{32}$/.test(token)) return page(404, "This link isn't one Lamp sent.");
         try {
-          const waiting = await kept.takeAccountWaiting(token);
+          const waiting = await kept.accountWaiting(token);
           if (!waiting) return page(410, "This link has been used already, or it's more than a day old. Ask Lamp for another.");
           const account = await kept.account(waiting.name);
           if (!account && !(await kept.createAccount({ name: waiting.name, email: waiting.email, created: now().toISOString() }))) {
@@ -50,6 +50,8 @@ export function createAccountHandler({ env = process.env, fetcher = fetch, store
           }
           if (account && account.email.toLowerCase() !== waiting.email.toLowerCase()) return page(409, `${escaped(waiting.name)} is someone else's. Choose another username in Lamp.`);
           await kept.addAccountKey(waiting.hash, waiting.name);
+          // Done only now, so a link whose first try failed partway works when it's opened again.
+          await kept.doneWaiting(token);
           return page(200, `You're signed in to Lamp as <b>${escaped(waiting.name)}</b>. Your links go under lamp.dev/${escaped(waiting.name)}. You can close this page.`);
         } catch { return page(503, "Lamp's site couldn't do that just now. Try the link again in a moment."); }
       }

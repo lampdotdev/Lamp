@@ -1014,8 +1014,15 @@ async function main() {
 
   if (command === "play") {
     const { options, rest } = parse(args, ["to"]);
-    const id = /(?:^|\/w\/)([A-Za-z0-9]{10})(?:-|$|\/|\?|#)/.exec(rest[0] ?? "")?.[1];
-    if (!id) throw new Problem("play takes a link to an app shared on lamp.dev: lamp play https://lamp.dev/w/AbCdEf1234-its-name");
+    let id = /(?:^|\/w\/)([A-Za-z0-9]{10})(?:-|$|\/|\?|#)/.exec(rest[0] ?? "")?.[1];
+    // A link by its maker's username and its name there (lamp.dev/<username>/<app>): its id, asked of the site.
+    let latest;
+    if (!id) {
+      const named = /^https?:\/\/[^/]+\/([a-z0-9-]{1,60})\/([a-z0-9-]{1,60})\/?(?:[?#]|$)/.exec(rest[0] ?? "");
+      if (named) { latest = await latestOf({ user: named[1], app: named[2] }); id = latest?.id ?? null; }
+      if (named && !id) throw new Problem("that link isn't on lamp.dev, or it has been taken down");
+    }
+    if (!id) throw new Problem("play takes a link to an app shared on lamp.dev: lamp play https://lamp.dev/matt-rubens/bricks");
     // Which folder each link was played into, so playing it again picks up where it was, saves and all: a file of its
     // own for each link, so two links played at once never write over each other's.
     const playedFile = join(process.env.LAMP_DEV_HOME || join(homedir(), ".lamp", "dev"), "played", id);
@@ -1025,7 +1032,7 @@ async function main() {
     let folder = !options.newest && recorded && (!wanted || wanted === recorded) && existsSync(join(recorded, "lamp-app.json")) ? recorded : null;
     if (folder) console.log(`Playing the copy in ${folder}. --newest takes the link's latest version instead.`);
     else {
-      const latest = await latestOf({ id });
+      latest ??= await latestOf({ id });
       if (!latest) throw new Problem("that link isn't on lamp.dev, or it has been taken down");
       if (!latest.file) throw new Problem(`"${latest.name ?? "That app"}" was shared without its file, so it plays only on lamp.dev`);
       const answer = await fetch(latest.file);

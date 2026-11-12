@@ -317,9 +317,10 @@ export function cloudStore(env, fetcher = fetch) {
         "2", accountKey(account.name), accountEmailKey(account.email), JSON.stringify(account), account.name])) === 1;
     },
     async addAccountKey(hash, name) { await command(["SET", accountByKeyKey(hash), name]); },
-    /** What waits on an email's confirmation, a day at most; taken once. */
+    /** What waits on an email's confirmation, a day at most; let go once it's done, so a try that fails can be tried again. */
     async waitForAccount(token, waiting) { await command(["SET", accountWaitingKey(token), JSON.stringify(waiting), "EX", "86400"]); },
-    async takeAccountWaiting(token) { const text = await command(["GETDEL", accountWaitingKey(token)]); return typeof text === "string" ? JSON.parse(text) : null; },
+    async accountWaiting(token) { const text = await command(["GET", accountWaitingKey(token)]); return typeof text === "string" ? JSON.parse(text) : null; },
+    async doneWaiting(token) { await command(["DEL", accountWaitingKey(token)]); },
     /** Claims an app's name under a username for a link: false when another link has it. */
     async claimApp(name, app, id) {
       return (await command(["EVAL", `local had = redis.call('GET', KEYS[1]) if had and had ~= ARGV[1] then return 0 end
@@ -572,7 +573,8 @@ export function memoryStore() {
     },
     async addAccountKey(hash, name) { keys.set(hash, name); },
     async waitForAccount(token, value) { waiting.set(token, structuredClone(value)); },
-    async takeAccountWaiting(token) { const value = waiting.get(token) ?? null; waiting.delete(token); return value; },
+    async accountWaiting(token) { return waiting.has(token) ? structuredClone(waiting.get(token)) : null; },
+    async doneWaiting(token) { waiting.delete(token); },
     async claimApp(name, app, id) { const had = apps.get(`${name}/${app}`); if (had && had !== id) return false; apps.set(`${name}/${app}`, id); return true; },
     async appID(name, app) { return apps.get(`${name}/${app}`) ?? null; },
     async releaseApp(name, app) { apps.delete(`${name}/${app}`); },
@@ -686,13 +688,17 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
     const origin = request.headers.get("origin");
     if (origin && origin !== url.origin) return reply(403, { error: "origin_not_allowed" });
     const id = url.searchParams.get("id");
-    if (method !== "POST" && !isID(id)) return reply(404, { error: "not_found" });
-    // Asked by the Lamps that follow this link: public, as the page is, and cheap (one read, no quota).
+    const user = url.searchParams.get("user"), app = url.searchParams.get("app");
+    const byName = method === "GET" && !id && typeof user === "string" && typeof app === "string" && /^[a-z0-9-]{1,60}$/.test(user) && /^[a-z0-9-]{1,60}$/.test(app);
+    if (method !== "POST" && !isID(id) && !byName) return reply(404, { error: "not_found" });
+    // Asked by the Lamps that follow this link: public, as the page is, and cheap (one read, no quota). By its id, or
+    // by its maker's username and its name there.
     if (method === "GET") {
       let kept;
       try { kept = store ?? cloudStore(env, fetcher); } catch { return reply(503, { error: "service_unavailable" }); }
       try {
-        const record = await kept.get(id);
+        const found = byName ? await kept.appID(user, app) : id;
+        const record = found ? await kept.get(found) : null;
         return record ? reply(200, latest(record)) : reply(404, { error: "not_found" });
       } catch { return reply(503, { error: "service_unavailable" }); }
     }
@@ -717,7 +723,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       if (retry > 0) return reply(429, { error: "rate_limited" }, { "Retry-After": String(retry) });
     }
 
-    let uploaded = [];
+    let uploaded = [], claimed = null;
     try {
       const earlier = method === "POST" ? null : await kept.get(id);
       if (method !== "POST" && (!earlier || !secretMatches(bearer(request), earlier.secret))) return reply(404, { error: "not_found" });
@@ -747,6 +753,8 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       // Its name under the account stays what it was first given, whatever the app is called later.
       const named = earlier?.owner ? { owner: earlier.owner, app: earlier.app }
         : owner ? { owner, app: await claimAppName(kept, owner, words.name, wishID) } : {};
+      // A name claimed for this share now, let go again if the record can't be kept.
+      if (!earlier?.owner && named.owner) claimed = named;
       if (method === "PUT") {
         const record = { ...earlier, ...words, ...named, updated: time };
         await kept.replace(record);
@@ -764,6 +772,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       return reply(201, { id: wishID, url: linkOf(url.origin, record), secret });
     } catch {
       try { await kept.removeImages(uploaded); } catch {}
+      try { if (claimed) await kept.releaseApp(claimed.owner, claimed.app); } catch {}
       return reply(503, { error: "service_unavailable" });
     }
   };
