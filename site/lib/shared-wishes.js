@@ -1308,8 +1308,9 @@ export function pictureScript(site) {
   // anything is put behind it, and by alpha alone, so a dark scene is kept.
   const blank = `const blank=x=>{const d=x.getImageData(0,0,x.canvas.width,x.canvas.height).data;for(let i=3;i<d.length;i+=4)if(d[i])return false;return true};`;
   // The color that shows through the canvas on the page: its own background or the first of the elements around it that
-  // has one. None (the page left as the browser draws it) is white.
-  const behind = `const behind=c=>{for(let e=c;e;e=e.parentElement){const b=getComputedStyle(e).backgroundColor;if(b&&b!=="transparent"&&!/[,/]\\s*0(\\.0*)?\\s*\\)$/.test(b))return b}return"#fff"};`;
+  // has one. None (the page left as the browser draws it) is white. Only an alpha of 0 is none: the fourth of rgba()'s
+  // values or what follows a slash, never a color's last channel, so black, red and green count.
+  const behind = `const behind=c=>{for(let e=c;e;e=e.parentElement){const b=getComputedStyle(e).backgroundColor;if(b&&b!=="transparent"&&!/^rgba\\(([^,]*,){3}\\s*0(\\.0*)?%?\\s*\\)$|\\/\\s*0(\\.0*)?%?\\s*\\)$/.test(b))return b}return"#fff"};`;
   return `<script>(()=>{${keep}const site=${JSON.stringify(site)};${blank}${behind}addEventListener("message",e=>{if(e.origin!==site||e.source!==parent||!e.data||e.data.lamp!=="picture")return;const n=e.data.n;requestAnimationFrame(()=>{let picture=null;try{const all=[...document.querySelectorAll("canvas")].filter(c=>c.width&&c.height&&c.getClientRects().length);const c=all.sort((a,b)=>b.clientWidth*b.clientHeight-a.clientWidth*a.clientHeight)[0];if(c){const k=Math.min(1,1280/c.width),o=document.createElement("canvas");o.width=Math.round(c.width*k);o.height=Math.round(c.height*k);const x=o.getContext("2d");x.drawImage(c,0,0,o.width,o.height);if(!blank(x)){x.globalCompositeOperation="destination-over";x.fillStyle=behind(c);x.fillRect(0,0,o.width,o.height);for(const q of [0.8,0.6,0.4]){picture=o.toDataURL("image/jpeg",q);if(picture.length<=${limit})break;picture=null}}}}catch(_){}parent.postMessage({lamp:"picture",n,picture},site)})})})()</script>`;
 }
 

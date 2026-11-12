@@ -699,3 +699,21 @@ test("ideas reach the link's maker, and only the maker reads them", async () => 
   await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${id}&n=${shot.n}`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }));
   assert.equal((await store.ideas(id)).find((one) => one.n === shot.n).picture, undefined);
 });
+
+test("what's put behind an idea's picture is the first background that isn't see-through, black, red and green included", () => {
+  // The page's own `behind`, run on a canvas inside elements whose computed backgrounds are given.
+  const script = pictureScript("https://lamp.dev");
+  const source = script.slice(script.indexOf("const behind="), script.indexOf("addEventListener("));
+  const behind = (...backgrounds) => {
+    let element = null;
+    for (const backgroundColor of backgrounds.reverse()) element = { backgroundColor, parentElement: element };
+    return new Function("getComputedStyle", `${source}return behind`)((e) => e)(element);
+  };
+  for (const opaque of ["rgb(0, 0, 0)", "rgb(255, 0, 0)", "rgb(0, 128, 0)", "rgb(255, 255, 0)", "rgba(0, 0, 0, 0.5)"]) {
+    assert.equal(behind("rgba(0, 0, 0, 0)", opaque), opaque, opaque);
+  }
+  for (const seeThrough of ["rgba(0, 0, 0, 0)", "rgba(255, 0, 0, 0.0)", "transparent", "color(srgb 1 0 0 / 0)", "rgb(0 128 0 / 0%)"]) {
+    assert.equal(behind(seeThrough, "rgb(0, 0, 255)"), "rgb(0, 0, 255)", seeThrough);
+  }
+  assert.equal(behind("rgba(0, 0, 0, 0)"), "#fff", "none at all is white, as the browser draws a page");
+});
