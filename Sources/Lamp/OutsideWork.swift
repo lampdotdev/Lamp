@@ -81,6 +81,7 @@ enum OutsideWork {
                 "path": path,
                 "operation_id": ["type": "string", "description": "Any id of yours for this apply, to retry it safely."],
                 "reopen": ["type": "boolean", "description": "Close the app and open a fresh copy, for what only a launch shows."],
+                "words": ["type": "string", "description": "What's changing, in a few of the person's words (\"Rain on the roads\"): the app shows it on the card it puts up while the change goes in. Give it with every change."],
              ], "required": ["path"]]],
             ["name": "look_at_app",
              "description": "Pictures of the open app's windows and what it printed. Applies nothing: it says when the folder has changes not put in yet.",
@@ -690,7 +691,7 @@ extension Store {
                     kept.text = "This operation_id was applied already; this is its first answer, and nothing ran again.\n\n" + kept.text
                     return kept
                 }
-                let answer = await outsideApply(path, reopen: payload.bool("reopen"))
+                let answer = await outsideApply(path, reopen: payload.bool("reopen"), words: payload.string("words"))
                 // Only an apply that ran is kept for a retry: one refused or cancelled before it began changed nothing,
                 // so the same id tried again (after the look a refusal asked for) runs.
                 if let id, !["refused", "cancelled"].contains(answer.outcome) { OutsideState.shared.answers[id] = answer }
@@ -858,7 +859,7 @@ extension Store {
 
     /// `reviewed`: the app's first build after its review, from what the review installed; the folder as read just before
     /// the review began, so what went in is known to be the folder's only when the folder still reads the same.
-    private func outsideApply(_ path: String, reopen: Bool, reviewed: [String: String]? = nil) async -> OutsideWork.Answer {
+    private func outsideApply(_ path: String, reopen: Bool, words: String? = nil, reviewed: [String: String]? = nil) async -> OutsideWork.Answer {
         guard let found = outsideFolder(path) else { return outsideRefusal(path) }
         let entry = found.0
         let project = found.1
@@ -873,6 +874,7 @@ extension Store {
         guard let hold = begin(project) else {
             return .refused("Lamp is busy with this app (its own chat or a build). Try again in a moment.")
         }
+        hold.saying = words.map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }.flatMap { $0.isEmpty ? nil : $0 }
         defer { finish(current(project) ?? project) }
         let repo = URL(fileURLWithPath: entry.repo)
         let began = Date()
