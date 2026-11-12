@@ -9,21 +9,26 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { decidePrompt, planPrompt, planSchema, readDecision, readPlan, readStep } from "./app-ai.mjs";
+import { chatBody, decidePrompt, planPrompt, planSchema, readDecision, readMessage, readPlan, readStep } from "./app-ai.mjs";
+import { DEFAULT_MODEL, OpenRouterTrouble, chat as openRouterChat, text as openRouterText } from "./openrouter.mjs";
 
 
-/** Which of the person's programs answers: `LAMP_AI` (claude or codex) when it's set, else Claude Code, else Codex. */
+/**
+ * What answers: `LAMP_AI` (claude, codex or openrouter) when it's set, else Claude Code, else Codex, else OpenRouter with
+ * the person's key in OPENROUTER_API_KEY.
+ */
 export function engine() {
   const wanted = process.env.LAMP_AI;
-  for (const name of wanted ? [wanted] : ["claude", "codex"]) {
+  for (const name of wanted ? [wanted] : ["claude", "codex", "openrouter"]) {
+    if (name === "openrouter") { if (process.env.OPENROUTER_API_KEY) return name; continue; }
     if (name !== "claude" && name !== "codex") continue;
     try { execFileSync("/usr/bin/which", [name], { stdio: ["ignore", "pipe", "ignore"] }); return name; } catch {}
   }
   return null;
 }
 
-const missing = "AI here needs Claude Code or Codex on this Mac, signed in: install one, or open the app in Lamp.";
-const named = (which) => (which === "codex" ? "Codex" : "Claude Code");
+const missing = "AI here needs Claude Code or Codex on this computer, signed in, or an OpenRouter key in OPENROUTER_API_KEY. Or open the app in Lamp.";
+const named = (which) => (which === "codex" ? "Codex" : which === "openrouter" ? "OpenRouter" : "Claude Code");
 
 /** Why an engine gave no answer: `kind` is "missing", "timeout", "stopped", "failed" (its own words) or "silent". */
 export class EngineTrouble extends Error {
@@ -39,6 +44,7 @@ export class EngineTrouble extends Error {
  * what it needs set (`env`); on its own lamp finds the person's own on the PATH.
  */
 export function complete({ system, prompt, schema, seconds = 60, which = engine(), tool, env = {}, model = process.env.LAMP_AI_MODEL || "", images = [], signal } = {}) {
+  if (which === "openrouter") return viaOpenRouter({ system, prompt, schema, seconds, model, images, signal });
   if (which !== "claude" && which !== "codex") return Promise.reject(new EngineTrouble("missing", missing));
   const folder = mkdtempSync(join(tmpdir(), "lamp-ai-"));
   const sayer = system || "You are a helpful assistant inside an app.";
@@ -131,6 +137,18 @@ export function complete({ system, prompt, schema, seconds = 60, which = engine(
   });
 }
 
+/** An answer from OpenRouter with the person's key (openrouter.mjs, as Lamp's app sends it), its troubles said as an engine's. */
+async function viaOpenRouter({ system, prompt, schema, seconds, model, images, signal }) {
+  try {
+    return (await openRouterText({ key: process.env.OPENROUTER_API_KEY, prompt, images, system: system || "You are a helpful assistant inside an app.",
+      model: model || DEFAULT_MODEL, json: !!schema, schema, seconds, signal })).text;
+  } catch (error) {
+    if (!(error instanceof OpenRouterTrouble)) throw error;
+    const words = error.reply?.error?.message;
+    throw new EngineTrouble(error.kind === "refused" ? "failed" : error.kind, words ? String(words) : error.message);
+  }
+}
+
 // MARK: Status and asking
 
 /** `/ai/status`: what can answer here. Text, decisions and actions with an engine; pictures only in Lamp's app. */
@@ -179,18 +197,26 @@ export async function act(body) {
   if (!which) return [501, { error: missing }];
   let r;
   try { r = readStep(JSON.stringify(body ?? null)); } catch (refused) { return [refused.status ?? 400, { error: refused.message }]; }
-  const seconds = 60;
+  const seconds = which === "openrouter" ? 25 : 60;
   const deadline = Date.now() + Math.min(r.seconds, seconds) * 1000;
   const tag = "outside-text-" + randomBytes(4).toString("hex");
   let retry = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     const left = (deadline - Date.now()) / 1000;
     if (left < 1) return [504, { error: "This step ran out of time." }];
-    const { system, prompt } = planPrompt(r, tag, retry);
-    let text;
-    try { text = await complete({ system, prompt, schema: planSchema(r), seconds: left, which }); }
-    catch (error) { return Date.now() >= deadline ? [504, { error: "This step ran out of time." }] : [502, { error: error.message }]; }
-    const read = readPlan(text, r);
+    let read;
+    try {
+      if (which === "openrouter") {
+        const body = chatBody(r, tag, retry, process.env.LAMP_AI_MODEL || DEFAULT_MODEL);
+        read = readMessage((await openRouterChat({ key: process.env.OPENROUTER_API_KEY, body, seconds: left })).message, r);
+      } else {
+        const { system, prompt } = planPrompt(r, tag, retry);
+        read = readPlan(await complete({ system, prompt, schema: planSchema(r), seconds: left, which }), r);
+      }
+    } catch (error) {
+      const words = error?.reply?.error?.message || error.message;
+      return Date.now() >= deadline || error?.kind === "timeout" ? [504, { error: "This step ran out of time." }] : [502, { error: String(words) }];
+    }
     if (read.answer) return [200, { ...read.answer, route: which, seconds }];
     if (attempt === 0) { retry = read.problem; continue; }
     return [200, { reply: "I couldn't work out how to do that.", ask: false, route: which, seconds, trouble: read.problem }];

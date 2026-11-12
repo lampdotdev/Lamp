@@ -59,7 +59,7 @@ const same = (a, b) => {
 /**
  * Answers shared pages' AI until it's closed. `ask(question, page)` puts a yes-or-no to the person and resolves true
  * for yes; by default it's the terminal's, and without a terminal nothing is let in. `answer(path, body, page)` is the
- * AI's [status, reply]: the person's Claude Code or Codex by default, Lamp's own AI when Lamp's app runs this
+ * AI's [status, reply]: the person's Claude Code, Codex or OpenRouter key by default, Lamp's own AI when Lamp's app runs this
  * (`sharedPages` in calls.mjs). Resolves to the server once it listens.
  */
 export async function serveLocalAI({ port = LOCAL_AI_PORT, ask = askInTerminal(), answer = answerAI, said = console.log } = {}) {
@@ -167,7 +167,7 @@ export async function serveLocalAI({ port = LOCAL_AI_PORT, ask = askInTerminal()
   return server;
 }
 
-const engineName = () => (engine() === "codex" ? "Codex" : "Claude Code");
+const engineName = () => ({ codex: "Codex", openrouter: "OpenRouter key" })[engine()] ?? "Claude Code";
 
 /** A yes-or-no in the terminal, or always no without one. */
 export function askInTerminal({ input = process.stdin, output = process.stdout } = {}) {

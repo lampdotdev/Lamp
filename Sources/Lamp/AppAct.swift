@@ -258,38 +258,15 @@ enum AppAct {
         return message
     }
 
-    /// One chat completion with tools. Its own call, not `viaOpenRouter`'s, since what comes back is the message
-    /// with its tool calls rather than text. The content-filter retry is the same, inside the same deadline.
+    /// One chat completion with tools, sent by lamp's command line (`openRouterChat`, cli/openrouter.mjs): the message
+    /// with its tool calls, within the step's deadline, a content filter's cut-off asked again inside it.
     static func openRouterStep(_ body: [String: Any], until deadline: Date) async throws -> ([String: Any], Double) {
-        guard deadline.timeIntervalSinceNow >= 1 else { throw OutOfTime() }
-        var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(KeyStore.openRouterKey ?? "")", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Lamp", forHTTPHeaderField: "X-Title")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        var cost = 0.0
-        for attempt in 0..<3 {
-            let left = deadline.timeIntervalSinceNow
-            guard left >= 1 else { throw OutOfTime(cost: cost) }
-            request.timeoutInterval = left
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            cost += (obj["usage"] as? [String: Any])?["cost"] as? Double ?? 0
-            guard status == 200, let choice = (obj["choices"] as? [[String: Any]])?.first else {
-                throw AppAI.Failure(message: Provider.friendlyError(status: status, reply: obj, from: Provider.openRouter), cost: cost)
-            }
-            if choice["finish_reason"] as? String == "content_filter" {
-                if attempt < 2 {
-                    let wait = min(Double(400 << attempt) / 1000, max(0, deadline.timeIntervalSinceNow))
-                    try await Task.sleep(for: .seconds(wait))
-                    continue
-                }
-                throw AppAI.Failure(message: "The AI provider's content filter cut the reply off. Try rewording the request.", cost: cost)
-            }
-            return (choice["message"] as? [String: Any] ?? [:], cost)
-        }
-        throw AppAI.Failure(message: "The AI didn't answer.", cost: cost)
+        let left = deadline.timeIntervalSinceNow
+        guard left >= 1 else { throw OutOfTime() }
+        let done = try await LampCLI.ask("openRouterChat", ["key": KeyStore.openRouterKey ?? "", "body": body, "seconds": left])
+        if let message = done["message"] as? [String: Any] { return (message, done["cost"] as? Double ?? 0) }
+        let trouble = done["trouble"] as? [String: Any] ?? [:]
+        if trouble["kind"] as? String == "timeout" { throw OutOfTime(cost: trouble["cost"] as? Double ?? 0) }
+        throw AppAI.openRouterFailure(trouble)
     }
 }

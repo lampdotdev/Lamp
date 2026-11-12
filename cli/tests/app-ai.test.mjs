@@ -175,3 +175,20 @@ test("an engine's answer keeps a character split between two reads, and a stop s
   run.stdin.end();
   assert.equal(said.done?.trouble?.kind, "stopped");
 });
+
+test("OpenRouter is asked again when a provider's filter cuts the reply off, and every attempt's cost is counted", async () => {
+  const { chat, text, OpenRouterTrouble } = await import("../openrouter.mjs");
+  const sent = [];
+  const answers = [
+    { status: 200, body: { choices: [{ finish_reason: "content_filter", message: { content: "" } }], usage: { cost: 0.01 } } },
+    { status: 200, body: { choices: [{ finish_reason: "stop", message: { content: "Hello" } }], usage: { cost: 0.02 } } },
+  ];
+  const fetcher = async (url, request) => { sent.push(request); const next = answers.shift(); return { status: next.status, json: async () => next.body }; };
+  const said = await text({ key: "k", prompt: "Hi", model: "m", json: true, schema: { type: "object" }, seconds: 24.123456, fetcher });
+  assert.deepEqual([said.text, Math.round(said.cost * 100)], ["Hello", 3]);
+  assert.equal(sent[0].headers.Authorization, "Bearer k");
+  assert.equal(JSON.parse(sent[0].body).response_format.type, "json_schema");
+  const refused = await chat({ key: "k", body: {}, fetcher: async () => ({ status: 401, json: async () => ({ error: { message: "No auth" } }) }) }).catch((e) => e);
+  assert.ok(refused instanceof OpenRouterTrouble);
+  assert.deepEqual([refused.kind, refused.status, refused.reply.error.message], ["refused", 401, "No auth"]);
+});
