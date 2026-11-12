@@ -1,5 +1,5 @@
 // The steps an AI app on the person's computer follows to get Lamp's command line (cli/README.md, "For a coding
-// agent"), written once for each prompt that hands them over: the homepage's Use with ChatGPT (`chatgpt.ts`) and a
+// agent"), written once for each prompt that hands them over: the homepage's setup buttons (`setup-prompts.ts`) and a
 // shared game's Make it myself (`change-words.ts`). They ask the person before installing anything and wait for a yes:
 // installing software is never implied by opening a chat, and a prompt that installs straight away reads like prompt
 // injection to the AI receiving it.
@@ -10,6 +10,13 @@
 // ChatGPT's link can't choose the chat's mode, and a plain chat can't run commands: it offers ChatGPT Work on this
 // computer by itself (Work in the cloud runs in a container that can't see it), and Codex only when Work can't.
 export const RUN_HERE_CHATGPT = "You need to run commands on this computer for this. If you can't in this chat, offer right away to continue in ChatGPT Work, working locally on this computer (Work in the cloud can't reach it), and bring these steps and my answers with you. Only if Work isn't available or can't run commands here, tell me to switch to Codex in the ChatGPT app on this computer, and stop.";
+
+// Claude's link carries no folder parameter, so the session may not be one that can run commands on this Mac: it asks
+// for a local Claude Code session, and a folder if need be, rather than go on without one.
+export const RUN_HERE_CLAUDE = "Work locally on this Mac; you need to run commands here. If this session can't, ask me to open a local Claude Code session and choose a folder if needed, then stop until that's ready.";
+
+// The copied prompt goes to whatever agent it's pasted into, so it names none.
+export const RUN_HERE_ANY = "You need to run commands on this computer for this. If you can't, tell me and stop.";
 
 export const ASK_TO_INSTALL = "Explain that Lamp's command-line tools would be installed on this computer (the command-line tools only, not the Lamp Mac app) and that setup can add Lamp instructions for future AI chats. Ask me: \"Would you like me to install and set up Lamp's command-line tools?\" Wait for my explicit yes before running any installation or setup commands. If I decline or haven't answered, stop.";
 

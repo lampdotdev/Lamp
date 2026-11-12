@@ -1,0 +1,61 @@
+---
+import { CHATGPT_LINK, CLAUDE_LINK, COPY_SETUP_PROMPT, CHATGPT_APP_URL, CLAUDE_APP_URL } from "../lib/setup-prompts";
+---
+
+<!--
+  Use with ChatGPT and Use with Claude: each button is the link itself, so one click puts that app's setup prompt in a
+  new chat in its Mac app, waiting to be sent. ChatGPT is the ink button and Claude the outline beside it; where
+  there's no room they wrap. A page can't tell whether either app is there (without it, Safari calls the address
+  invalid), so one small line under them covers that: getting an app, or copying a prompt that names no app, for any
+  agent that runs commands on the Mac.
+-->
+<div class="setup">
+  <div class="setup-buttons">
+    <a href={CHATGPT_LINK} class="ink-button h-12 px-6 text-base">Use with ChatGPT</a>
+    <a href={CLAUDE_LINK} class="setup-outline h-12 px-6 text-base">Use with Claude</a>
+  </div>
+  <p class="setup-other">
+    <a href={CHATGPT_APP_URL} target="_blank" rel="noopener">Get ChatGPT</a> · <a href={CLAUDE_APP_URL} target="_blank" rel="noopener">Get Claude</a> · <button type="button" data-copy data-prompt={COPY_SETUP_PROMPT}>Copy the prompt</button>
+  </p>
+</div>
+
+<script>
+  const copy = document.querySelector<HTMLButtonElement>(".setup [data-copy]");
+  copy?.addEventListener("click", async () => {
+    const line = copy.closest(".setup-other")!;
+    try {
+      await navigator.clipboard.writeText(copy.dataset.prompt!);
+      line.textContent = "Copied. Paste it into an AI app that can run commands on this Mac.";
+    } catch {
+      // Copying can be refused: show the prompt itself, selected, to copy by hand.
+      const box = document.createElement("textarea");
+      box.readOnly = true;
+      box.rows = 4;
+      box.className = "setup-prompt";
+      box.setAttribute("aria-label", "The prompt, to copy");
+      box.value = copy.dataset.prompt!;
+      line.replaceChildren(box);
+      box.focus();
+      box.select();
+    }
+  });
+</script>
+
+<style>
+  .setup-buttons { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+  /* The second choice beside the ink button: an ink outline. */
+  .setup-outline {
+    display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; white-space: nowrap;
+    font-weight: 700; color: var(--color-tape); box-shadow: inset 0 0 0 1px var(--color-tape);
+  }
+  .setup-outline:hover { opacity: 0.88; }
+  .setup-outline:focus-visible { outline: 2px solid var(--color-tape); outline-offset: 3px; }
+  .setup-other { margin: 0.625rem 0 0; font-size: 0.875rem; color: var(--color-muted-ink); }
+  .setup-other :is(a, button) { color: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+  .setup-other :is(a, button):focus-visible { outline: 2px solid var(--color-tape); outline-offset: 2px; }
+  .setup-other :global(.setup-prompt) {
+    display: block; width: min(100%, 34rem); padding: 0.5rem; border-radius: 6px; resize: vertical;
+    font-family: var(--font-mono); font-size: 0.75rem; color: var(--color-tape); background: transparent;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-tape) 30%, transparent);
+  }
+</style>
