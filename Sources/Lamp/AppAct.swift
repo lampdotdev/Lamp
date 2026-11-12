@@ -13,12 +13,10 @@ import Foundation
 /// `response_format`; an MLX model with mlx_lm.server's tool calling where its version has it, otherwise asked for the
 /// shape in words. A turn stays on the route its first step took.
 enum AppAct {
-    /// The turn's time on a route: OpenRouter answers a step in a few seconds; Claude Code and Codex start a program for
-    /// every step, and a model on this Mac answers more slowly, so they get longer, never more than the step allows.
-    static func turnSeconds(for route: AppAI.TextRoute) -> Double {
-        if case .openRouter = route.kind { return 25 }
-        return 60
-    }
+    /// How long a step may take on any route before its call is taken to have stopped answering: a guard, never a limit
+    /// on a real answer, however long the model takes to write it. A turn has no time of its own unless the app gives
+    /// it one, which the page sends as each step's `seconds` (`ACT_STEP_SECONDS` in lamp.js, `readStep` in cli/app-ai.mjs).
+    static func turnSeconds(for route: AppAI.TextRoute) -> Double { 600 }
 
     struct Failure: Error, Equatable { let status: Int; let message: String }
 

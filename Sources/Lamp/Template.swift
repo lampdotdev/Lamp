@@ -15246,15 +15246,17 @@ enum Template {
     /// The AI proposes calls; Lamp checks their shapes; the app's `check` decides whether each change is allowed now and
     /// its `run` makes it. Reads run first, then changes one at a time, each checked right before it runs; a change that
     /// fails skips the rest of that step. The same change asked twice in a request runs once. A request may take 4 AI
-    /// steps between questions, 6 changes in all, 3 questions back, and the route's time (25 seconds over OpenRouter, a
-    /// minute through Claude Code, Codex or a model on the Mac); asking something new, cancelling or closing ends it.
+    /// steps between questions, 6 changes in all and 3 questions back, with no time limit unless the app sets one
+    /// (`seconds:`): a real answer is never cut off. Each step stops only when a call has stopped answering
+    /// (`stepSeconds`). Asking something new, cancelling or closing ends it.
     @MainActor final class LampActSession {
         static let maxSteps = 4
         static let maxWrites = 6
         static let maxQuestions = 3
         /// What a session keeps of its changes; past this it stops taking changes and says so, rather than forget them.
         static let maxReceipts = 60
-        static let maxSeconds: Double = 60
+        /// How long one step may take before its call is taken to have stopped answering.
+        static let stepSeconds: Double = 600
 
         let about: String
         let tools: [LampActTool]
@@ -15278,11 +15280,16 @@ enum Template {
         private var closed = false
         private weak var running: LampActTurn?
         private let send: ([String: Any], TimeInterval) async throws -> [String: Any]
+        /// The longest a request may take, when the app wants a quick answer; nil for no limit.
+        let seconds: Double?
 
+        /// `seconds` limits each request's time, for a feature that should answer quickly; leave it out for no limit.
         /// `send` stands in for Lamp in a test; leave it out.
-        init(about: String = "", tools: [LampActTool], send: (([String: Any], TimeInterval) async throws -> [String: Any])? = nil) {
+        init(about: String = "", tools: [LampActTool], seconds: Double? = nil,
+             send: (([String: Any], TimeInterval) async throws -> [String: Any])? = nil) {
             self.about = about
             self.tools = tools
+            self.seconds = seconds.map { max(1, $0) }
             self.send = send ?? { body, timeout in try await LampAI.post("/ai/act", body, timeout: timeout) }
         }
 
@@ -15346,7 +15353,7 @@ enum Template {
                 return out
             }
             let started = Date()
-            var deadline = started.addingTimeInterval(Self.maxSeconds)
+            let deadline = seconds.map { started.addingTimeInterval($0) } ?? .distantFuture
             func over() -> LampActResult.Stop? {
                 if closed || cancelled.contains(turn) || turn != generation || Task.isCancelled { return .cancelled }
                 if Date() >= deadline { return .time }
@@ -15360,7 +15367,7 @@ enum Template {
             var route: String?
             while true {
                 if let stop = over() { out.stopped = stop; break }
-                let left = deadline.timeIntervalSinceNow
+                let left = min(deadline.timeIntervalSinceNow, Self.stepSeconds)
                 if left <= 0.5 { out.stopped = .time; break }
                 var body: [String: Any] = ["request": request, "about": about, "now": LampAI.actPresent,
                                            "tools": tools.map(\.declared), "steps": steps, "seconds": Int(left)]
@@ -15375,10 +15382,6 @@ enum Template {
                     out.stopped = message.contains("reach Lamp") ? .unreachable : .error
                     out.error = message
                     break
-                }
-                // The route's own time for a turn, counted from its start, shortens it; it never lengthens it.
-                if let seconds = (answer["seconds"] as? NSNumber)?.doubleValue, seconds > 0 {
-                    deadline = min(deadline, started.addingTimeInterval(seconds))
                 }
                 // Cancelled, out of time or replaced: an answer that comes late runs nothing.
                 if let stop = over() { out.stopped = stop; break }
