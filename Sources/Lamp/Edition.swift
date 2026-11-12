@@ -143,6 +143,9 @@ enum Edition {
 
     /// lamp://edit?app=… (lamp-dev:// for the development build, lamp-dev-<instance>:// for an instance),
     /// registered in Info.plist by build.sh.
+    /// The command Install Command-Line Tool… puts on the PATH (`CommandLineTool`): `lamp` for Lamp and Lamp Nightly,
+    /// which are the person's own Lamp either way, and its own name for a build from source or an instance.
+    static let commandName = isDev ? "lamp-dev" + (instance.isEmpty ? "" : "-" + instance) : "lamp"
     static let urlScheme = isDev ? "lamp-dev" + (instance.isEmpty ? "" : "-" + instance) : isNightly ? "lamp-nightly" : "lamp"
     /// The bundle id of every app this Lamp builds: dev.lamp.app.<slug>, dev.lamp.dev.app.<slug>, or
     /// dev.lamp.dev.<instance>.app.<slug>.

@@ -55,6 +55,11 @@ struct LampCommands: Commands {
         AboutCommands()
         CheckForUpdatesCommand()
         LampHelpCommands()
+        // After Settings…, where a Mac app puts its command-line tool.
+        CommandGroup(before: .systemServices) {
+            Button("Install Command-Line Tool…") { CommandLineTool.install() }
+            Divider()
+        }
         CommandGroup(replacing: .newItem) {
             Button("New App") { store.newWish() }
                 .keyboardShortcut("n")

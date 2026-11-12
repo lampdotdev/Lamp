@@ -48,6 +48,11 @@ runtime, so no Node is needed:
 /Applications/Lamp.app/Contents/Resources/cli/lamp setup
 ```
 
+To type `lamp` anywhere, Lamp's menu has Install Command-Line Tool… (`CommandLineTool`): it links `/usr/local/bin/lamp`
+to that copy, asking for the Mac's administrator password when Lamp can't write there itself, so the command updates
+with Lamp. A build from source or an instance names its own (`Edition.commandName`: `lamp-dev`, `lamp-dev-<instance>`).
+The launcher finds the app it's in through the link (`${0:A:h}` in `cli/lamp.sh`).
+
 On a computer without Lamp, lamp comes from npm, `npm install -g @lampdotdev/lamp` (it needs Node 20), and
 `lamp setup` sets it up the same way. From a checkout of this repository, `node cli/lamp.mjs setup`.
 
