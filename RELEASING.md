@@ -22,8 +22,9 @@ a secure timestamp. Nested code is signed first:
 - Lamp's player (`Resources/LampPlayer.bundle`), the Mac app every game and screen is a copy of: `build.sh` compiles
   it afresh for a release, before the starters, and each copy is signed again as its own app when Lamp makes it
 - the starters' prebuilt apps: `build.sh` has the new Lamp build each starter as a person's Mac would
-  (`PrebuiltStarters.swift`), signs it and zips it into `dist/assets` (`Lamp-Starter-<starter>-<version>.zip`,
-  `Lamp-Nightly-Starter-…` for a nightly), which goes up on the release beside the DMG, so a new person's starters open
+  (`PrebuiltStarters.swift`), signs it and zips it into `dist/assets` (`Lamp-Starter-<starter>-<version>.zip`; a
+  nightly makes none, `PREBUILD_STARTERS=0`, since they took most of its time, so Lamp Nightly builds a starter on the
+  Mac it's first opened on, as Lamp Dev does), which goes up on the release beside the DMG, so a new person's starters open
   at once, before Apple's build tools are installed. Lamp's bundle carries none of them: it pins each one's address,
   size and SHA-256 (the starter's `listing/prebuilt.json`), and Lamp fetches it with the starter's tree when the
   starter is first opened, checking its signature as Lamp's own before using it (`StarterDownloads`, "Starters are
