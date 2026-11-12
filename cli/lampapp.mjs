@@ -9,6 +9,7 @@ import { inflateRawSync } from "node:zlib";
 import { Problem, RESOURCES, manifestOf, projectOf, stateOf } from "./state.mjs";
 import { LIMITS, nameOf, zipOf } from "./share.mjs";
 import { isID } from "../site/lib/shared-wishes.js";
+import { ignoredFor, ignoredIn } from "./ignore.mjs";
 
 // What a Lamp app file may hold, written once in Resources/share-rules.json, which Lamp's app reads too (`ShareRules`):
 // the sizes another Lamp opens, the names a license goes by, and the shapes of keys a shared file never carries.
@@ -185,7 +186,7 @@ function filesUnder(dir, prefix = "", { hidden = () => false, skip = () => false
   try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return found; }
   for (const entry of entries) {
     const path = prefix + entry.name;
-    if ((entry.name.startsWith(".") && !hidden(path)) || skip(path)) continue;
+    if ((entry.name.startsWith(".") && !hidden(path)) || skip(path, entry.isDirectory())) continue;
     if (entry.isDirectory()) found.push(...filesUnder(join(dir, entry.name), path + "/", { hidden: () => false, skip }));
     else if (entry.isFile()) found.push(path);
   }
@@ -237,6 +238,10 @@ export function exportApp(given, { anyway = false, link = null } = {}) {
   }
 
   const files = new Map(), from = (path) => readFileSync(join(app, path));
+  // The folder's .lampignore covers the app's own files too (its code beside the page, Assets/), as they are from the
+  // folder's top; a wish's own copy in .lamp-wish/ isn't the folder's, so its rules don't reach in there.
+  const appIgnored = app === folder ? ignoredIn(folder) : () => false;
+  const keep = (path) => !appIgnored(path);
   let kind, site = false, flags = {};
   if (project.kind === "page") {
     kind = typeof manifest?.platform === "string" ? manifest.platform : project.game ? "game" : "web-app";
@@ -245,19 +250,21 @@ export function exportApp(given, { anyway = false, link = null } = {}) {
     // page is Web/ in the file and whose own files beside it go as themselves.
     // A site stays one at every export, whether its page is at the folder's top or (unpacked) in Web/.
     site = kind === "web-app" && (manifest?.site === true || !project.lamps);
-    for (const path of filesUnder(project.root, "", { hidden: (path) => site && SERVED_HIDDEN.has(path), skip: (path) => path === "node_modules" || (!project.lamps && (wishFolder ? path === ".lamp-wish" || path === "LAMP-LICENSE.txt" : WISH_FILES.has(path))) })) {
+    // What the folder's .lampignore keeps to this computer stays out of the file, as it does of the page.
+    const ignored = ignoredFor(project.root, folder);
+    for (const path of filesUnder(project.root, "", { hidden: (path) => site && SERVED_HIDDEN.has(path), skip: (path, dir) => path === "node_modules" || ignored(path, dir) || (!project.lamps && (wishFolder ? path === ".lamp-wish" || path === "LAMP-LICENSE.txt" : WISH_FILES.has(path))) })) {
       if (!lamps(path)) files.set(`Web/${path}`, readFileSync(join(project.root, path)));
     }
     if (project.lamps || wishFolder) {
       // The Swift beside the page that answers its calls of the device, and a game's phone page.
-      for (const path of filesUnder(join(app, "Sources"), "Sources/")) if (path.endsWith(".swift") && (kind === "game" ? path === "Sources/Native.swift" : !["Sources/LampSupport.swift", "Sources/LampPage.swift", "Sources/LampControllerKit.swift", "Sources/LampScreen.swift", "Sources/LampWebApp.swift"].includes(path))) files.set(path, from(path));
-      if (kind === "game") for (const path of [...filesUnder(join(app, "Phone"), "Phone/"), ...filesUnder(join(app, "src"), "src/")]) files.set(path, from(path));
+      for (const path of filesUnder(join(app, "Sources"), "Sources/")) if (keep(path) && path.endsWith(".swift") && (kind === "game" ? path === "Sources/Native.swift" : !["Sources/LampSupport.swift", "Sources/LampPage.swift", "Sources/LampControllerKit.swift", "Sources/LampScreen.swift", "Sources/LampWebApp.swift"].includes(path))) files.set(path, from(path));
+      if (kind === "game") for (const path of [...filesUnder(join(app, "Phone"), "Phone/"), ...filesUnder(join(app, "src"), "src/")]) if (keep(path)) files.set(path, from(path));
     }
   } else {
     kind = "mac";
-    for (const path of filesUnder(join(folder, "Sources"), "Sources/")) if (path.endsWith(".swift") && !SWIFT_LAMPS.has(basename(path))) files.set(path, from(path));
+    for (const path of filesUnder(join(folder, "Sources"), "Sources/")) if (keep(path) && path.endsWith(".swift") && !SWIFT_LAMPS.has(basename(path))) files.set(path, from(path));
     for (const [extra, flag] of [["Widget", "widget"], ["Share", "share"]]) {
-      const code = filesUnder(join(folder, extra), `${extra}/`).filter((path) => path.endsWith(".swift") && !SWIFT_LAMPS.has(basename(path)));
+      const code = filesUnder(join(folder, extra), `${extra}/`).filter((path) => keep(path) && path.endsWith(".swift") && !SWIFT_LAMPS.has(basename(path)));
       for (const path of code) files.set(path, from(path));
       flags[flag] = code.length > 0;
     }
@@ -271,11 +278,12 @@ export function exportApp(given, { anyway = false, link = null } = {}) {
   let attached = 0;
   // A page at the folder's top with no `.lamp-wish/` keeps an Assets/ there as its own: it went with the page.
   for (const path of project.kind === "page" && !project.lamps && !wishFolder ? [] : filesUnder(join(app, "Assets"), "Assets/")) {
+    if (!keep(path)) continue;
     attached += statSync(join(app, path)).size;
     if (attached > MAX_ARCHIVE - 8 * 1024 * 1024) throw new Problem(`${name} is too big to share: its pictures and other files come to over ${Math.floor((MAX_ARCHIVE - 8 * 1024 * 1024) / 1_000_000)} MB`);
     files.set(path, from(path));
   }
-  if (existsSync(join(app, "APP.md"))) files.set("APP.md", from("APP.md"));
+  if (keep("APP.md") && existsSync(join(app, "APP.md"))) files.set("APP.md", from("APP.md"));
   // What the app declares; the Lamp that opens the file checks each of it again as it reads it.
   let declares = false;
   try {
@@ -286,7 +294,7 @@ export function exportApp(given, { anyway = false, link = null } = {}) {
   // icon.png at the top of a page lamp made is the page's, which went with it.
   for (const icon of ["icon.json", "icon-glass.json", "icon-art.png", "icon.png"]) {
     if (icon === "icon.png" && project.kind === "page" && !project.lamps && !wishFolder) continue;
-    if (existsSync(join(app, icon))) files.set(icon, from(icon));
+    if (keep(icon) && existsSync(join(app, icon))) files.set(icon, from(icon));
   }
   const releases = releasesOf(app);
   if (releases.length) files.set("releases.json", Buffer.from(JSON.stringify(releases, null, 2)));

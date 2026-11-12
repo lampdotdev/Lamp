@@ -17,6 +17,7 @@ import { LIMITS, FILE_LIMITS, PAGE_LIMITS } from "../site/lib/shared-wishes.js";
 import { ideasOf, makerOf, pageUp, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile, siteOrigin } from "./link.mjs";
 import { exportApp, sourceLinkOf } from "./lampapp.mjs";
 import { scaled, sizeOf } from "./png.mjs";
+import { ignoredFor } from "./ignore.mjs";
 
 export { siteOrigin };
 
@@ -104,10 +105,12 @@ export function zipOf(files) {
  */
 export function pageFiles(layout, { device = ANY_BROWSER } = {}) {
   const files = new Map();
+  // What the folder's .lampignore keeps to this computer (data too big to share, say) never goes.
+  const ignored = ignoredFor(layout.root, layout.folder);
   const walk = (dir, prefix) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const path = prefix + entry.name;
-      if (entry.name.startsWith(".") || entry.name === "node_modules" || path === NOTES_FILE) continue;
+      if (entry.name.startsWith(".") || entry.name === "node_modules" || path === NOTES_FILE || ignored(path, entry.isDirectory())) continue;
       if (entry.isDirectory()) walk(join(dir, entry.name), path + "/");
       else if (entry.isFile()) files.set(path, readFileSync(join(dir, entry.name)));
     }
