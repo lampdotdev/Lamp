@@ -17,6 +17,8 @@ enum CommandLineTool {
 
     enum Found: Equatable {
         case nothing
+        /// A folder by that name, which is never replaced: removing it would remove everything in it.
+        case folder
         /// Already this app's own launcher.
         case ours
         /// Something else by that name: another Lamp's launcher, lamp from npm, or a file that isn't a link.
@@ -25,6 +27,8 @@ enum CommandLineTool {
 
     static func found(at path: String = link, launcher: URL? = launcher) -> Found {
         let fm = FileManager.default
+        // The entry itself, not where a link leads.
+        if (try? fm.attributesOfItem(atPath: path))?[.type] as? FileAttributeType == .typeDirectory { return .folder }
         guard let destination = try? fm.destinationOfSymbolicLink(atPath: path) else {
             return fm.fileExists(atPath: path) ? .other(path) : .nothing
         }
@@ -34,13 +38,26 @@ enum CommandLineTool {
         return .other(target)
     }
 
+    /// Where an app runs from only for now: a disk image, or the copy macOS runs an app from before it's moved
+    /// (App Translocation). A link there would lead nowhere once it's gone.
+    static func isPassing(_ app: String) -> Bool {
+        app.hasPrefix("/Volumes/") || app.contains("/AppTranslocation/")
+    }
+
     @MainActor static func install() {
         let name = Edition.commandName
         guard let launcher else {
             say("This copy of \(Edition.name) has no command-line tool.", "A copy of \(Edition.name) built for the Mac has one.")
             return
         }
+        guard !isPassing(Bundle.main.bundlePath) else {
+            say("Move \(Edition.name) to Applications first.", "Then open it from there and choose Install Command-Line Tool… again, so \(name) keeps working.")
+            return
+        }
         switch found() {
+        case .folder:
+            say("\(name) couldn't be installed.", "\(link) is a folder. Move or rename it, then try again.")
+            return
         case .ours:
             say("\(name) is already installed.", "Run \(name) in Terminal. It updates with \(Edition.name).")
             return
@@ -63,6 +80,7 @@ enum CommandLineTool {
     /// False when it wasn't made (the person cancelled, or it failed, which is said).
     @MainActor private static func linked(_ launcher: URL) -> Bool {
         let fm = FileManager.default
+        guard found() != .folder else { return false }
         if fm.isWritableFile(atPath: folder) {
             try? fm.removeItem(atPath: link)
             if (try? fm.createSymbolicLink(atPath: link, withDestinationPath: launcher.path)) != nil { return true }
