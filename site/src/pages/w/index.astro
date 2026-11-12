@@ -1,5 +1,6 @@
 ---
 import Base from "../../layouts/Base.astro";
+import LampLockup from "../../components/LampLockup.astro";
 import { DOWNLOAD_URL } from "../../lib/download";
 ---
 
@@ -84,9 +85,9 @@ import { DOWNLOAD_URL } from "../../lib/download";
          brings both back. -->
     <div data-bar data-remix-band class="bar bar-bottom">
     <aside class="remix-band relative h-16 border-t border-tape/15 bg-paper" aria-label="Make a change">
-      <!-- Credit at the foot, where there's room beside the box: Lamp's mark and its name, saying the rest on hover. On a
+      <!-- Credit at the foot, where there's room beside the box: Lamp's mark as the site's header has it (`LampLockup`), saying the rest on hover. On a
            narrow screen the box has the whole band. -->
-      <a href="/" title="Made with Lamp" aria-label="Made with Lamp" class="absolute top-1/2 left-6 hidden -translate-y-1/2 items-center gap-1.5 rounded-md font-mono text-[13px] text-muted-ink hover:text-tape focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tape/50 lg:flex"><img src="/favicon.png" alt="" width="16" height="16" class="size-4" />Lamp</a>
+      <a href="/" title="Made with Lamp" aria-label="Made with Lamp" class="absolute top-1/2 left-6 hidden -translate-y-1/2 rounded-md opacity-80 hover:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tape/50 lg:flex"><LampLockup size={18} /></a>
       <form data-prompt class="mx-auto flex h-full max-w-[44rem] items-center gap-3 py-3 pr-14 pl-3 sm:pl-6 lg:px-6">
         <!-- The box's questions and its button say what it's for; its label is for screen readers. -->
         <label for="change" class="sr-only">How would you make this better?</label>
