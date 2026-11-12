@@ -208,7 +208,7 @@ enum AppAct {
             guard left >= 1 else { throw OutOfTime() }
             let (system, prompt, schema) = try await plan("plan")
             let (text, cost) = try await AppAI.viaEngine(engine, prompt: prompt, images: [], system: system, model: model,
-                                                         schema: schema, timeLimit: left, sealed: true)
+                                                         schema: schema, timeLimit: left)
             return (try await read(["plan": text], for: r), cost)
         case .localModel(_, let model):
             let base = try await LocalModels.shared.ensureServer(for: model)

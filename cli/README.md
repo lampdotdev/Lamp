@@ -98,7 +98,7 @@ What a game's folder lacks all the same, the server gives it:
 | `lamp-device.js`, `lamp-build.js` | Made by the server: the device is a browser on any device, as a page published to the web is given, and the build is named for the files as they are. |
 | `lamp-controllers.js` | `cli/lamps/lamp-controllers.js`, the list of controllers as Lamp writes it (`Controllers.pageJS`). `CLIFilesTests` fails when the two differ, and writes the copy again when run with `LAMP_WRITE_CLI_FILES=1`. The game runtime can't load without it. |
 | `three/`, `phaser/`, `rapier/` | Lamp's copies (`Resources/WebLibraries`), for a library the page asks for and the folder has none of. |
-| `lamp.js` | Lamp's building blocks for a page (saved data, the app's files, AI through Lamp's app), as Lamp's own code writes them: `scripts/cli-files.sh` writes the file out (`cli/lamps/lamp.js`, and `lamp-for-games.js` as a game is given it, without a TV's remote; not committed, since they change often), and without it a stand-in that holds nothing. Its AI (`LampAI`: status, ask, act, decide) is answered by `lamp dev` itself (`ai.mjs`, through `lampGatewayHost` in `page.js`, `/__lamp/ai`, only for the page on this Mac) with the person's own Claude Code or Codex (`LAMP_AI` picks one, `LAMP_AI_MODEL` its model), each sealed as Lamp's app seals it; pictures and hearing need Lamp's app. On a page shared on lamp.dev, Lamp's app or `lamp ai` answers it instead. |
+| `lamp.js` | Lamp's building blocks for a page (saved data, the app's files, AI through Lamp's app), as Lamp's own code writes them: `scripts/cli-files.sh` writes the file out (`cli/lamps/lamp.js`, and `lamp-for-games.js` as a game is given it, without a TV's remote; not committed, since they change often), and without it a stand-in that holds nothing. Its AI (`LampAI`: status, ask, act, decide) is answered by `lamp dev` itself (`ai.mjs`, through `lampGatewayHost` in `page.js`, `/__lamp/ai`, only for the page on this Mac) with the person's own Claude Code or Codex (`LAMP_AI` picks one, `LAMP_AI_MODEL` its model), each sealed as Lamp's app seals it (the same run, `complete` in ai.mjs); making pictures and hearing need Lamp's app. On a page shared on lamp.dev, Lamp's app or `lamp ai` answers it instead. |
 
 A file the page asks for that neither the folder nor Lamp has is logged as an error, since a module that imports one
 never runs and the page can't say so itself.
@@ -329,7 +329,8 @@ does. A problem says its kind where Lamp's app acts on which it was: a device th
   of this computer's subnet and every Bonjour service (cli/mdns.mjs); and `neighbours`, the gateway and subnet now. An app's own AI is told and read here too (cli/app-ai.mjs, which `lamp dev`'s answers use as well): `actStep`,
   `actAsk` and `actRead`, a step of `LampAI.act` checked, what its route is asked and its answer read (`AppAct`); and
   `decideAsk` and `decideRead`, a decision answered by a text model (`AppAI.decideByText`). Which route answers and
-  asking it stay in Lamp's app, with its keys and its models.
+  asking it stay in Lamp's app, with its keys and its models, except Claude Code and Codex, which `engineAnswer` runs
+  (`AppAI.viaEngine`), sealed, with the program and its settings Lamp's app chose.
   Two things stay in Lamp's app, since only it can see them: whether macOS lets Lamp look at all, which is
   Network.framework's to say (`DeviceProbe.localNetworkDenied`), and the neighbor table, which macOS shows only to a
   process it lets on the local network, and the runtime Lamp carries isn't one (`Neighbours`). Moving a

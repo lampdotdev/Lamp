@@ -39,7 +39,7 @@ final class AppActRoutesTests: XCTestCase {
             let asked = try await LampCLI.ask("actAsk", ["step": r, "tag": "outside-text-1", "way": "plan"])
             let (text, _) = try await AppAI.viaEngine(engine, prompt: asked["prompt"] as? String ?? "", images: [], system: asked["system"] as? String ?? "",
                                                       model: engine == .claude ? "sonnet" : "",
-                                                      schema: asked["schema"] as? [String: Any], timeLimit: 60, sealed: true)
+                                                      schema: asked["schema"] as? [String: Any], timeLimit: 60)
             out[name] = text
         }
         let file = fixture(engine)

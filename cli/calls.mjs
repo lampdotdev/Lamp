@@ -30,6 +30,7 @@ import { PUBLISHER, identityName, keptSigner, namesOf, packageOf, versionAfter }
 import { tile } from "./png.mjs";
 import { Problem } from "./state.mjs";
 import { serveLocalAI } from "./local-ai.mjs";
+import { EngineTrouble, complete } from "./ai.mjs";
 import { Refused as StepRefused, chatBody, decidePrompt, planPrompt, planSchema, readDecision, readMessage, readPlan, readStep } from "./app-ai.mjs";
 
 // Pages shared on lamp.dev asking for their AI, answered by Lamp's app (`sharedPages`): what each is waiting on from it.
@@ -315,6 +316,23 @@ export const CALLS = {
   async neighbours() {
     const route = await defaultRoute();
     return { table: await neighbours(), gateway: route?.gateway ?? null, subnet: route ? subnetOn(route.interface) : null };
+  },
+
+  /**
+   * One answer from Claude Code or Codex for an app's AI (`AppAI.viaEngine`), sealed as ai.mjs runs every one: `engine`,
+   * the program Lamp chose (`tool`) and what it needs set (`env`), `system`, `prompt`, optional `schema`, `model`,
+   * `images` and `seconds`. `{text}`, or `{trouble: {kind, message}}`; stopping the call stops the engine.
+   */
+  async engineAnswer(given, { stopped } = {}) {
+    try {
+      return { text: await complete({ which: text(given, "engine"), tool: typeof given.tool === "string" && given.tool ? given.tool : undefined,
+        env: given.env && typeof given.env === "object" ? given.env : {}, system: typeof given.system === "string" ? given.system : "",
+        prompt: text(given, "prompt"), schema: given.schema ?? undefined, model: typeof given.model === "string" ? given.model : "",
+        images: Array.isArray(given.images) ? given.images : [], seconds: seconds(given.seconds, 300, 600), signal: stopped }) };
+    } catch (error) {
+      if (error instanceof EngineTrouble) return { trouble: { kind: error.kind, message: error.message } };
+      throw error;
+    }
   },
 
   /**

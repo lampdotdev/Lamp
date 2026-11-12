@@ -282,8 +282,9 @@ enum AppAI {
     /// suggestion, a version's title): Sonnet, unless apps' text goes to a model on this Mac. Someone who
     /// chose to stay local gets nil here, so these calls follow that route instead of leaving the Mac.
     /// The link's id of the page shared on lamp.dev this request is for (`SharedPagesAI`), nil for an app of the
-    /// person's own. A shared page is someone else's code, so Claude Code and Codex answer it sealed, with nothing that
-    /// reads or runs anything on the Mac, whatever it asks for.
+    /// person's own. A shared page is someone else's code: it never gets a route that runs an engine's own tools, which
+    /// for now is picture-making through Codex (`viaCodexImage`). Its answers from Claude Code and Codex are sealed as
+    /// every app's are (`viaEngine`).
     @TaskLocal static var sharedPage: String?
 
     @MainActor static func helperModel() async -> String? {
@@ -580,120 +581,35 @@ enum AppAI {
     /// The failure an app gets when nothing can answer its text: Lamp offers a way in the app's chat.
     static let noTextRoute = "Apps' AI features need an OpenRouter key, or a working builder. Set one up in Lamp → Settings (⌘,)."
 
-    /// One-shot answer from an external coding agent, using the user's own sign-in (and so their subscription).
-    /// Isolated from their setup like a build turn, with no tools except reading the images it's given.
-    /// `sealed` takes Codex's own tools away too (commands, web search, connectors, sub-agents) and refuses any
-    /// approval, for a caller whose answer decides what an app does next (`AppAct`): Claude Code's `--restricted`
-    /// with no tools already leaves it nothing to run.
+    /// One answer from Claude Code or Codex, with the person's own sign-in (and so their subscription), run by lamp's
+    /// command line (`engineAnswer`, cli/ai.mjs), the one place that runs them for an app's AI: sealed every time, with
+    /// none of the person's setup and none of the engine's tools, so nothing on the Mac is read or run whatever the
+    /// prompt asks. Pictures go with the request itself, never through a tool that reads files. Which copy of the engine
+    /// runs, and what it needs set, are decided here (`EngineInstall`). A cancelled caller stops the run with it.
     static func viaEngine(_ engine: Engine, prompt: String, images: [Image],
                           system: String, model: String, schema: [String: Any]? = nil,
-                          timeLimit: TimeInterval? = nil, sealed: Bool = false) async throws -> (String, Double) {
-        let sealed = sealed || sharedPage != nil
-        // Claude Code looks at a picture only by reading its file, which is a tool that reads any file.
-        if sealed, engine == .claude, !images.isEmpty {
-            throw Failure(message: "Pictures from a page shared on lamp.dev can't go to Claude Code. Choose another AI for apps in \(Edition.name).")
-        }
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-ai-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: folder) }
-        var files: [String] = []
-        for (index, image) in images.enumerated() {
-            guard let data = Data(base64Encoded: image.data) else { continue }
-            let name = "image\(index).\(image.mediaType.hasSuffix("png") ? "png" : "jpg")"
-            try data.write(to: folder.appendingPathComponent(name))
-            files.append(name)
-        }
-        var env: [String: String] = ["PATH": ToolLocator.userPath, "LAMP_TOOL": EngineInstall.path(for: engine) ?? "",
-                                     "LAMP_SYSTEM": system.isEmpty ? "You are a helpful assistant inside an app." : system,
-                                     "LAMP_PROMPT": prompt]
+                          timeLimit: TimeInterval? = nil) async throws -> (String, Double) {
+        guard engine != .pi else { throw Failure(message: noTextRoute, needs: .text) }
+        var env = ["PATH": ToolLocator.userPath]
         env.merge(EngineInstall.environment(for: engine)) { $1 }
-        for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
-        // A JSON schema the answer must fit: Claude Code takes it as text, Codex as a file.
-        var schemaArg = ""
-        if let schema, let data = try? JSONSerialization.data(withJSONObject: schema, options: [.sortedKeys]) {
-            env["LAMP_SCHEMA"] = String(decoding: data, as: UTF8.self)
-            if engine == .codex { try data.write(to: folder.appendingPathComponent("schema.json")) }
-            schemaArg = engine == .codex ? "--output-schema schema.json " : "--json-schema \"$LAMP_SCHEMA\" "
-        }
-        let command: String
-        switch engine {
-        case .claude:
-            // Claude Code takes images by reading them, so it gets the Read tool and their names.
-            if !files.isEmpty { env["LAMP_PROMPT"] = prompt + "\n\n(Images: " + files.joined(separator: ", ") + ". Read them.)" }
-            env["LAMP_MODEL"] = model   // Claude Code's own aliases ("sonnet", "opus") or a full model id
-            command = """
-            "$LAMP_TOOL" -p "$LAMP_PROMPT" --output-format stream-json --verbose --no-session-persistence \\
-              --restricted --strict-mcp-config --disable-slash-commands \\
-              --tools \(files.isEmpty ? "''" : "Read --allowedTools Read") --model "$LAMP_MODEL" \(schemaArg)--system-prompt "$LAMP_SYSTEM"
-            """
-        case .codex:
-            env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions="
-                + Agent.tomlString(env["LAMP_SYSTEM"]! + "\n\nAnswer directly. Don't run commands or change files.")
-            let imageArgs = files.indices.map { "-i \"$LAMP_FILE_\($0)\"" }.joined(separator: " ")
-            // Only one of Codex's own models is passed on; an Anthropic id (an app built before Codex
-            // answered for it) means Codex's default.
-            var modelArg = ""
-            if Builder.codexModels.contains(where: { $0.id == model && !model.isEmpty }) {
-                env["LAMP_MODEL"] = model
-                modelArg = "-m \"$LAMP_MODEL\" "
-            }
-            // Every key here is one of Codex's documented settings; --ignore-user-config already leaves out the
-            // person's MCP servers.
-            // Its picture tool reads any file on the Mac: `features.view_image` turns it off now, and `tools.view_image` did in
-            // the versions before it (each ignores the other's, with only a warning). Goals are left out too. What's left
-            // of its tools, checked with Codex 0.167.1, is asking the person a question, which a run with no one to ask
-            // can't use.
-            let seal = sealed ? #"-c approval_policy="never" -c features.shell_tool=false -c features.unified_exec=false -c web_search="disabled" -c features.apps=false -c features.multi_agent=false -c features.view_image=false -c tools.view_image=false -c features.goals=false "# : ""
-            command = """
-            "$LAMP_TOOL" exec --json --ignore-user-config --ignore-rules --skip-git-repo-check --ephemeral \\
-              -s read-only -c hooks={} -c model_reasoning_effort="low" \(seal)\(modelArg)\(schemaArg)-c "$LAMP_CODEX_INSTRUCTIONS" \(imageArgs) -- "$LAMP_PROMPT"
-            """
-        case .pi:
-            throw Failure(message: noTextRoute, needs: .text)
-        }
-        var text = ""
-        var cost = 0.0
-        var failure: String?
-        final class Deadline { var passed = false }
-        let deadline = Deadline()
-        // A caller that's cancelled (a shared app's review closed or out of time) stops the engine with it, rather than
-        // waiting for an engine that may never answer.
-        let running = Subprocess.Running()
-        let status = await withTaskCancellationHandler { await Shell.run(command, cwd: folder, env: env, started: { process in
-            running.started(process)
-            guard let timeLimit else { return }
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(timeLimit))
-                guard process.isRunning else { return }
-                deadline.passed = true
-                // The whole tree, killed if it won't stop: a child left holding the output, or an engine that
-                // ignores the signal, would keep the call waiting past its limit all the same.
-                Subprocess.terminateTree(process)
-            }
-        }) { line in
-            // With a schema, Claude Code gives the answer in its result, not as a message.
-            if schema != nil, engine == .claude, line.contains("\"structured_output\""),
-               let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any], obj["type"] as? String == "result",
-               let answer = obj["structured_output"], let data = try? JSONSerialization.data(withJSONObject: answer) {
-                text = String(decoding: data, as: UTF8.self)
-                return
-            }
-            for event in Agent.parse(line, engine: engine) {
-                switch event {
-                case .text(let chunk): text = chunk   // the last message is the answer
-                case .cost(let amount): cost += amount
-                case .failed(let message): failure = message
-                default: break
-                }
-            }
-        } } onCancel: { running.stop() }
+        var given: [String: Any] = ["engine": engine == .codex ? "codex" : "claude", "tool": EngineInstall.path(for: engine) ?? "",
+                                    "env": env, "system": system, "prompt": prompt,
+                                    "images": images.map { ["media_type": $0.mediaType, "data": $0.data] }]
+        // Claude Code takes its own aliases ("sonnet", "opus") or a full id. Only one of Codex's own models is passed on;
+        // an Anthropic id (an app built before Codex answered for it) means Codex's default.
+        if engine == .claude || Builder.codexModels.contains(where: { $0.id == model && !model.isEmpty }) { given["model"] = model }
+        if let schema { given["schema"] = schema }
+        if let timeLimit { given["seconds"] = timeLimit }
+        let done = try await LampCLI.ask("engineAnswer", given)
         try Task.checkCancellation()
-        if deadline.passed { throw Failure(message: "\(engine.title) took too long to answer.") }
-        if let failure { throw Failure(message: Provider.friendlyError(failure, from: engine.title)) }
-        guard !text.isEmpty else {
-            throw Failure(message: status == 0 ? "The AI didn't answer." : "\(engine.title) didn't answer. Check it's signed in.")
+        if let text = done["text"] as? String { return (text, 0) }   // the person's sign-in: nothing billed through Lamp
+        let trouble = done["trouble"] as? [String: Any] ?? [:]
+        let message = trouble["message"] as? String ?? "The AI didn't answer."
+        switch trouble["kind"] as? String {
+        case "failed": throw Failure(message: Provider.friendlyError(message, from: engine.title))
+        case "stopped": throw CancellationError()
+        default: throw Failure(message: message)
         }
-        return (text, cost)
     }
 
     /// One answer for Lamp's own reading of text someone else wrote (`SuggestionSummaries`), only along a way that can't
