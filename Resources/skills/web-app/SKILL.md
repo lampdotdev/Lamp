@@ -59,8 +59,10 @@ APP.md says that it was brought in as it is, so every later turn keeps to this.
 ## On the web, without Lamp
 
 Sharing its link gives a web app a page on lamp.dev anyone opens in a browser, with no Lamp around it: the page as it
-is, with lamp.js. There, `LampAI.status` says it's unavailable, with the line to show, and its calls fail with that sentence, `LampNative.available` is false, and `Lamp.wish` can't reach the project's other apps; `LampStore` and `LampAssets`
-work as they do everywhere. So every feature that leans on Lamp keeps the app usable without it: the app's own buttons
+is, with lamp.js. There its AI is answered only on a computer running `lamp ai`, for whoever plays it there; elsewhere
+`LampAI.status` says it's unavailable, with the line to show, and its calls fail with that sentence. `LampNative.available`
+is false, and `Lamp.wish` can't reach the project's other apps; `LampStore` and `LampAssets` work as they do everywhere.
+So every feature that leans on Lamp keeps the app usable without it, going by what `status` says rather than where it is: the app's own buttons
 for everything AI would do, example content where the person's own things would be, and a short line where something
 needs Lamp (for AI, `LampAI.status`'s `reason`), never an error or an empty screen.
 
