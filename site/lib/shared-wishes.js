@@ -1292,8 +1292,9 @@ export const PLAY_MEMORY = { ms: 60_000, links: 200 };
  * What a page played on its link is given at the top of its HTML: when the link's page asks for a picture of the app
  * (as someone opens the box to send its maker an idea), the app's biggest canvas, drawn after the app has drawn its
  * next frame, scaled to at most 1280 wide, as a JPEG small enough to go with an idea. Only the site's own page may ask,
- * and only it is answered. Nothing for an app without a canvas, one that can't be read, or one that reads as nothing
- * but black.
+ * and only it is answered. Nothing for an app without a canvas, one that can't be read, or one with nothing drawn in it
+ * (see-through all over). A JPEG has no see-through, so what shows through the canvas on the page is put behind it: the
+ * first color behind it there, else white as the browser's own. A scene that's dark (night, space) is a picture.
  *
  * A 3D canvas's picture is gone once its frame is on screen, and an app that draws only when something changes (a
  * builder, a viewer) draws no next frame to catch: so before the app's own code runs, every WebGL canvas made here
@@ -1303,10 +1304,13 @@ export function pictureScript(site) {
   // The most a picture may be as a data: URL to go with an idea (`IDEA_LIMITS.picture` bytes, as base64).
   const limit = 23 + Math.floor(IDEA_LIMITS.picture / 3) * 4;
   const keep = `try{const get=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(type,options){if(/^(webgl2?|experimental-webgl)$/.test(type))options=Object.assign({},options,{preserveDrawingBuffer:true});return get.call(this,type,options)}}catch(_){}`;
-  // Black all over (a 3D canvas read when it held nothing) is no picture: the whole of it drawn down to 20 by 20, every
-  // point of which is near black, so anything drawn anywhere in it counts.
-  const blank = `const blank=x=>{const t=document.createElement("canvas");t.width=t.height=20;const y=t.getContext("2d");y.drawImage(x.canvas,0,0,20,20);const d=y.getImageData(0,0,20,20).data;for(let i=0;i<d.length;i+=4)if(d[i]+d[i+1]+d[i+2]>24)return false;return true};`;
-  return `<script>(()=>{${keep}const site=${JSON.stringify(site)};${blank}addEventListener("message",e=>{if(e.origin!==site||e.source!==parent||!e.data||e.data.lamp!=="picture")return;const n=e.data.n;requestAnimationFrame(()=>{let picture=null;try{const all=[...document.querySelectorAll("canvas")].filter(c=>c.width&&c.height&&c.getClientRects().length);const c=all.sort((a,b)=>b.clientWidth*b.clientHeight-a.clientWidth*a.clientHeight)[0];if(c){const k=Math.min(1,1280/c.width),o=document.createElement("canvas");o.width=Math.round(c.width*k);o.height=Math.round(c.height*k);const x=o.getContext("2d");x.drawImage(c,0,0,o.width,o.height);if(!blank(x))for(const q of [0.8,0.6,0.4]){picture=o.toDataURL("image/jpeg",q);if(picture.length<=${limit})break;picture=null}}}catch(_){}parent.postMessage({lamp:"picture",n,picture},site)})})})()</script>`;
+  // Nothing drawn (a canvas read when it held nothing) is no picture: every point of the copy see-through. Read before
+  // anything is put behind it, and by alpha alone, so a dark scene is kept.
+  const blank = `const blank=x=>{const d=x.getImageData(0,0,x.canvas.width,x.canvas.height).data;for(let i=3;i<d.length;i+=4)if(d[i])return false;return true};`;
+  // The color that shows through the canvas on the page: its own background or the first of the elements around it that
+  // has one. None (the page left as the browser draws it) is white.
+  const behind = `const behind=c=>{for(let e=c;e;e=e.parentElement){const b=getComputedStyle(e).backgroundColor;if(b&&b!=="transparent"&&!/[,/]\\s*0(\\.0*)?\\s*\\)$/.test(b))return b}return"#fff"};`;
+  return `<script>(()=>{${keep}const site=${JSON.stringify(site)};${blank}${behind}addEventListener("message",e=>{if(e.origin!==site||e.source!==parent||!e.data||e.data.lamp!=="picture")return;const n=e.data.n;requestAnimationFrame(()=>{let picture=null;try{const all=[...document.querySelectorAll("canvas")].filter(c=>c.width&&c.height&&c.getClientRects().length);const c=all.sort((a,b)=>b.clientWidth*b.clientHeight-a.clientWidth*a.clientHeight)[0];if(c){const k=Math.min(1,1280/c.width),o=document.createElement("canvas");o.width=Math.round(c.width*k);o.height=Math.round(c.height*k);const x=o.getContext("2d");x.drawImage(c,0,0,o.width,o.height);if(!blank(x)){x.globalCompositeOperation="destination-over";x.fillStyle=behind(c);x.fillRect(0,0,o.width,o.height);for(const q of [0.8,0.6,0.4]){picture=o.toDataURL("image/jpeg",q);if(picture.length<=${limit})break;picture=null}}}}catch(_){}parent.postMessage({lamp:"picture",n,picture},site)})})})()</script>`;
 }
 
 export function createPlayHandler({ env = process.env, fetcher = fetch, store, anyHost = false, direct = DIRECT_FILE, directData = DIRECT_DATA, now = () => Date.now() } = {}) {
