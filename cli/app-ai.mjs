@@ -14,7 +14,7 @@
 // (OpenRouter: `chatBody`, `readMessage`), or one prompt whose answer must fit the step's JSON shape (Claude Code, Codex:
 // `planPrompt`, `planSchema`, `readPlan`).
 
-export const MAX_TOOLS = 24, MAX_CALLS = 8, MAX_STEPS = 4, MAX_BODY = 256 * 1024, MAX_CHOICES = 4, MAX_CHOICE = 24;
+export const MAX_TOOLS = 24, MAX_CALLS = 8, MAX_STEPS = 4, MAX_BODY = 2 * 1024 * 1024, MAX_CHOICES = 4, MAX_CHOICE = 24;
 /** The longest a step may take, whatever its route, before its call is taken to have stopped answering (`ACT_STEP_SECONDS`
  *  in lamp.js, `AppAct.turnSeconds`). A turn has no time of its own unless the app gives it one. */
 export const MAX_TURN_SECONDS = 600;
@@ -66,7 +66,7 @@ function parseArg(raw, path) {
  * steps, route, seconds, final}`, each tool's `args` as [name, shape] pairs by name. Throws `Refused`.
  */
 export function readStep(text) {
-  if (Buffer.byteLength(text) > MAX_BODY) throw new Refused(413, "A step can carry at most 256 KB.");
+  if (Buffer.byteLength(text) > MAX_BODY) throw new Refused(413, "A step can carry at most 2 MB.");
   let body;
   try { body = JSON.parse(text); } catch {}
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new Refused(400, "A step needs a JSON object.");

@@ -21,7 +21,7 @@ import { answer as answerAI, engine } from "./ai.mjs";
 /** The port lamp.js on a shared page asks (`LOCAL_AI` there): one, fixed, since the page can't be told another. */
 export const LOCAL_AI_PORT = 47423;
 const PLAY_HOST = "play.lamp.dev";
-const MOST = 2_000_000, AT_ONCE = 3, ASKING_FOR = 120_000;
+const MOST = 4_000_000, AT_ONCE = 3, ASKING_FOR = 120_000;
 const ROUTES = new Set(["/ai/status", "/ai", "/ai/act", "/ai/decide", "/ai/hear", "/ai/image"]);
 
 const keptFile = () => join(process.env.LAMP_DEV_HOME || join(homedir(), ".lamp", "dev"), "shared-pages-ai.json");

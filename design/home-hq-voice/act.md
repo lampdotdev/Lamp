@@ -71,7 +71,7 @@ turn.cancel();
   - No other keys are allowed, so every route can take every shape.
 - **Reads and writes**: `reads: true` marks a read. Anything else is a write.
 - **`run(args, call)`**: `call` has `turn`, `step`, the call's `id`, and, for a write, `key` (below).
-- **What goes back to the model**: a result is at most 4 KB of JSON, cut with a note. `throw LampAI.refuse('…')`, or any
+- **What goes back to the model**: a result is at most 32 KB of JSON (an app raises it with `limits: { result }`, up to 256 KB; a turn's results share 1.2 MB in all), cut with a note. `throw LampAI.refuse('…')`, or any
   thrown error, fails the call, and the model hears why.
 - **What comes back to the app**: `result` never rejects. `done`, `failed` and `skipped` are what the page ran, never
   the model's own account. A `done` entry carries `partly` when `run` said its change only partly went through.

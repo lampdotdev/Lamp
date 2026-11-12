@@ -854,16 +854,33 @@ enum DeviceSupport {
       // given ACT_STEP_SECONDS, which only a call that has stopped answering reaches. An app that wants a quicker turn
       // asks for one (`limits: { seconds }`); steps and writes it may only lower.
       var ACT_LIMITS = { steps: 4, writes: 6 };
+      // How much of one read goes back to the model: room for a real app's state (a 184-piece model, a week's calendar)
+      // in one step, since paging through it costs steps a turn needs for its work. An app with more raises it
+      // (`limits: { result }`), up to ACT_RESULT_MAX.
+      var ACT_RESULT = 32768, ACT_RESULT_MAX = 262144;
+      // What a turn's reads give back in all, which every later step carries again: kept under what a step may carry
+      // (`MAX_BODY` in lamp's app-ai.mjs), with room for the request, the tools and the steps' own words.
+      var ACT_TURN_RESULTS = 1200000;
       var ACT_STEP_SECONDS = 600;
       var actRan = {};      // turn id -> call key -> the result a write gave, while this copy of the page is open
       function actId() { return 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
       function isList(v) { return Object.prototype.toString.call(v) === '[object Array]'; }
-      /** At most 4 KB of a result goes back to the model, cut with a note. */
-      function actValue(value) {
+      /** A text's size in UTF-8 bytes, as a step is measured where it's checked. */
+      function utf8Bytes(text) { try { return unescape(encodeURIComponent(text)).length; } catch (e) { return text.length * 3; } }
+      /** At most `max` bytes of a result go back to the model, as it's sent (UTF-8, its cut wrapper included), cut with a note. */
+      function actValue(value, max) {
         var json = jsonState(value === undefined ? null : value), text;
         try { text = JSON.stringify(json); } catch (e) { return { note: 'The result couldn\'t be read.' }; }
-        if (text && text.length > 4096) return { cut: text.slice(0, 4000), note: 'Cut short: ask for less.' };
-        return json;
+        if (!text || utf8Bytes(text) <= max) return json;
+        // The cut is JSON inside JSON, so its quotes are escaped again: shrink it until the whole wrapper fits.
+        var cut = text.slice(0, max);
+        for (var i = 0; i < 24; i++) {
+          var wrapped = { cut: cut, note: 'Cut short: ask for less.' };
+          var size = utf8Bytes(JSON.stringify(wrapped));
+          if (size <= max) return wrapped;
+          cut = cut.slice(0, Math.max(0, Math.floor(cut.length * max / size) - 16));
+        }
+        return { note: 'Cut short: ask for less.' };
       }
       /** The page's own check of a call before it runs: a tool it declared, its arguments an object with nothing
        *  undeclared and nothing required missing. Lamp has checked the shapes; this is what the page itself can hold to. */
@@ -885,6 +902,15 @@ enum DeviceSupport {
           limits[k] = Math.max(1, Math.min(asked, ACT_LIMITS[k]));
         });
         var asked = o.limits && typeof o.limits.seconds === 'number' && o.limits.seconds > 0 ? o.limits.seconds : null;
+        var resultMax = o.limits && typeof o.limits.result === 'number' && o.limits.result > 0
+          ? Math.min(Math.max(1024, Math.floor(o.limits.result)), ACT_RESULT_MAX) : ACT_RESULT;
+        // Each result takes from the turn's allowance, so later reads get less rather than the step growing past it.
+        var resultsLeft = ACT_TURN_RESULTS;
+        function sized(value) {
+          var kept = actValue(value, Math.max(1024, Math.min(resultMax, resultsLeft)));
+          try { resultsLeft = Math.max(0, resultsLeft - utf8Bytes(JSON.stringify(kept))); } catch (e) {}
+          return kept;
+        }
         var id = o.turn || actId();
         if (!actRan[id]) {
           var kept = Object.keys(actRan);
@@ -934,7 +960,7 @@ enum DeviceSupport {
             }).then(function (value) {
               if (value === NOT_RUN) return;
               out.reads.push({ name: c.name, args: c.args });
-              results[c.id] = { id: c.id, ok: true, value: actValue(value) };
+              results[c.id] = { id: c.id, ok: true, value: sized(value) };
             }, function (e) { results[c.id] = { id: c.id, ok: false, error: refused(e) }; });
           })).then(function () {
             var stopped = null;
@@ -971,7 +997,7 @@ enum DeviceSupport {
                 var running;
                 try { running = Promise.resolve(tool.run(c.args, call)); } catch (e) { running = Promise.reject(e); }
                 return running.then(function (value) {
-                  var kept = actValue(value);
+                  var kept = sized(value);
                   ran[key] = kept;
                   var entry = { name: c.name, args: c.args, result: value };
                   if (value && typeof value === 'object' && value.partly) entry.partly = String(value.partly);
