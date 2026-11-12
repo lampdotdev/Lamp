@@ -15,7 +15,7 @@ with "Lamp" beside it (`LampLockup.astro`), in the menu bar and wherever the sit
 runs along a part of the homepage as it's added.
 
 The homepage is itself a demo of changing something by asking. It opens as only a headline, the lines under it and
-Use with ChatGPT, beside Lamp's chat, and each request in the chat adds a part of the page while you watch: what Lamp is, the starters,
+Use with ChatGPT and Use with Claude, beside Lamp's chat, and each request in the chat adds a part of the page while you watch: what Lamp is, the starters,
 what it runs on, how to get it (the download, the newest version, and building from source), answers to common
 questions and what's new; "I'm bored" adds Lamplighter (`src/lib/light-game.ts`), a one-button rooftop runner made as Lamp's
 2D game skills make one (Phaser 3.90, loaded only when it's asked for, art and sound made in code, keys only while its
@@ -45,17 +45,23 @@ those a kind of app or a shipped device integration really reaches. The newest v
 changelog page (`/changelog`), so release notes are written in one place; a build without them leaves those out and
 points to GitHub's releases.
 
-Use with ChatGPT (`ChatGPTButton.astro`) is there from the start, so nobody has to find the download in the demo first.
-The button is OpenAI's documented `codex://new?prompt=` link: one click opens a new chat in ChatGPT's Mac app with a
-prompt to set up lamp's command line (`cli/README.md`) in its message box, never sent. The link doesn't choose the
-chat's mode, so the prompt has a chat that can't run commands offer ChatGPT Work by itself, working on the Mac
-(Work in the cloud can't reach it), and says to switch to Codex only when Work can't. The prompt asks before
-installing anything and waits for a yes. A page can't tell whether the app is
-there (Safari calls the address invalid when it isn't), so one small line under the button gets the app or copies
-the prompt, for any agent that runs commands on the Mac; where copying is refused, the prompt appears selected to
-copy by hand. The prompt is written once, in `src/lib/chatgpt.ts`, for the link and the copy alike, from install steps
-shared with a shared game's Make it myself (`src/lib/lamp-cli-words.ts`); it runs
-`lamp guide` as well as `lamp setup`, since setup writes its skill only where an agent's folder already exists.
+Use with ChatGPT and Use with Claude (`SetupButtons.astro`) are there from the start, so nobody has to find the download in
+the demo first: ChatGPT as the ink button, Claude as the outline beside it, wrapping where there's no room. Each carries
+its maker's mark, the file exactly as published (`public/brands/`): OpenAI's Blossom from its brand page's logos, white
+on the ink and black where "Make it dark" turns the ink light, drawn with the clear space that's part of the file; and
+the Claude spark from Anthropic's press kit, in its own color. Their guidelines allow no recoloring, cropping or added
+effects, and the marks stay smaller than Lamp's own. Each button is a link, as Make it myself's Open is, that opens a
+new chat in its Mac app with a prompt to set up lamp's command line (`cli/README.md`) in the message box, never sent;
+neither offers the prompt to copy. ChatGPT's is OpenAI's documented `codex://new?prompt=` link; it doesn't choose the
+chat's mode, so its prompt has a chat that can't run commands offer ChatGPT Work by itself, working on the Mac (Work in
+the cloud can't reach it), and says to switch to Codex only when Work can't. Claude's is the `claude://code/new?q=` link
+Make it myself uses, sent without a folder parameter, so its prompt says to work locally and, when the session can't
+run commands here, to ask for a local Claude Code session and a folder and stop until that's ready. Each prompt asks
+before installing anything and waits for a yes. A page can't tell whether either app is there (Safari calls the
+address invalid when it isn't), so one small line under the buttons gets either app. The two prompts are written in
+`src/lib/setup-prompts.ts`, the same steps but for the one on where commands run, from install steps shared with a
+shared game's Make it myself (`src/lib/lamp-cli-words.ts`); they run `lamp guide` as well as `lamp setup`, since setup
+writes its skill only where an agent's folder already exists.
 
 A link from a Remix panel or a repository's README (`?ask=`, with `starter=` or `repo=` and `commit=` when it names
 what it's a copy of, and `from=` where it was pressed) opens the homepage's remix dialog (`RemixDialog.astro`,
