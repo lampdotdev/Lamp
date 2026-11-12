@@ -188,7 +188,8 @@ Only when the person asks: a link is public, and anyone who has it can play the 
   Its ideas and taking it down are on Lamp's Share Link card, not `ideas` and `unshare` here.
 - **Any other page:** `{{lamp}} share --words "What it is, in a sentence or a few"` puts it on lamp.dev and answers its
   link. `--line` is a line under its name, `--asks "Found a bug?|What's missing?"` what the box under the page asks
-  people, and `--by "Their Name"` who it's by: only a name the person gave you to show. A page that's logging errors
+  people, and `--by "Their Name"` who it's by, when they want another name than the one it goes out with (the name they last
+  gave, or Lamp's, or their name on this computer, which the share says). A page that's logging errors
   isn't shared until they're put right. Again, after changes, it sends the page as it is now to the same link, with the
   same words unless you give new ones.
 - `{{lamp}} ideas` lists what people playing it have sent, each with the address of a picture of the app as they saw

@@ -244,6 +244,26 @@ function parse(args, valued) {
   return { options, rest };
 }
 
+/**
+ * Who a link says it's by when nothing says, as Lamp's Share Link card fills it (`WishLink.sharer`): the name last given
+ * with `--by`, else the one Lamp's app last shared with, else this computer's account name. The share says it, and
+ * `--by` changes it.
+ */
+function sharer() {
+  try { const kept = readFileSync(sharerFile(), "utf8").trim(); if (kept) return kept; } catch {}
+  for (const bundle of ["dev.lamp.host", "dev.lamp.host.nightly"]) {
+    const said = spawnSync("/usr/bin/defaults", ["read", bundle, "wishLinkSharer"], { encoding: "utf8" });
+    if (said.status === 0 && said.stdout.trim()) return said.stdout.trim();
+  }
+  const name = spawnSync("/usr/bin/id", ["-F"], { encoding: "utf8" });
+  return name.status === 0 ? [...name.stdout.trim()].slice(0, LIMITS.by).join("") : "";
+}
+const sharerFile = () => join(process.env.LAMP_DEV_HOME || join(homedir(), ".lamp", "dev"), "sharer");
+function keepSharer(name) {
+  mkdirSync(dirname(sharerFile()), { recursive: true });
+  writeFileSync(sharerFile(), name);
+}
+
 /** The server for the folder: the one running, or one started for this command that ends when nothing uses it. */
 async function serverFor(folder) {
   const live = await running(folder);
@@ -912,7 +932,7 @@ async function main() {
     // The link's words: what's given now, else what it went out with before. Its name, where nothing says, is the page's.
     const words = {
       name: String(options.name ?? before?.name ?? nameOf(layout)).trim(), words: String(options.words ?? before?.words ?? "").trim(),
-      line: String(options.line ?? before?.line ?? "").trim(), by: String(options.by ?? before?.by ?? "").trim(),
+      line: String(options.line ?? before?.line ?? "").trim(), by: String(options.by ?? before?.by ?? sharer()).trim(),
       asks: options.asks !== undefined ? String(options.asks).split("|").map((ask) => ask.trim()).filter(Boolean) : before?.asks ?? [],
     };
     const count = (text) => [...new Intl.Segmenter("en", { granularity: "grapheme" }).segment(text)].length;
@@ -926,6 +946,8 @@ async function main() {
     if (count(words.words) > LIMITS.words) throw new Problem(`a link's words are at most ${LIMITS.words} characters`);
     if (count(words.line) > LIMITS.line) throw new Problem(`a link's line is at most ${LIMITS.line} characters`);
     if (count(words.by) > LIMITS.by) throw new Problem(`who it's by is at most ${LIMITS.by} characters`);
+    // A name given is the one every later link says it's by, as Lamp's Share Link card keeps it.
+    if (options.by !== undefined) keepSharer(words.by);
     if (words.asks.length > LIMITS.asks || words.asks.some((ask) => count(ask) > LIMITS.ask)) throw new Problem(`a link asks at most ${LIMITS.asks} things, each of at most ${LIMITS.ask} characters`);
     // The page as it runs now: its picture for the link's card, the shape it plays in, and whether it's working.
     let card = { picture: null, stage: null, errors: [] };
@@ -944,6 +966,7 @@ async function main() {
     console.log(`${before ? "Sent again to its link" : "Shared"}: ${sent.url}`);
     console.log(`"${words.name}"${words.by ? ` by ${words.by}` : ""}: ${sent.files} files, ${(sent.bytes / 1_000_000).toFixed(1)} MB packed, ${shape === "fill" ? "filling the window" : "on its own stage"}${sent.picture ? ", with a picture of it" : ", with no picture"}${sent.file ? ", and its app file, for anyone to open in Lamp" : ""}${sent.github ? `, with a link to its code on GitHub (${sent.github})` : ""}.`);
     console.log("Anyone with the link can play it and send an idea: lamp ideas shows them. lamp unshare takes it down.");
+    if (words.by && options.by === undefined) console.log(`It says it's by ${words.by}; --by "Another Name" changes that, for this link and the next.`);
     return;
   }
 
