@@ -113,38 +113,72 @@ import { DOWNLOAD_URL } from "../../lib/download";
       <svg aria-hidden="true" viewBox="0 0 16 16" class="size-3.5 fill-none stroke-current stroke-2 [stroke-linecap:round] [stroke-linejoin:round]"><path d="M4 6l4 4 4-4" /></svg>
     </button>
 
-    <!-- An idea, to send to the person who made it once it's confirmed here: its words, which can still be changed, and an
-         address to hear back at, if they want. Once sent, it says so. Under it either way, making one's own with Lamp:
-         opening it (on a Mac) or getting it. -->
+    <!-- An idea, and two ways on with it, as tabs over the same words: send it to the person who made it (its words,
+         which can still be changed, a picture of the app, a name and an address to hear back at), or make it oneself,
+         in one's own copy on one's own computer, with ChatGPT or Claude Code. The tabs are there only when the game can
+         be made that way (it plays here and came with its file); otherwise it's sending alone, with Lamp under it. -->
     <dialog data-remix-dialog aria-labelledby="remix-title" class="remix-popup">
       <button type="button" data-remix-close aria-label="Close" class="remix-popup-close">
         <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" /></svg>
       </button>
       <h2 id="remix-title" data-remix-title class="remix-popup-title"></h2>
       <p data-remix-text class="remix-popup-text"></p>
-      <form data-confirm class="remix-popup-confirm">
-        <label for="idea-text" class="sr-only">Your idea</label>
-        <textarea id="idea-text" data-remix-to class="remix-popup-to remix-popup-edit" rows="3" maxlength="1000" required></textarea>
-        <!-- The app as it was when the box was opened, sent with the idea unless it's left out. -->
-        <div data-shot hidden class="remix-popup-shot">
-          <img data-shot-picture alt="The app as it is now" />
-          <label><input type="checkbox" data-shot-keep checked /> Include this picture</label>
-        </div>
-        <label for="idea-name" class="remix-popup-label">Your name <span class="remix-popup-optional">(optional)</span></label>
-        <input id="idea-name" data-idea-name class="remix-popup-input" type="text" autocomplete="name" maxlength="60" placeholder="Your name" />
-        <label for="notify-email" class="remix-popup-label">Email me about it <span class="remix-popup-optional">(optional)</span></label>
-        <input id="notify-email" data-notify-email class="remix-popup-input" type="email" autocomplete="email" placeholder="Your email" />
-        <div class="remix-popup-rows"><button type="submit" data-confirm-send class="shared-button">Send</button></div>
-      </form>
-      <p data-sent-text hidden class="remix-popup-to"></p>
-      <p data-notify-note class="remix-popup-note empty:hidden" role="status" aria-live="polite"></p>
-      <p data-own-lead class="remix-popup-lead">Or have Lamp make it for you now. It's free on your Mac and works with your ChatGPT or Claude plan.</p>
-      <div class="remix-popup-rows">
-        <!-- One way on: on a Mac it opens Lamp with the idea, or gets Lamp when that doesn't open; elsewhere it gets Lamp. -->
-        <a href={DOWNLOAD_URL} data-download data-download-place="shared-remix" class="shared-button shared-button-outline"><span data-download-label>Get Lamp</span></a>
+      <label for="idea-text" class="sr-only">Your idea</label>
+      <textarea id="idea-text" data-remix-to form="idea-form" class="remix-popup-to remix-popup-edit" rows="3" maxlength="1000" required></textarea>
+      <div data-tabs hidden role="tablist" aria-label="What to do with it" class="remix-tabs">
+        <button type="button" role="tab" data-tab="send" aria-selected="true" aria-controls="idea-send"></button>
+        <button type="button" role="tab" data-tab="make" aria-selected="false" aria-controls="idea-make">Make it myself</button>
       </div>
-      <!-- Empty until Download is pressed, when it says how the wish waits for Lamp. -->
-      <p data-next class="remix-popup-note empty:hidden" role="status" aria-live="polite"></p>
+      <div id="idea-send" data-panel="send" role="tabpanel">
+        <form id="idea-form" data-confirm class="remix-popup-confirm">
+          <!-- The app as it was when the box was opened, sent with the idea unless it's left out. -->
+          <div data-shot hidden class="remix-popup-shot">
+            <img data-shot-picture alt="The app as it is now" />
+            <label><input type="checkbox" data-shot-keep checked /> Include this picture</label>
+          </div>
+          <label for="idea-name" class="remix-popup-label">Your name <span class="remix-popup-optional">(optional)</span></label>
+          <input id="idea-name" data-idea-name class="remix-popup-input" type="text" autocomplete="name" maxlength="60" placeholder="Your name" />
+          <label for="notify-email" class="remix-popup-label">Email me about it <span class="remix-popup-optional">(optional)</span></label>
+          <input id="notify-email" data-notify-email class="remix-popup-input" type="email" autocomplete="email" placeholder="Your email" />
+          <div class="remix-popup-rows"><button type="submit" data-confirm-send class="shared-button">Send</button></div>
+        </form>
+        <p data-sent-text hidden class="remix-popup-to"></p>
+        <p data-notify-note class="remix-popup-note empty:hidden" role="status" aria-live="polite"></p>
+        <!-- Lamp, for a game that can't be made the other way: opening it (on a Mac) or getting it. -->
+        <div data-lamp>
+          <p data-own-lead class="remix-popup-lead">Or have Lamp make it for you now. It's free on your Mac and works with your ChatGPT or Claude plan.</p>
+          <div class="remix-popup-rows">
+            <!-- One way on: on a Mac it opens Lamp with the idea, or gets Lamp when that doesn't open; elsewhere it gets Lamp. -->
+            <a href={DOWNLOAD_URL} data-download data-download-place="shared-remix" class="shared-button shared-button-outline"><span data-download-label>Get Lamp</span></a>
+          </div>
+          <!-- Empty until Download is pressed, when it says how the wish waits for Lamp. -->
+          <p data-next class="remix-popup-note empty:hidden" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+      <!-- Making it oneself: each app opened with one prompt (lib/change-words.ts). Out of autocapture: its links carry
+           the idea. -->
+      <div id="idea-make" data-panel="make" role="tabpanel" hidden class="ph-no-capture">
+        <div class="remix-options">
+          <div class="remix-option" data-option="chatgpt">
+            <div><b>ChatGPT</b><small>The desktop app makes it on your computer</small></div>
+            <a href="#" data-open="chatgpt" class="shared-button">Open</a>
+          </div>
+          <div class="remix-option" data-option="claude">
+            <div><b>Claude Code</b><small data-claude-where>Opens in your games folder</small></div>
+            <a href="#" data-open="claude" class="shared-button">Open</a>
+            <!-- Claude Code opens in this folder, asked for once and kept in this browser, so the person trusts it and
+                 never their home folder (lib/change-words.ts `gamesFolder`). -->
+            <form data-folder-form hidden class="remix-folder">
+              <label for="games-folder" class="remix-popup-label">Your games folder</label>
+              <div class="remix-folder-row">
+                <input id="games-folder" data-folder-input class="remix-popup-input" autocomplete="off" spellcheck="false" placeholder="/Users/you/Games" />
+                <button type="submit" class="shared-button shared-button-outline">Save</button>
+              </div>
+              <p data-folder-problem class="remix-folder-problem empty:hidden" role="alert"></p>
+            </form>
+          </div>
+        </div>
+      </div>
     </dialog>
   </div>
 </Base>
@@ -325,11 +359,40 @@ import { DOWNLOAD_URL } from "../../lib/download";
     font-size: 0.875rem; color: var(--color-muted-ink);
   }
   .remix-popup-lead + .remix-popup-rows { margin-top: 0.75rem; }
+  /* Send it or make it oneself: two tabs over the idea, the one shown raised. */
+  .remix-tabs {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 3px; margin-top: 1rem; padding: 3px; border-radius: 0.4375rem;
+    border: 1px solid color-mix(in srgb, var(--color-tape) 15%, transparent); background: color-mix(in srgb, var(--color-tape) 4%, transparent);
+  }
+  .remix-tabs[hidden], [data-panel][hidden], [data-lamp][hidden] { display: none; }
+  .remix-tabs button {
+    padding: 0.4375rem 0; border-radius: 0.3125rem; font-size: 0.875rem; font-weight: 600; color: var(--color-muted-ink); cursor: pointer;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .remix-tabs button[aria-selected="true"] { background: var(--color-paper); color: var(--color-tape); box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); }
+  .remix-tabs button:focus-visible { outline: 2px solid var(--color-muted-ink); outline-offset: 1px; }
+  /* Each app a row: its name and what it does, and Open. The one last chosen is raised, its Open in ink. */
+  .remix-options { display: grid; gap: 0.5rem; margin-top: 0.875rem; }
+  .remix-option {
+    display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0.25rem 0.75rem; padding: 0.625rem 0.75rem;
+    border: 1px solid color-mix(in srgb, var(--color-tape) 15%, transparent); border-radius: 0.375rem; font-size: 0.875rem;
+  }
+  .remix-option small { display: block; margin-top: 0.125rem; font-size: 0.8125rem; color: var(--color-muted-ink); overflow-wrap: anywhere; }
+  .remix-option .shared-button { background: var(--color-paper); color: var(--color-tape); border: 1px solid color-mix(in srgb, var(--color-tape) 15%, transparent); }
+  .remix-option.chosen { border-color: var(--color-tape); box-shadow: inset 0 0 0 1px var(--color-tape); }
+  .remix-option.chosen .shared-button { background: var(--color-tape); color: var(--color-paper); border-color: var(--color-tape); }
+  .remix-folder { grid-column: 1 / -1; margin-top: 0.25rem; }
+  .remix-folder[hidden] { display: none; }
+  .remix-folder .remix-popup-label { margin-top: 0.25rem; }
+  .remix-folder-row { display: flex; gap: 0.5rem; margin-top: 0.375rem; }
+  .remix-folder-row .remix-popup-input { margin-top: 0; font-family: var(--font-mono); font-size: 0.75rem; }
+  .remix-folder-problem { margin: 0.375rem 0 0; font-size: 0.8125rem; color: #a3261b; }
 </style>
 
 <script>
   import { askFrom, copyWish, sharedWishLink, withAsk, wishLink } from "../../../lib/wish.js";
   import { track } from "../../lib/analytics";
+  import { appLink, changeWords, gamesFolder, type ChangeApp } from "../../lib/change-words";
 
   type Release = { date: string; lines: string[] };
   type Shared = { id: string; name: string; by?: string; github?: string; ideas?: string[]; asks?: string[]; releases?: Release[]; about: string; wish: string; picture: string; icon: string; file?: string; shared?: string; play?: string; shape?: number | "fill" };
@@ -578,6 +641,80 @@ import { DOWNLOAD_URL } from "../../lib/download";
     const shotPicture = $<HTMLImageElement>("[data-shot-picture]");
     const shotKeep = $<HTMLInputElement>("[data-shot-keep]");
     let shot: string | null = null;
+
+    // Send it, or make it oneself: the tabs, there when the game plays here and came with its file, which is what the
+    // player's own app unpacks. The title and its line follow the tab shown; the idea's words are the same under both.
+    const canMake = Boolean(wish.play && wish.file);
+    const tabs = $<HTMLElement>("[data-tabs]");
+    const sendTab = $<HTMLButtonElement>('[data-tab="send"]');
+    const makeTab = $<HTMLButtonElement>('[data-tab="make"]');
+    tabs.hidden = !canMake;
+    $<HTMLElement>("[data-lamp]").hidden = canMake;
+    sendTab.textContent = short === "Send" ? "Send it" : short;
+    let sentIdea = false;
+    const showTab = (which: "send" | "make") => {
+      sendTab.setAttribute("aria-selected", String(which === "send"));
+      makeTab.setAttribute("aria-selected", String(which === "make"));
+      $<HTMLElement>('[data-panel="send"]').hidden = which !== "send";
+      $<HTMLElement>('[data-panel="make"]').hidden = which !== "make";
+      if (which === "make") {
+        title.textContent = "Make it yourself";
+        text.textContent = `Your app makes it in your own copy, on your computer. ${maker ? `${maker}'s` : "The one shared here"} stays as it is.`;
+        links();
+      } else {
+        title.textContent = sentIdea ? (maker ? `Sent to ${maker}` : "Sent") : maker ? `Send to ${maker}?` : "Send your idea?";
+        text.textContent = `${maker || "Whoever made it"} sees every idea, and can add yours to ${wish.name}.`;
+      }
+    };
+    sendTab.addEventListener("click", () => showTab("send"));
+    makeTab.addEventListener("click", () => showTab("make"));
+
+    // Making it oneself: each app's Open is a link with the one prompt (lib/change-words.ts), which has it install
+    // Lamp's command line if it's not there (asking first), unpack the game's file and make the change on the player's
+    // computer. Claude Code opens in the games folder the player picks, asked for once and kept in this browser.
+    const FOLDER = "lamp.change.folder";
+    let folder = "";
+    try { const kept = gamesFolder(localStorage.getItem(FOLDER) ?? ""); if ("folder" in kept) folder = kept.folder; } catch {}
+    const links = () => {
+      if (!canMake) return;
+      for (const link of document.querySelectorAll<HTMLAnchorElement>("[data-open]")) {
+        const app = link.dataset.open as ChangeApp;
+        link.href = app === "claude" && !folder ? "#" : appLink(app, changeWords({
+          name: wish.name, page: `${location.origin}/w/${wish.id}`, file: wish.file!, app, idea: ideaText.value,
+        }), folder);
+      }
+      $<HTMLElement>("[data-claude-where]").textContent = folder ? `Opens in ${folder}` : "Opens in your games folder";
+    };
+    ideaText.addEventListener("input", links);
+    const choose = (app: ChangeApp) => {
+      for (const row of document.querySelectorAll<HTMLElement>("[data-option]")) row.classList.toggle("chosen", row.dataset.option === app);
+    };
+    choose("chatgpt");
+    for (const link of document.querySelectorAll<HTMLAnchorElement>("[data-open]")) {
+      link.addEventListener("click", (event) => {
+        const app = link.dataset.open as ChangeApp;
+        choose(app);
+        if (app === "claude" && !folder) {
+          event.preventDefault();
+          $<HTMLElement>("[data-folder-form]").hidden = false;
+          $<HTMLInputElement>("[data-folder-input]").focus();
+          return;
+        }
+        // Which app, never what the idea says.
+        track("idea_change_yourself", { idea: wish.name, place: "shared", app });
+      });
+    }
+    $<HTMLFormElement>("[data-folder-form]").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const checked = gamesFolder($<HTMLInputElement>("[data-folder-input]").value);
+      $<HTMLElement>("[data-folder-problem]").textContent = "problem" in checked ? checked.problem : "";
+      if ("problem" in checked) return;
+      folder = checked.folder;
+      try { localStorage.setItem(FOLDER, folder); } catch {}
+      $<HTMLElement>("[data-folder-form]").hidden = true;
+      links();
+    });
+
     // The bar's send opens the dialog with the idea, to confirm before it goes; nothing is sent until then.
     $<HTMLFormElement>("[data-prompt]").addEventListener("submit", (event) => {
       event.preventDefault();
@@ -599,13 +736,13 @@ import { DOWNLOAD_URL } from "../../lib/download";
       draft += 1;
       fromBar = ask;
       confirmSend.disabled = false;
-      title.textContent = maker ? `Send to ${maker}?` : "Send your idea?";
-      text.textContent = `${maker || "Whoever made it"} sees every idea, and can add yours to ${wish.name}.`;
+      sentIdea = false;
       ideaText.value = ask;
       confirm.hidden = false;
       sentText.hidden = true;
       $<HTMLElement>("[data-own-lead]").textContent = "Or have Lamp make it for you now. It's free on your Mac and works with your ChatGPT or Claude plan.";
       notifyNote.textContent = "";
+      showTab("send");
       pointOpen();
       dialog.showModal();
       confirmSend.focus();
@@ -705,6 +842,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
       if (mine !== draft) return;
       confirmSend.disabled = false;
       if (!sent) { notifyNote.textContent = "That didn't go. Try again in a moment."; return; }
+      sentIdea = true;
       title.textContent = maker ? `Sent to ${maker}` : "Sent";
       sentText.textContent = idea;
       sentText.hidden = false;
