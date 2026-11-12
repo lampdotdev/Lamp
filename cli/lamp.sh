@@ -18,6 +18,9 @@ export LAMP_LAUNCHER=1 LAMP_LAUNCHER_PATH="$here/lamp" LAMP_BUNDLED_VERSION="$bu
 use="${LAMP_DEV_HOME:+${LAMP_DEV_HOME:h}}"; use="${use:-$HOME/.lamp}/cli/use"
 if [[ -z "${LAMP_NO_UPDATE_CHECK:-}" && -n "$bundled" && -r "$use" ]]; then
   lines=("${(@f)$(<"$use")}")
-  [[ "${lines[1]}" == "$bundled" && -f "${lines[2]}/cli/lamp.mjs" ]] && script="${lines[2]}/cli/lamp.mjs"
+  if [[ "${lines[1]}" == "$bundled" && -f "${lines[2]}/cli/lamp.mjs" ]]; then
+    script="${lines[2]}/cli/lamp.mjs"
+    touch "${lines[2]:h}" 2>/dev/null   # in use: kept while it is (update.mjs)
+  fi
 fi
 exec "$here/../pi/pi" --no-install --no-env-file "$script" "$@"

@@ -138,9 +138,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === "-
         rmSync(folder, { recursive: true, force: true });
         renameSync(part, folder);
       }
+      // The one used until now is retired as of now: its week starts here, not from when it was fetched.
+      let before = null;
+      try { before = readFileSync(join(fetched(), "use"), "utf8").split("\n")[1] || null; } catch {}
+      if (before && dirname(before) !== folder) { try { const now = new Date(); utimesSync(dirname(before), now, now); } catch {} }
       writeFileSync(join(fetched(), "use"), `${app}\n${join(folder, "package")}\n`);
-      // Older ones go once they've been out of use a week: one a `lamp dev` started before is still serving from may run
-      // for days, and reads its files (libraries, controllers) as it goes.
+      // Older ones go once they've been out of use a week (the launcher touches the one it runs, and the one retired above
+      // was touched as it was): a `lamp dev` started from one may run for days, reading its files (libraries,
+      // controllers) as it goes.
       for (const other of readdirSync(fetched())) {
         if (other === "use" || other === String(version) || other.endsWith(".part")) continue;
         try { if (statSync(join(fetched(), other)).mtimeMs < Date.now() - 7 * DAY) rmSync(join(fetched(), other), { recursive: true, force: true }); } catch {}
