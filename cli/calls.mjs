@@ -25,7 +25,7 @@ import { Away, OffNetwork, Refused, Rejected, Runner, StillWorking, answersOn, b
 import { adbCommand, connectTo, deviceListing, deviceProperties, displaySizeOf, dumpIn, installApk, installTools, launchApp, makeEmulator, pairWith, processIn, processOf,
   rowsOf, saveState, screenItems, screenshotOf, tellApp, toolsThere, useLamps } from "./android.mjs";
 import { accountFor, keepAccount } from "./share.mjs";
-import { Unreachable, accountName, askAccount, ideasOf, latestOf, makerOf, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile } from "./link.mjs";
+import { Unreachable, accountName, askAccount, ideasOf, latestOf, pageUp, makerOf, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile } from "./link.mjs";
 import { defaultRoute, homeNetwork, neighbours, samsungAt, subnetOn, tvsIn } from "./network.mjs";
 import { PUBLISHER, identityName, keptSigner, namesOf, packageOf, versionAfter } from "./msix.mjs";
 import { tile } from "./png.mjs";
@@ -216,8 +216,10 @@ export const CALLS = {
 
   /** The link's file (or with `page`, its playable page), from a file of Lamp's at `file`, sent in parts. */
   async linkUpload(given, how = {}) {
-    return { version: await sendFile({ site: siteOf(given), link: linkOf(given), bytes: readFileSync(text(given, "file")), page: given.page === true,
-      said: (line) => how.event?.({ said: line }) }) };
+    const said = (line) => how.event?.({ said: line });
+    const version = await sendFile({ site: siteOf(given), link: linkOf(given), bytes: readFileSync(text(given, "file")), page: given.page === true, said });
+    if (given.page === true) await pageUp({ site: siteOf(given), id: linkOf(given).id, version, said });
+    return { version };
   },
 
   /** Takes the link's file away (with `page`, only its page). */

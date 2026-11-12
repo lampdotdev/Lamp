@@ -112,7 +112,21 @@ export async function latestOf({ site = siteOrigin(), id, user, app }) {
   let file = null;
   try { const url = new URL(said.file); if (url.protocol === "https:" || (url.protocol === "data:" && new URL(site).protocol === "http:")) file = url.href; } catch {}
   const by = typeof said.by === "string" ? said.by.trim().slice(0, LIMITS.by) : "";
-  return { id: typeof said.id === "string" ? said.id : id ?? null, name: typeof said.name === "string" ? said.name : null, by: by || null, version: said.version, file };
+  return { id: typeof said.id === "string" ? said.id : id ?? null, name: typeof said.name === "string" ? said.name : null, by: by || null, version: said.version, file,
+    page: Number.isInteger(said.page) ? said.page : null };
+}
+
+/**
+ * The site stores a page's files after it answers its last part, and the link shows the page before until they're in:
+ * waits until it shows `version` (a minute at most; a site from before that doesn't say is taken at its word).
+ */
+export async function pageUp({ site = siteOrigin(), id, version, said = () => {} }) {
+  for (let waited = 0; waited < 60; waited += 2) {
+    const now = await latestOf({ site, id });
+    if (!Number.isInteger(now?.page) || now.page >= version) return;
+    if (waited === 0) said("Waiting for lamp.dev to put the page up…");
+    await sleep(2000);
+  }
 }
 
 const fileAddress = (site, id, more = "") => `${site}/api/wish-file?id=${encodeURIComponent(id)}${more}`;

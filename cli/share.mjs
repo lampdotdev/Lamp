@@ -14,7 +14,7 @@ import { deflateRawSync } from "node:zlib";
 import { NOTES_FILE, Problem, stateOf } from "./state.mjs";
 import { ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS, LIBRARIES } from "./dev.mjs";
 import { LIMITS, FILE_LIMITS, PAGE_LIMITS } from "../site/lib/shared-wishes.js";
-import { ideasOf, makerOf, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile, siteOrigin } from "./link.mjs";
+import { ideasOf, makerOf, pageUp, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile, siteOrigin } from "./link.mjs";
 import { exportApp } from "./lampapp.mjs";
 
 export { siteOrigin };
@@ -217,6 +217,7 @@ export async function share({ layout, words, picture = null, shape = "fill", sit
   const version = await sendFile({ site, link, bytes: zip, page: true, said });
   link = { ...link, version, shared: new Date().toISOString() };
   writeLink(layout.folder, link);
+  await pageUp({ site, id: link.id, version, said });
   return { url: link.url, version, files: files.length, bytes: zip.length, picture: !!picture, file: !!app, github: repo || null };
 }
 

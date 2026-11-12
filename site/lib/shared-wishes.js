@@ -190,6 +190,8 @@ export const FOLLOW_FORMAT = 1;
 export const latest = (record) => ({
   format: FOLLOW_FORMAT, id: record.id, name: record.name, by: record.by ?? "",
   version: record.file ? (record.file.version ?? 1) : 0, file: record.file?.url ?? null,
+  // The version of its page that plays now, which lamp waits on after sending one (it's stored after the answer).
+  page: record.page?.version ?? null,
 });
 
 /**
