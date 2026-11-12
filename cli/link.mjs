@@ -118,6 +118,19 @@ export async function latestOf({ site = siteOrigin(), id, user, app }) {
 }
 
 /**
+ * The copies people shared from a link (each one's `from` names it), newest first: each its address, name, who made it
+ * and when it last changed, as the link's page lists them. Public, so asked with nothing of the person's.
+ */
+export async function copiesOf({ site = siteOrigin(), id }) {
+  const { said } = await call("GET", `${site}/api/wishes?id=${encodeURIComponent(id)}&copies=1`, { seconds: 30 });
+  if (!Array.isArray(said.copies)) throw new Problem("the site's answer couldn't be read");
+  return said.copies.map((copy) => ({
+    url: onSite(site, copy?.url), name: typeof copy?.name === "string" ? copy.name.slice(0, LIMITS.name) : "",
+    by: typeof copy?.by === "string" ? copy.by.trim().slice(0, LIMITS.by) : "", updated: typeof copy?.updated === "string" ? copy.updated : null,
+  })).filter((copy) => copy.url);
+}
+
+/**
  * The site stores a page's files after it answers its last part, and the link shows the page before until they're in:
  * waits until it shows `version` (a minute at most; a site from before that doesn't say is taken at its word).
  */
