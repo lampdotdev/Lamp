@@ -46,7 +46,7 @@ const GAME_SCRIPT = (() => { try { return readFileSync(join(RESOURCES, "GameKit"
 // Lamp's building blocks for a page (saved data, the app's files, AI through Lamp's app): lamp.js, which Lamp's app
 // writes at each build from its own code. A page whose folder has none is given it as that code writes it, when it has
 // been written out for the command line (scripts/cli-files.sh, cli/lamps/lamp.js), and else a stand-in, so the page loads.
-const LAMP_JS_STAND_IN = "// lamp's stand-in for lamp.js: Lamp's building blocks for a page aren't written out for the command line yet (scripts/cli-files.sh).\n";
+export const LAMP_JS_STAND_IN = "// lamp's stand-in for lamp.js: Lamp's building blocks for a page aren't written out for the command line yet (scripts/cli-files.sh).\n";
 export function lampJS(game = false) {
   // A game's is its own (`GameKit.lampJS`): without a TV's remote, which would take the keys a game reads itself.
   for (const name of game ? ["lamp-for-games.js", "lamp.js"] : ["lamp.js"]) {

@@ -27,7 +27,7 @@ import { MAX_ARCHIVE, exportApp, unpack } from "./lampapp.mjs";
 import { latestOf } from "./link.mjs";
 import { updateNotice } from "./update.mjs";
 import { editionName, giveTo, givenTo, keepInLamp, keepPictures, lampOwning, lampsKeptLink, reachLamp, takeBack } from "./outside.mjs";
-import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS } from "./dev.mjs";
+import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, LAMP_JS_STAND_IN, lampJS } from "./dev.mjs";
 import { findBrowser, noBrowser } from "./browser.mjs";
 import { allSkills } from "./skills.mjs";
 import { engine } from "./ai.mjs";
@@ -189,7 +189,8 @@ const quoted = (path) => (/\s/.test(path) ? JSON.stringify(path) : path);
  * Lamp's own files beside a page, which its app writes at every build and a shared file never carries: for a game the
  * runtime, the controllers' list and the device it's on; for any page lamp.js, Lamp's building blocks (a stand-in where
  * Lamp's own isn't beside lamp, never over one); and Lamp's libraries its import map names from beside it. Only those:
- * the page and its code are the project's. `update` writes the game's again over what's there.
+ * the page and its code are the project's. `update` writes again those of them the folder has (lamp.js too), and adds
+ * the game's only to a game: a page that never had them gets none.
  */
 function lampsFilesBeside(root, { game, update = false }) {
   const runtime = join(RESOURCES, "GameKit", "web");
@@ -207,10 +208,13 @@ function lampsFilesBeside(root, { game, update = false }) {
       wrote.push(name);
     }
   }
-  if (!existsSync(join(root, "lamp.js"))) {
-    writeFileSync(join(root, "lamp.js"), lampJS(game));
+  // Updating, only over Lamp's own: a copy of lamp with only the stand-in (a checkout whose generated files aren't
+  // written) never replaces a page's working lamp.js with it.
+  const js = lampJS(game);
+  if (!existsSync(join(root, "lamp.js")) || (update && js !== LAMP_JS_STAND_IN)) {
+    writeFileSync(join(root, "lamp.js"), js);
     wrote.push("lamp.js");
-  }
+  } else if (update) kept.push("lamp.js");
   wrote.push(...addLibraries(root));
   return { wrote, kept };
 }
@@ -743,10 +747,12 @@ async function main() {
   if (command === "init") {
     const { options, rest } = parse(args, []);
     const layout = layoutOf(rest[0] ?? ".");
-    const { wrote, kept } = lampsFilesBeside(layout.root, { game: true, update: !!options.update });
+    // Updating, a page is a game only if it has the runtime already; setting one up, it becomes one.
+    const game = options.update ? existsSync(join(layout.root, "lamp-game.js")) : true;
+    const { wrote, kept } = lampsFilesBeside(layout.root, { game, update: !!options.update });
     console.log(wrote.length ? `Lamp's own files are beside the page in ${layout.root}: ${wrote.join(", ")}.` : `Lamp's own files were beside the page already in ${layout.root}.`);
     if (kept.length) console.log(`Left as they were: ${kept.join(", ")} (lamp init --update writes them again).`);
-    console.log(`The game takes the runtime up in its own code. Lamp's game-live skill says how (${lampCommand()} skill game-live), and lamp-game.js's own comments are the whole interface.`);
+    if (game) console.log(`The game takes the runtime up in its own code. Lamp's game-live skill says how (${lampCommand()} skill game-live), and lamp-game.js's own comments are the whole interface.`);
     return;
   }
 
