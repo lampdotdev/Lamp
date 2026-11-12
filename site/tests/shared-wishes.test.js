@@ -92,31 +92,45 @@ test("a wish is shared, changed and taken down only with its secret", async () =
   assert.equal(store.records.has(id), false);
 });
 
-test("a copy's link names the link it came from, while that's up", async () => {
-  const store = memoryStore();
-  const handler = createShareHandler({ store, limited: false });
+test("a copy's link names the link it came from, while that's up, and the link lists its copies", async () => {
+  const store = memoryStore(), mail = [];
+  const fetcher = async (url, request) => { mail.push(JSON.parse(request.body)); return new Response("{}", { status: 200 }); };
+  const handler = createShareHandler({ store, limited: false, env: { RESEND_API_KEY: "test", LAMP_IDEAS_FROM: "Lamp <ideas@lamp.dev>" }, fetcher });
   const pageOf = async (id) => {
     const html = await (await createPageHandler({ store, template: async () => "<html><head></head><body></body></html>" })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
     return JSON.parse(/id="shared-wish">(.*?)<\/script>/.exec(html)[1]);
   };
   const source = await (await send(handler, "POST", share)).json();
+  await store.setMaker(source.id, { email: "alex@example.com", confirmed: true });
   assert.equal(readShare({ ...share, from: "not an id" }), null);
-  const copy = await (await send(handler, "POST", { ...share, name: "Plant Pal Too", from: source.id })).json();
+  const copy = await (await send(handler, "POST", { ...share, name: "Plant Pal Too", by: "Sam", from: source.id })).json();
   assert.equal(store.records.get(copy.id).from, source.id);
+  // Its maker hears of it once, and the link lists it, and its page counts it.
+  assert.deepEqual([mail.length, mail[0].to[0], mail[0].subject], [1, "alex@example.com", "Sam made their own Plant Pal"]);
+  const listed = await (await handler(new Request(`https://lamp.dev/api/wishes?id=${source.id}&copies=1`))).json();
+  assert.deepEqual(listed.copies.map((one) => [one.name, one.by, one.url]), [["Plant Pal Too", "Sam", `https://lamp.dev/w/${copy.id}-plant-pal-too`]]);
+  assert.equal((await pageOf(source.id)).copies, 1);
   assert.deepEqual((await pageOf(copy.id)).from, { url: `https://lamp.dev/w/${source.id}-plant-pal`, label: "Plant Pal" });
   assert.equal((await pageOf(source.id)).from, undefined);
 
   // A change that doesn't say keeps it; a link that isn't there, or the link itself, is never one.
   await send(handler, "PUT", share, { id: copy.id, secret: copy.secret });
   assert.equal(store.records.get(copy.id).from, source.id);
+  assert.equal(mail.length, 1, "told once, not at every share of the copy");
   const stray = await (await send(handler, "POST", { ...share, from: "2345678922" })).json();
   assert.equal(store.records.get(stray.id).from, undefined);
   await send(handler, "PUT", { ...share, from: stray.id }, { id: stray.id, secret: stray.secret });
   assert.equal(store.records.get(stray.id).from, undefined);
 
+  // A copy taken down leaves the list.
+  await send(handler, "DELETE", undefined, { id: stray.id, secret: stray.secret });
+  await send(handler, "DELETE", undefined, { id: copy.id, secret: copy.secret });
+  assert.deepEqual((await (await handler(new Request(`https://lamp.dev/api/wishes?id=${source.id}&copies=1`))).json()).copies, []);
+
   // Taken down, the source leaves the page.
+  const again = await (await send(handler, "POST", { ...share, from: source.id })).json();
   await send(handler, "DELETE", undefined, { id: source.id, secret: source.secret });
-  assert.equal((await pageOf(copy.id)).from, undefined);
+  assert.equal((await pageOf(again.id)).from, undefined);
 });
 
 test("what's new in each release is checked, kept newest first, and kept by a change that doesn't say", async () => {

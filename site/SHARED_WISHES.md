@@ -104,6 +104,12 @@ share sends that link's id as `from`. The site keeps it only when there's such a
 change that doesn't send it keeps it. The page draws "from <maker>/<app>" (or the source's name, with no username)
 beside the name, linking to the source as it's known now (`findWish`), and nothing once the source is taken down.
 
+The other way round, a link keeps the copies shared from it (`addCopy`, a set by its id, in the store). Its page counts
+them ("3 copies" in the header) and lists them when that's opened (`GET /api/wishes?id=<id>&copies=1`, `copiesOf`): name,
+who made it, when it last changed, newest first, public as every link is. A copy taken down since is let go when listed.
+The first time a share names a link as its source, that link's maker is told by email (`copied`): at the address that
+confirmed their account, else the link's own maker address once confirmed; a copy shared again doesn't tell them again.
+
 ## Setup (one time)
 
 In the **lamp** Vercel project:

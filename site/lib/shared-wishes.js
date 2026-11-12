@@ -299,6 +299,7 @@ export function cloudStore(env, fetcher = fetch) {
   const accountByKeyKey = (hash) => `lamp:shared-wish:{${scope}}:account-key:${hash}`;
   const accountWaitingKey = (token) => `lamp:shared-wish:{${scope}}:account-waiting:${token}`;
   const appKey = (name, app) => `lamp:shared-wish:{${scope}}:app:${name}:${app}`;
+  const copiesKey = (id) => `lamp:shared-wish:{${scope}}:copies:${id}`;
   const command = async (args) => {
     const response = await fetcher(db.url, {
       method: "POST", redirect: "error", signal: AbortSignal.timeout(3000),
@@ -330,7 +331,11 @@ export function cloudStore(env, fetcher = fetch) {
       return (await command(["EVAL", "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('SET', KEYS[1], ARGV[2]) end return false",
         "1", key(after.id), JSON.stringify(before), JSON.stringify(after)])) === "OK";
     },
-    async remove(id) { await command(["DEL", key(id), ideasKey(id), makerKey(id)]); },
+    async remove(id) { await command(["DEL", key(id), ideasKey(id), makerKey(id), copiesKey(id)]); },
+    /** The links shared from copies of a link (each record's `from`), by id: a copy taken down since is let go when listed. */
+    async addCopy(id, copy) { await command(["SADD", copiesKey(id), copy]); },
+    async copies(id) { const ids = await command(["SMEMBERS", copiesKey(id)]); return Array.isArray(ids) ? ids : []; },
+    async removeCopy(id, copy) { await command(["SREM", copiesKey(id), copy]); },
     /** A maker's account by its username: `{ name, email, created }`, or null. */
     async account(name) { const text = await command(["GET", accountKey(name)]); return typeof text === "string" ? JSON.parse(text) : null; },
     async accountForEmail(email) { const name = await command(["GET", accountEmailKey(email)]); return typeof name === "string" ? name : null; },
@@ -583,7 +588,7 @@ function remember(url, bytes) {
 
 /** Kept in memory, for `npm run dev` and the tests: pictures as data: URLs, so nothing else needs serving. */
 export function memoryStore() {
-  const records = new Map(), pages = new Map(), ideas = new Map(), mailboxes = new Map(), makers = new Map();
+  const records = new Map(), pages = new Map(), ideas = new Map(), mailboxes = new Map(), makers = new Map(), copies = new Map();
   const accounts = new Map(), emails = new Map(), keys = new Map(), waiting = new Map(), apps = new Map();
   return {
     limiter: null,
@@ -611,7 +616,10 @@ export function memoryStore() {
       records.set(after.id, structuredClone(after));
       return true;
     },
-    async remove(id) { records.delete(id); ideas.delete(id); makers.delete(id); },
+    async remove(id) { records.delete(id); ideas.delete(id); makers.delete(id); copies.delete(id); },
+    async addCopy(id, copy) { if (!copies.has(id)) copies.set(id, new Set()); copies.get(id).add(copy); },
+    async copies(id) { return [...(copies.get(id) ?? [])]; },
+    async removeCopy(id, copy) { copies.get(id)?.delete(copy); },
     async maker(id) { return makers.has(id) ? structuredClone(makers.get(id)) : null; },
     async setMaker(id, value) { if (value) makers.set(id, structuredClone(value)); else makers.delete(id); },
     async makerStep(id, key, step) {
@@ -705,6 +713,37 @@ const bearer = (request) => /^Bearer (\S+)$/.exec(request.headers.get("authoriza
  * keeping the link; DELETE ?id= with the secret takes it down. Lamp is the only caller: a browser on another site
  * is refused, and nothing a request holds is logged.
  */
+/**
+ * A copy of a link was shared (`from`): kept among the link's copies, and its maker told by email at the address that
+ * confirmed their account (or the link's own maker address), once. Never fails the share: a copy is kept either way.
+ */
+async function copied(kept, from, copy, origin, { env, fetcher }) {
+  try { await kept.addCopy(from, copy.id); } catch {}
+  try {
+    const source = await kept.get(from);
+    if (!source) return;
+    const account = source.owner ? await kept.account(source.owner) : null;
+    const maker = account ? null : await kept.maker(from);
+    const to = account?.email ?? (maker?.confirmed ? maker.email : null);
+    if (!to) return;
+    const who = copy.owner || copy.by || "Someone";
+    const theirs = linkOf(origin, copy), yours = linkOf(origin, source);
+    await sendMail(env, fetcher, { to: [to], subject: `${who} made their own ${source.name}`,
+      text: `${who} made their own copy of ${source.name} and shared it:\n\n${theirs}\n\nEvery copy of yours is listed on its page: ${yours}\n` }, `copy-${from}-${copy.id}`);
+  } catch {}
+}
+
+/** The copies of a link as its page lists them, newest first; one taken down since is let go. */
+export async function copiesOf(kept, id, origin) {
+  const found = [];
+  for (const copy of (await kept.copies(id)).slice(0, 200)) {
+    const record = await kept.get(copy);
+    if (!record || record.from !== id) { try { await kept.removeCopy(id, copy); } catch {} continue; }
+    found.push({ url: linkOf(origin, record), name: record.name, by: record.owner || record.by || "", updated: record.updated ?? record.created ?? null });
+  }
+  return found.sort((a, b) => String(b.updated).localeCompare(String(a.updated)));
+}
+
 export function createShareHandler({ env = process.env, fetcher = fetch, store, limited = true, now = () => new Date() } = {}) {
   return async (request) => {
     const method = request.method;
@@ -721,6 +760,10 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
     if (method === "GET") {
       let kept;
       try { kept = store ?? cloudStore(env, fetcher); } catch { return reply(503, { error: "service_unavailable" }); }
+      // The copies people shared of this link, newest first: public, as every link is.
+      if (url.searchParams.get("copies") === "1" && isID(id)) {
+        try { return reply(200, { copies: await copiesOf(kept, id, url.origin) }); } catch { return reply(503, { error: "service_unavailable" }); }
+      }
       try {
         const found = byName ? await kept.appID(user, app) : id;
         const record = found ? await kept.get(found) : null;
@@ -786,6 +829,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       if (method === "PUT") {
         const record = { ...earlier, ...words, ...named, updated: time };
         await kept.replace(record);
+        if (from && earlier?.from !== from) await copied(kept, from, record, url.origin, { env, fetcher });
         // Kept: the name is the record's now, whatever the cleanup after it does.
         uploaded = [];
         claimed = null;
@@ -800,6 +844,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       }
       uploaded = [];
       claimed = null;
+      if (from) await copied(kept, from, record, url.origin, { env, fetcher });
       return reply(201, { id: wishID, url: linkOf(url.origin, record), secret });
     } catch {
       try { await kept.removeImages(uploaded); } catch {}
@@ -1305,6 +1350,8 @@ export async function findWish(id, { env = process.env, fetcher = fetch, store, 
       if (source) wish.from = { url: linkOf(origin, source), label: source.owner && source.app ? `${source.owner}/${source.app}` : source.name };
     } catch {}
   }
+  // How many copies of it people shared, for the page's "copies" (the list itself is asked for when opened).
+  if (wish && origin) { try { wish.copies = (await kept.copies(id)).length; } catch {} }
   return wish;
 }
 

@@ -26,6 +26,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
         <p data-by hidden class="hidden min-w-0 shrink-[3] truncate text-sm text-muted-ink sm:block"></p>
         <!-- The link this app is a copy of, when its maker shared one they got from another link: "from <maker>/<app>". -->
         <p data-from hidden class="hidden min-w-0 shrink-[3] truncate text-sm text-muted-ink sm:block">from <a data-from-link class="underline decoration-tape/20 underline-offset-4 hover:text-tape hover:decoration-tape/60"></a></p>
+        <!-- The copies people made of it and shared, public as every link is: opens the list, newest first. -->
+        <button type="button" data-copies hidden popovertarget="copies" class="news-button shrink-0 cursor-pointer rounded-md px-1.5 py-0.5 -my-0.5 text-sm whitespace-nowrap text-muted-ink hover:bg-tape/5 hover:text-tape focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tape/50"></button>
         <!-- When the maker last released a version, opening what's new in each, in plain words Lamp wrote: there only
              when there's some. Gray once this browser has opened it; until then darker, with a sparkle. -->
         <button type="button" data-news hidden popovertarget="news" class="news-button shrink-0 cursor-pointer rounded-md px-1.5 py-0.5 -my-0.5 text-sm whitespace-nowrap text-muted-ink hover:bg-tape/5 hover:text-tape focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tape/50">
@@ -42,6 +44,10 @@ import { DOWNLOAD_URL } from "../../lib/download";
         <button type="button" data-make-own hidden class="h-8 cursor-pointer rounded-md border border-tape/20 px-3 text-sm font-semibold whitespace-nowrap hover:bg-tape/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tape/50">Make it your own</button>
       </div>
     </header>
+    </div>
+    <div id="copies" data-copies-list popover class="news-list" aria-labelledby="copies-title">
+      <h2 id="copies-title" class="news-title">Copies people made</h2>
+      <ol data-copies-items class="copies-items"></ol>
     </div>
     <div id="news" data-news-list popover class="news-list" aria-labelledby="news-title">
       <h2 id="news-title" class="news-title">What's new</h2>
@@ -256,6 +262,10 @@ import { DOWNLOAD_URL } from "../../lib/download";
     .news-list:popover-open { animation: remix-popup-in 0.15s ease-out both; }
   }
   .news-title { margin: 0; font-size: 0.9375rem; font-weight: 600; }
+  .copies-items { margin: 0.5rem 0 0; padding: 0; list-style: none; font-size: 0.875rem; }
+  .copies-items :global(> li + li) { margin-top: 0.625rem; padding-top: 0.625rem; border-top: 1px solid color-mix(in srgb, var(--color-tape) 6%, transparent); }
+  .copies-items :global(a) { font-weight: 600; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--color-tape) 20%, transparent); text-underline-offset: 4px; }
+  .copies-items :global(span) { display: block; font-size: 0.75rem; color: var(--color-muted-ink); }
   .news-releases { margin: 0.5rem 0 0; padding: 0; list-style: none; }
   /* The list's items are made by the script, so they're reached through :global (scoped styles miss them). */
   .news-releases :global(> li + li) { margin-top: 0.875rem; padding-top: 0.875rem; border-top: 1px solid color-mix(in srgb, var(--color-tape) 6%, transparent); }
@@ -385,7 +395,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
   import { appLink, changeWords, type ChangeApp } from "../../lib/change-words";
 
   type Release = { date: string; lines: string[] };
-  type Shared = { id: string; name: string; by?: string; from?: { url: string; label: string }; github?: string; ideas?: string[]; asks?: string[]; releases?: Release[]; about: string; wish: string; picture: string; icon: string; file?: string; shared?: string; play?: string; shape?: number | "fill" };
+  type Shared = { id: string; name: string; by?: string; from?: { url: string; label: string }; copies?: number; github?: string; ideas?: string[]; asks?: string[]; releases?: Release[]; about: string; wish: string; picture: string; icon: string; file?: string; shared?: string; play?: string; shape?: number | "fill" };
   const json = document.getElementById("shared-wish")?.textContent;
   // Only ever a shared wish's page: on its own, there's nothing to show.
   if (!json) location.replace("/ideas");
@@ -404,6 +414,28 @@ import { DOWNLOAD_URL } from "../../lib/download";
       from.href = wish.from.url;
       from.textContent = wish.from.label;
       $<HTMLElement>("[data-from]").hidden = false;
+    }
+    // The copies people made of it: how many, and the list, asked of the site when it's opened.
+    if (wish.copies) {
+      const button = $<HTMLButtonElement>("[data-copies]");
+      button.textContent = wish.copies === 1 ? "1 copy" : `${wish.copies} copies`;
+      button.hidden = false;
+      const list = $<HTMLElement>("[data-copies-items]");
+      $<HTMLElement>("[data-copies-list]").addEventListener("toggle", async (event) => {
+        if ((event as ToggleEvent).newState !== "open" || list.childElementCount) return;
+        try {
+          const said = await (await fetch(`/api/wishes?id=${encodeURIComponent(wish.id)}&copies=1`, { signal: AbortSignal.timeout(8000) })).json();
+          for (const copy of (said.copies ?? []) as { url: string; name: string; by: string; updated: string | null }[]) {
+            const item = document.createElement("li"), link = document.createElement("a"), note = document.createElement("span");
+            link.href = copy.url;
+            link.textContent = copy.name;
+            note.textContent = [copy.by && `by ${copy.by}`, copy.updated && `updated ${new Date(copy.updated).toLocaleDateString()}`].filter(Boolean).join(" · ");
+            item.append(link, note);
+            list.append(item);
+          }
+          if (!list.childElementCount) list.textContent = "None of them is shared any more.";
+        } catch { list.textContent = "The list couldn't be read just now."; }
+      });
     }
     const icon = $<HTMLImageElement>("[data-icon]");
     if (wish.icon) { icon.src = wish.icon; icon.hidden = false; }
