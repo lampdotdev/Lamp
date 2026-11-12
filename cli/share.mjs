@@ -7,15 +7,16 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { deflateRawSync } from "node:zlib";
 import { NOTES_FILE, Problem, stateOf } from "./state.mjs";
 import { ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS, LIBRARIES } from "./dev.mjs";
 import { LIMITS, FILE_LIMITS, PAGE_LIMITS } from "../site/lib/shared-wishes.js";
 import { ideasOf, makerOf, pageUp, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile, siteOrigin } from "./link.mjs";
 import { exportApp, sourceLinkOf } from "./lampapp.mjs";
+import { scaled, sizeOf } from "./png.mjs";
 
 export { siteOrigin };
 
@@ -175,6 +176,40 @@ const megabytes = (bytes) => `${(bytes / 1_000_000).toFixed(bytes < 10_000_000 ?
  * are what the link says (`name`, `words`, and `line`, `by` and `asks` when given), `picture` a PNG or JPEG of the
  * page or null, `shape` "fill" or the page's width over its height. Answers the link and what went up.
  */
+/**
+ * The app's own icon for its link: a square PNG the page has (icon.png or apple-touch-icon.png beside it, or a PNG its
+ * index.html names as its icon), else the one Lamp keeps in its own app's folder (.lamp/icon.png). Made 512 pixels a side
+ * when it's bigger than the site takes. Null when there's none that's square: a page's own picture is never squashed.
+ */
+export function iconOf(layout) {
+  const names = ["icon.png", "apple-touch-icon.png"];
+  try {
+    const html = readFileSync(join(layout.root, "index.html"), "utf8");
+    for (const tag of html.match(/<link\b[^>]*>/gi) ?? []) {
+      const href = /\bhref=["']([^"'?#]+\.png)["']/i.exec(tag)?.[1];
+      if (/\brel=["'][^"']*\bicon\b/i.test(tag) && href && !/^[a-z]+:|^\/\//i.test(href)) names.push(href.replace(/^\.?\//, ""));
+    }
+  } catch {}
+  const candidates = [...names.map((name) => join(layout.root, name)), join(layout.folder, ".lamp", "icon.png")];
+  // Only a file really in the app's folder, links followed: a name like ../elsewhere.png or a link out of the folder
+  // would put someone's other picture on a public page.
+  let home;
+  try { home = realpathSync(layout.folder); } catch { return null; }
+  for (const file of candidates) {
+    let real;
+    try { real = realpathSync(file); } catch { continue; }
+    if (!real.startsWith(home + sep)) continue;
+    let bytes;
+    try { bytes = readFileSync(real); } catch { continue; }
+    const size = sizeOf(bytes);
+    if (!size || size.width !== size.height || size.width < 16) continue;
+    if (size.width <= 512 && bytes.length <= LIMITS.icon) return bytes;
+    const smaller = scaled(bytes, 512);
+    if (smaller && smaller.length <= LIMITS.icon) return smaller;
+  }
+  return null;
+}
+
 export async function share({ layout, words, picture = null, shape = "fill", site = siteOrigin(), said = () => {}, file = true, anyway = false, github, fromLamp = false }) {
   // The folder's own link when it has one on this site, changed in place; a link that's gone is made again.
   let earlier = readLink(layout.folder);
@@ -200,6 +235,9 @@ export async function share({ layout, words, picture = null, shape = "fill", sit
     ...(words.asks?.length ? { asks: words.asks } : {}), ...(picture ? { picture: picture.toString("base64") } : {}),
     ...(repo ? { github: repo } : {}),
   };
+  // The app's icon, which its page shows beside its name and in the browser's tab, as Lamp's Share Link sends it.
+  const icon = iconOf(layout);
+  if (icon) body.icon = icon.toString("base64");
   // The link this app came from, when it's a copy of one shared there: its page says so.
   const from = sourceLinkOf(layout.folder, site, earlier?.id);
   if (from) body.from = from;
