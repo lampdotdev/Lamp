@@ -146,9 +146,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === "-
       // Older ones go once they've been out of use a week (the launcher touches the one it runs, and the one retired above
       // was touched as it was): a `lamp dev` started from one may run for days, reading its files (libraries,
       // controllers) as it goes.
+      // Never one a process running now was started from (a `lamp dev` that has run past its week): its command line
+      // names the copy's lamp.mjs.
+      const running = spawnSync("ps", ["-axo", "command"], { encoding: "utf8" }).stdout ?? "";
       for (const other of readdirSync(fetched())) {
         if (other === "use" || other === String(version) || other.endsWith(".part")) continue;
-        try { if (statSync(join(fetched(), other)).mtimeMs < Date.now() - 7 * DAY) rmSync(join(fetched(), other), { recursive: true, force: true }); } catch {}
+        const at = join(fetched(), other);
+        if (running.includes(`${at}${sep}`)) continue;
+        try { if (statSync(at).mtimeMs < Date.now() - 7 * DAY) rmSync(at, { recursive: true, force: true }); } catch {}
       }
       // The one in use is touched, so it's counted from when it was last named.
       try { const now = new Date(); utimesSync(folder, now, now); } catch {}
