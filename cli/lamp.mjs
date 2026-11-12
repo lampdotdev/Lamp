@@ -1100,6 +1100,8 @@ async function main() {
       console.log("The app says so as the change goes in.");
       return;
     }
+    // A Mac app lamp runs itself has no card for a change: nothing to say it on, and nothing wrong.
+    if (layout.kind === "mac") { console.log("A Mac app lamp runs itself shows no card for a change: nothing says it."); return; }
     const live = await running(layout.folder);
     if (!live) { console.log("lamp dev isn't running for this folder: nothing shows it."); return; }
     await ask(live, "changing", { words });
