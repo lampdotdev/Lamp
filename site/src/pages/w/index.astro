@@ -641,6 +641,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
       makeTab.setAttribute("aria-selected", String(which === "make"));
       $<HTMLElement>('[data-panel="send"]').hidden = which !== "send";
       $<HTMLElement>('[data-panel="make"]').hidden = which !== "make";
+      // An idea is needed only to send one: making one's own copy starts with nothing written.
+      ideaText.required = which === "send";
       if (which === "make") {
         title.textContent = "Make it yourself";
         text.textContent = `Your app makes it in your own copy, on your computer. ${maker ? `${maker}'s` : "The one shared here"} stays as it is.`;
@@ -653,6 +655,8 @@ import { DOWNLOAD_URL } from "../../lib/download";
     sendTab.addEventListener("click", () => showTab("send"));
     makeTab.addEventListener("click", () => showTab("make"));
 
+    // The page's own address as it's known now (lamp.dev/<username>/<app> once its maker has a username; an old /w/ link
+    // comes here by redirect), for the prompt to name.
     // Making it oneself: each app's Open is a link with the one prompt (lib/change-words.ts), which has it install
     // Lamp's command line if it's not there (asking first), unpack the game's file and make the change on the player's
     // computer. Claude used to open in a games folder typed here and kept in this browser; that path is let go.
@@ -661,7 +665,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
       if (!canMake) return;
       for (const link of document.querySelectorAll<HTMLAnchorElement>("[data-open]")) {
         const app = link.dataset.open as ChangeApp;
-        link.href = appLink(app, changeWords({ name: wish.name, page: `${location.origin}/w/${wish.id}`, file: wish.file!, app, idea: ideaText.value }));
+        link.href = appLink(app, changeWords({ name: wish.name, page: `${location.origin}${location.pathname.replace(/\/+$/, "")}`, file: wish.file!, app, idea: ideaText.value }));
       }
     };
     ideaText.addEventListener("input", links);
