@@ -1291,13 +1291,21 @@ export const PLAY_MEMORY = { ms: 60_000, links: 200 };
 /**
  * What a page played on its link is given at the top of its HTML: when the link's page asks for a picture of the app
  * (as someone opens the box to send its maker an idea), the app's biggest canvas, drawn after the app has drawn its
- * next frame (a 3D scene's picture is gone once the frame is shown), scaled to at most 1280 wide, as a JPEG small enough to go with an idea. Only the
- * site's own page may ask, and only it is answered. Nothing for an app without a canvas, or one that can't be read.
+ * next frame, scaled to at most 1280 wide, as a JPEG small enough to go with an idea. Only the site's own page may ask,
+ * and only it is answered. Nothing for an app without a canvas, one that can't be read, or one that reads as nothing
+ * but black.
+ *
+ * A 3D canvas's picture is gone once its frame is on screen, and an app that draws only when something changes (a
+ * builder, a viewer) draws no next frame to catch: so before the app's own code runs, every WebGL canvas made here
+ * keeps its last picture (`preserveDrawingBuffer`), which costs a game little and lets any of them be read.
  */
 export function pictureScript(site) {
   // The most a picture may be as a data: URL to go with an idea (`IDEA_LIMITS.picture` bytes, as base64).
   const limit = 23 + Math.floor(IDEA_LIMITS.picture / 3) * 4;
-  return `<script>(()=>{const site=${JSON.stringify(site)};addEventListener("message",e=>{if(e.origin!==site||e.source!==parent||!e.data||e.data.lamp!=="picture")return;const n=e.data.n;requestAnimationFrame(()=>{let picture=null;try{const all=[...document.querySelectorAll("canvas")].filter(c=>c.width&&c.height&&c.getClientRects().length);const c=all.sort((a,b)=>b.clientWidth*b.clientHeight-a.clientWidth*a.clientHeight)[0];if(c){const k=Math.min(1,1280/c.width),o=document.createElement("canvas");o.width=Math.round(c.width*k);o.height=Math.round(c.height*k);o.getContext("2d").drawImage(c,0,0,o.width,o.height);for(const q of [0.8,0.6,0.4]){picture=o.toDataURL("image/jpeg",q);if(picture.length<=${limit})break;picture=null}}}catch(_){}parent.postMessage({lamp:"picture",n,picture},site)})})})()</script>`;
+  const keep = `try{const get=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(type,options){if(/^(webgl2?|experimental-webgl)$/.test(type))options=Object.assign({},options,{preserveDrawingBuffer:true});return get.call(this,type,options)}}catch(_){}`;
+  // Black all over (a 3D canvas read when it held nothing) is no picture: a few points across it, all near black.
+  const blank = `const blank=x=>{const d=x.getImageData(0,0,x.canvas.width,x.canvas.height).data,step=Math.max(4,Math.floor(d.length/4/400)*4);for(let i=0;i<d.length;i+=step)if(d[i]+d[i+1]+d[i+2]>24)return false;return true};`;
+  return `<script>(()=>{${keep}const site=${JSON.stringify(site)};${blank}addEventListener("message",e=>{if(e.origin!==site||e.source!==parent||!e.data||e.data.lamp!=="picture")return;const n=e.data.n;requestAnimationFrame(()=>{let picture=null;try{const all=[...document.querySelectorAll("canvas")].filter(c=>c.width&&c.height&&c.getClientRects().length);const c=all.sort((a,b)=>b.clientWidth*b.clientHeight-a.clientWidth*a.clientHeight)[0];if(c){const k=Math.min(1,1280/c.width),o=document.createElement("canvas");o.width=Math.round(c.width*k);o.height=Math.round(c.height*k);const x=o.getContext("2d");x.drawImage(c,0,0,o.width,o.height);if(!blank(x))for(const q of [0.8,0.6,0.4]){picture=o.toDataURL("image/jpeg",q);if(picture.length<=${limit})break;picture=null}}}catch(_){}parent.postMessage({lamp:"picture",n,picture},site)})})})()</script>`;
 }
 
 export function createPlayHandler({ env = process.env, fetcher = fetch, store, anyHost = false, direct = DIRECT_FILE, directData = DIRECT_DATA, now = () => Date.now() } = {}) {
