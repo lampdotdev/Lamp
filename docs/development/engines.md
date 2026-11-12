@@ -285,7 +285,7 @@ A capability given to one engine must be given to all of them that can take it, 
   through OpenRouter, to a Jev-class model on this Mac (`LocalModels.decisionCatalog`, run on the
   llama-server (fetched when first needed, `LlamaInstall`); `decideLocally` does what the model's serving shim does: one forward pass per
   question, probabilities read off the label tokens at the "Answer:" slot), or by text through what answers
-  apps (`decideByText`). A decision model is never offered for text or building (`LocalModels.isDecisionModel`).
+  apps (`decideByText`, told and read by `cli/app-ai.mjs`). A decision model is never offered for text or building (`LocalModels.isDecisionModel`).
 - **What answers apps, and offering better** (`Sources/Lamp/Capabilities.swift`): `AppAI.resolve(capability,
   for: app, in: .mac | .phoneAway)` is the one answer to "what answers text / decisions / pictures for this
   app, how well (`Resolution.Tier`: none, works, best), and what would make it better (`Upgrade`: a key, a
@@ -303,18 +303,20 @@ A capability given to one engine must be given to all of them that can take it, 
 - **An app's own agent loop** (`LampAI.act` in Web/lamp.js, `/ai/act`, `Sources/Lamp/AppAct.swift`): the page
   runs its own tools and keeps the turn; each `/ai/act` request is one step carrying everything so far (the request,
   the tools' argument shapes, every earlier call with its result) and gets back the next calls or the reply, with the
-  route's id, which the page sends back so the whole turn stays on one route. The gateway keeps nothing between steps,
-  so it holds only what one request can: tool names and shapes (`reply` is Lamp's own), unique call ids, at most
-  `AppAct.maxCalls` calls per answer checked against their shapes (a call that doesn't fit is asked for again once,
-  then answered as a reply that says it couldn't), and a reply-only step once three are behind it. The turn's writes,
-  its deadline and cancel are the page's: it runs reads together and writes one after another, each `check`ed right
-  before it runs, stops at the deadline in every layer (the step's request, `send`'s retries) and drops an answer that
-  comes after a cancel. Only OpenRouter answers: tools with `require_parameters` and `tool_choice` "auto" ("none" for
-  the reply-only step), since the Anthropic models there take nothing stronger, so words without a call are the reply.
-  A question back may carry `choices` from `reply` (two to four short plain-text answers, checked by `AppAct.choices`
-  and again in lamp.js); words without a call carry none.
-  Every other route answers 501 with a sentence saying so; Claude Code and Codex would take a JSON plan through their
-  `--json-schema`/`--output-schema` paths, a GGUF model through `response_format`, and mlx_lm.server has neither.
+  route's id, which the page sends back so the whole turn stays on one route. Nothing is kept between steps, so a step
+  holds only what one request can: tool names and shapes (`reply` is Lamp's own), unique call ids, at most eight calls
+  per answer checked against their shapes (a call that doesn't fit is asked for again once, then answered as a reply
+  that says it couldn't), and a reply-only step once three are behind it. The turn's writes, its deadline and cancel are
+  the page's: it runs reads together and writes one after another, each `check`ed right before it runs, stops at the
+  deadline in every layer (the step's request, `send`'s retries) and drops an answer that comes after a cancel.
+  What the model is told and how its answer is read and checked is in one place, `cli/app-ai.mjs`, which Lamp's app
+  has do it through `LampCLI` (`actStep`, `actAsk`, `actRead`) and lamp's own answers use directly (`cli/ai.mjs`);
+  `AppAct` keeps only the route, its time and asking it. Every text route answers: OpenRouter with tools,
+  `require_parameters` and `tool_choice` "auto" ("none" for the reply-only step), so words without a call are the
+  reply; Claude Code and Codex with one sealed run per step held to the step's JSON shape (`--json-schema`,
+  `--output-schema`); a GGUF model through `response_format`; an MLX model with its server's tool calling where it has
+  a parser for the model, else asked for the shape in words. A question back may carry `choices` from `reply` (two to
+  four short plain-text answers, checked in app-ai.mjs and again in lamp.js); words without a call carry none.
   `LampAI.isAvailable('act')` asks `/ai/act` itself (`probe`), so it's true only when lamp.js has `act`, the app around
   the page lets the route through and the app's route can take it.
 - **Shared pages' AI** (`SharedPagesAI`, `Store.sharedPageAI`): a page shared on lamp.dev, played in a browser on the

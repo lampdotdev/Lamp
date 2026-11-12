@@ -1008,116 +1008,19 @@ enum AppAI {
         }
     }
 
-    /// The answers' shape as a JSON schema, which the routes that take one hold the model to: every question's key,
-    /// and for a choice only its own options, written exactly. Without it a small model sometimes left the
-    /// question's key off its answer.
-    static func decisionSchema(_ questions: [String: Any]) -> [String: Any] {
-        func object(_ properties: [String: Any]) -> [String: Any] {
-            ["type": "object", "properties": properties, "required": properties.keys.sorted(), "additionalProperties": false]
-        }
-        let number: [String: Any] = ["type": "number"]
-        var answers: [String: Any] = [:]
-        for (id, value) in questions {
-            guard let question = value as? [String: Any], let type = question["type"] as? String else { continue }
-            switch type {
-            case "noul":
-                answers[id] = object(["noul": number])
-            case "choice":
-                // Each option once: an app may list one twice, and the schema's properties can't hold it twice.
-                let options = Set((question["criteria"] as? [String: Any]).map { Array($0.keys) } ?? (question["criteria"] as? [String] ?? [])).sorted()
-                answers[id] = object(["choice": ["type": "string", "enum": options] as [String: Any],
-                                      "probabilities": object(Dictionary(uniqueKeysWithValues: options.map { ($0, number as Any) })),
-                                      "confidence": number])
-            case "score":
-                let levels = (question["criteria"] as? [Any])?.count ?? 0
-                answers[id] = object(["score": number,
-                                      "probabilities": object(Dictionary(uniqueKeysWithValues: (0..<levels).map { (String($0), number as Any) })),
-                                      "confidence": number])
-            default:
-                continue
-            }
-        }
-        return object(answers)
-    }
-
     /// Decisions without a decision model: the questions go to a small text model as JSON, and its answers
     /// come back in the same shape Jev's would (`noul`, `choice`/`score` with `probabilities` and
     /// `confidence`), checked against each question so an app can't be handed a made-up option.
     static func decideByText(state: Any, questions: [String: Any], appText: String? = nil) async throws -> ([String: Any], Double) {
-        let stateJSON = (try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys, .fragmentsAllowed]))
-            .map { String(decoding: $0, as: UTF8.self) } ?? "\(state)"
-        let questionsJSON = (try? JSONSerialization.data(withJSONObject: questions, options: [.sortedKeys]))
-            .map { String(decoding: $0, as: UTF8.self) } ?? ""
-        // Worded for a small model: Luna got "rm -rf ~" backwards with a terser version of this.
-        let system = """
-        You answer typed questions about some state, like a calibrated classifier. The questions are JSON, keyed \
-        by id; reply with one JSON object with the same keys and nothing else.
-
-        For a question of type "noul", the value is {"noul": p}: p is the probability, from 0 to 1, that the \
-        answer to its instructions is yes, judged against its criteria ("true" describes a yes, "false" a no). \
-        A clear no is 0.0, a clear yes 1.0.
-
-        For a question of type "choice", the criteria are the options (a description of when each applies, or \
-        null). The value is {"choice": option, "probabilities": {option: p, ...}, "confidence": c}: one \
-        probability per option, summing to 1; choice is the most likely option; confidence (0 to 1) is how \
-        concentrated the probabilities are.
-
-        For a question of type "score", the criteria are ordered levels, lowest first, each describing a \
-        situation. The value is {"score": s, "probabilities": {"0": p, "1": p, ...}, "confidence": c}: one \
-        probability per level index, summing to 1; s is the probability-weighted index; confidence (0 to 1) is \
-        how concentrated the probabilities are.
-        """
-        let prompt = "State:\n\(stateJSON)\n\nQuestions:\n\(questionsJSON)"
+        // What the model is told and how its answer is read is lamp's command line's (cli/app-ai.mjs), which lamp's own
+        // answers use too: worded for a small model, and held to the answers' shape where the route takes a schema.
+        let asked = try await LampCLI.ask("decideAsk", ["state": state, "questions": questions])
         let fast = await fastModel(for: route(for: appText))
-        let (text, cost) = try await complete(prompt: prompt, images: [], system: system, json: true, appModel: appText, engineModel: fast,
-                                              schema: decisionSchema(questions))
-        guard let raw = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
-            throw Failure(message: "The model's decision wasn't valid JSON.", cost: cost)
-        }
-        var answers: [String: Any] = [:]
-        for (id, question) in questions {
-            guard let q = question as? [String: Any], let type = q["type"] as? String else { continue }
-            let given = raw[id] as? [String: Any] ?? [:]
-            func clamp(_ value: Any?) -> Double? { (value as? NSNumber).map { min(max($0.doubleValue, 0), 1) } }
-            switch type {
-            case "noul":
-                guard let p = clamp(given["noul"]) else { throw Failure(message: "The model didn't answer \"\(id)\".", cost: cost) }
-                answers[id] = ["noul": p]
-            case "choice":
-                let options = (q["criteria"] as? [String: Any])?.keys.map { $0 } ?? (q["criteria"] as? [String] ?? [])
-                var probabilities = (given["probabilities"] as? [String: Any] ?? [:]).reduce(into: [String: Double]()) {
-                    if options.contains($1.key), let p = clamp($1.value) { $0[$1.key] = p }
-                }
-                var choice = given["choice"] as? String
-                if choice == nil || !options.contains(choice!) { choice = probabilities.max { $0.value < $1.value }?.key }
-                guard let choice else { throw Failure(message: "The model didn't pick an option for \"\(id)\".", cost: cost) }
-                if probabilities.isEmpty { probabilities = [choice: 1] }
-                let total = probabilities.values.reduce(0, +)
-                if total > 0 { probabilities = probabilities.mapValues { $0 / total } }
-                answers[id] = ["choice": choice, "probabilities": probabilities,
-                               "confidence": clamp(given["confidence"]) ?? probabilities[choice] ?? 1]
-            case "score":
-                let levels = (q["criteria"] as? [Any])?.count ?? 0
-                let top = Double(max(levels - 1, 0))
-                // One normalized distribution is the truth; the score is derived from it, so the two can't
-                // disagree. The model's own score only stands in when it gave no usable probabilities.
-                var probabilities = (given["probabilities"] as? [String: Any] ?? [:]).reduce(into: [String: Double]()) {
-                    if let index = Int($1.key), index >= 0, Double(index) <= top, let p = clamp($1.value) { $0[$1.key] = p }
-                }
-                let total = probabilities.values.reduce(0, +)
-                if total > 0 {
-                    probabilities = probabilities.mapValues { $0 / total }
-                } else if let given = (given["score"] as? NSNumber).map({ min(max($0.doubleValue, 0), top) }) {
-                    probabilities = [String(Int(given.rounded())): 1]
-                } else {
-                    throw Failure(message: "The model didn't rate \"\(id)\".", cost: cost)
-                }
-                let score = probabilities.reduce(0) { $0 + Double($1.key)! * $1.value }
-                answers[id] = ["score": score, "probabilities": probabilities,
-                               "confidence": clamp(given["confidence"]) ?? probabilities.values.max() ?? 1]
-            default:
-                throw Failure(message: "Unknown question type \"\(type)\".", cost: cost)
-            }
+        let (text, cost) = try await complete(prompt: asked["prompt"] as? String ?? "", images: [], system: asked["system"] as? String ?? "",
+                                              json: true, appModel: appText, engineModel: fast, schema: asked["schema"] as? [String: Any])
+        let read = try await LampCLI.ask("decideRead", ["text": text, "questions": questions])
+        guard let answers = read["answers"] as? [String: Any] else {
+            throw Failure(message: read["problem"] as? String ?? "The model's decision wasn't valid JSON.", cost: cost)
         }
         return (answers, cost)
     }
