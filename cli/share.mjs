@@ -173,7 +173,7 @@ const megabytes = (bytes) => `${(bytes / 1_000_000).toFixed(bytes < 10_000_000 ?
  * are what the link says (`name`, `words`, and `line`, `by` and `asks` when given), `picture` a PNG or JPEG of the
  * page or null, `shape` "fill" or the page's width over its height. Answers the link and what went up.
  */
-export async function share({ layout, words, picture = null, shape = "fill", site = siteOrigin(), said = () => {}, file = true, anyway = false, github }) {
+export async function share({ layout, words, picture = null, shape = "fill", site = siteOrigin(), said = () => {}, file = true, anyway = false, github, fromLamp = false }) {
   // The app's own file goes with the link, as Lamp's Share Link sends it, so whoever follows the link can open it in
   // Lamp too: made first, with Share…'s checks, so a page that can't be shared (a key in it) puts nothing up.
   const app = file ? exportApp(layout.folder, { anyway }) : null;
@@ -198,7 +198,9 @@ export async function share({ layout, words, picture = null, shape = "fill", sit
   let earlier = readLink(layout.folder);
   if (earlier && earlier.site !== site) earlier = null;
   // A file an earlier share sent stays on the record until it's taken away, so a retry after a failed removal tries again.
-  let link = { site, ...(await publishLink({ site, body, earlier, account: accountFor(site)?.key })), ...words, shape, ...(earlier?.file ? { file: true } : {}) };
+  // A link that's a Lamp's (`fromLamp`, the app in its own folder) stays so in every write, a share that fails partway too.
+  let link = { site, ...(await publishLink({ site, body, earlier, account: accountFor(site)?.key })), ...words, shape, ...(earlier?.file ? { file: true } : {}),
+    ...(fromLamp ? { fromLamp: true } : {}) };
   // Kept before the page goes up: a link whose page didn't make it is still this folder's to send again or take down.
   writeLink(layout.folder, link);
 

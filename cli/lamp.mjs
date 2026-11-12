@@ -998,12 +998,14 @@ async function main() {
     // A name given is the one every later link says it's by, as Lamp's Share Link card keeps it: kept once the share is
     // checked and about to go, so a share refused leaves it as it was.
     if (options.by !== undefined) keepSharer(words.by);
-    const sent = await share({ layout, words, shape, picture: card.picture ? Buffer.from(card.picture, "base64") : null, said: (line) => console.log(line),
-      file: !options["no-file"], anyway: !!options.anyway });
-    if (lampsOwn) {
-      const link = { ...readLink(layout.folder), fromLamp: true };
-      writeLink(layout.folder, link);
-      keepInLamp(layout.folder, link);
+    let sent;
+    try {
+      sent = await share({ layout, words, shape, picture: card.picture ? Buffer.from(card.picture, "base64") : null, said: (line) => console.log(line),
+        file: !options["no-file"], anyway: !!options.anyway, fromLamp: !!lampsOwn });
+    } finally {
+      // Lamp is told of the link even when its page didn't go, so its card has the link that's out, not a second one.
+      const link = lampsOwn ? readLink(layout.folder) : null;
+      if (link) keepInLamp(layout.folder, link);
     }
     console.log(`${before ? "Sent again to its link" : "Shared"}: ${sent.url}`);
     console.log(`"${words.name}"${words.by ? ` by ${words.by}` : ""}: ${sent.files} files, ${(sent.bytes / 1_000_000).toFixed(1)} MB packed, ${shape === "fill" ? "filling the window" : "on its own stage"}${sent.picture ? ", with a picture of it" : ", with no picture"}${sent.file ? ", and its app file, for anyone to open in Lamp" : ""}${sent.github ? `, with a link to its code on GitHub (${sent.github})` : ""}.`);
