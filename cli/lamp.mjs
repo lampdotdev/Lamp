@@ -10,6 +10,7 @@
 //   lamp use [folder] …   try it: a key, a click, some typing
 //   lamp stop [folder]    stop running it
 //   lamp share [folder]   a link on lamp.dev to play it, and lamp ideas for what people send back
+//   lamp play <link>      play an app shared on lamp.dev here, its AI answered on this computer
 //   lamp ai               the AI of pages shared on lamp.dev, played here, from the person's own Claude Code, Codex or OpenRouter key
 //   lamp devices          the person's devices; lamp open --on xbox, or --on android, puts a page on one
 //   lamp setup            teach the coding agents on this computer to work this way
@@ -22,7 +23,8 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Problem, RESOURCES, layoutOf, manifestOf, projectOf, stateOf, running, ask } from "./state.mjs";
 import { macActions, serveMac, writeMacStarter } from "./mac.mjs";
-import { exportApp, unpack } from "./lampapp.mjs";
+import { MAX_ARCHIVE, exportApp, unpack } from "./lampapp.mjs";
+import { latestOf } from "./link.mjs";
 import { updateNotice } from "./update.mjs";
 import { editionName, giveTo, givenTo, keepPictures, lampOwning, reachLamp, takeBack } from "./outside.mjs";
 import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS } from "./dev.mjs";
@@ -128,6 +130,11 @@ Mac app Lamp made in Swift, built and run on this Mac.
       page and in that email; they can answer it by email. "reply" says something more, and "done" leaves
       their answer without one. --earlier lists those seen to, to look back on or answer again. "email"
       sends new ideas and replies to your own address too (once you confirm it), and you can answer from there.
+  lamp play <link> [--to folder] [--newest]
+      Play an app shared on lamp.dev on this computer: its file, unpacked into a folder of its own in
+      ~/Lamp Games (or where --to says), run and opened as lamp dev runs any page, so its AI is answered here in any
+      browser, Safari too. The same link again plays the same folder; --newest takes the link's latest version
+      into a new one.
   lamp ai [--forget]
       Answer the AI of pages shared on lamp.dev, played in a browser on this computer, with your own Claude Code
       or Codex, or OpenRouter with your key in OPENROUTER_API_KEY, until stopped. Lamp does the same while it's
@@ -945,6 +952,48 @@ async function main() {
     const lamps = lampsLink(rest[0] ?? ".");
     if (lamps) throw new Problem(`${lamps} keeps this app's link: take it down from its Share Link card (Stop Sharing).`);
     console.log(`Taken down: ${await unshare(layoutOf(rest[0] ?? ".").folder)}`);
+    return;
+  }
+
+  if (command === "play") {
+    const { options, rest } = parse(args, ["to"]);
+    const id = /(?:^|\/w\/)([A-Za-z0-9]{10})(?:-|$|\/|\?|#)/.exec(rest[0] ?? "")?.[1];
+    if (!id) throw new Problem("play takes a link to an app shared on lamp.dev: lamp play https://lamp.dev/w/AbCdEf1234-its-name");
+    // Which folder each link was played into, so playing it again picks up where it was, saves and all: a file of its
+    // own for each link, so two links played at once never write over each other's.
+    const playedFile = join(process.env.LAMP_DEV_HOME || join(homedir(), ".lamp", "dev"), "played", id);
+    let recorded = null;
+    try { recorded = readFileSync(playedFile, "utf8").trim() || null; } catch {}
+    const wanted = options.to ? resolve(options.to) : null;
+    let folder = !options.newest && recorded && (!wanted || wanted === recorded) && existsSync(join(recorded, "lamp-app.json")) ? recorded : null;
+    if (folder) console.log(`Playing the copy in ${folder}. --newest takes the link's latest version instead.`);
+    else {
+      const latest = await latestOf({ id });
+      if (!latest) throw new Problem("that link isn't on lamp.dev, or it has been taken down");
+      if (!latest.file) throw new Problem(`"${latest.name ?? "That app"}" was shared without its file, so it plays only on lamp.dev`);
+      const answer = await fetch(latest.file);
+      const bytes = answer.ok ? Buffer.from(await answer.arrayBuffer()) : null;
+      if (!bytes) throw new Problem("its file couldn't be downloaded; try again in a moment");
+      if (bytes.length > MAX_ARCHIVE) throw new Problem("its file is bigger than a Lamp app file is let be");
+      const name = String(latest.name || "Shared app").replace(/[\r\n/:\\]+/g, " ").trim().slice(0, 60) || "Shared app";
+      const games = join(homedir(), "Lamp Games");
+      folder = wanted ?? join(games, name);
+      for (let n = 2; !options.to && existsSync(folder) && readdirSync(folder).length; n++) folder = join(games, `${name} ${n}`);
+      const work = join(stateOf(folder), "download.lampapp");
+      mkdirSync(dirname(work), { recursive: true });
+      writeFileSync(work, bytes);
+      let opened;
+      try { opened = unpack(work, folder); } finally { rmSync(work, { force: true }); }
+      if (opened.refused) throw new Problem(`it's unpacked in ${folder}, but lamp can't run it: ${opened.refused}. Open it in Lamp instead`);
+      if (opened.project.kind === "page") lampsFilesBeside(opened.project.root, { game: opened.project.game || manifestOf(folder)?.platform === "game" });
+      mkdirSync(dirname(playedFile), { recursive: true });
+      writeFileSync(playedFile, folder);
+      console.log(`"${opened.name}", version ${latest.version}, is in ${folder}.`);
+    }
+    const opened = await ask(await serverFor(projectOf(folder).folder), "open", {}, { timeout: 30_000 });
+    if (opened.opened === "app") console.log(opened.running ? `${opened.url} is open.` : `${opened.url} is being built, and opens when it is.`);
+    else console.log(opened.opened === "window" ? `Opened in a window: ${opened.url}` : `Opened in the browser: ${opened.url}`);
+    console.log("Its AI is answered here, with your own Claude Code, Codex or OpenRouter key. A change you make stays in this copy.");
     return;
   }
 
