@@ -13,6 +13,8 @@ name: Mac release
 on:
   push:
     tags: ["v*"]
+    # and lamp's command line on npm as `nightly` from every push to main (the cli-nightly job, below)
+    branches: [main]
   workflow_dispatch:  # re-run a release: gh workflow run mac-release.yml --ref v0.2.0 -f version=0.2.0
     inputs:
       version:
@@ -25,6 +27,7 @@ permissions:
 
 jobs:
   release:
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: xcode-27   # macOS 27 with Xcode 27; mac-build.yml shares the Xcode version, not the runner image.
     timeout-minutes: 60
     environment: release
@@ -107,3 +110,61 @@ jobs:
         run: |
           npm install --global npm@11
           scripts/npm-package.sh "$VERSION" --publish
+
+  # lamp's command line on npm as @lampdotdev/lamp@nightly from every push to main: lamp is Node files, with nothing to
+  # sign or notarize, so it's out in minutes where Lamp Nightly takes most of an hour. The `lamp` Lamp's app puts on the
+  # PATH fetches it when it's newer than the app's own (cli/update.mjs), and so does anyone who installs
+  # @lampdotdev/lamp@nightly. Its version is the next patch's pre-release with the commits since the last release
+  # (0.36.2-nightly.9, scripts/cli-version.sh), the number Lamp Nightly built from the same commit gives its own copy.
+  # In this workflow, with the release environment, because npm trusts one workflow to publish the package.
+  cli-nightly:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: xcode-27
+    timeout-minutes: 30
+    environment: release
+    # Only the newest matters: a newer push replaces one under way.
+    concurrency:
+      group: cli-nightly
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the version counts commits since the last release tag
+
+      - name: Version
+        # A push that is a release tag itself is published by the release workflow, as `latest`.
+        run: |
+          described="$(git describe --tags --match 'v[0-9]*' 2>/dev/null || true)"
+          if [[ "$described" =~ ^v([0-9.]+)-([0-9]+)-g[0-9a-f]+$ ]]; then
+            echo "VERSION=$(scripts/cli-version.sh "${BASH_REMATCH[1]}+${BASH_REMATCH[2]}")" >> $GITHUB_ENV
+          else
+            echo "This commit is a release, or no release tag is reachable: nothing to publish."
+            echo "VERSION=" >> $GITHUB_ENV
+          fi
+
+      - name: Select Xcode
+        if: env.VERSION != ''
+        run: sudo xcode-select -s "/Applications/Xcode_$(cat .github/xcode-version).app"
+
+      - name: Cache the Swift build
+        # What cli-files.sh builds to write lamp's generated files: kept between runs, so each builds only what changed.
+        if: env.VERSION != ''
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: cli-nightly-${{ hashFiles('.github/xcode-version', 'Package.resolved') }}-${{ github.sha }}
+          restore-keys: cli-nightly-${{ hashFiles('.github/xcode-version', 'Package.resolved') }}-
+
+      - name: Set up Node
+        if: env.VERSION != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Pack, check and publish
+        if: env.VERSION != ''
+        run: |
+          npm install --global npm@11
+          scripts/npm-package.sh "$VERSION"
+          node scripts/check-npm-package.mjs "build/npm/lampdotdev-lamp-$VERSION.tgz"
+          npm publish "build/npm/lampdotdev-lamp-$VERSION.tgz" --access public --tag nightly

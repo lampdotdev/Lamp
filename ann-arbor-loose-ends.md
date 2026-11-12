@@ -1,0 +1,6 @@
+A few loose ends from the move to Ann Arbor:
+
+1. Credits: take NYC Open Data and the MTA's subway entrances out of credits.json if nothing in the game uses them any more (check first: anything still drawn from them stays credited). Make sure every source the game does use is credited, with its license or "None" where the source states none.
+2. The Huron River's flow: if it isn't in yet, read the USGS gauge "Huron River at Ann Arbor" (https://waterservices.usgs.gov/nwis/iv/?sites=04174500&format=json&parameterCd=00060, public domain) while playing, so the river runs higher and faster after rain and calmer when it's low, with a fair default offline. Credit USGS.
+3. Amtrak: if it isn't in yet, Wolverine trains on the railway, stopping at the Depot Street station on Amtrak's schedule (https://content.amtrak.com/content/gtfs/GTFS.zip: build the Ann Arbor stops into the game's data ahead, don't fetch it while playing). Credit Amtrak, checking its feed's terms.
+4. Leftovers from New York: rename the camera ids, functions, files and comments still named for Manhattan (centralPark, fifthAve, nyc-geodata.js, boroughs.js, subway-geodata.js…) to Ann Arbor's or to what they are, remove the empty subway module if nothing needs it, and update APP.md to match.

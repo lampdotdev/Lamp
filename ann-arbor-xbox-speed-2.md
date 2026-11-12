@@ -1,0 +1,8 @@
+On the Xbox it's still about 20 frames a second in one view, though everything from the last request went in and the city is now about twice as cheap to draw. So the slow part is something the Mac doesn't show. Find out what, then fix it:
+
+1. Log what the Xbox is actually doing, once when the game starts: the graphics card WebGL reports (`WEBGL_debug_renderer_info`'s `UNMASKED_RENDERER_WEBGL`, which says whether it's the console's GPU or a slow software one), how long a short fixed JavaScript loop takes (which says whether the browser's fast JavaScript is on), and in the `[frame]` line every ten seconds, the GPU's time per frame (`EXT_disjoint_timer_query_webgl2`) beside the render and logic times already there.
+2. Turn tree merging off on the Xbox (`mergeTrees: 0` in its tier): merged, the trees sway every species' shape for every tree, nearly doubling what the GPU draws, and save no time on the processor.
+3. Stop the ground shading's uploads every frame (ground-shade.js): its band's attributes are marked dynamic, so three.js sends them whole every frame (about 680 KB), and the blobs' matrices are flagged every frame too. Mark them static and flag them only when `layOut` changes them; give the people's blobs their own small mesh.
+4. Do less every frame on the Xbox: the ground streaming checks and scene culling every few frames, and the new birds and the traffic updated less often.
+
+Then look, and read the Xbox's log Lamp gives you (not the Mac's): if render plus logic come to 35–50 ms, the processor is the limit and step 4 matters most; if they're small and the GPU time is large, the GPU is, and drawing at 1440x810 again (scale 0.75) is next. Note the numbers in APP.md.

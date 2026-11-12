@@ -64,8 +64,17 @@ The npm package is laid out as the repository is (`scripts/npm-package.sh <versi
 site's limits for a link, and the Lamp resources lamp reads, with their licenses. A copy npm installed asks npm's
 registry for a newer one at most once a day, in a process of its own that never holds up the command, and the next
 command says so in one line, once a day, with the command that updates it (`cli/update.mjs`). It never updates itself.
-The copy in Lamp's app updates with Lamp and a checkout with its repository, so neither asks; nor does one in CI, or
-with `LAMP_NO_UPDATE_CHECK` set.
+A checkout updates with its repository, so it doesn't ask; nor does a copy in CI, or with `LAMP_NO_UPDATE_CHECK` set.
+
+lamp is also published to npm from every push to main, as `nightly` (the release workflow's `cli-nightly` job, at the
+version `scripts/cli-version.sh` gives: `0.36.2-nightly.9` for the ninth commit after 0.36.1), in minutes rather than
+the most of an hour Lamp Nightly takes. The `lamp` that Lamp's app puts on the PATH (`cli/lamp.sh`) follows it: at most
+once an hour a process of its own fetches the newest of its channel (Lamp Nightly's `nightly`, Lamp's `latest`; none for
+Lamp Dev) into `~/.lamp/cli` when it's newer than the app's own copy, checked against npm's integrity hash, and the
+launcher runs that one from then on, until the app has caught up (`~/.lamp/cli/use` names it with the app version it was
+fetched for). Lamp's app stamps its copy with the same numbering (build.sh), so the same commit compares equal. Lamp's
+own calls of lamp (`LampCLI`) always run the app's copy, so the app and what it asks of lamp never differ.
+`lamp --version` says which is running.
 
 writes one skill, [`skill/SKILL.md`](skill/SKILL.md), where each agent found on the computer reads its skills
 (`~/.claude/skills/lamp`, `~/.codex/skills/lamp`), with the command as it's run on this computer filled in. From its

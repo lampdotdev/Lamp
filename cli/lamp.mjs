@@ -25,7 +25,7 @@ import { Problem, RESOURCES, layoutOf, manifestOf, projectOf, stateOf, running, 
 import { macActions, serveMac, writeMacStarter } from "./mac.mjs";
 import { MAX_ARCHIVE, exportApp, unpack } from "./lampapp.mjs";
 import { latestOf } from "./link.mjs";
-import { updateNotice } from "./update.mjs";
+import { updateNotice, versionLine } from "./update.mjs";
 import { editionName, giveTo, givenTo, keepInLamp, keepPictures, lampOwning, lampsKeptLink, reachLamp, takeBack } from "./outside.mjs";
 import { serve, ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, LAMP_JS_STAND_IN, lampJS } from "./dev.mjs";
 import { findBrowser, noBrowser } from "./browser.mjs";
@@ -164,7 +164,8 @@ const SKILL_MARK = "<!-- Written by lamp setup: run it again to update, or with 
 function lampCommand() {
   const me = fileURLToPath(import.meta.url);
   // The copy in Lamp's app is run by its launcher beside it, on the app's own runtime, and updates with Lamp.
-  if (process.env.LAMP_FROM_APP === "1") { const launcher = join(here, "lamp"); return /\s/.test(launcher) ? JSON.stringify(launcher) : launcher; }
+  // A newer copy fetched from npm is run by that same launcher (lamp.sh names it): the app's, never one beside this.
+  if (process.env.LAMP_FROM_APP === "1") { const launcher = process.env.LAMP_LAUNCHER_PATH || join(here, "lamp"); return /\s/.test(launcher) ? JSON.stringify(launcher) : launcher; }
   const found = spawnSync(process.platform === "win32" ? "where" : "which", ["lamp"], { encoding: "utf8" });
   const onPath = found.status === 0 && found.stdout.trim().split("\n").some((path) => { try { return realpathSync(path.trim()) === realpathSync(me); } catch { return false; } });
   return onPath ? "lamp" : `node ${/\s/.test(me) ? JSON.stringify(me) : me}`;
@@ -649,6 +650,7 @@ async function devInLamp(layout, lamp) {
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (!command || command === "--help" || command === "-h" || command === "help") { console.log(USAGE); return; }
+  if (command === "--version" || command === "-v" || command === "version") { console.log(versionLine()); return; }
 
   if (command === "new") {
     const { options, rest } = parse(args, ["name"]);
