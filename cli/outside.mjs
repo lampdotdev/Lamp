@@ -8,7 +8,7 @@
 import { createConnection } from "node:net";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Problem, stateOf } from "./state.mjs";
 
 // The handshake's version, as Lamp's helper sends it (`OutsideKit.protocolVersion`).
@@ -151,4 +151,53 @@ export function keepPictures(folder, pictures) {
     writeFileSync(path, bytes);
     return path;
   });
+}
+
+/**
+ * The link Lamp's app keeps for an app in its own folder (its "Wish Links.json", by the app's instance id), as lamp
+ * keeps a link (`readLink`), or null. lamp shares such an app itself, to the same link, whether Lamp is open or not.
+ */
+export function lampsKeptLink(folder) {
+  const where = keptLinkOf(folder);
+  if (!where) return null;
+  let kept;
+  try { kept = JSON.parse(readFileSync(where.file, "utf8"))[where.key]; } catch { return null; }
+  if (typeof kept?.id !== "string" || typeof kept.secret !== "string" || typeof kept.url !== "string") return null;
+  const shown = kept.shown ?? {};
+  let site = "https://lamp.dev";
+  try { site = new URL(kept.url).origin; } catch {}
+  return { site, id: kept.id, url: kept.url, secret: kept.secret, name: shown.name ?? "", words: shown.words ?? "", line: shown.line ?? "",
+    by: shown.by ?? "", asks: shown.asks ?? [], ...(shown.file ? { file: true } : {}) };
+}
+
+/** Tells Lamp's app what lamp shared to an app's link (or, with none, that it was taken down), so its Share Link card
+ * shows the link as it is now. */
+export function keepInLamp(folder, link) {
+  const where = keptLinkOf(folder);
+  if (!where) return;
+  let all = {};
+  try { all = JSON.parse(readFileSync(where.file, "utf8")) || {}; } catch {}
+  const was = all[where.key] ?? {};
+  // Taken down: Lamp's card has no link for it any more.
+  if (!link) delete all[where.key];
+  else all[where.key] = { ...was, id: link.id, url: link.url, secret: link.secret,
+    // Its picture isn't the one Lamp took (Lamp knows its own by a digest), so the card offers to send Lamp's again.
+    shown: { ...(({ picture: _picture, ...rest }) => rest)(was.shown ?? {}), name: link.name, words: link.words, line: link.line, by: link.by,
+      asks: link.asks ?? [], file: link.file ? true : undefined,
+      ...(link.shape !== undefined ? { shape: link.shape === "fill" ? "fill" : Number(link.shape).toFixed(4) } : {}) } };
+  mkdirSync(dirname(where.file), { recursive: true });
+  writeFileSync(where.file, JSON.stringify(all), { mode: 0o600 });
+}
+
+/** Where Lamp's app keeps an app's link: its Lamp's "Wish Links.json", under the app's instance id (`.lamp/meta.json`). */
+function keptLinkOf(folder) {
+  let real = folder;
+  try { real = realpathSync(folder); } catch {}
+  const at = real.lastIndexOf("/Apps/");
+  if (!lampOwning(real) || at < 0) return null;
+  const app = join(real.slice(0, at), "Apps", real.slice(at + 6).split("/")[0]);
+  let meta;
+  try { meta = JSON.parse(readFileSync(join(app, ".lamp", "meta.json"), "utf8")); } catch { return null; }
+  const key = typeof meta?.instance === "string" && meta.instance ? meta.instance : meta?.id;
+  return typeof key === "string" && key ? { file: join(real.slice(0, at), "Wish Links.json"), key } : null;
 }
