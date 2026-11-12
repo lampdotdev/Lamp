@@ -31,14 +31,17 @@ function compile(line) {
   return new RegExp(`^${anchored ? "" : "(?:.*/)?"}${source}${folder ? "/" : "(?:/|$)"}`);
 }
 
-/** Whether a path from the folder's top ("ldraw/parts/3001.dat") is one its `.lampignore` leaves out; never, with none. */
+/**
+ * Whether a path from the folder's top ("ldraw/parts/3001.dat"), a folder's when `folder` is true, is one its
+ * `.lampignore` leaves out; never, with none.
+ */
 export function ignoredIn(folder) {
   let lines = [];
   try { lines = readFileSync(join(folder, IGNORE_FILE), "utf8").split(/\r?\n/); } catch {}
   const tests = lines.map((line) => line.trim()).filter((line) => line && !line.startsWith("#") && !line.startsWith("!")).map(compile).filter(Boolean);
   if (!tests.length) return () => false;
-  // A folder's own path is asked about with a trailing slash too, so a folder-only pattern names it.
-  return (path) => tests.some((test) => test.test(path) || test.test(`${path}/`));
+  // A folder's own path is asked about with a trailing slash too, so a folder-only pattern names it (and never a file).
+  return (path, folder = false) => tests.some((test) => test.test(path) || (folder && test.test(`${path}/`)));
 }
 
 /**
@@ -49,5 +52,5 @@ export function ignoredFor(root, app = root) {
   const own = ignoredIn(root);
   if (app === root) return own;
   const outer = ignoredIn(app), under = relative(app, root).split(sep).join("/");
-  return (path) => own(path) || outer(under ? `${under}/${path}` : path);
+  return (path, folder = false) => own(path, folder) || outer(under ? `${under}/${path}` : path, folder);
 }

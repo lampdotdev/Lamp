@@ -110,7 +110,7 @@ export function pageFiles(layout, { device = ANY_BROWSER } = {}) {
   const walk = (dir, prefix) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const path = prefix + entry.name;
-      if (entry.name.startsWith(".") || entry.name === "node_modules" || path === NOTES_FILE || ignored(path)) continue;
+      if (entry.name.startsWith(".") || entry.name === "node_modules" || path === NOTES_FILE || ignored(path, entry.isDirectory())) continue;
       if (entry.isDirectory()) walk(join(dir, entry.name), path + "/");
       else if (entry.isFile()) files.set(path, readFileSync(join(dir, entry.name)));
     }
