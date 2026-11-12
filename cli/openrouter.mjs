@@ -108,7 +108,9 @@ export async function decide({ key, model, state, questions, seconds = 60, signa
       throw new OpenRouterTrouble(status === 422 ? "invalid" : "refused", status === 422 ? `The decision request was invalid: ${detail}` : "The decision model didn't answer.", { status, reply });
     }
     // Jev charges per input token ($0.042 per million); OpenRouter may report the exact cost.
-    const cost = Number(reply.usage?.cost) || (Number(reply.usage?.input_tokens) || 0) * 0.042 / 1_000_000;
+    // A cost OpenRouter reports stands, nothing included; the estimate is only for when it reports none.
+    const reported = reply.usage?.cost;
+    const cost = typeof reported === "number" && Number.isFinite(reported) ? reported : (Number(reply.usage?.input_tokens) || 0) * 0.042 / 1_000_000;
     return { answers: reply.answers, cost };
   }
   throw new OpenRouterTrouble("busy", "The decision model is busy. Try again in a moment.");
