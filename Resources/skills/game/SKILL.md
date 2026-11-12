@@ -25,6 +25,8 @@ The tools Lamp has for games:
   `new Worker(new URL("./<name>.worker.js", import.meta.url), { type: "module" })` (`.js`: every file is bundled flat
   into `Web/app/`; a module worker, since what it shares with the page comes as an import). Edit `src/`,
   never `Web/app/`. A game in plain JavaScript stays as it is, its modules in `Web/`.
+- **AI in a game** (`LampAI` in Web/lamp.js): checked and shown where it can't answer as the web-app skill's
+  "LampAI" says, with lamp.js's own line and its link, never words of the game's own.
 - **Phones as players**: a game on the runtime takes phones on the Wi‑Fi with `Lamp.controllers` (Web/lamp.js) and
   its page for them in Phone/ (the phone-controllers and phone-pages skills), on the Mac, in the TV preview, on a
   Samsung or LG TV and on the Xbox; elsewhere `Lamp.controllers` says it can't start, so the game stays whole with a controller,
