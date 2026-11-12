@@ -80,8 +80,9 @@ to the new one (301). A share with no key is made as before, at `/w/`. The page 
 either way. Usernames are 2 to 30 lowercase letters, digits and dashes, never one of the site's own words (`w`, `api`,
 `ideas` and the rest, `RESERVED`), and `/:user/:app` is the last of the site's routes, so a page of its own always wins.
 
-The browser an account's email link is opened in is signed in too: a key of its own in an HttpOnly, SameSite=Lax cookie
-(`ACCOUNT_COOKIE`), which `GET /api/accounts` reads and `DELETE` clears. An idea sent from a signed-in browser is by
+A browser is signed in only by pressing the button on an idea's confirm page (never by opening a link, which anyone
+could be sent to): a key of its own in an HttpOnly, SameSite=Lax cookie (`ACCOUNT_COOKIE`), which `GET /api/accounts`
+reads and `DELETE` clears. An idea sent from a signed-in browser is by
 its username (`user`, and the name the maker sees), and its news goes to the account's address. Someone who sends an
 idea with an address that has no account is emailed a link to confirm it (`askToConfirm`): the page it opens shows a
 button, so nothing is used up by a mail scanner, and pressing it signs the browser in to the address's account or

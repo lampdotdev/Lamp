@@ -2,10 +2,10 @@
 // There are no passwords. Asking for one (`POST /api/accounts`, from Lamp's Share Link card or `lamp account`) answers
 // a key the asker's Lamp keeps and sends an email with a link; once that's opened, the key is the account's, and a share
 // sent with it (`X-Lamp-Account`) is its maker's. Asked again with an address that has an account already, it's a
-// sign-in: another Lamp, on another computer, gets a key of its own the same way. The browser the email's link is opened
-// in is signed in too (`ACCOUNT_COOKIE`), so ideas sent from it are by the username. Someone who sent an idea with their
-// address is asked to confirm it the same way (`askToConfirm`): its link signs them in, or makes them an account with a
-// username they choose, and only then do emails about their ideas go to it.
+// sign-in: another Lamp, on another computer, gets a key of its own the same way. Someone who sent an idea with their
+// address is asked to confirm it the same way (`askToConfirm`): its page's button signs their browser in
+// (`ACCOUNT_COOKIE`), or makes them an account with a username they choose, and only then do emails about their ideas
+// go to it; ideas sent from that browser are by the username.
 
 import { randomBytes } from "node:crypto";
 import { isIP } from "node:net";
@@ -77,12 +77,10 @@ export function createAccountHandler({ env = process.env, fetcher = fetch, store
           }
           if (account && account.email.toLowerCase() !== waiting.email.toLowerCase()) return page(409, `${escaped(waiting.name)} is someone else's. Choose another username in Lamp.`);
           await kept.addAccountKey(waiting.hash, waiting.name);
-          const browser = newSecret();
-          await kept.addAccountKey(hashSecret(browser), waiting.name);
-          // Done only now, so a link whose first try failed partway works when it's opened again.
+          // Done only now, so a link whose first try failed partway works when it's opened again. The browser isn't
+          // signed in here: a GET anyone could be sent to never puts an account in it.
           await kept.doneWaiting(token);
-          return page(200, `You're signed in to Lamp as <b>${escaped(waiting.name)}</b>. Your links go under lamp.dev/${escaped(waiting.name)}. You can close this page.`,
-            { "Set-Cookie": signInCookie(browser, request.url) });
+          return page(200, `You're signed in to Lamp as <b>${escaped(waiting.name)}</b>. Your links go under lamp.dev/${escaped(waiting.name)}. You can close this page.`);
         } catch { return page(503, "Lamp's site couldn't do that just now. Try the link again in a moment."); }
       }
       // Whose a key is, for the Lamp that holds it (or the browser, by its cookie): its username once the email's link

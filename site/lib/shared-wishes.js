@@ -1053,13 +1053,15 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
         try { number = await kept.addIdea(id, added); }
         finally { if (!number && at) { try { await kept.removeImages([at]); } catch {} } }
         if (!number) return reply(429, { error: "full" });
-        // To the maker's own address too, if they gave one: the idea is kept whether or not that goes.
-        try {
-          const maker = await kept.maker(id);
-          if (maker?.confirmed) await writeToMaker(kept, id, { ...added, n: number }, record, linkOf(url.origin, record), { env, fetcher, origin: url.origin, maker, once: `maker-${id}-${number}` });
-        } catch {}
-        let confirm = false;
-        if (confirming) { try { confirm = await askToConfirm(kept, { email: words.email, name: words.name, app: record.name, origin: url.origin, env, fetcher }); } catch {} }
+        // To the maker's own address too, if they gave one, and the sender asked to confirm theirs: both at once, so the
+        // answer that carries the sender's token comes inside the page's wait. The idea is kept whether or not they go.
+        const [, confirm] = await Promise.all([
+          (async () => {
+            const maker = await kept.maker(id);
+            if (maker?.confirmed) await writeToMaker(kept, id, { ...added, n: number }, record, linkOf(url.origin, record), { env, fetcher, origin: url.origin, maker, once: `maker-${id}-${number}` });
+          })().catch(() => {}),
+          confirming ? askToConfirm(kept, { email: words.email, name: words.name, app: record.name, origin: url.origin, env, fetcher }).catch(() => false) : false,
+        ]);
         return reply(201, { n: number, token, ...(user ? { user } : {}), ...(confirm ? { confirm: true } : {}) });
       }
       // The sender's own ideas, asked by number and token from their browser: what became of each, and the maker's
