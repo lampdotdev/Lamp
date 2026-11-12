@@ -15271,6 +15271,9 @@ enum Template {
             let request: String
             var answers: [(question: String, answer: String)] = []
             var writes = 0
+            /// What its reads may still give back in all: every later step carries them again, under what a step may
+            /// carry (`MAX_BODY` in lamp's app-ai.mjs).
+            var resultsLeft = 1_200_000
         }
         private var operation: Operation?
         /// Each change's result by its key, so the same change asked again gets it without running again.
@@ -15451,7 +15454,9 @@ enum Template {
                 onStep(.reading(tool.name))
                 do {
                     let value = try await tool.perform(args(call), callInfo(call, key: ""))
-                    results[id] = ["id": id, "ok": true, "value": Self.cut(value, max: resultBytes)]
+                    let kept = Self.cut(value, max: max(1024, min(resultBytes, op.resultsLeft)))
+                    op.resultsLeft = max(0, op.resultsLeft - ((try? JSONSerialization.data(withJSONObject: [kept]))?.count ?? 0))
+                    results[id] = ["id": id, "ok": true, "value": kept]
                 } catch {
                     results[id] = ["id": id, "ok": false, "error": Self.words(error)]
                 }
