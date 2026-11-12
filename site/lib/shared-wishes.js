@@ -1303,8 +1303,9 @@ export function pictureScript(site) {
   // The most a picture may be as a data: URL to go with an idea (`IDEA_LIMITS.picture` bytes, as base64).
   const limit = 23 + Math.floor(IDEA_LIMITS.picture / 3) * 4;
   const keep = `try{const get=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(type,options){if(/^(webgl2?|experimental-webgl)$/.test(type))options=Object.assign({},options,{preserveDrawingBuffer:true});return get.call(this,type,options)}}catch(_){}`;
-  // Black all over (a 3D canvas read when it held nothing) is no picture: a few points across it, all near black.
-  const blank = `const blank=x=>{const d=x.getImageData(0,0,x.canvas.width,x.canvas.height).data,step=Math.max(4,Math.floor(d.length/4/400)*4);for(let i=0;i<d.length;i+=step)if(d[i]+d[i+1]+d[i+2]>24)return false;return true};`;
+  // Black all over (a 3D canvas read when it held nothing) is no picture: the whole of it drawn down to 20 by 20, every
+  // point of which is near black, so anything drawn anywhere in it counts.
+  const blank = `const blank=x=>{const t=document.createElement("canvas");t.width=t.height=20;const y=t.getContext("2d");y.drawImage(x.canvas,0,0,20,20);const d=y.getImageData(0,0,20,20).data;for(let i=0;i<d.length;i+=4)if(d[i]+d[i+1]+d[i+2]>24)return false;return true};`;
   return `<script>(()=>{${keep}const site=${JSON.stringify(site)};${blank}addEventListener("message",e=>{if(e.origin!==site||e.source!==parent||!e.data||e.data.lamp!=="picture")return;const n=e.data.n;requestAnimationFrame(()=>{let picture=null;try{const all=[...document.querySelectorAll("canvas")].filter(c=>c.width&&c.height&&c.getClientRects().length);const c=all.sort((a,b)=>b.clientWidth*b.clientHeight-a.clientWidth*a.clientHeight)[0];if(c){const k=Math.min(1,1280/c.width),o=document.createElement("canvas");o.width=Math.round(c.width*k);o.height=Math.round(c.height*k);const x=o.getContext("2d");x.drawImage(c,0,0,o.width,o.height);if(!blank(x))for(const q of [0.8,0.6,0.4]){picture=o.toDataURL("image/jpeg",q);if(picture.length<=${limit})break;picture=null}}}catch(_){}parent.postMessage({lamp:"picture",n,picture},site)})})})()</script>`;
 }
 
