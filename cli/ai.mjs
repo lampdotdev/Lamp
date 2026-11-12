@@ -197,7 +197,8 @@ export async function act(body) {
   if (!which) return [501, { error: missing }];
   let r;
   try { r = readStep(JSON.stringify(body ?? null)); } catch (refused) { return [refused.status ?? 400, { error: refused.message }]; }
-  const seconds = which === "openrouter" ? 25 : 60;
+  // A step's guard against a call that has stopped answering, as Lamp's app gives it (`AppAct.turnSeconds`).
+  const seconds = 600;
   const deadline = Date.now() + Math.min(r.seconds, seconds) * 1000;
   const tag = "outside-text-" + randomBytes(4).toString("hex");
   let retry = null;

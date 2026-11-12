@@ -70,7 +70,7 @@ needs Lamp (for AI, `LampAI.status`'s `reason`), never an error or an empty scre
 
 `LampAI.act(request, { about, context, tools, history, onStep })` runs a short loop: the AI picks calls among the
 app's tools, the page runs them, the AI sees the results, until it replies (at most 4 AI calls and 6 writes a
-turn, and 25 seconds over OpenRouter or a minute through Claude Code, Codex or a model on the Mac). It works with
+turn, and no time limit unless the app sets one with `limits: { seconds }`, for a feature that should answer quickly). It works with
 whichever AI the person set up for apps' text, so don't tie it to voice: typing works wherever `act` does. Its comment in lamp.js has the shapes. This is the one recipe for it:
 
 - Show the feature where `LampAI.status('act')` says it's available, and keep the app's own buttons for everything:

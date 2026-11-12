@@ -212,8 +212,8 @@ enum GameAndroid {
                 val id = call.optInt("id")
                 val path = call.optString("path")
                 val body = call.optString("body", "{}")
-                // The page's own wait for an answer (a status check's few seconds, a question's minutes).
-                val timeout = call.optInt("timeout", 240_000).coerceIn(1_000, 240_000)
+                // The page's own wait for an answer (a status check's few seconds, an action step's ten minutes at most).
+                val timeout = call.optInt("timeout", 240_000).coerceIn(1_000, 600_000)
                 thread {
                     val (status, text) = if (path in routes) post(files, path, body, timeout) else 404 to JSONObject().put("error", "Not found").toString()
                     val answer = JSONObject().put("id", id).put("status", status).put("body", text).toString()

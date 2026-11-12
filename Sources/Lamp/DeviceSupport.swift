@@ -827,8 +827,11 @@ enum DeviceSupport {
 
       // Doing things for the person: LampAI.act
 
-      // 60 seconds is the longest any route allows; each answer says its route's own (`seconds`), and the turn keeps to it.
-      var ACT_LIMITS = { steps: 4, writes: 6, seconds: 60 };
+      // A turn has no time limit of its own: a real answer is never cut off, however long the model takes. Each step is
+      // given ACT_STEP_SECONDS, which only a call that has stopped answering reaches. An app that wants a quicker turn
+      // asks for one (`limits: { seconds }`); steps and writes it may only lower.
+      var ACT_LIMITS = { steps: 4, writes: 6 };
+      var ACT_STEP_SECONDS = 600;
       var actRan = {};      // turn id -> call key -> the result a write gave, while this copy of the page is open
       function actId() { return 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
       function isList(v) { return Object.prototype.toString.call(v) === '[object Array]'; }
@@ -854,10 +857,11 @@ enum DeviceSupport {
       function act(request, options) {
         var o = options || {}, tools = o.tools || {};
         var limits = {};
-        ['steps', 'writes', 'seconds'].forEach(function (k) {
+        ['steps', 'writes'].forEach(function (k) {
           var asked = o.limits && typeof o.limits[k] === 'number' ? o.limits[k] : ACT_LIMITS[k];
           limits[k] = Math.max(1, Math.min(asked, ACT_LIMITS[k]));
         });
+        var asked = o.limits && typeof o.limits.seconds === 'number' && o.limits.seconds > 0 ? o.limits.seconds : null;
         var id = o.turn || actId();
         if (!actRan[id]) {
           var kept = Object.keys(actRan);
@@ -865,7 +869,7 @@ enum DeviceSupport {
           actRan[id] = {};
         }
         var ran = actRan[id];
-        var started = Date.now(), deadline = started + limits.seconds * 1000;
+        var started = Date.now(), deadline = asked ? started + Math.max(1, asked) * 1000 : Infinity;
         var out = { turn: id, reply: '', ask: false, choices: [], done: [], failed: [], skipped: [], reads: [], stopped: null, error: '' };
         var steps = [], route = null, writes = 0, over = false, settle;
         var declared = Object.keys(tools).map(function (name) {
@@ -887,7 +891,7 @@ enum DeviceSupport {
           return over;
         }
         var result = new Promise(function (resolve) { settle = resolve; });
-        var timer = setTimeout(function () { stop('time'); }, limits.seconds * 1000);
+        var timer = asked ? setTimeout(function () { stop('time'); }, Math.max(1, asked) * 1000) : null;
         result.then(function () { clearTimeout(timer); });
 
         // Reads run together; then the writes, one after another, each checked right before it runs. A write that
@@ -963,23 +967,15 @@ enum DeviceSupport {
           if (over) return;
           var left = deadline - Date.now();
           if (left <= 500) return stop('time');
+          // The step's own time: what's left of an app's turn, or the step's guard against a call that has stopped.
+          var stepTime = Math.min(left, ACT_STEP_SECONDS * 1000);
           var body = { request: String(request), about: o.about || '', now: present(), tools: declared, steps: steps,
-                       history: (o.history || []).slice(-3), seconds: Math.floor(left / 1000) };
+                       history: (o.history || []).slice(-3), seconds: Math.floor(stepTime / 1000) };
           if (o.context !== undefined) body.context = jsonState(o.context);
           if (route) body.route = route;
           if (steps.length >= limits.steps - 1) body.final = true;
           if (o.model) body.model = o.model;
-          post('/ai/act', body, left, deadline).then(function (answer) {
-            // The route's own time for a turn (25 seconds over OpenRouter, a minute through Claude Code, Codex or a model
-            // on the Mac) shortens the turn's deadline, counted from its start; it never lengthens it.
-            if (!over && typeof answer.seconds === 'number' && answer.seconds > 0) {
-              var end = started + Math.min(answer.seconds, limits.seconds) * 1000;
-              if (end < deadline) {
-                deadline = end;
-                clearTimeout(timer);
-                timer = setTimeout(function () { stop('time'); }, Math.max(0, deadline - Date.now()));
-              }
-            }
+          post('/ai/act', body, stepTime, Date.now() + stepTime).then(function (answer) {
             // Cancelled, out of time or already over: an answer that comes late runs nothing.
             if (late()) return;
             route = answer.route || route;
@@ -1104,7 +1100,7 @@ enum DeviceSupport {
         /**
          * Does what the person asks, in their own words, with the app's own reads and writes: the model picks calls,
          * the page runs them, the model sees what happened, until it replies (at most 4 model calls and 6 writes a turn,
-         * and 25 seconds over OpenRouter or a minute through Claude Code, Codex or a model on the Mac). Check `LampAI.isAvailable('act')` first; keep the app's buttons for everything.
+         * with no time limit unless the app sets one with `limits: { seconds }`; Cancel ends it at once). Check `LampAI.isAvailable('act')` first; keep the app's buttons for everything.
          *
          *     var turn = LampAI.act('Add milk', {
          *       about: 'A family dashboard: the calendar, chores and the shopping list.',

@@ -15,6 +15,9 @@
 // the step's JSON shape (Claude Code, Codex, a GGUF model, an older MLX model: `planPrompt`, `planSchema`, `readPlan`).
 
 export const MAX_TOOLS = 24, MAX_CALLS = 8, MAX_STEPS = 4, MAX_BODY = 256 * 1024, MAX_CHOICES = 4, MAX_CHOICE = 24;
+/** The longest a step may take, whatever its route, before its call is taken to have stopped answering (`ACT_STEP_SECONDS`
+ *  in lamp.js, `AppAct.turnSeconds`). A turn has no time of its own unless the app gives it one. */
+export const MAX_TURN_SECONDS = 600;
 /** Lamp's own tool, the way every answer that isn't a call comes back. */
 export const REPLY = "reply";
 const NAME = /^[a-zA-Z][a-zA-Z0-9_]{0,40}$/;
@@ -106,7 +109,7 @@ export function readStep(text) {
     .map((h) => ({ said: typeof h.said === "string" ? h.said : "", heard: typeof h.heard === "string" ? h.heard : "" }));
   const seconds = typeof body.seconds === "number" ? body.seconds : 60;
   const step = { request, about: typeof body.about === "string" ? body.about : "", now: typeof body.now === "string" ? body.now : "",
-    tools, history, steps, route: typeof body.route === "string" ? body.route : null, seconds: Math.max(1, Math.min(seconds, 60)),
+    tools, history, steps, route: typeof body.route === "string" ? body.route : null, seconds: Math.max(1, Math.min(seconds, MAX_TURN_SECONDS)),
     final: body.final === true || rawSteps.length >= MAX_STEPS - 1 };
   if ("context" in body) step.context = body.context;
   return step;
