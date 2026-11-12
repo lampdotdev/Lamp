@@ -1092,8 +1092,9 @@ enum DeviceSupport {
        * own, or hiding it or failing at it, and where it gives `help` (a page away from Lamp), a link to it beside the
        * reason: "How to turn on AI". A call that fails for that reason has `needsSetup`, or `help`, set on its error.
        * On a page shared on lamp.dev that hasn't reached this computer yet, `status` asks nothing and answers
-       * `connect: true`: show a small "Connect AI" button beside its reason that calls `LampAI.connect()`, and use what
-       * that gives as `status`'s answer. Never call `connect()` as the page loads.
+       * `connect: true`: show a small "Connect AI" button beside its reason that calls `LampAI.connect(capability)` with
+       * the same kind of AI (`connect('pictures')` for pictures), and use what that gives as `status`'s answer. Never
+       * call `connect()` as the page loads.
        */
       var LampAI = {
         Failure: Failure,

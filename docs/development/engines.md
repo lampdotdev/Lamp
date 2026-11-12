@@ -338,7 +338,7 @@ A capability given to one engine must be given to all of them that can take it, 
   (a dialog) and the AI's answer, given as an app's request is with no app behind it (`appRequest(for: nil)`: Lamp's
   default choices, no cost recorded, no setup card). Not `/ai/computer`, nor anything of the agent's. Reaching that
   port makes Chrome ask the person (Local Network Access), so lamp.js's `LampAI.status` doesn't reach out on its own:
-  only once the browser already grants it, the page has a kept token, or the person asked (`LampAI.connect()` from a
+  only once the browser already grants it, the page has a kept token, or the person asked (`LampAI.connect(capability)` from a
   button, or a real AI call). Until then `status` answers `connect: true` without asking anything.
 - **Hearing for apps** (`LampAI.hear` in Web/lamp.js, `/ai/hear`, `Sources/Lamp/AppHear.swift`): the page's host
   records (`LampVoice`, devices guide) and the page sends a WAV in base64; the gateway checks it is 16 kHz mono 16-bit
