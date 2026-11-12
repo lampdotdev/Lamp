@@ -59,6 +59,39 @@ enum WishIdeas {
         return data
     }
 
+    /// What a line's button said to the sender: Send with a note, Done, It's In or Dismiss.
+    enum Answer: Equatable { case send, done, itsIn, dismiss }
+
+    /// What lamp.dev did with an answer it took: kept it, or kept it without confirming the email the sender was
+    /// promised. Lamp never sends that again by itself: a timeout can say no after the email went.
+    enum Saved: Equatable { case saved, emailUnconfirmed }
+
+    /// A reply or It's In kept on the link whose promised email lamp.dev couldn't confirm, shown on its idea until a
+    /// later Send to it is confirmed, while Lamp runs.
+    enum Unconfirmed: Equatable {
+        case reply, itsIn
+        var words: String {
+            switch self {
+            case .reply: "Your reply is saved on the link, but email couldn't be confirmed."
+            case .itsIn: "It's In is saved on the link, but email couldn't be confirmed."
+            }
+        }
+    }
+
+    /// The warning an idea shows after an answer lamp.dev kept, given the one it had. Only Send and It's In promise a
+    /// sender who gave an address an email, and only a confirmed Send says the conversation reached them again; Done
+    /// and Dismiss promise none, so they leave the warning as it was.
+    static func unconfirmed(after answer: Answer, wantsNews: Bool, notified: Bool, had: Unconfirmed?) -> Unconfirmed? {
+        guard wantsNews else { return had }
+        switch answer {
+        case .send: return notified ? nil : .reply
+        case .itsIn: return notified ? had : .itsIn
+        case .done, .dismiss: return had
+        }
+    }
+
+    /// Warnings are kept by the link as well as the idea's number: a link made again counts from one.
+    static func unconfirmedKey(_ project: LampProject, link: String, _ number: Int) -> String { "\(project.id) \(link) \(number)" }
 }
 
 extension Store {
@@ -128,25 +161,47 @@ extension Store {
 
     /// It's In, or Dismiss: the idea goes from the link (built, the site first tells whoever asked), with the maker's
     /// note to its sender if they wrote one, and from the panel once the site says so.
-    func finishIdea(_ idea: WishLink.Idea, built: Bool, note: String? = nil, in project: LampProject) async -> Bool {
-        guard let shared = WishLink.kept(for: project) else { return false }
-        do { try await WishLink.removeIdea(idea.n, built: built, note: note, for: shared) } catch { return false }
+    func finishIdea(_ idea: WishLink.Idea, built: Bool, note: String? = nil, in project: LampProject) async -> WishIdeas.Saved? {
+        guard let shared = WishLink.kept(for: project) else { return nil }
+        let notified: Bool
+        do { notified = try await WishLink.removeIdea(idea.n, built: built, note: note, for: shared) } catch { return nil }
         dropIdea(idea.n, of: project)
-        return true
+        return noteEmail(built ? .itsIn : .dismiss, idea, notified: notified, in: project, on: shared)
     }
 
     /// Send, or Done: something more said to the idea's sender (emailed, if they gave an address), or their answer
     /// seen to without a word. One with its outcome leaves the list, one still open stays with its thread.
-    func answerIdea(_ idea: WishLink.Idea, note: String?, in project: LampProject) async -> Bool {
-        guard let shared = WishLink.kept(for: project) else { return false }
-        do { try await WishLink.replyIdea(idea.n, note: note, for: shared) } catch { return false }
-        if idea.status != nil { dropIdea(idea.n, of: project); return true }
-        guard let index = ideas[project.id]?.firstIndex(where: { $0.n == idea.n }) else { return true }
+    func answerIdea(_ idea: WishLink.Idea, note: String?, in project: LampProject) async -> WishIdeas.Saved? {
+        guard let shared = WishLink.kept(for: project) else { return nil }
+        let notified: Bool
+        do { notified = try await WishLink.replyIdea(idea.n, note: note, for: shared) } catch { return nil }
+        let said = note?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let saved = noteEmail(said == nil ? .done : .send, idea, notified: notified, in: project, on: shared)
+        if idea.status != nil { dropIdea(idea.n, of: project); return saved }
+        guard let index = ideas[project.id]?.firstIndex(where: { $0.n == idea.n }) else { return saved }
         ideas[project.id]?[index].waiting = nil
-        if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
-            ideas[project.id]?[index].thread = (idea.thread ?? []) + [.init(by: "maker", text: note, at: ISO8601DateFormatter().string(from: Date()))]
+        if let said {
+            ideas[project.id]?[index].thread = (idea.thread ?? []) + [.init(by: "maker", text: said, at: ISO8601DateFormatter().string(from: Date()))]
         }
-        return true
+        return saved
+    }
+
+    /// The warning on an idea whose promised email lamp.dev couldn't confirm, if it has one on the wish's link now.
+    func emailUnconfirmed(_ number: Int, in project: LampProject) -> WishIdeas.Unconfirmed? {
+        guard let link = WishLink.kept(for: project)?.id else { return nil }
+        return unconfirmedEmails[WishIdeas.unconfirmedKey(project, link: link, number)]
+    }
+
+    /// Keeps, or clears, the idea's warning after an answer lamp.dev kept, and says whether this answer left one.
+    private func noteEmail(_ answer: WishIdeas.Answer, _ idea: WishLink.Idea, notified: Bool, in project: LampProject,
+                           on shared: WishLink.Shared) -> WishIdeas.Saved {
+        // A link taken down or made again while this was on its way counts its ideas from one again: the answer is about
+        // an idea that's gone, and mustn't mark the new link's idea of the same number.
+        guard WishLink.kept(for: project)?.id == shared.id else { return .saved }
+        let key = WishIdeas.unconfirmedKey(project, link: shared.id, idea.n)
+        let now = WishIdeas.unconfirmed(after: answer, wantsNews: idea.wantsNews == true, notified: notified, had: unconfirmedEmails[key])
+        unconfirmedEmails[key] = now
+        return answer != .done && answer != .dismiss && now != nil ? .emailUnconfirmed : .saved
     }
 
     /// Those seen to, for the panel's Earlier: nil when lamp.dev can't be reached.
@@ -173,6 +228,8 @@ struct IdeasPanel: View {
     var previewEarlier: [WishLink.Idea]? = nil
     /// The gallery's made-up address for the maker's own emails.
     var previewMaker = WishLink.Maker(email: nil, confirmed: false)
+    /// The gallery's made-up ideas whose email couldn't be confirmed, by number.
+    var previewUnconfirmed: [Int: WishIdeas.Unconfirmed] = [:]
 
     /// Those new when the panel opened, which stay marked while it's open.
     @State private var newHere: Set<Int> = []
@@ -262,7 +319,9 @@ struct IdeasPanel: View {
         .padding(.top, 8)
         if showingEarlier {
             if let earlier, !earlier.isEmpty {
-                ForEach(earlier) { line($0) }
+                // Numbered apart from the list's: in one lazy stack, an idea that leaves the list for Earlier would
+                // otherwise keep the line drawn for it there, as it was mid-send.
+                ForEach(earlier, id: \.earlierID) { line($0) }
             } else if earlierFailed {
                 Text("Couldn't reach lamp.dev. Try again.").font(.system(size: 12.5)).foregroundStyle(Paper.muted)
             } else if earlier != nil {
@@ -286,8 +345,9 @@ struct IdeasPanel: View {
 
     private func finish(_ idea: WishLink.Idea, built: Bool) {
         settle(idea) { project in
-            guard await store.finishIdea(idea, built: built, note: notes[idea.n], in: project) else { return false }
-            // It's under Earlier now.
+            guard let saved = await store.finishIdea(idea, built: built, note: notes[idea.n], in: project) else { return false }
+            // It's under Earlier now, which opens to show the warning of one whose email couldn't be confirmed.
+            if saved == .emailUnconfirmed { showingEarlier = true }
             if showingEarlier { loadEarlier() }
             return true
         }
@@ -297,8 +357,10 @@ struct IdeasPanel: View {
     private func answer(_ idea: WishLink.Idea, saying: Bool) {
         let note = saying ? notes[idea.n]?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
         settle(idea) { project in
-            guard await store.answerIdea(idea, note: note, in: project) else { return false }
-            // Seen to, it's under Earlier now: one answered from there shows what was said, one from the list goes there.
+            guard let saved = await store.answerIdea(idea, note: note, in: project) else { return false }
+            // Seen to, it's under Earlier now: one answered from there shows what was said, one from the list goes there,
+            // which opens to show the warning of one whose email couldn't be confirmed.
+            if saved == .emailUnconfirmed, idea.status != nil { showingEarlier = true }
             if showingEarlier { loadEarlier() }
             return true
         }
@@ -323,6 +385,7 @@ struct IdeasPanel: View {
     private func line(_ idea: WishLink.Idea) -> some View {
         let written = !(notes[idea.n] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let outcome = idea.status == "in" ? "It's in" : idea.status == "dismissed" ? "Dismissed" : nil
+        let unconfirmed = preview == nil ? project.flatMap { store.emailUnconfirmed(idea.n, in: $0) } : previewUnconfirmed[idea.n]
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 if idea.waiting == true { tag("ANSWERED") } else if newHere.contains(idea.n) { tag("NEW") }
@@ -380,6 +443,11 @@ struct IdeasPanel: View {
                 if failed == idea.n {
                     Text("Couldn't reach lamp.dev. Try again.").font(.system(size: 12)).foregroundStyle(Paper.muted)
                 }
+            }
+            if let unconfirmed {
+                Label(unconfirmed.words, systemImage: "envelope.badge")
+                    .font(.system(size: 12)).foregroundStyle(Paper.muted)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(14)
@@ -526,6 +594,10 @@ private struct IdeaPicture: View {
     }
 }
 
+private extension WishLink.Idea {
+    var earlierID: String { "earlier \(n)" }
+}
+
 extension Gallery {
     /// The desk's panel of ideas sent from a link, from made-up ideas to a made-up app.
     static let ideaEntries: [Entry] = [
@@ -534,11 +606,13 @@ extension Gallery {
         ideas("No ideas left", ideas: []),
         ideas("An idea they answered", only: 1),
         ideas("Earlier, opened", only: 3, earlier: true),
+        ideas("Email not confirmed", only: 3, earlier: true, unconfirmed: [3: .reply, 0: .itsIn]),
         ideas("Ideas by email", only: 3, maker: WishLink.Maker(email: "maker@example.com", confirmed: true), width: 640),
     ]
 
     private static func ideas(_ name: String, ideas: [WishLink.Idea]? = nil, only: Int? = nil, earlier: Bool = false,
-                              maker: WishLink.Maker = .init(email: nil, confirmed: false), width: CGFloat = 940) -> Entry {
+                              maker: WishLink.Maker = .init(email: nil, confirmed: false),
+                              unconfirmed: [Int: WishIdeas.Unconfirmed] = [:], width: CGFloat = 940) -> Entry {
         Entry(group: "Sent to you", name: name) {
             let project = LampProject(id: "gallery-harbor-racer", name: "Harbor Racer", exe: "HarborRacer", dir: URL(fileURLWithPath: "/nonexistent"))
             let now = Date()
@@ -560,7 +634,7 @@ extension Gallery {
                     .init(by: "maker", text: "Headlights are in now too.", at: at(20)),
                 ]),
             ]
-            return AnyView(IdeasPanel(wish: project.id, back: {}, preview: (project, made.filter { only == nil || $0.n == only }, [3]), previewEarlier: seenTo, previewMaker: maker)
+            return AnyView(IdeasPanel(wish: project.id, back: {}, preview: (project, made.filter { only == nil || $0.n == only }, [3]), previewEarlier: seenTo, previewMaker: maker, previewUnconfirmed: unconfirmed)
                 .frame(width: width, height: 600)
                 .background(Paper.page)
                 .environmentObject(Store.shared))

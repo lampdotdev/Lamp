@@ -595,6 +595,9 @@ final class Store: ObservableObject {
     @Published var ideas: [String: [WishLink.Idea]] = [:]
     @Published var ideasOpen: String?
     var ideasTimer: Timer?
+    /// Ideas whose reply or It's In lamp.dev kept without confirming the email their sender was promised, by wish, link
+    /// and number (`WishIdeas.unconfirmedKey`), while Lamp runs.
+    @Published var unconfirmedEmails: [String: WishIdeas.Unconfirmed] = [:]
     /// The try of a suggested change open for each wish, at most one in all (`SuggestionTrial`).
     @Published var trials: [String: SuggestionTrial.Running] = [:]
     /// Copies an update was prepared in that are going, by the app they went into: a message sent to one meanwhile goes

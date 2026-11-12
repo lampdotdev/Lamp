@@ -380,7 +380,11 @@ with Back: Build It asks the wish's chat for one, in the sender's words, marked 
 lets it go and has the site write to whoever asked to hear back, through Resend (`writeToSender`: `RESEND_API_KEY` and
 `LAMP_IDEAS_FROM` in the site's environment); Dismiss lets it go quietly. Either can carry a note to the sender, written
 on the idea's line (the DELETE's JSON `note`), and Send Note says one without an outcome (PATCH): each goes on the
-idea's thread, on the link's page, and by email to an address they gave. Every email has the idea's mailbox as its
+idea's thread, on the link's page, and by email to an address they gave. The site answers whether Resend took
+that email (`notified`); when a Send or It's In promised one and it's false, the idea says the reply (or It's In) is
+saved on the link but email couldn't be confirmed, and Earlier opens if the idea left the list. It isn't sent again by
+itself, since a timeout can answer false after the email went. The warning is kept by wish, link and number while Lamp
+runs (`Store.unconfirmedEmails`); only a later Send that's confirmed clears it. Every email has the idea's mailbox as its
 Reply-To when `LAMP_IDEAS_REPLY_DOMAIN` is set (`idea-<mailbox>@` it, receiving on in Resend with its MX record), and
 a link to stop them. A reply comes back through Resend's `email.received` webhook (`/api/idea-mail`,
 `createIdeaMailHandler`, signed with `RESEND_WEBHOOK_SECRET`): only from the address the idea came with, its own words
