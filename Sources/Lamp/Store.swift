@@ -14908,7 +14908,9 @@ final class Store: ObservableObject {
             let (text, cost) = try await AppAI.complete(prompt: prompt, images: images,
                                                          system: body["system"] as? String ?? "",
                                                          json: body["json"] as? Bool ?? false,
-                                                         appModel: AppAI.textChoice(asked: body["model"] as? String, app: models.text))
+                                                         appModel: AppAI.textChoice(asked: body["model"] as? String, app: models.text),
+                                                         // The page's own limit, when it asked for a quicker answer.
+                                                         timeLimit: (body["seconds"] as? Double).flatMap { $0 > 0 ? min($0, AppAI.guardSeconds) : nil })
             if let project { record(project, cost: cost) }
             return (200, ["text": text])
         } catch let failure as AppAI.Failure {
