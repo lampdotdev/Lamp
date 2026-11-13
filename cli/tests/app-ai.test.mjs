@@ -214,3 +214,37 @@ test("OpenRouter's decision model is asked again when busy, and a picture comes 
   const none = await image({ key: "k", model: "m", prompt: "x", fetcher: async () => ({ status: 200, json: async () => ({ data: [] }) }) }).catch((e) => e);
   assert.equal(none.kind, "empty");
 });
+
+test("models say what answers each, and every id goes through its own engine", async () => {
+  const { models, routeFor, ask } = await import("../ai.mjs");
+  const { mkdtempSync, writeFileSync, chmodSync, readFileSync: read } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const folder = mkdtempSync(join(tmpdir(), "lamp-models-test-"));
+  // Claude Code alone on the PATH, a stand-in that says which model it was run with.
+  writeFileSync(join(folder, "claude"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${folder}/args"\necho '{"type":"result","result":"Hi"}'\n`);
+  chmodSync(join(folder, "claude"), 0o755);
+  const kept = { PATH: process.env.PATH, LAMP_AI: process.env.LAMP_AI, LAMP_AI_MODEL: process.env.LAMP_AI_MODEL, OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY };
+  process.env.PATH = folder;
+  for (const name of ["LAMP_AI", "LAMP_AI_MODEL", "OPENROUTER_API_KEY"]) delete process.env[name];
+  try {
+    const alone = models();
+    assert.deepEqual(alone.models.map((m) => [m.id, m.model, m.via.id, m.via.name]), [
+      ["engine:claude:claude-fable-5-2", "Claude Fable", "claude-code", "Claude Code"], ["engine:claude:opus", "Claude Opus", "claude-code", "Claude Code"],
+      ["engine:claude:sonnet", "Claude Sonnet", "claude-code", "Claude Code"], ["engine:claude:haiku", "Claude Haiku", "claude-code", "Claude Code"]]);
+    assert.equal(alone.models[0].name, "Claude Fable via Claude Code");
+    assert.equal(alone.default, "engine:claude:sonnet");
+    process.env.OPENROUTER_API_KEY = "k";
+    const both = models();
+    assert.equal(new Set(both.models.map((m) => m.id)).size, 8);
+    assert.deepEqual(both.models.map((m) => m.via.id), [...Array(4).fill("claude-code"), ...Array(4).fill("openrouter")]);
+    assert.deepEqual(routeFor("engine:claude:opus"), { which: "claude", model: "opus" });
+    assert.deepEqual(routeFor("openrouter:opus"), { which: "openrouter", model: "anthropic/claude-opus-5.5" });
+    assert.deepEqual(routeFor("opus"), { which: "claude", model: "opus" }, "a bare id is the model through what answers first");
+    assert.deepEqual(routeFor("engine:codex"), { which: "claude", model: "sonnet" }, "one that can't answer is no choice");
+    assert.deepEqual(await ask({ prompt: "Hello", model: "engine:claude:haiku" }), [200, { text: "Hi" }]);
+    const args = read(join(folder, "args"), "utf8").split("\n");
+    assert.equal(args[args.indexOf("--model") + 1], "haiku");
+  } finally {
+    for (const [name, value] of Object.entries(kept)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
+  }
+});

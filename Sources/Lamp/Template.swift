@@ -14479,8 +14479,9 @@ enum Template {
         }
 
         /// `data` is text from outside the app (an email, a web page, a file) for the AI to work on, not obey.
-        /// `model` overrides the app's text model for one call, by an id `LampAI.models()` lists ("sonnet", "opus", "haiku",
-        /// "claude-fable-5-2", …); one that can't answer now is answered as no choice, never refused.
+        /// `model` overrides the app's text model for one call, by an id `LampAI.models()` lists ("engine:claude:opus",
+        /// "openrouter:sonnet", …; a bare "opus" is Opus through whatever answers by default); one that can't answer
+        /// now is answered as no choice, never refused.
         static func ask(_ prompt: String, data: String? = nil, images: [LampImage] = [],
                         system: String? = nil, model: String? = nil) async throws -> String {
             try await call(prompt: prompt, data: data, images: images, system: system, json: false, model: model)
@@ -14942,10 +14943,20 @@ enum Template {
 
     // MARK: - Doing things for the person
 
-    /// A model an app may offer the person (`LampAI.models()`): `id` is what `ask(model:)` takes, `name` what to show.
+    /// A model an app may offer the person (`LampAI.models()`): `id` is what `ask(model:)` takes, `name` the model with
+    /// what answers it ("Claude Sonnet via Claude Code").
     struct LampAIModel: Identifiable, Equatable {
+        /// What answers a model: `id` is "claude-code", "codex" or "openrouter", `name` what to show ("Claude Code").
+        struct Via: Equatable {
+            let id: String
+            let name: String
+        }
         let id: String
         let name: String
+        /// The model's own short name ("Claude Sonnet"); nil from a Lamp from before it was sent, so show `name` then.
+        var model: String? = nil
+        /// What answers it; nil from a Lamp from before it was sent.
+        var via: Via? = nil
         /// Whether it can answer now; one that can't isn't worth offering.
         let available: Bool
         /// Why it can't, when it can't.
@@ -15019,12 +15030,18 @@ enum Template {
         }
 
         /// The models the person's setup can answer this app with now, asked of no model, so it's cheap to call as a
-        /// view appears. The ids are what `ask(model:)` and `LampActSession(model:)` take. Keep the person's choice with
-        /// the app's saved things, and go back to `defaultID` when it's no longer listed as available.
+        /// view appears. The ids are what `ask(model:)` and `LampActSession(model:)` take, each the model through one
+        /// harness ("engine:claude:opus", "openrouter:opus", "engine:codex"; a bare "opus" is Opus through whatever
+        /// answers by default). They come with what answers a call naming no model first, then by what else answers,
+        /// each with its most capable model first. Show `model` (the model's own short name) in a picker, under `via`'s
+        /// name when more than one harness is available, and `name` where `model` is nil (an older Lamp). Keep the
+        /// person's choice with the app's saved things, and go back to `defaultID` when it's no longer listed as available.
         ///
         ///     let choices = await LampAI.models()
         ///     if choices.available.count > 1 {
-        ///         Picker("AI", selection: $model) { ForEach(choices.available) { Text($0.name).tag(Optional($0.id)) } }
+        ///         Picker("AI", selection: $model) {
+        ///             ForEach(choices.available) { Text($0.model ?? $0.name).help($0.name).tag(Optional($0.id)) }
+        ///         }
         ///     }
         ///     // model starts as choices.defaultID; then: try await LampAI.ask(question, model: model)
         static func models() async -> LampAIModels {
@@ -15038,8 +15055,13 @@ enum Template {
             let models = (reply["models"] as? [[String: Any]] ?? []).compactMap { m -> LampAIModel? in
                 guard let id = m["id"] as? String, !id.isEmpty else { return nil }
                 let available = m["available"] as? Bool ?? false
-                return LampAIModel(id: id, name: (m["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? id, available: available,
-                                   reason: available ? nil : m["reason"] as? String)
+                let via = (m["via"] as? [String: Any]).flatMap { v -> LampAIModel.Via? in
+                    guard let id = v["id"] as? String, !id.isEmpty, let name = v["name"] as? String, !name.isEmpty else { return nil }
+                    return LampAIModel.Via(id: id, name: name)
+                }
+                return LampAIModel(id: id, name: (m["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? id,
+                                   model: (m["model"] as? String).flatMap { $0.isEmpty ? nil : $0 }, via: via,
+                                   available: available, reason: available ? nil : m["reason"] as? String)
             }
             let fallback = reply["default"] as? String
             return LampAIModels(models: models, defaultID: models.contains { $0.id == fallback && $0.available } ? fallback : nil,

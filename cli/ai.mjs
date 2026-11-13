@@ -18,13 +18,17 @@ import { DEFAULT_MODEL, OpenRouterTrouble, chat as openRouterChat, text as openR
  * the person's key in OPENROUTER_API_KEY.
  */
 export function engine() {
+  return engines()[0] ?? null;
+}
+
+/** Every engine that can answer here, what answers first: only `LAMP_AI`'s when it's set. */
+export function engines() {
   const wanted = process.env.LAMP_AI;
-  for (const name of wanted ? [wanted] : ["claude", "codex", "openrouter"]) {
-    if (name === "openrouter") { if (process.env.OPENROUTER_API_KEY) return name; continue; }
-    if (name !== "claude" && name !== "codex") continue;
-    try { execFileSync("/usr/bin/which", [name], { stdio: ["ignore", "pipe", "ignore"] }); return name; } catch {}
-  }
-  return null;
+  return (wanted ? [wanted] : ["claude", "codex", "openrouter"]).filter((name) => {
+    if (name === "openrouter") return !!process.env.OPENROUTER_API_KEY;
+    if (name !== "claude" && name !== "codex") return false;
+    try { execFileSync("/usr/bin/which", [name], { stdio: ["ignore", "pipe", "ignore"] }); return true; } catch { return false; }
+  });
 }
 
 const missing = "AI here needs Claude Code or Codex on this computer, signed in, or an OpenRouter key in OPENROUTER_API_KEY. Or open the app in Lamp.";
@@ -176,19 +180,32 @@ const APP_MODELS = [
 /** Codex's models aren't known here without running it, so it's offered as one choice, by the id Lamp's app gives it then. */
 const CODEX = "engine:codex";
 
-/** One of the listed models by an id a page sent, Lamp's app's sign-in ids ("engine:claude:opus") included. */
-const listed = (asked) => APP_MODELS.find((m) => m.id === String(asked || "").replace(/^engine:claude:/, ""));
+/** How a page names a model through each engine, as Lamp's app does (`TextRoute.appID`), and what answers it
+ *  (`via`). A bare id ("opus") is that model through the engine that answers first. */
+const PREFIX = { claude: "engine:claude:", codex: CODEX, openrouter: "openrouter:" };
+const via = (which) => ({ id: which === "claude" ? "claude-code" : which, name: named(which) });
 
-/** The model's id a page gets when it names none: `LAMP_AI_MODEL` when it names a listed one, else Sonnet, as Lamp's app
- *  answers apps (never Haiku unasked). */
+/** One of the listed models by its bare id. */
+const listed = (asked) => APP_MODELS.find((m) => m.id === String(asked || ""));
+
+/** A model `LAMP_AI_MODEL` names that isn't one of Lamp's: what a page naming none gets from the engine that answers
+ *  first, so it's listed too. */
+function unlisted() {
+  const wanted = process.env.LAMP_AI_MODEL || "";
+  return wanted && !APP_MODELS.some((m) => m.id === wanted || m.openRouter === wanted) ? wanted : "";
+}
+
+/** The model's id a page gets when it names none: `LAMP_AI_MODEL` when it names one, else Sonnet, as Lamp's app
+ *  answers apps (never Haiku unasked), through the engine that answers first. */
 function defaultId(which) {
   if (which === "codex") return CODEX;
   const wanted = process.env.LAMP_AI_MODEL || "";
-  return (APP_MODELS.find((m) => m.id === wanted || m.openRouter === wanted) ?? listed("sonnet")).id;
+  const model = unlisted() || (APP_MODELS.find((m) => m.id === wanted || m.openRouter === wanted) ?? listed("sonnet")).id;
+  return PREFIX[which] + model;
 }
 
-/** What `complete` is told to run for the model a page named: an unknown one is answered as one that named none, never
- *  refused. A `LAMP_AI_MODEL` that isn't listed still answers what names none, as before. */
+/** What `complete` is told to run on `which` for a bare model id: an unknown one is answered as one that named none,
+ *  never refused. A `LAMP_AI_MODEL` that isn't listed still answers what names none, as before. */
 export function modelFor(which, asked) {
   const model = listed(asked);
   if (which === "codex") return process.env.LAMP_AI_MODEL || "";
@@ -197,19 +214,39 @@ export function modelFor(which, asked) {
   return which === "openrouter" ? DEFAULT_MODEL : "sonnet";
 }
 
-/** `/ai/models`: what a page can offer to choose from here, asked of nothing. */
-export function models() {
-  const which = engine();
-  if (!which) return { models: [], default: null, reason: missing };
-  if (which === "codex") return { models: [{ id: CODEX, name: "ChatGPT's default model via Codex", available: true }], default: CODEX };
-  const listedHere = APP_MODELS.map((m) => ({ id: m.id, name: `${m.name} via ${named(which)}`, available: true }));
-  // A model LAMP_AI_MODEL names that isn't one of Lamp's is what a page naming none gets: it's offered too, as the
-  // default, so choosing the default answers the same as choosing nothing.
-  const wanted = process.env.LAMP_AI_MODEL || "";
-  if (wanted && !APP_MODELS.some((m) => m.id === wanted || m.openRouter === wanted)) {
-    return { models: [{ id: wanted, name: `${wanted} via ${named(which)}`, available: true }, ...listedHere], default: wanted };
+/** The engine and model a page's `model` goes to (`ask` and `act`): an id with its engine ("engine:claude:opus",
+ *  "openrouter:opus", "engine:codex") is that engine when it can answer here; a bare id ("opus") is that model through
+ *  the engine that answers first. One that can't answer is answered as one that named none, never refused. */
+export function routeFor(asked, here = engines()) {
+  const first = here[0] ?? null;
+  const id = String(asked || "");
+  for (const which of here) {
+    const prefix = PREFIX[which];
+    if (which === "codex" ? id !== CODEX && !id.startsWith(CODEX + ":") : !id.startsWith(prefix)) continue;
+    const model = which === "codex" ? id.slice(CODEX.length + 1) : id.slice(prefix.length);
+    if (which === "codex") return { which, model: model || (which === first ? process.env.LAMP_AI_MODEL || "" : "") };
+    if (listed(model)) return { which, model: modelFor(which, model) };
+    if (which === first && model === unlisted()) return { which, model };
+    break;
   }
-  return { models: listedHere, default: defaultId(which) };
+  const bare = id.includes(":") ? "" : id;
+  return { which: first, model: first ? modelFor(first, bare) : "" };
+}
+
+/** `/ai/models`: what a page can offer to choose from here, asked of nothing. The engine that answers first comes
+ *  first, then the others, each with its most capable model first. */
+export function models() {
+  const here = engines();
+  if (!here.length) return { models: [], default: null, reason: missing };
+  const list = here.flatMap((which) => {
+    if (which === "codex") return [{ id: CODEX, name: "ChatGPT's default model via Codex", model: "ChatGPT's default model", via: via(which), available: true }];
+    const one = (id, model) => ({ id: PREFIX[which] + id, name: `${model} via ${named(which)}`, model, via: via(which), available: true });
+    // A model LAMP_AI_MODEL names that isn't one of Lamp's is what a page naming none gets: it's offered too, first,
+    // so choosing the default answers the same as choosing nothing.
+    const extra = which === here[0] && unlisted() ? [one(unlisted(), unlisted())] : [];
+    return [...extra, ...APP_MODELS.map((m) => one(m.id, m.name))];
+  });
+  return { models: list, default: defaultId(here[0]) };
 }
 
 /**
@@ -226,8 +263,8 @@ export async function ask(body) {
   if (!prompt) return [400, { error: "Missing prompt." }];
   let system = typeof body.system === "string" ? body.system : "";
   if (body.json) system += (system ? "\n\n" : "") + "Answer with JSON only, nothing around it.";
-  const which = engine();
-  try { return [200, { text: await complete({ system, prompt, images: body.images, which, model: modelFor(which, body.model), seconds: secondsFor(body) }) }]; }
+  const { which, model } = routeFor(body.model);
+  try { return [200, { text: await complete({ system, prompt, images: body.images, which, model, seconds: secondsFor(body) }) }]; }
   catch (error) { return [502, { error: error.message }]; }
 }
 
@@ -250,11 +287,13 @@ export async function decide(body) {
 
 /** `/ai/act`: one step of the page's agent loop, told and checked as Lamp's app does it (app-ai.mjs). */
 export async function act(body) {
-  const which = engine();
-  if (body?.probe === true) return [200, { act: !!which, route: which || "", why: which ? "" : missing }];
-  if (!which) return [501, { error: missing }];
+  const first = engine();
+  if (body?.probe === true) return [200, { act: !!first, route: first || "", why: first ? "" : missing }];
+  if (!first) return [501, { error: missing }];
   let r;
   try { r = readStep(JSON.stringify(body ?? null)); } catch (refused) { return [refused.status ?? 400, { error: refused.message }]; }
+  // The model the page named, through its own engine when that can answer here; else what answers first.
+  const { which, model } = routeFor(r.model);
   // A step's guard against a call that has stopped answering, as Lamp's app gives it (`AppAct.turnSeconds`).
   const seconds = 600;
   const deadline = Date.now() + Math.min(r.seconds, seconds) * 1000;
@@ -266,11 +305,11 @@ export async function act(body) {
     let read;
     try {
       if (which === "openrouter") {
-        const body = chatBody(r, tag, retry, modelFor(which, r.model));
+        const body = chatBody(r, tag, retry, model);
         read = readMessage((await openRouterChat({ key: process.env.OPENROUTER_API_KEY, body, seconds: left })).message, r);
       } else {
         const { system, prompt } = planPrompt(r, tag, retry);
-        read = readPlan(await complete({ system, prompt, schema: planSchema(r), seconds: left, which, model: modelFor(which, r.model) }), r);
+        read = readPlan(await complete({ system, prompt, schema: planSchema(r), seconds: left, which, model }), r);
       }
     } catch (error) {
       const words = error?.reply?.error?.message || error.message;

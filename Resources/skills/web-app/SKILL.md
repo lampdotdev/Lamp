@@ -108,7 +108,9 @@ whichever AI the person set up for apps' text, so don't tie it to voice: typing 
   that both fit.
 - Where the person might want another AI for the app's asking, `LampAI.models()` lists what their setup can answer it
   with: a small picker beside the Ask button with only the `available` ones and `default` chosen, left out when
-  there's one or none; the chosen id goes as `model` to `act` and `ask`. Keep the choice with the app's saved things,
+  there's one or none; the chosen id goes as `model` to `act` and `ask`. Each option shows the model's short `model`
+  (`name` when an older Lamp sends no `model`), with `name` as its `title`, under an `<optgroup>` per `via.name` only
+  when the available ones come through more than one; keep the list's order. Keep the choice with the app's saved things,
   and go back to `default` when it's no longer listed. On a page shared on lamp.dev it answers `connect: true` until
   the person connects, as `status` does.
 

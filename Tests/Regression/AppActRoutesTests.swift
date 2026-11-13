@@ -87,4 +87,37 @@ final class AppActRoutesTests: XCTestCase {
         guard case .failure(let refused) = AppAct.choose(none) else { return XCTFail("nothing can answer") }
         XCTAssertEqual(refused.message, AppAI.noTextRoute)
     }
+
+    /// `/ai/models` says what answers each model as its own fields, the default's harness first, and every id is one
+    /// route: the same model through Claude Code and through OpenRouter are told apart, and each id chooses its own.
+    func testModelsSayWhatAnswersEachAndEveryIdIsOneRoute() throws {
+        let routes = [
+            AppAI.TextRoute(id: "opus", label: "Best at coding (Claude Opus) via OpenRouter", group: "OpenRouter", name: "Best at coding (Claude Opus)",
+                            kind: .openRouter(model: "anthropic/claude-opus-5.5"), available: true),
+            AppAI.TextRoute(id: "sonnet", label: "Faster & cheaper (Claude Sonnet) via OpenRouter", group: "OpenRouter", name: "Faster & cheaper (Claude Sonnet)",
+                            kind: .openRouter(model: "anthropic/claude-sonnet-5.5"), available: true),
+            AppAI.TextRoute(id: "engine:claude:opus", label: "Opus via Claude", group: "Claude", name: "Opus", kind: .engine(.claude, model: "opus"), available: true),
+            AppAI.TextRoute(id: "engine:claude:sonnet", label: "Sonnet via Claude", group: "Claude", name: "Sonnet", kind: .engine(.claude, model: "sonnet"), available: true),
+            AppAI.TextRoute(id: "engine:codex", label: "ChatGPT's default model via ChatGPT", group: "ChatGPT", name: "ChatGPT's default model",
+                            kind: .engine(.codex, model: ""), available: false),
+        ]
+        let list = AppAI.modelList(routes, answering: routes[3], reason: "Not set up.")
+        let models = try XCTUnwrap(list["models"] as? [[String: Any]])
+        XCTAssertEqual(models.map { $0["id"] as? String }, ["engine:claude:opus", "engine:claude:sonnet", "openrouter:opus", "openrouter:sonnet", "engine:codex"])
+        XCTAssertEqual(models.map { $0["model"] as? String }, ["Claude Opus", "Claude Sonnet", "Claude Opus", "Claude Sonnet", "ChatGPT's default model"])
+        XCTAssertEqual(models.map { ($0["via"] as? [String: String])?["id"] }, ["claude-code", "claude-code", "openrouter", "openrouter", "codex"])
+        XCTAssertEqual((models[2]["via"] as? [String: String])?["name"], "OpenRouter")
+        XCTAssertEqual(models[2]["name"] as? String, "Best at coding (Claude Opus) via OpenRouter")
+        XCTAssertEqual(list["default"] as? String, "engine:claude:sonnet")
+        XCTAssertEqual(models[4]["reason"] as? String, "Not set up.")
+        // Each listed id goes through its own route; a bare one through the default's harness, else OpenRouter as before.
+        func choice(_ asked: String, default fallback: AppAI.TextRoute = routes[3]) -> String? {
+            AppAI.choice(asked: asked, canonical: asked.hasPrefix("openrouter:") ? String(asked.dropFirst(11)) : asked, among: routes, answering: fallback)
+        }
+        XCTAssertEqual(choice("engine:claude:opus"), "engine:claude:opus")
+        XCTAssertEqual(choice("openrouter:opus"), "opus")
+        XCTAssertEqual(choice("opus"), "engine:claude:opus")
+        XCTAssertEqual(choice("opus", default: routes[1]), "opus")
+        XCTAssertNil(choice("engine:codex"))
+    }
 }

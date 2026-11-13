@@ -259,6 +259,33 @@ enum AppAI {
             return AppAI.anthropicModels.first { $0.id == "sonnet" }!.openRouter
         }
 
+        /// The id an app names this route by (`LampAI.models`): a sign-in's as it is (`engine:claude:opus`,
+        /// `engine:codex`), an OpenRouter model's with its harness (`openrouter:opus`), since its own id, a bare
+        /// model's, is what an app names for that model through whatever answers it by default.
+        var appID: String {
+            if case .openRouter = kind, !id.contains(":") { return "openrouter:\(id)" }
+            return id
+        }
+
+        /// The model's own short name, without what answers it ("Claude Sonnet").
+        var modelName: String {
+            switch kind {
+            case .openRouter: AppAI.anthropicModels.first { $0.id == id }?.name ?? name
+            case .engine(.claude, let model): AppAI.anthropicModels.first { $0.id == model }?.name ?? name
+            case .engine: name
+            }
+        }
+
+        /// What answers it, as `LampAI.models` names it: an id an app can tell apart and a name to show.
+        var via: (id: String, name: String) {
+            switch kind {
+            case .openRouter: ("openrouter", Provider.openRouter)
+            case .engine(.claude, _): ("claude-code", "Claude Code")
+            case .engine(.codex, _): ("codex", "Codex")
+            case .engine(.pi, _): ("pi", Engine.pi.title)
+            }
+        }
+
         @MainActor static func make(id: String, group: String, name: String, via: String? = nil, kind: Kind) -> TextRoute {
             let available: Bool
             switch kind {
@@ -344,6 +371,8 @@ enum AppAI {
     /// A route id as saved by an earlier Lamp, when the sign-ins were one route each with no model, read as
     /// today's: Sonnet through Claude Code, Codex's first model.
     @MainActor static func canonicalRoute(_ id: String) -> String {
+        // An OpenRouter model named with its harness, as `LampAI.models` lists it, is the route kept by its bare id.
+        if id.hasPrefix("openrouter:") { return Builder.currentModel(String(id.dropFirst("openrouter:".count))) }
         switch id {
         case "engine:claude": return "engine:claude:sonnet"
         case "engine:codex": return Builder.codexModels.first { !$0.id.isEmpty }.map { "engine:codex:\($0.id)" } ?? id
@@ -443,23 +472,41 @@ enum AppAI {
     /// named none. `ask` and `act` both go by this, so a picker's choice reaches either the same way.
     @MainActor static func textChoice(asked: String?, app: String?) -> String? {
         guard let asked, !asked.isEmpty else { return app }
-        let id = canonicalRoute(asked)
-        return allTextRoutes.contains(where: { $0.id == id && $0.available }) ? id : app
+        return choice(asked: asked, canonical: canonicalRoute(asked), among: allTextRoutes, answering: route(for: app)) ?? app
+    }
+
+    /// The route an app's `model` names, when it can answer now. One named with its harness (`engine:claude:opus`,
+    /// `openrouter:opus`) is that route. A bare model (`opus`, as apps named them before models said what answers
+    /// them) is that model through the harness that answers the app when it names none (`fallback`), else through
+    /// OpenRouter, as it was.
+    nonisolated static func choice(asked: String, canonical id: String, among routes: [TextRoute], answering fallback: TextRoute) -> String? {
+        func answers(_ id: String) -> Bool { routes.contains { $0.id == id && $0.available } }
+        if !asked.contains(":"), case .engine(.claude, _) = fallback.kind, answers("engine:claude:\(id)") { return "engine:claude:\(id)" }
+        return answers(id) ? id : nil
     }
 
     /// `/ai/models`, for `LampAI.models`: every text route by the id `ask` and `act` take as `model`, whether it can
     /// answer now, and the one that answers an app whose call names none. Only what's set up is looked at (a key, a
     /// sign-in), never a model asked, so an app can show its picker as it opens.
     @MainActor static func modelChoices(app: String?) -> [String: Any] {
-        let routes = allTextRoutes
-        let fallback = route(for: app)
+        modelList(allTextRoutes, answering: route(for: app), reason: "Not set up in \(Edition.name).")
+    }
+
+    /// The list `modelChoices` answers, from the routes and the one that answers an app naming none. Each model has
+    /// its id (`TextRoute.appID`), `name` (with what answers it, as Lamp's captions say it), `model` (its own short
+    /// name) and `via` (what answers it, `{ id, name }`). The default's harness comes first, then the others in their
+    /// usual order, each with its most capable model first.
+    nonisolated static func modelList(_ routes: [TextRoute], answering fallback: TextRoute, reason: String) -> [String: Any] {
+        let first = fallback.via.id
+        let ordered = routes.filter { $0.via.id == first } + routes.filter { $0.via.id != first }
         return [
-            "models": routes.map { route -> [String: Any] in
-                var one: [String: Any] = ["id": route.id, "name": route.label, "available": route.available]
-                if !route.available { one["reason"] = "Not set up in \(Edition.name)." }
+            "models": ordered.map { route -> [String: Any] in
+                var one: [String: Any] = ["id": route.appID, "name": route.label, "model": route.modelName,
+                                          "via": ["id": route.via.id, "name": route.via.name], "available": route.available]
+                if !route.available { one["reason"] = reason }
                 return one
             },
-            "default": fallback.available ? fallback.id : NSNull(),
+            "default": fallback.available ? fallback.appID : NSNull(),
         ]
     }
 

@@ -319,10 +319,18 @@ A capability given to one engine must be given to all of them that can take it, 
   the page lets the route through and the app's route can take it.
 - **An app's own model choice** (`LampAI.models()` in lamp.js and LampSupport, `/ai/models`): what the person's setup
   can answer the app with now, asked of no model: Lamp's app lists every text route by its id with whether it can
-  answer and which answers the app when it names none (`AppAI.modelChoices`); `lamp dev` and `lamp ai` list Lamp's
-  Anthropic ids through Claude Code or OpenRouter, or Codex's default (`models` in cli/ai.mjs). The ids are what `ask`
-  and `act` take as `model`; one that can't answer is answered as the app's own choice, never refused
-  (`AppAI.textChoice`, `modelFor` in cli/ai.mjs). Decisions take no `model`: they go to the decision model, or the
+  answer and which answers the app when it names none (`AppAI.modelChoices`, built by `AppAI.modelList`); `lamp dev`
+  and `lamp ai` list Lamp's Anthropic ids through each of Claude Code and OpenRouter that's here, and Codex's default
+  (`models` in cli/ai.mjs). Each model has `name` (the model with what answers it, as Lamp's captions say it), `model`
+  (its own short name) and `via` (`{ id, name }`: `claude-code`, `codex`, `openrouter`), so an app never reads the
+  harness out of `name`. Every id is one model through one harness: `engine:claude:<model>`, `engine:codex` or
+  `engine:codex:<model>`, `openrouter:<model>` (`TextRoute.appID`; Lamp's app keeps an OpenRouter route by its bare
+  id, which `canonicalRoute` reads it as). A bare id (`opus`, as apps named them before) is that model through the
+  harness that answers when the app names none, or else, in Lamp's app, through OpenRouter as before
+  (`AppAI.choice`, `routeFor` in cli/ai.mjs). The list's order means something: the default's harness first, then the
+  others, each with its most capable model first. The ids are what `ask` and `act` take as `model`, each going through
+  its own harness; one that can't answer is answered as the app's own choice, never refused
+  (`AppAI.textChoice`, `routeFor` in cli/ai.mjs). Decisions take no `model`: they go to the decision model, or the
   fast model of the app's text route. Every host that passes `/ai/status` passes `/ai/models` too (the TV preview,
   `LampPageGateway` on Apple devices and Android, `SharedPagesAI`, cli/local-ai.mjs), and a shared page asks it
   without pairing, as it asks `status`; before the person connects, lamp.js answers `connect: true` without asking.
