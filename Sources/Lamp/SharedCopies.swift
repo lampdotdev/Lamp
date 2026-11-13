@@ -237,8 +237,11 @@ extension Store {
         var since: [MixHistory.Version]? = nil
         if let history = MixHistory.read(in: package.folder) { since = await Mix.meeting(package, history: history, with: wish)?.theirs }
         let name = latest.name ?? package.name
-        let what = (arguments["what"] as? String)?.trimmed.nilIfEmpty.map { WishLink.clip($0, 80) } ?? "Something"
-        PulledIn.expect(PulledIn.Credit(link: place.url, name: name, by: latest.by, from: latest.version, what: what, date: Date()), in: wish)
+        // Only a fetch to bring something in waits for a credit: a look or a compare saves nothing, and a credit left
+        // waiting would land on the next unrelated change.
+        if let what = (arguments["what"] as? String)?.trimmed.nilIfEmpty.map({ WishLink.clip($0, 80) }) {
+            PulledIn.expect(PulledIn.Credit(link: place.url, name: name, by: latest.by, from: latest.version, what: what, date: Date()), in: wish)
+        }
         return (200, ["text": SharedCopies.answer(name: name, by: latest.by, link: place.url, version: latest.version, folder: laid.folder,
                                                   count: laid.count, package: package, found: found, since: since)])
     }
