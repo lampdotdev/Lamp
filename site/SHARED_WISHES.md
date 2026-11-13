@@ -110,6 +110,13 @@ who made it, when it last changed, the newest 200 first and read in one round tr
 The first time a share names a link as its source, that link's maker is told by email (`copied`): at the address that
 confirmed their account, else the link's own maker address once confirmed; a copy shared again doesn't tell them again.
 
+A link can also say whose copies its app took changes from (`lamp take`, Lamp's `shared_copy`): its share sends their
+ids as `with` (at most 20), read from the app's credits (and the copies Lamp's app brought into a saved version). The
+site keeps those that are there and aren't the link itself, and a change that doesn't send it keeps them. The page draws
+"with changes from <maker>/<app>" after "from" (three named, then how many more), each as it's known now (`findWish`),
+leaving out one taken down and the source already named by "from". The first time a link names a copy there, that
+copy's maker is told by email (`tookFrom`), at the same address as `copied` uses, once.
+
 ## Setup (one time)
 
 In the **lamp** Vercel project:

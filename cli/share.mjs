@@ -15,7 +15,7 @@ import { NOTES_FILE, Problem, stateOf } from "./state.mjs";
 import { ANY_BROWSER, CONTROLLERS, CONTROLLERS_FILE, DEVICE_FILE, lampJS, LIBRARIES } from "./dev.mjs";
 import { LIMITS, FILE_LIMITS, PAGE_LIMITS } from "../site/lib/shared-wishes.js";
 import { ideasOf, makerOf, pageUp, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile, siteOrigin } from "./link.mjs";
-import { exportApp, sourceLinkOf } from "./lampapp.mjs";
+import { exportApp, sourceLinkOf, takenLinksOf } from "./lampapp.mjs";
 import { scaled, sizeOf } from "./png.mjs";
 import { ignoredFor } from "./ignore.mjs";
 
@@ -244,6 +244,9 @@ export async function share({ layout, words, picture = null, shape = "fill", sit
   // The link this app came from, when it's a copy of one shared there: its page says so.
   const from = sourceLinkOf(layout.folder, site, earlier?.id);
   if (from) body.from = from;
+  // The copies on the site it took changes from: its page says "with changes from" them. None said keeps what it had.
+  const taken = takenLinksOf(layout.folder, site, earlier?.id);
+  if (taken.length) body.with = taken;
   // A file an earlier share sent stays on the record until it's taken away, so a retry after a failed removal tries again.
   // A link that's a Lamp's (`fromLamp`, the app in its own folder) stays so in every write, a share that fails partway too.
   let link = { site, ...(await publishLink({ site, body, earlier, account: accountFor(site)?.key })), ...words, shape, ...(earlier?.file ? { file: true } : {}),
