@@ -14,8 +14,19 @@ enum LampIgnore {
     /// `ignoredFor` counts them for a page in Web/). Never, with neither. A file under a folder a pattern names matches it
     /// too, so asking of each file is the same as leaving out the folder.
     static func rules(for folder: URL) -> (String) -> Bool {
-        let app = patterns(in: folder.appendingPathComponent(file), of: folder)
-        let page = patterns(in: folder.appendingPathComponent(TVTemplate.webFolder).appendingPathComponent(file), of: folder)
+        let texts = texts(of: folder)
+        return rules(app: texts.app, page: texts.page)
+    }
+
+    /// The app's `.lampignore` and its page's, as text, read as any of the app's files Lamp reads (`AppFile`: no link
+    /// followed).
+    private static func texts(of folder: URL) -> (app: String?, page: String?) {
+        (AppFile.text(folder.appendingPathComponent(file), inFolder: folder),
+         AppFile.text(folder.appendingPathComponent(TVTemplate.webFolder).appendingPathComponent(file), inFolder: folder))
+    }
+
+    private static func rules(app: String?, page: String?) -> (String) -> Bool {
+        let app = app.map(patterns) ?? [], page = page.map(patterns) ?? []
         if app.isEmpty && page.isEmpty { return { _ in false } }
         let web = TVTemplate.webFolder + "/"
         return { path in
@@ -37,24 +48,40 @@ enum LampIgnore {
     /// its own rules with its folder taken off, as its files are when it's shared, the one a shared file puts at its root
     /// (`Sharing.layout`) included; every other path is asked by the wish folder's own, as the icon beside its apps is.
     static func rules(ofWish project: LampProject) -> (String) -> Bool {
-        let (root, parts) = Sharing.layout(of: project)
-        let wish = rules(for: project.dir), top = project.dir.standardizedFileURL
-        var apps: [String: (String) -> Bool] = [:]
-        for app in [root] + parts where app.dir.standardizedFileURL != top {
-            apps[app.dir.lastPathComponent] = rules(for: app.dir)
-        }
-        return { path in
-            if let slash = path.firstIndex(of: "/"), let app = apps[String(path[..<slash])] {
-                return app(String(path[path.index(after: slash)...]))
-            }
-            return wish(path)
-        }
+        Wish(of: project).rules()
     }
 
-    /// The patterns of one `.lampignore`, read as any of the app's files Lamp reads (`AppFile`: no link followed).
-    private static func patterns(in url: URL, of folder: URL) -> [NSRegularExpression] {
-        guard let text = AppFile.text(url, inFolder: folder) else { return [] }
-        return patterns(text)
+    /// A wish's `.lampignore` files as they were read once, so everything one piece of work asks of them (a mix, from
+    /// lining the copies up to saving) goes by the same rules, and can tell when they've changed since.
+    struct Wish: Equatable {
+        /// Each app in a folder of its own, by that folder's name, and the wish's own folder (""): its `.lampignore` and
+        /// its page's.
+        private let texts: [String: [String?]]
+
+        init(of project: LampProject) {
+            let (root, parts) = Sharing.layout(of: project)
+            let top = project.dir.standardizedFileURL
+            var texts: [String: [String?]] = [:]
+            let own = LampIgnore.texts(of: project.dir)
+            texts[""] = [own.app, own.page]
+            for app in [root] + parts where app.dir.standardizedFileURL != top {
+                let read = LampIgnore.texts(of: app.dir)
+                texts[app.dir.lastPathComponent] = [read.app, read.page]
+            }
+            self.texts = texts
+        }
+
+        func rules() -> (String) -> Bool {
+            var apps: [String: (String) -> Bool] = [:]
+            for (folder, read) in texts { apps[folder] = LampIgnore.rules(app: read[0], page: read[1]) }
+            let wish = apps[""] ?? { _ in false }
+            return { path in
+                if let slash = path.firstIndex(of: "/"), let app = apps[String(path[..<slash])] {
+                    return app(String(path[path.index(after: slash)...]))
+                }
+                return wish(path)
+            }
+        }
     }
 
     static func patterns(_ text: String) -> [NSRegularExpression] {

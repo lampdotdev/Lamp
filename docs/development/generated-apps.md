@@ -296,7 +296,9 @@ is what lost people's work.
 What an app's folder names in its `.lampignore` (data only that computer needs, too big to share) stays out of everything
 shared of it: its file (`Sharing.export`, and so its repository), the versions that file carries for mixing (`MixHistory`,
 by `LampIgnore.rules(ofWish:)`: each app's own rules from its folder, the wish folder's for the rest) and its page on its
-link or on GitHub (`Publish.copyPage`).
+link or on GitHub (`Publish.copyPage`). Mixing another copy into this one never touches what this copy's own
+`.lampignore` files keep here, whatever the other copy sent ("Mixing copies" in [desk](desk.md)). An update from a copy
+it follows, or from its own repository (`Upstream`), doesn't ask them yet.
 The format is lamp's command line's (`cli/ignore.mjs`), which shares from the same folders; `LampIgnore` follows it
 pattern for pattern, and a test asks both about the same paths.
 
