@@ -9,7 +9,8 @@ import Foundation
 ///
 /// Their changes come in the shared file (`MixHistory`); yours are this wish's own versions. Only what a shared file
 /// carries is mixed: Lamp's own files, its records and the chat's attachments stay as this copy has them
-/// (`Upstream.isLeftOut`). Every git command runs as Lamp's own git does (`Versions.git`).
+/// (`Upstream.isLeftOut`), and so does whatever this copy's `.lampignore` files keep to this computer, whatever their
+/// copy sent (`Lineup.keptHere`). Every git command runs as Lamp's own git does (`Versions.git`).
 enum Mix {
     /// The experiment's switch.
     static let switchKey = "mixCopies"
@@ -57,6 +58,31 @@ enum Mix {
         let changes: [Change]
         let theirPicture: URL?
         let yourPicture: URL?
+        /// This copy's `.lampignore` files as they were when the copies were lined up. The whole mix goes by them, and a
+        /// mix whose copy has changed them since isn't one (`isCurrent`). One of theirs coming in counts from the next mix.
+        let ignore: LampIgnore.Wish
+        /// What the mix never touches: Lamp's own files, and what those `.lampignore` files keep to this computer. Each is
+        /// in every version a mix saves exactly as this copy's version had it, absence included.
+        let keptHere: (String) -> Bool
+
+        init(project: LampProject, package: Sharing.Package, head: String, start: String, changes: [Change],
+             theirPicture: URL?, yourPicture: URL?, ignore: LampIgnore.Wish) {
+            self.project = project
+            self.package = package
+            self.head = head
+            self.start = start
+            self.changes = changes
+            self.theirPicture = theirPicture
+            self.yourPicture = yourPicture
+            self.ignore = ignore
+            let ignored = ignore.rules()
+            keptHere = { Upstream.isLeftOut($0, in: project) || ignored($0) }
+        }
+
+        /// The copy is as it was lined up: at the same version, with the same `.lampignore` files.
+        func isCurrent() async -> Bool {
+            await Versions.head(project) == head && LampIgnore.Wish(of: project) == ignore
+        }
     }
 
     struct Failure: LocalizedError {
@@ -106,15 +132,19 @@ enum Mix {
         guard let (base, theirs) = await meeting(package, history: history, with: project) else {
             throw Failure(message: "These two copies don't share a version Lamp can find.")
         }
+        let ignore = LampIgnore.Wish(of: project)
+        let ignored = ignore.rules()
+        func keptHere(_ path: String) -> Bool { Upstream.isLeftOut(path, in: project) || ignored(path) }
 
         // Yours: each version since, with what it touched and the change of theirs it brought in, if any.
-        struct Yours { var id: String; var date: Date; var mixed: String?; var leftOut: [String]; var title: String; var files: [String] }
+        // `keptOnly`: it touched files a mix carries, but only ones this copy keeps to itself (`keptHere`).
+        struct Yours { var id: String; var date: Date; var mixed: String?; var leftOut: [String]; var title: String; var files: [String]; var keptOnly = false }
         let titles = VersionTitles.saved(in: project)
         var yours: [Yours] = []
         let listing = """
         git rev-list --first-parent --reverse \(base)..HEAD | while read -r c; do
           git log -1 --format="C%x1f%H%x1f%ct%x1f%(trailers:key=\(trailer),valueonly,separator=%x2C)%x1f%(trailers:key=\(leftOutTrailer),valueonly,separator=%x2C)%x1f%s" "$c"
-          git -c core.quotePath=false diff-tree -r --no-renames --no-commit-id --name-only "$c^" "$c" | sed 's/^/F /'
+          printf 'F '; git diff-tree -r -z --no-renames --no-commit-id --name-only "$c^" "$c" | /usr/bin/xxd -p | /usr/bin/tr -d '\\n'; echo
         done
         """
         let listed = await run(listing, in: project)
@@ -128,8 +158,15 @@ enum Mix {
                                    leftOut: parts[4].split(separator: ",").compactMap { Credits.validCommit(String($0).trimmed) },
                                    title: titles[id] ?? parts[5], files: []))
             } else if line.hasPrefix("F "), !yours.isEmpty {
-                let path = String(line.dropFirst(2))
-                if MixHistory.isSafe(path), !Upstream.isLeftOut(path, in: project) { yours[yours.count - 1].files.append(path) }
+                // NUL-separated and as hex, as `entries` reads a tree: a name git would quote is still the name it is.
+                guard let bytes = hexBytes(String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces)) else {
+                    throw Failure(message: "Lamp couldn't read your copy's versions.")
+                }
+                let carried = bytes.split(separator: 0).compactMap { String(bytes: $0, encoding: .utf8) }
+                    .filter { MixHistory.isSafe($0) && !Upstream.isLeftOut($0, in: project) }
+                let files = carried.filter { !ignored($0) }
+                yours[yours.count - 1].files = files
+                yours[yours.count - 1].keptOnly = files.isEmpty && !carried.isEmpty
             }
         }
         // What's in both histories already is shown once: a change of theirs this copy brought in earlier stays on
@@ -158,8 +195,9 @@ enum Mix {
         for version in yours {
             defer { previous = version.id }
             let side: Side = version.mixed.map(sent.contains) == true ? .them : .you
-            // Nor is one that took a left-out change back: that change is in again.
-            guard !version.files.isEmpty || side == .them, version.leftOut.isEmpty,
+            // Nor is one that took a left-out change back: that change is in again. Nor one that touched only what this
+            // copy keeps to itself, theirs taken earlier included: what it did is kept here whatever the mix.
+            guard !version.keptOnly, !version.files.isEmpty || side == .them, version.leftOut.isEmpty,
                   !(version.mixed.map(yourIDs.contains) ?? false) else { continue }
             let date = side == .them ? version.mixed.flatMap { made[$0] } ?? version.date : version.date
             changes.append(Change(id: version.id, side: side, title: version.title, date: date, before: previous + "^{tree}",
@@ -170,7 +208,7 @@ enum Mix {
         let start = try await treeID(of: base, in: project)
         var files: [URL] = []
         for version in theirs {
-            for path in version.changed where !Upstream.isLeftOut(path, in: project) {
+            for path in version.changed where !keptHere(path) {
                 files.append(MixHistory.url(of: path, in: version, package: package.folder))
             }
         }
@@ -186,13 +224,13 @@ enum Mix {
         var kept: [MixHistory.Version] = []
         for version in theirs {
             var lines: [String] = []
-            for path in version.changed where !Upstream.isLeftOut(path, in: project) {
+            for path in version.changed where !keptHere(path) {
                 let file = MixHistory.url(of: path, in: version, package: package.folder)
                 let mode = FileManager.default.isExecutableFile(atPath: file.path) ? "100755" : "100644"
                 lines.append("\(mode) \(blobs[next])\t\(path)")
                 next += 1
             }
-            for path in version.removed where !Upstream.isLeftOut(path, in: project) {
+            for path in version.removed where !keptHere(path) {
                 lines.append("0 0000000000000000000000000000000000000000\t\(path)")
             }
             guard !lines.isEmpty else { continue }
@@ -204,7 +242,7 @@ enum Mix {
         for (version, after) in zip(kept, trees) {
             defer { before = after }
             guard offered(version) else { continue }
-            let paths = (version.changed + version.removed).filter { !Upstream.isLeftOut($0, in: project) }
+            let paths = (version.changed + version.removed).filter { !keptHere($0) }
             let picture = version.changed.first(where: isPicture).map { MixHistory.url(of: $0, in: version, package: package.folder) }
             changes.append(Change(id: version.id, side: .them, title: version.title, date: version.date, before: before, after: after,
                                   files: paths, here: false, picture: picture))
@@ -222,7 +260,7 @@ enum Mix {
         let yourPicture = Versions.pictureURL(in: project, for: head)
         return Lineup(project: project, package: package, head: head, start: start, changes: changes,
                       theirPicture: MixHistory.pictureURL(in: package.folder),
-                      yourPicture: FileManager.default.fileExists(atPath: yourPicture.path) ? yourPicture : nil)
+                      yourPicture: FileManager.default.fileExists(atPath: yourPicture.path) ? yourPicture : nil, ignore: ignore)
     }
 
     private static func isPicture(_ path: String) -> Bool {
@@ -292,7 +330,7 @@ enum Mix {
             if line.hasPrefix("S ") { current = String(line.dropFirst(2)) }
             if line.hasPrefix("O ") {
                 let path = String(line.dropFirst(2))
-                if !Upstream.isLeftOut(path, in: lineup.project), !(overlaps[current]?.contains(path) ?? false) { overlaps[current, default: []].append(path) }
+                if !lineup.keptHere(path), !(overlaps[current]?.contains(path) ?? false) { overlaps[current, default: []].append(path) }
             }
         }
         guard trees.count == ordered.count + 1 else { throw Failure(message: "Lamp couldn't play the changes back.") }
@@ -364,11 +402,12 @@ enum Mix {
     }
 
     /// Plays the pick back into the versions a mix saves, without saving any. What a mix doesn't carry stays as this copy
-    /// has it: Lamp's own files, and a file a shared copy never carries (`Upstream.stage`), which their changes don't
-    /// touch here, as an update's never would.
+    /// has it: Lamp's own files and what this copy's `.lampignore` files keep here (`Lineup.keptHere`), in every version
+    /// it saves, and a file a shared copy never carries (`Upstream.stage`), which their changes don't touch here, as an
+    /// update's never would.
     static func prepare(_ picked: Set<String>, in lineup: Lineup) async throws -> Prepared {
         let project = lineup.project
-        guard await Versions.head(project) == lineup.head else { throw moved }
+        guard await lineup.isCurrent() else { throw moved }
         let changes = lineup.changes
         let mine = changes.filter { $0.here && picked.contains($0.id) }
         let left = changes.filter { $0.here && !picked.contains($0.id) }
@@ -384,15 +423,9 @@ enum Mix {
         let none = Prepared(folder: lineup.package.folder, head: lineup.head, picked: picked, versions: [], unseen: [])
         guard !plans.isEmpty else { return none }
 
-        let ownListed = await run("git -c core.quotePath=false ls-tree -r \(lineup.head)", in: project)
-        guard ownListed.status == 0 else { throw Failure(message: "Lamp couldn't read your copy.") }
-        let own = ownListed.output.split(separator: "\n").map(String.init).filter { line in
-            guard let tab = line.firstIndex(of: "\t") else { return false }
-            let path = String(line[line.index(after: tab)...])
-            return !path.hasPrefix("\"") && Upstream.isLeftOut(path, in: project)
-        }
         let headTree = try await treeID(of: lineup.head, in: project)
         let headEntries = try await entries(of: headTree, in: project)
+        let own = headEntries.filter { lineup.keptHere($0.key) }
         let carry = try await Carrying(lineup: lineup, head: headTree)
         defer { carry.clear() }
         var tree = headTree
@@ -402,11 +435,7 @@ enum Mix {
         for plan in plans {
             let played = try await replay(plan.changes, in: lineup, resuming: last).played
             last = played
-            let listed = await run("git -c core.quotePath=false ls-tree -r --name-only \(played.tree)", in: project)
-            guard listed.status == 0 else { throw Failure(message: "Lamp couldn't read what the mix came to.") }
-            let dropped = listed.output.split(separator: "\n").map(String.init).filter { !$0.hasPrefix("\"") && Upstream.isLeftOut($0, in: project) }
-            let lines = dropped.map { "0 0000000000000000000000000000000000000000\t\($0)" } + own
-            var whole = lines.isEmpty ? played.tree : try await edit("FROM \(played.tree)\n" + lines.joined(separator: "\n") + "\n@@\n", in: project).first ?? played.tree
+            var whole = try await keeping(own, in: played.tree, lineup: lineup)
             // Their changes to a file no shared copy carries: it stays as yours is.
             let theirs = Set(plan.changes.filter { $0.side == .them && !$0.here }.flatMap(\.files))
             if !theirs.isEmpty {
@@ -437,7 +466,7 @@ enum Mix {
         var unseen: [Int] = []
         for (index, version) in versions.enumerated() {
             let saved = try await entries(of: version.tree, in: project)
-            let touched = Set(saved.keys).union(headEntries.keys).filter { saved[$0] != headEntries[$0] && !Upstream.isLeftOut($0, in: project) }
+            let touched = Set(saved.keys).union(headEntries.keys).filter { saved[$0] != headEntries[$0] && !lineup.keptHere($0) }
             if touched.contains(where: { path in saved[path] != reviewed[path] && !yours.contains { $0[path] == saved[path] } }) {
                 unseen.append(index)
             }
@@ -484,10 +513,12 @@ enum Mix {
     /// code no review read without the check that read it (`checked`). Returns how many versions were saved.
     static func apply(_ prepared: Prepared, in lineup: Lineup, checked: ImportReview?) async throws -> Int {
         let project = lineup.project
-        guard prepared.folder == lineup.package.folder, prepared.head == lineup.head,
-              await Versions.head(project) == prepared.head else { throw moved }
+        guard prepared.folder == lineup.package.folder, prepared.head == lineup.head, await lineup.isCurrent() else { throw moved }
         guard !prepared.needsCheck || checked != nil else { throw Failure(message: "Lamp hasn't checked what this mix brings in.") }
         guard !prepared.versions.isEmpty else { return 0 }
+        if let tree = prepared.versions.last?.tree, let kept = try await displaced(by: tree, in: lineup) {
+            throw Failure(message: "Their copy puts something where you keep “\(kept)” on this Mac. Move it, then mix again.")
+        }
         var parent = prepared.head
         var saved: [(commit: String, title: String)] = []
         for version in prepared.versions {
@@ -510,6 +541,35 @@ enum Mix {
         }
         for version in saved { VersionTitles.save(version.title, for: version.commit, in: project) }
         return saved.count
+    }
+
+    /// A file this copy keeps here (`Lineup.keptHere`) that no version holds, which putting `tree` in the wish's folder
+    /// would remove: one in a folder where the tree puts a file, or one where the tree puts a folder. The mix's own trees
+    /// never touch what's kept, but git replaces whatever is in the way of what they do change, and the check for
+    /// unsaved changes can't see a file the versions never take.
+    private static func displaced(by tree: String, in lineup: Lineup) async throws -> String? {
+        let fm = FileManager.default
+        let project = lineup.project
+        let saved = try await entries(of: tree, in: project)
+        let head = try await entries(of: try await treeID(of: lineup.head, in: project), in: project)
+        func kind(_ path: String) -> FileAttributeType? {
+            (try? fm.attributesOfItem(atPath: project.dir.appendingPathComponent(path).path))?[.type] as? FileAttributeType
+        }
+        func isKept(_ path: String) -> Bool { head[path] == nil && lineup.keptHere(path) }
+        for (path, entry) in saved.sorted(by: { $0.key < $1.key }) where head[path] != entry {
+            if kind(path) == .typeDirectory {
+                let inside = (try? fm.subpathsOfDirectory(atPath: project.dir.appendingPathComponent(path).path)) ?? []
+                for sub in inside.sorted() where kind(path + "/" + sub) != .typeDirectory && isKept(path + "/" + sub) {
+                    return path + "/" + sub
+                }
+            }
+            var folder = (path as NSString).deletingLastPathComponent
+            while !folder.isEmpty {
+                if let found = kind(folder), found != .typeDirectory, isKept(folder) { return folder }
+                folder = (folder as NSString).deletingLastPathComponent
+            }
+        }
+        return nil
     }
 
     private static let moved = Failure(message: "Your copy changed while this was open. Drop their copy here again.")
@@ -670,6 +730,33 @@ enum Mix {
     }
 
     // MARK: Git
+
+    /// `tree` with every file this copy keeps here (`Lineup.keptHere`) as `own` has it: the same content and mode, and
+    /// gone where `own` hasn't it. Read and written by each name's bytes, never as git would print it, so a name git
+    /// quotes is kept like any other.
+    private static func keeping(_ own: [String: String], in tree: String, lineup: Lineup) async throws -> String {
+        let now = try await entries(of: tree, in: lineup.project)
+        let gone = now.keys.filter { lineup.keptHere($0) && own[$0] == nil }
+        let put = own.filter { now[$0.key] != $0.value }
+        guard !gone.isEmpty || !put.isEmpty else { return tree }
+        // "<mode> <blob>\t<path>" ended by NUL, as `update-index -z --index-info` reads it; mode 0 removes the path.
+        var info = Data()
+        for path in gone.sorted() { info.append(Data("0 0000000000000000000000000000000000000000\t\(path)\u{0}".utf8)) }
+        for (path, entry) in put.sorted(by: { $0.key < $1.key }) { info.append(Data("\(entry)\t\(path)\u{0}".utf8)) }
+        let index = try scratchIndex(in: lineup.project)
+        let input = index.appendingPathExtension("info")
+        defer {
+            try? FileManager.default.removeItem(at: index)
+            try? FileManager.default.removeItem(at: input)
+        }
+        try info.write(to: input)
+        let made = await run("""
+        GIT_INDEX_FILE="$LAMP_INDEX" git read-tree "$LAMP_TREE" && GIT_INDEX_FILE="$LAMP_INDEX" git update-index -z --index-info < "$LAMP_INFO" \
+          && GIT_INDEX_FILE="$LAMP_INDEX" git write-tree
+        """, in: lineup.project, env: ["LAMP_INDEX": index.path, "LAMP_TREE": tree, "LAMP_INFO": input.path])
+        guard made.status == 0, let kept = Credits.validCommit(made.output) else { throw Failure(message: "Lamp couldn't keep your own files as they are.") }
+        return kept
+    }
 
     /// Builds trees in an index of its own (`scratchIndex`): each block of `plan` starts from a tree (`FROM <tree>`, or
     /// `FROM -` for the one before), applies index lines ("<mode> <blob>\t<path>", mode 0 removing the path), and ends at `@@`.
