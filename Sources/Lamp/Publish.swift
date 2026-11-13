@@ -120,14 +120,18 @@ enum Publish {
     static func copyPage(of project: LampProject, into site: URL, scope: String) throws -> String {
         let fm = FileManager.default
         try fm.createDirectory(at: site, withIntermediateDirectories: true)
-        let web = (pageApp(project) ?? project).dir.appendingPathComponent(GameKit.webFolder)
+        let app = (pageApp(project) ?? project).dir, web = app.appendingPathComponent(GameKit.webFolder)
+        // What the app's .lampignore (or the page's own) keeps to this computer stays out, as from lamp's command line.
+        let ignored = LampIgnore.pageRules(for: app)
         let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey]
         guard let items = fm.enumerator(at: web, includingPropertiesForKeys: keys) else { throw Failure(message: "\(project.name) has no page to play.") }
         for case let file as URL in items {
             if file.lastPathComponent.hasPrefix(".") { Sharing.skip(file, in: items); continue }
             let values = try? file.resourceValues(forKeys: Set(keys))
             guard values?.isRegularFile == true, values?.isSymbolicLink != true else { continue }
-            let target = site.appendingPathComponent(Sharing.relativePath(of: file, in: web))
+            let path = Sharing.relativePath(of: file, in: web)
+            if ignored(path) { continue }
+            let target = site.appendingPathComponent(path)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.copyItem(at: file, to: target)
         }

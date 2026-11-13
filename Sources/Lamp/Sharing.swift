@@ -455,7 +455,11 @@ enum Sharing {
     private static func stageApp(_ project: LampProject, into stage: URL, attachedBytes: inout Int) throws -> Staged {
         let fm = FileManager.default
         var staged = Staged()
+        // What the app's .lampignore keeps to this computer (data too big to share, say) stays out, as it does when
+        // lamp's command line shares the same folder.
+        let ignored = LampIgnore.rules(for: project.dir)
         func copy(_ file: URL, as relative: String) throws {
+            guard !ignored(relative) else { return }
             let target = stage.appendingPathComponent(relative)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.copyItem(at: file, to: target)
@@ -479,16 +483,18 @@ enum Sharing {
             let shareCode = Template.hasShare(project) ? swiftSources(in: project.dir.appendingPathComponent(Template.shareFolder))
                 .filter { $0.lastPathComponent != Template.shareSupportFile } : []
             for file in widgetCode + watchCode + shareCode { try copy(file, as: relativePath(of: file, in: project.dir)) }
-            staged.widget = !widgetCode.isEmpty
-            staged.watch = !watchCode.isEmpty
-            staged.share = !shareCode.isEmpty
+            // An extension whose code the .lampignore leaves out entirely doesn't go, and the file doesn't say it has one.
+            func kept(_ code: [URL]) -> Bool { code.contains { !ignored(relativePath(of: $0, in: project.dir)) } }
+            staged.widget = kept(widgetCode)
+            staged.watch = kept(watchCode)
+            staged.share = kept(shareCode)
             staged.scene = Template.usesScene(project)
         }
         // The app's own files (Assets/), capped so shared apps stay small enough to send and within what
         // another Lamp accepts (`open`). The chat's attachments stay private.
         Assets.adopt(in: project)
         let assets = project.dir.appendingPathComponent(Assets.folder)
-        for file in assetFiles(of: project) {
+        for file in assetFiles(of: project) where !ignored(Assets.folder + "/" + relativePath(of: file, in: assets)) {
             attachedBytes += (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             guard attachedBytes <= maxAttachedBytes else {
                 throw ImportError("\(project.name) is too big to share.",
@@ -496,7 +502,7 @@ enum Sharing {
             }
             try copy(file, as: Assets.folder + "/" + relativePath(of: file, in: assets))
         }
-        if fm.fileExists(atPath: project.dir.appendingPathComponent("APP.md").path) {
+        if fm.fileExists(atPath: project.dir.appendingPathComponent("APP.md").path), !ignored("APP.md") {
             try fm.copyItem(at: project.dir.appendingPathComponent("APP.md"), to: stage.appendingPathComponent("APP.md"))
         }
         // What the app declares, as Lamp reads it: only what passed each check, never the file as it is.

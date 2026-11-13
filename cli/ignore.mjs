@@ -3,6 +3,8 @@
 // from elsewhere when it isn't there). The patterns are gitignore's simpler half: one a line, `#` for a note, `*`, `?` and
 // `**`, a trailing `/` for a folder, a leading `/` (or any `/` inside) for a path from the folder's top, and otherwise a
 // name matched at any depth. Nothing starting with `!`: what's left out stays out.
+// Lamp's app shares the same folders and reads them by these rules too (`LampIgnore`, which a test holds to this file):
+// a change here is made there in the same change.
 
 import { readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";

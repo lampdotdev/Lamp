@@ -291,6 +291,11 @@ that ends it. A build that waits for an app for both
 goes in only while Try On points at this Mac. Don't add a time limit after which an app is ended anyway: that
 is what lost people's work.
 
+What an app's folder names in its `.lampignore` (data only that computer needs, too big to share) stays out of everything
+shared of it: its file (`Sharing.export`, and so its repository) and its page on its link or on GitHub (`Publish.copyPage`).
+The format is lamp's command line's (`cli/ignore.mjs`), which shares from the same folders; `LampIgnore` follows it
+pattern for pattern, and a test asks both about the same paths.
+
 A wish goes on GitHub as a repository on the person's own account (`GitHubRepo`), from its link's Release Update
 (`GitHubRelease`, "Releases" in the wishes guide), the one way it goes there: the shared file's contents (`Sharing.export`, so the same checks and the same
 credits chain) unpacked, Lamp's own files for each of the wish's apps beside them (`GitHubRepo.ownedPaths`: the files
