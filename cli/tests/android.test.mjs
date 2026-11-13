@@ -41,7 +41,8 @@ mkdirSync("app/build/outputs/apk/debug", { recursive: true });
 writeFileSync("app/build/outputs/apk/debug/app-debug.apk", "apk");
 `;
 
-test("a game goes on lamp's Android emulator, is looked at and tried there, stopped and taken off", { skip: !knowsAndroid() && "Lamp's Android host isn't beside lamp here" }, async () => {
+test("a game goes on lamp's Android emulator, is looked at and tried there, stopped and taken off", { skip: !knowsAndroid() && process.env.LAMP_REQUIRE_ANDROID_HOST !== "1" && "Lamp's Android host isn't beside lamp here" }, async () => {
+  assert.ok(knowsAndroid(), "Run on macOS with scripts/cli-files.sh's Android host beside lamp");
   const home = mkdtempSync(join(tmpdir(), "lamp-android-test-")), tools = join(home, "tools"), spec = JSON.parse(readFileSync(new URL("../lamps/android-host/tools.json", import.meta.url), "utf8"));
   Object.assign(process.env, { LAMP_ANDROID_TOOLS: tools, LAMP_ANDROID_HOME: join(home, "android"), LAMP_DEV_HOME: join(home, "dev"), LAMP_GRADLE_HOME: join(home, "gradle"),
     LAMP_TEST_LOG: join(home, "adb.log"), LAMP_TEST_STATE: join(home, "device.json"), LAMP_TEST_PICTURE: encode(4, 2, Buffer.alloc(32, 90)).toString("base64") });
