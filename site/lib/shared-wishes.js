@@ -755,20 +755,26 @@ async function copied(kept, from, copy, origin, { env, fetcher, first }) {
  * the share.
  */
 async function tookFrom(kept, ids, link, origin, { env, fetcher }) {
-  for (const id of ids) {
+  const one = async (id) => {
     try {
       const copy = await kept.get(id);
-      if (!copy) continue;
+      if (!copy) return;
       const account = copy.owner ? await kept.account(copy.owner) : null;
       const maker = account ? null : await kept.maker(id);
       const to = account?.email ?? (maker?.confirmed ? maker.email : null);
-      if (!to) continue;
+      if (!to) return;
       const who = link.owner || link.by || "Someone";
       await sendMail(env, fetcher, { to: [to], subject: `${who} took changes from your ${copy.name}`,
         text: `${who} took changes from your ${copy.name} into ${link.name}:\n\n${linkOf(origin, link)}\n` }, `with-${link.id}-${id}`);
     } catch {}
-  }
+  };
+  // All at once, and the share waits for them a few seconds at most: it has to answer well within its function's time,
+  // with the link's secret, whatever the mail service does. A send cut short here is only an email not sent.
+  await Promise.race([Promise.all(ids.map(one)), new Promise((done) => setTimeout(done, NOTIFY_MS))]);
 }
+
+/** The longest a share waits on the emails it sends its copies' makers, well within the function's time. */
+const NOTIFY_MS = 6000;
 
 /** The copies of a link as its page lists them, newest first; one taken down since is let go. */
 export async function copiesOf(kept, id, origin) {
