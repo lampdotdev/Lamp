@@ -980,11 +980,24 @@ enum Gallery {
         share("With a link", link: true),
         share("No link yet"),
         share("From a repository", link: true, canContribute: true),
+        share("Copies shared from it", link: true, copies: Array(shareCopies.prefix(3))),
+        share("More copies than fit", link: true, copies: shareCopies),
     ]
 
-    private static func share(_ name: String, link: Bool = false, canContribute: Bool = false) -> Entry {
+    /// Made-up copies of a link, newest first, the way the site answers them.
+    private static let shareCopies: [SharedCopyRow] = {
+        let made = [("Tide Clock, Night Mode", "Riley Park", 0), ("Tide Clock for Sailors", "Jun Ito", 1), ("Moon Tides", "", 4),
+                    ("Harbor Tides", "Ada Moss", 12), ("Tide Clock Big Numbers", "Sam Lee", 20), ("Surf Window", "Noor Haddad", 41),
+                    ("Tide Clock Plus", "Eli Grant", 60)]
+        return made.enumerated().map { index, copy in
+            let updated = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-Double(copy.2) * 86_400))
+            return SharedCopyRow(url: "https://lamp.dev/w/Cq\(index + 2)mxTp7v", name: copy.0, by: copy.1, updated: updated)
+        }
+    }()
+
+    private static func share(_ name: String, link: Bool = false, canContribute: Bool = false, copies: [SharedCopyRow] = []) -> Entry {
         Entry(group: "Share", name: name) {
-            AnyView(SharePopover(link: link ? URL(string: "https://lamp.dev/w/AyTkit4xCc") : nil, canContribute: canContribute) { _ in }
+            AnyView(SharePopover(link: link ? URL(string: "https://lamp.dev/w/AyTkit4xCc") : nil, copies: copies, canContribute: canContribute) { _ in }
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)

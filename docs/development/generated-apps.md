@@ -235,7 +235,9 @@ Share (the file is made by Lamp and handed over whole, `SidebarState.sharing`, s
 once, so the extension keeps it as it's read, `Link.sharing`, as one lasting file per wish in a folder of its own under
 its caches folder, since Lamp's process draws every wish's chat and one wish's share mustn't remove another's; each share
 replaces it in one step, `SharedCopy`, as Lamp's own Share… does; its popover, `SharePopover`, leads with the wish's link
-(`SidebarToolbar.shareLink`) and sends the link with AirDrop, Messages, Mail or More, or the file when there's no link),
+(`SidebarToolbar.shareLink`), lists under it the copies people shared of it (`SidebarToolbar.copies`, asked of the site
+by `WishCopies` every few minutes and as the popover opens, never per state), each with Compare, which asks the agent
+what that copy changed as if the person typed it (`SidebarCommand.compare`, `Sharing.compareRequest`), and sends the link with AirDrop, Messages, Mail or More, or the file when there's no link),
 Agent Details and Delete, then Undo Last Change and Versions.
 A wish that opens anywhere but this Mac alone (a game, a screen, an app for both) has Try On's device button before
 Undo, which stays with it: where it opens, a tick on where Play puts it, and for a game or a screen "… Too" for each

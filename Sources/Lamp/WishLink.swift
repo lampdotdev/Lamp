@@ -252,6 +252,16 @@ enum WishLink {
                       file: (said["file"] as? String).flatMap(URL.init(string:)))
     }
 
+    /// The copies people shared of a link (`copiesOf` in cli/link.mjs), newest first, as its page lists them. Nil when the
+    /// site can't be asked. Asked with nothing of the person's.
+    static func copies(of id: String) async -> [SharedCopyRow]? {
+        guard let said = (try? await ask("linkCopies", ["id": id]))?["copies"] as? [[String: Any]] else { return nil }
+        return said.compactMap { copy in
+            guard let url = copy["url"] as? String, !url.isEmpty else { return nil }
+            return SharedCopyRow(url: url, name: copy["name"] as? String ?? "", by: copy["by"] as? String ?? "", updated: copy["updated"] as? String)
+        }
+    }
+
     /// The wish's page, to play or use right on its link's page (a web app's, a web game's, a screen's: `Publish.hasPage`),
     /// zipped: the page a release puts on GitHub Pages (`Publish.copyPage`), what it saves kept under the link
     /// (`LAMP_PAGE_SCOPE`), searched for keys and secrets as that one is. Nil for a wish with no such page.

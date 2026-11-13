@@ -581,7 +581,8 @@ as following does, opens it with a shared file's checks, and lays out what those
 the copies the wish follows and the person's own shared wishes. When the file carries its history and it meets this
 wish's (`MixHistory`, `Mix.meeting`), the answer lists their changes since, so the agent finds what was asked for; it
 brings that in by writing it into the app itself, as any change, never the whole copy, and says in its last message what
-it took from whose copy. Nothing is followed by it. The credit (`PulledIn`, `.lamp/pulled-in.json`, not versioned): the
+it took from whose copy. Compare beside a copy in the Share popover asks the same way, in the person's words, and the
+rule has the agent change nothing then, only say what that copy does differently. Nothing is followed by it. The credit (`PulledIn`, `.lamp/pulled-in.json`, not versioned): the
 link, its name and who it's by as the site says (`WishLink.Latest.by`), their file's version, and what was asked for,
 waiting for the version the turn saves (`PulledIn.settle`, after the turn's commit), so a turn that asked first credits
 the turn after; one never saved goes after a day. A release reads it by version (`PulledIn.credits(for:in:)`,

@@ -408,7 +408,8 @@ enum Agent {
 
     - When a request has a link to someone's shared Lamp app (lamp.dev/w/…, or a wish?shared= link of Lamp's) or means \
     one ("the one I shared", "Sam's version"), get it with `shared_copy` before working on it, and bring in only what \
-    the request asks for from it. Your last message says what you took from whose copy.
+    the request asks for from it. Your last message says what you took from whose copy. Asked to compare with one, \
+    change nothing: say what their copy does differently, one short line each, and let the person say what to take.
     """
 
     /// When to look at changes someone suggested, and how choosing what to bring in goes in the chat; what the tool

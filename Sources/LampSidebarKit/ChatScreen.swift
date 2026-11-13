@@ -887,7 +887,9 @@ struct ChatBar: View {
             .disabled(!toolbar.canShare)
             .help("Share this app")
             .popover(isPresented: $sharingOpen, arrowEdge: .bottom) {
-                SharePopover(link: shareLink, canContribute: toolbar.canContribute == true) { shareAction($0, link: shareLink) }
+                SharePopover(link: shareLink, copies: toolbar.copies ?? [], canContribute: toolbar.canContribute == true) { shareAction($0, link: shareLink) }
+                    // Lamp asks the site again for the link's copies, so ones shared since come in while it's open.
+                    .onAppear { link.send(.shareOpened) }
             }
     }
 
@@ -904,6 +906,9 @@ struct ChatBar: View {
         case .contribute: link.send(.contribute(.open))
         case .copyFile: link.send(.copyWishFile)
         case .export: link.send(.export)
+        case .openCopy(let page): NSWorkspace.shared.open(page)
+        case .allCopies: if let url { NSWorkspace.shared.open(url) }
+        case .compare(let copy): link.send(.compare(copy.absoluteString))
         case .send(let way):
             // The link goes when there is one. Without it the wish's file does, which Lamp makes first and hands over.
             // One file at a time, until Lamp answers with it or says it failed (`SidebarState.shareFailures`): a way

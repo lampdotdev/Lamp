@@ -274,7 +274,8 @@ final class SidebarServer {
         // The chat, and how far an open card has been answered in Lamp's window, which isn't the Store's.
         watching = Store.shared.objectWillChange.merge(with: AskProgresses.shared.objectWillChange)
             .merge(with: WishLinkCards.shared.objectWillChange)
-            .merge(with: ContributeCards.shared.objectWillChange).sink { [weak self] _ in
+            .merge(with: ContributeCards.shared.objectWillChange)
+            .merge(with: WishCopies.shared.objectWillChange).sink { [weak self] _ in
             DispatchQueue.main.async { self?.scheduleUpdate() }
         }
         // A key, a model chosen in Settings or for the app, or Not Now changes what an offer's card says.
@@ -465,6 +466,7 @@ final class SidebarServer {
             // A chat of an earlier Lamp then leaves its Put on GitHub… out: Release Update puts the wish there now.
             toolbar.onGitHub = true
             toolbar.shareLink = WishLink.kept(for: project)?.url.absoluteString
+            toolbar.copies = WishCopies.shared.rows(for: project)
             // Play and Stop where the wish isn't a Mac window beside this chat (that one is open, and quits as a window does).
             // Only once there's something to play: a first build opens the app itself.
             // A wish with no app at all has nothing to play.
@@ -1389,6 +1391,13 @@ final class SidebarServer {
             // Beside its Mac app the chat has no Play: a place chosen there is where it opens at once.
             store.tryOn(project, id, open: Self.besideItsApp(project, place: histories[project.id]?.value?.place))
             scheduleUpdate()
+        case .shareOpened:
+            WishCopies.shared.refresh(project)
+        case .compare(let link):
+            // Sent as the person's own message, not through the box, so what they were writing stays there; it waits in
+            // line while a turn runs, as anything they send does. Only a copy the popover listed, which came from the site.
+            guard WishCopies.shared.rows(for: project)?.contains(where: { $0.url == link }) == true else { return }
+            store.send(Sharing.compareRequest(link), to: project)
         case .tryOnOpened:
             store.refreshDevices()
             store.refreshSimulators()

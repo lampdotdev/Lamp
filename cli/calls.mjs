@@ -25,7 +25,7 @@ import { Away, OffNetwork, Refused, Rejected, Runner, StillWorking, answersOn, b
 import { adbCommand, connectTo, deviceListing, deviceProperties, displaySizeOf, dumpIn, installApk, installTools, launchApp, makeEmulator, pairWith, processIn, processOf,
   rowsOf, saveState, screenItems, screenshotOf, tellApp, toolsThere, useLamps } from "./android.mjs";
 import { accountFor, keepAccount } from "./share.mjs";
-import { Unreachable, accountName, askAccount, ideasOf, latestOf, pageUp, makerOf, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile } from "./link.mjs";
+import { Unreachable, accountName, askAccount, copiesOf, ideasOf, latestOf, pageUp, makerOf, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile } from "./link.mjs";
 import { defaultRoute, homeNetwork, neighbours, samsungAt, subnetOn, tvsIn } from "./network.mjs";
 import { PUBLISHER, identityName, keptSigner, namesOf, packageOf, versionAfter } from "./msix.mjs";
 import { tile } from "./png.mjs";
@@ -212,6 +212,11 @@ export const CALLS = {
   /** What a followed link has now, asked with nothing of the person's; `latest` null when it can't be asked or is gone. */
   async linkLatest(given) {
     return { latest: await latestOf({ site: siteOf(given), id: text(given, "id") }) };
+  },
+
+  /** The copies people shared of a link, newest first, as its page lists them: asked with nothing of the person's. */
+  async linkCopies(given) {
+    return { copies: await copiesOf({ site: siteOf(given), id: text(given, "id") }) };
   },
 
   /** The link's file (or with `page`, its playable page), from a file of Lamp's at `file`, sent in parts. */
