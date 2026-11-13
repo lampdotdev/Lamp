@@ -323,14 +323,17 @@ enum Sharing {
             try fm.createDirectory(at: folder, withIntermediateDirectories: true)
             _ = try stageApp(part, into: folder, attachedBytes: &attachedBytes)
         }
-        // The icon is the wish's, and goes with the app at its root.
-        if fm.fileExists(atPath: project.dir.appendingPathComponent("icon.json").path) {
+        // The icon is the wish's, and goes with the app at its root, unless the wish's .lampignore names its files (as
+        // the command line leaves them out: by their names in the file).
+        let ignoredAtRoot = LampIgnore.rules(for: project.dir)
+        if fm.fileExists(atPath: project.dir.appendingPathComponent("icon.json").path), !ignoredAtRoot("icon.json") {
             try fm.copyItem(at: project.dir.appendingPathComponent("icon.json"), to: stage.appendingPathComponent("icon.json"))
         }
         if let spec = Icons.load(project) {
             switch Icons.artwork(project, spec: spec) {
-            case .glass(let glass): try glass.encoded().write(to: stage.appendingPathComponent(glassEntry))
-            case .picture: try fm.copyItem(at: Icons.artURL(project, spec: spec), to: stage.appendingPathComponent("icon-art.png"))
+            case .glass(let glass) where !ignoredAtRoot(glassEntry): try glass.encoded().write(to: stage.appendingPathComponent(glassEntry))
+            case .picture where !ignoredAtRoot("icon-art.png"): try fm.copyItem(at: Icons.artURL(project, spec: spec), to: stage.appendingPathComponent("icon-art.png"))
+            case .glass, .picture: break
             case .waiting, nil: break
             }
         }
