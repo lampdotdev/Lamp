@@ -3,9 +3,10 @@ import Foundation
 /// The run of versions a shared file carries for mixing (`Mix`), in History/ beside the app: each version's title, when
 /// it was saved, and the files it changed as they were after it, so the Mac that opens the file can replay them one at
 /// a time. Only what a shared file would carry anyway: Lamp's own files, its records and the chat's attachments are left
-/// out (`Upstream.isLeftOut`), and the whole folder goes through the same check for keys the rest of the file does. Code
-/// in it reaches an app only through the mix window, after the file's review, and after a check of its own wherever a mix
-/// comes to code that review didn't read (`Mix.prepare`). An older Lamp never reads the folder.
+/// out (`Upstream.isLeftOut`), and so is what the wish's apps' `.lampignore` files keep to this computer
+/// (`LampIgnore.rules(ofWish:)`), as they are now; the whole folder goes through the same check for keys the rest of
+/// the file does. Code in it reaches an app only through the mix window, after the file's review, and after a check of
+/// its own wherever a mix comes to code that review didn't read (`Mix.prepare`). An older Lamp never reads the folder.
 struct MixHistory: Codable {
     static let folder = "History"
     static let file = "history.json"
@@ -37,11 +38,20 @@ struct MixHistory: Codable {
     // MARK: Sending
 
     /// Writes the run into `stage` (a shared file's folder). Nothing for a wish with no history, or one whose run can't
-    /// be read: the file goes as it always has.
-    static func write(for project: LampProject, credits: Credits, identity: String?, into stage: URL) {
+    /// be read: the file goes as it always has. Throws only when a run that may hold what it shouldn't can't be taken
+    /// back out of `stage`: its files would go in the file whatever history.json lists.
+    static func write(for project: LampProject, credits: Credits, identity: String?, into stage: URL) throws {
         let fm = FileManager.default
         guard let start = start(of: project, credits: credits, identity: identity) else { return }
         let out = stage.appendingPathComponent(folder)
+        // A run that can't be shown to hold only what it lists goes, and the file goes without it.
+        func drop() throws {
+            try? fm.removeItem(at: out)
+            guard (try? fm.attributesOfItem(atPath: out.path)) == nil else {
+                throw Sharing.ImportError("\(project.name) can't be shared.", detail: "Lamp couldn't finish putting its versions in. Try again.")
+            }
+        }
+        let ignored = LampIgnore.rules(ofWish: project)
         try? fm.createDirectory(at: out, withIntermediateDirectories: true)
         // One sandboxed run for the whole history: each version's line, what it changed, and its changed files
         // unpacked into its folder. A run longer than the limit keeps its latest versions, and everything before them
@@ -68,9 +78,11 @@ struct MixHistory: Codable {
         done
         """
         let listed = Versions.gitBlocking(script, cwd: project.dir)
-        guard listed.ok else { try? fm.removeItem(at: out); return }
+        guard listed.ok else { return try drop() }
         let titles = VersionTitles.saved(in: project)
         var versions: [Version] = []
+        // The folders of versions that touched something the .lampignore files keep here.
+        var touchedIgnored: Set<String> = []
         for line in listed.output.split(separator: "\n", omittingEmptySubsequences: true).map(String.init) {
             if line.hasPrefix("V\u{1f}") {
                 let parts = line.split(separator: "\u{1f}", maxSplits: 6, omittingEmptySubsequences: false).map(String.init)
@@ -82,25 +94,35 @@ struct MixHistory: Codable {
             } else if !versions.isEmpty, let tab = line.firstIndex(of: "\t") {
                 let status = line[..<tab], path = String(line[line.index(after: tab)...])
                 guard isSafe(path), !Upstream.isLeftOut(path, in: project) else { continue }
+                if ignored(path) { touchedIgnored.insert(versions[versions.count - 1].folder); continue }
                 if status.hasPrefix("D") { versions[versions.count - 1].removed.append(path) } else { versions[versions.count - 1].changed.append(path) }
             }
         }
-        // Only plain files go; a version that changed nothing a shared file carries isn't one to mix.
+        // Only plain files go; a version that changed nothing a shared file carries isn't one to mix. One that changed only
+        // what the .lampignore files keep here still goes, as its id, title and time with no files: another copy may have
+        // been given the file shared at it, and finds where the two met by it (`Mix.meeting`). Nothing offers it, since
+        // it changes nothing (`Mix.lineUp`).
         for index in versions.indices {
             let base = out.appendingPathComponent(versions[index].folder)
             versions[index].changed = versions[index].changed.filter { isPlainFile(base.appendingPathComponent($0)) }
         }
-        let kept = versions.filter { !$0.changed.isEmpty || !$0.removed.isEmpty }
-        // Each folder holds what its version listed and nothing else: whatever else the unpacking brought is removed.
-        for version in versions {
-            let base = out.appendingPathComponent(version.folder)
-            guard kept.contains(where: { $0.folder == version.folder }) else { try? fm.removeItem(at: base); continue }
-            let wanted = Set(version.changed)
-            for case let file as URL in fm.enumerator(at: base, includingPropertiesForKeys: nil) ?? FileManager.DirectoryEnumerator() {
-                let values = try? file.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-                if values?.isDirectory == true, values?.isSymbolicLink != true { continue }
-                if !wanted.contains(Sharing.relativePath(of: file, in: base)) { try? fm.removeItem(at: file) }
+        let carrying = versions.filter { !$0.changed.isEmpty || !$0.removed.isEmpty }
+        let kept = versions.filter { !$0.changed.isEmpty || !$0.removed.isEmpty || touchedIgnored.contains($0.folder) }
+        // Each folder holds what its version listed and nothing else: whatever else the unpacking brought (a file the
+        // .lampignore files keep here among it) is removed, or nothing of the run goes.
+        do {
+            for version in versions {
+                let base = out.appendingPathComponent(version.folder)
+                guard carrying.contains(where: { $0.folder == version.folder }) else { try fm.removeItem(at: base); continue }
+                let wanted = Set(version.changed)
+                for case let file as URL in fm.enumerator(at: base, includingPropertiesForKeys: nil) ?? FileManager.DirectoryEnumerator() {
+                    let values = try? file.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                    if values?.isDirectory == true, values?.isSymbolicLink != true { continue }
+                    if !wanted.contains(Sharing.relativePath(of: file, in: base)) { try fm.removeItem(at: file) }
+                }
             }
+        } catch {
+            return try drop()
         }
         // The latest picture of the app, so the other copy can be seen before it's mixed.
         if let picture = ([start.head] + kept.reversed().map(\.id)).lazy.map({ Versions.pictureURL(in: project, for: $0) })
@@ -112,9 +134,22 @@ struct MixHistory: Codable {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? encoder.encode(MixHistory(base: start.base, versions: kept)),
               (try? data.write(to: out.appendingPathComponent(file))) != nil else {
-            try? fm.removeItem(at: out)
-            return
+            return try drop()
         }
+        // What's left is read back: every file in the folder is one history.json lists, its picture or history.json
+        // itself, or nothing of the run goes.
+        var allowed: Set<String> = [file, Self.picture]
+        for version in carrying { allowed.formUnion(version.changed.map { version.folder + "/" + $0 }) }
+        var unread = false
+        let left = fm.enumerator(at: out, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [],
+                                 errorHandler: { _, _ in unread = true; return false })
+        guard let left else { return try drop() }
+        for case let item as URL in left {
+            let values = try? item.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            if values?.isDirectory == true, values?.isSymbolicLink != true { continue }
+            guard allowed.contains(Sharing.relativePath(of: item, in: out)) else { return try drop() }
+        }
+        if unread { try drop() }
     }
 
     /// Where the run starts. A copy (its chain names a version of this wish that isn't in its own history: the one it
