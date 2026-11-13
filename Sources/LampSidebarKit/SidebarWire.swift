@@ -241,6 +241,9 @@ public struct SidebarToolbar: Codable, Equatable {
     public var onGitHub: Bool?
     /// The wish's Share Link, once it has one: the share button shows it first, to copy.
     public var shareLink: String?
+    /// The copies people shared of that link, newest first (`WishCopies`): the share button lists them under it, each to
+    /// compare. Nil with none, or when the site couldn't be asked.
+    public var copies: [SharedCopyRow]?
     /// It has versions to look back at.
     public var hasVersions: Bool
     public var details: Bool
@@ -252,6 +255,25 @@ public struct SidebarToolbar: Codable, Equatable {
         self.canShare = canShare
         self.hasVersions = hasVersions
         self.details = details
+    }
+}
+
+/// Someone's copy shared from the wish's link, as the link's page lists it.
+public struct SharedCopyRow: Codable, Equatable, Hashable, Identifiable {
+    /// Its page on the site.
+    public var url: String
+    public var name: String
+    /// Who shared it; empty for nobody.
+    public var by: String
+    /// When it last changed, as the site says it (an ISO date); nil when it doesn't.
+    public var updated: String?
+    public var id: String { url }
+
+    public init(url: String, name: String, by: String, updated: String?) {
+        self.url = url
+        self.name = name
+        self.by = by
+        self.updated = updated
     }
 }
 
@@ -620,6 +642,10 @@ public enum SidebarCommand: Codable, Equatable {
     case contribute(SidebarContributeCommand)
     /// A Try On choice, by its id (`SidebarTryOn.Item.id`).
     case tryOn(String)
+    /// The share button's popover opened: Lamp asks the site again for the copies of the wish's link, if it's been a while.
+    case shareOpened
+    /// Compare on one of the copies the share button lists, by its page: asked of the agent as if the person typed it.
+    case compare(String)
     /// Try On's menu opened: Lamp looks for devices, as when Lamp's own Try On opens, so the list is the one now.
     case tryOnOpened
     /// Play, and Stop.

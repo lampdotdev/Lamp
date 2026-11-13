@@ -79,6 +79,10 @@ enum Sharing {
 
     @MainActor private static var popover: NSPopover?
 
+    /// What Compare on one of the link's copies asks the agent, in the person's words: it fetches the copy with
+    /// `shared_copy` and says what's different (`Agent.sharedLinkRules`), and the person can then ask to take part of it.
+    static func compareRequest(_ copy: String) -> String { "Compare this app with \(copy) and tell me what's different." }
+
     /// Share…: the popover the chat's Share button opens (`SharePopover`), from the control it was chosen with: the
     /// wish's link to copy, the Mac's ways to send it, and the rest of sharing.
     @MainActor static func share(_ project: LampProject, from origin: Origin) {
@@ -89,7 +93,8 @@ enum Sharing {
         let link = WishLink.kept(for: project)?.url
         let popover = NSPopover()
         popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView: SharePopover(link: link, canContribute: Contribute.canContribute(project)) { action in
+        WishCopies.shared.refresh(project)
+        popover.contentViewController = NSHostingController(rootView: SharePopoverWithCopies(project: project, link: link) { action in
             chose(action, for: project, link: link, origin: origin, window: window, clicked: clicked)
         })
         self.popover?.close()
@@ -120,6 +125,13 @@ enum Sharing {
         case .contribute: store.sendChangesBack(project)
         case .copyFile: store.copyAppFile(project)
         case .export: store.chooseExport(project)
+        case .openCopy(let page): NSWorkspace.shared.open(page)
+        case .allCopies: if let link { NSWorkspace.shared.open(link) }
+        case .compare(let copy):
+            // As if the person asked in the wish's chat, which comes forward with the request in it.
+            let wish = store.wish(of: project)
+            store.send(compareRequest(copy.absoluteString), to: wish)
+            store.showChat(wish.id)
         case .send(let way):
             // The link goes when there is one; without it, the wish's file.
             if let link {
