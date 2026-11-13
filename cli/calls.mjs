@@ -211,7 +211,9 @@ export const CALLS = {
 
   /** What a followed link has now, asked with nothing of the person's; `latest` null when it can't be asked or is gone. */
   async linkLatest(given) {
-    return { latest: await latestOf({ site: siteOf(given), id: text(given, "id") }) };
+    // By the link's id, or by its maker's username and its name there (`lamp.dev/<user>/<app>`).
+    const named = typeof given?.user === "string" && typeof given?.app === "string";
+    return { latest: await latestOf(named ? { site: siteOf(given), user: given.user, app: given.app } : { site: siteOf(given), id: text(given, "id") }) };
   },
 
   /** The copies people shared of a link, newest first, as its page lists them: asked with nothing of the person's. */

@@ -246,8 +246,22 @@ enum WishLink {
         let file: URL?
     }
 
-    static func latest(_ id: String) async -> Latest? {
-        guard let said = (try? await ask("linkLatest", ["id": id]))?["latest"] as? [String: Any], let version = said["version"] as? Int else { return nil }
+    static func latest(_ id: String) async -> Latest? { await latest(asking: ["id": id]) }
+
+    /// A link by its maker's username and its name there (`lamp.dev/<user>/<app>`): its id and what it has now.
+    static func latest(user: String, app: String) async -> (id: String, latest: Latest)? {
+        guard let said = (try? await ask("linkLatest", ["user": user, "app": app]))?["latest"] as? [String: Any],
+              let id = said["id"] as? String, Wish.isSharedID(id), let latest = latest(from: said) else { return nil }
+        return (id, latest)
+    }
+
+    private static func latest(asking: [String: Any]) async -> Latest? {
+        guard let said = (try? await ask("linkLatest", asking))?["latest"] as? [String: Any] else { return nil }
+        return latest(from: said)
+    }
+
+    private static func latest(from said: [String: Any]) -> Latest? {
+        guard let version = said["version"] as? Int else { return nil }
         return Latest(name: said["name"] as? String, by: (said["by"] as? String)?.nilIfEmpty, version: version,
                       file: (said["file"] as? String).flatMap(URL.init(string:)))
     }

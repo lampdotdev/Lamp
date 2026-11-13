@@ -43,6 +43,22 @@ enum SharedCopies {
         Following.copy(fromLink: text.trimmingCharacters(in: CharacterSet(charactersIn: "<>()[]{}\"'“”‘’`.,;:!? \n\t")))
     }
 
+    /// The link given, as `place(from:)` reads it, or a link by its maker's username and its name there
+    /// (`lamp.dev/<user>/<app>`, what the site shows for a confirmed account's link), asked of the site for its id.
+    static func resolvedPlace(from text: String, site: URL = WishLink.endpoint) async -> Following.Place? {
+        if let place = place(from: text) { return place }
+        var line = text.trimmingCharacters(in: CharacterSet(charactersIn: "<>()[]{}\"'“”‘’`.,;:!? \n\t"))
+        if ["lamp.dev/", "www.lamp.dev/"].contains(where: { line.lowercased().hasPrefix($0) }) { line = "https://" + line }
+        guard let url = URL(string: line), let host = url.host?.lowercased() else { return nil }
+        let onSite = (url.scheme == "https" && ["lamp.dev", "www.lamp.dev"].contains(host))
+            || (url.scheme == site.scheme && url.host == site.host && url.port == site.port)
+        let parts = url.pathComponents.filter { $0 != "/" }
+        let name = { (part: String) in part.count <= 60 && !part.isEmpty && part.allSatisfy { ($0.isASCII && ($0.isLowercase || $0.isNumber)) || $0 == "-" } }
+        guard onSite, parts.count == 2, parts.allSatisfy(name),
+              let found = await WishLink.latest(user: parts[0], app: parts[1]) else { return nil }
+        return .lamp(found.id)
+    }
+
     /// Clears copies older than `keptFor`.
     static func clearOld(now: Date = Date()) {
         let fm = FileManager.default
@@ -200,8 +216,8 @@ extension Store {
         let wish = wish(of: project)
         let given = (arguments["link"] as? String)?.trimmed ?? ""
         guard !given.isEmpty else { return (200, ["text": sharedLinksKnown(to: wish)]) }
-        guard let place = SharedCopies.place(from: given) else {
-            return (400, ["error": "That isn't a link to a shared Lamp app. Lamp takes lamp.dev/w/<id> (with -<name> after the id or not), or Lamp's own wish?shared=<id> link. Call shared_copy without a link for the ones this Mac knows."])
+        guard let place = await SharedCopies.resolvedPlace(from: given) else {
+            return (400, ["error": "That isn't a link to a shared Lamp app. Lamp takes lamp.dev/w/<id> (with -<name> after the id or not), lamp.dev/<username>/<app>, or Lamp's own wish?shared=<id> link. Call shared_copy without a link for the ones this Mac knows."])
         }
         guard let id = place.link else {
             return (400, ["error": "That's a project on GitHub, not a Lamp link: open the github-projects skill with `read_skill`."])
