@@ -294,7 +294,9 @@ goes in only while Try On points at this Mac. Don't add a time limit after which
 is what lost people's work.
 
 What an app's folder names in its `.lampignore` (data only that computer needs, too big to share) stays out of everything
-shared of it: its file (`Sharing.export`, and so its repository) and its page on its link or on GitHub (`Publish.copyPage`).
+shared of it: its file (`Sharing.export`, and so its repository), the versions that file carries for mixing (`MixHistory`,
+by `LampIgnore.rules(ofWish:)`: each app's own rules from its folder, the wish folder's for the rest) and its page on its
+link or on GitHub (`Publish.copyPage`).
 The format is lamp's command line's (`cli/ignore.mjs`), which shares from the same folders; `LampIgnore` follows it
 pattern for pattern, and a test asks both about the same paths.
 

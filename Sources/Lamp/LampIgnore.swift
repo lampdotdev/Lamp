@@ -32,6 +32,25 @@ enum LampIgnore {
         return { rules(web + $0) }
     }
 
+    /// The same for a file by its path from a wish's folder, as the wish's history names it, so what a shared file
+    /// carries of its history leaves out what its apps do (`MixHistory`). Each app in a folder of its own is asked by
+    /// its own rules with its folder taken off, as its files are when it's shared, the one a shared file puts at its root
+    /// (`Sharing.layout`) included; every other path is asked by the wish folder's own, as the icon beside its apps is.
+    static func rules(ofWish project: LampProject) -> (String) -> Bool {
+        let (root, parts) = Sharing.layout(of: project)
+        let wish = rules(for: project.dir), top = project.dir.standardizedFileURL
+        var apps: [String: (String) -> Bool] = [:]
+        for app in [root] + parts where app.dir.standardizedFileURL != top {
+            apps[app.dir.lastPathComponent] = rules(for: app.dir)
+        }
+        return { path in
+            if let slash = path.firstIndex(of: "/"), let app = apps[String(path[..<slash])] {
+                return app(String(path[path.index(after: slash)...]))
+            }
+            return wish(path)
+        }
+    }
+
     /// The patterns of one `.lampignore`, read as any of the app's files Lamp reads (`AppFile`: no link followed).
     private static func patterns(in url: URL, of folder: URL) -> [NSRegularExpression] {
         guard let text = AppFile.text(url, inFolder: folder) else { return [] }

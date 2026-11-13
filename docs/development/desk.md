@@ -372,8 +372,10 @@ in place of Update on its review, waiting while another mix is saved
   changed as they were after it. A run
   longer than `MixHistory.limit` keeps its latest versions and carries the rest as one ("Earlier changes"), so it
   always starts where the copies met. Only what a
-  shared file carries (`Upstream.isLeftOut`), through the same check for keys; a key in an old version or a history
-  too big to send drops History/, never the share.
+  shared file carries (`Upstream.isLeftOut`), and nothing the apps' `.lampignore` files keep here, as they are when it's
+  shared (a version that changed only such files isn't sent), through the same check for keys; a key in an old version
+  or a history too big to send drops History/, never the share, and so does a History/ that can't be shown to hold
+  only what it lists; one that can't be taken out stops the share.
 - **Where they met.** The run's base when it's in this copy's history (the file came back), else this copy's
   arrival when the run starts at, or passes, the version it was given (`Mix.lineUp`). Copies with no such version
   aren't mixed.

@@ -294,9 +294,10 @@ enum Sharing {
     /// (`Upstream.ownVersion`); a copy sharing on keeps the version it was given, which is the sender's and not its own.
     /// `releasing` is what's new in a release the file goes out with, which isn't kept until it has (`WishReleases`).
     /// `link` is the lamp.dev link the file goes up with (the Share Link card), which this wish's place on the chain
-    /// names, so a copy shared on as a link of its own says it came from this one.
+    /// names, so a copy shared on as a link of its own says it came from this one. `withHistory` is whether the file
+    /// carries the wish's versions for mixing (`MixHistory`): the experiment's switch, which tests set themselves.
     static func export(_ project: LampProject, icon: Data? = nil, repository: String? = nil, commit: String? = nil,
-                       releasing: WishReleases.Entry? = nil, link: String? = nil) throws -> URL {
+                       releasing: WishReleases.Entry? = nil, link: String? = nil, withHistory: Bool = Mix.isOn) throws -> URL {
         // Some kinds' files can't go in a shared file yet (an app for a device through its integration). The wish's
         // other apps are read off its folder, as Lamp lists them.
         // The file holds one app at its root and the others in their folders, as Lamp laid wishes out until any app could
@@ -411,7 +412,7 @@ enum Sharing {
         // With mixing on, the file also carries the versions since the copies last met (`MixHistory`). It's the first
         // thing given up: a key in an old version, or a history too big to send, sends the file without it.
         let history = stage.appendingPathComponent(MixHistory.folder)
-        if Mix.isOn { MixHistory.write(for: project, credits: credits, identity: identity(of: project), into: stage) }
+        if withHistory { try MixHistory.write(for: project, credits: credits, identity: identity(of: project), into: stage) }
         // Every app's: each of a wish's apps keeps its own secrets and token.
         let known = Array(Set(([project, root] + parts).flatMap { knownSecrets($0) }))
         var leaks = ShareCheck.secrets(in: stage, known: known)

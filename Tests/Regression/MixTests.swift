@@ -63,7 +63,7 @@ final class MixTests: XCTestCase {
         let stage = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-mix-test-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: stage) }
-        MixHistory.write(for: theirs.project, credits: Credits.load(theirs.project), identity: identity, into: stage)
+        try MixHistory.write(for: theirs.project, credits: Credits.load(theirs.project), identity: identity, into: stage)
         let history = try XCTUnwrap(MixHistory.read(in: stage))
         XCTAssertEqual(history.base, met)
         XCTAssertEqual(history.versions.map(\.title), ["Shout the first line", "Shout the last line"])
@@ -136,7 +136,7 @@ final class MixTests: XCTestCase {
         let stage = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-mix-test-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: stage) }
-        MixHistory.write(for: theirs.project, credits: Credits.load(theirs.project), identity: identity, into: stage)
+        try MixHistory.write(for: theirs.project, credits: Credits.load(theirs.project), identity: identity, into: stage)
         let history = try XCTUnwrap(MixHistory.read(in: stage))
         XCTAssertEqual(history.versions.count, MixHistory.limit + 1)
         XCTAssertEqual(history.versions.first?.title, "Earlier changes")
@@ -184,7 +184,7 @@ final class MixTests: XCTestCase {
         let stage = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-mix-test-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: stage) }
-        MixHistory.write(for: theirs.project, credits: Credits.load(theirs.project), identity: remix, into: stage)
+        try MixHistory.write(for: theirs.project, credits: Credits.load(theirs.project), identity: remix, into: stage)
         let history = try XCTUnwrap(MixHistory.read(in: stage))
         XCTAssertEqual(history.versions.map(\.title), ["Remix of Coin Flip", "Shout the last line"])
         XCTAssertEqual(history.versions.map { $0.began == true }, [true, false])
@@ -216,7 +216,7 @@ final class MixTests: XCTestCase {
         try commit(theirs, "Remove the app file", at: 410, [:])
         try commit(yours, "Whisper it again", at: 420, ["Sources/App.swift": "A-you-again\nb\nc\nd\ne\n"])
         try FileManager.default.removeItem(at: package.folder.appendingPathComponent(MixHistory.folder))
-        MixHistory.write(for: theirs.project, credits: Credits.load(theirs.project), identity: identity, into: package.folder)
+        try MixHistory.write(for: theirs.project, credits: Credits.load(theirs.project), identity: identity, into: package.folder)
         let history = try XCTUnwrap(MixHistory.read(in: package.folder))
         let lineup = try await Mix.lineUp(package, history: history, with: yours.project)
         let removal = try XCTUnwrap(lineup.changes.first { $0.title == "Remove the app file" })
@@ -230,7 +230,7 @@ final class MixTests: XCTestCase {
         let (yours, theirs, package, _) = try await copies()
         try commit(theirs, "Shout it again", at: 450, ["Sources/App.swift": "A-them-again\nb\nc\nd\nE-them\n"])
         try FileManager.default.removeItem(at: package.folder.appendingPathComponent(MixHistory.folder))
-        MixHistory.write(for: theirs.project, credits: Credits.load(theirs.project), identity: identity, into: package.folder)
+        try MixHistory.write(for: theirs.project, credits: Credits.load(theirs.project), identity: identity, into: package.folder)
         let history = try XCTUnwrap(MixHistory.read(in: package.folder))
 
         let first = try await Mix.lineUp(package, history: history, with: yours.project)
@@ -298,7 +298,7 @@ final class MixTests: XCTestCase {
         let stage = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-mix-test-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: stage) }
-        MixHistory.write(for: yours.project, credits: Credits.load(yours.project), identity: identity, into: stage)
+        try MixHistory.write(for: yours.project, credits: Credits.load(yours.project), identity: identity, into: stage)
         let history = try XCTUnwrap(MixHistory.read(in: stage))
         XCTAssertEqual(history.versions.map(\.title), ["Shout the last line"])
         let package = Sharing.Package(name: "Coin Flip", identity: identity, folder: stage, sources: [], attachments: [], fileCount: 0)
@@ -317,7 +317,7 @@ final class MixTests: XCTestCase {
         addTeardownBlock { try? FileManager.default.removeItem(at: stage) }
         // The original's first share was where they met, so its run starts there.
         _ = try escape.loose("mkdir -p .lamp && git rev-parse HEAD~1 > .lamp/mix-start", in: yours.project.dir)
-        MixHistory.write(for: yours.project, credits: Credits.load(yours.project), identity: identity, into: stage)
+        try MixHistory.write(for: yours.project, credits: Credits.load(yours.project), identity: identity, into: stage)
         let history = try XCTUnwrap(MixHistory.read(in: stage))
         XCTAssertEqual(history.versions.map(\.title), ["Whisper the first line"])
         let package = Sharing.Package(name: "Coin Flip", identity: identity, folder: stage, sources: [], attachments: [], fileCount: 0)
@@ -430,7 +430,7 @@ final class MixTests: XCTestCase {
         for (path, content) in top { try content.write(to: stage.appendingPathComponent(path), atomically: true, encoding: .utf8) }
         try #"{"format": 2, "name": "Coin Flip", "exportedAt": "2026-01-01T00:00:00Z", "platform": "mac", "app": "\#(identity)"}"#
             .write(to: stage.appendingPathComponent("lamp-app.json"), atomically: true, encoding: .utf8)
-        MixHistory.write(for: theirs.project, credits: Credits.load(theirs.project), identity: identity, into: stage)
+        try MixHistory.write(for: theirs.project, credits: Credits.load(theirs.project), identity: identity, into: stage)
         try tamper(stage)
         let package = try Sharing.open(unpacked: stage)
         let history = try XCTUnwrap(MixHistory.read(in: stage))
