@@ -321,10 +321,12 @@ A capability given to one engine must be given to all of them that can take it, 
   can answer the app with now, asked of no model: Lamp's app lists every text route by its id with whether it can
   answer and which answers the app when it names none (`AppAI.modelChoices`, built by `AppAI.modelList`); `lamp dev`
   and `lamp ai` list Lamp's Anthropic ids through each of Claude Code and OpenRouter that's here, and Codex's default
-  (`models` in cli/ai.mjs). Each model has `name` (the model with what answers it, as Lamp's captions say it), `model`
+  (`models` in cli/ai.mjs); a page shared on lamp.dev that `lamp ai` answers gets only the engine that answers first,
+  the one the person was asked to let it use (`enginesFor`), for its list, `ask` and `act`. Each model has `name` (the model with what answers it, as Lamp's captions say it), `model`
   (its own short name) and `via` (`{ id, name }`: `claude-code`, `codex`, `openrouter`), so an app never reads the
   harness out of `name`. Every id is one model through one harness: `engine:claude:<model>`, `engine:codex` or
-  `engine:codex:<model>`, `openrouter:<model>` (`TextRoute.appID`; Lamp's app keeps an OpenRouter route by its bare
+  `engine:codex:<model>` (only in Lamp's app, which knows Codex's models; lamp takes `engine:codex` alone),
+  `openrouter:<model>` (`TextRoute.appID`; Lamp's app keeps an OpenRouter route by its bare
   id, which `canonicalRoute` reads it as). A bare id (`opus`, as apps named them before) is that model through the
   harness that answers when the app names none, or else, in Lamp's app, through OpenRouter as before
   (`AppAI.choice`, `routeFor` in cli/ai.mjs). The list's order means something: the default's harness first, then the

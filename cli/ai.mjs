@@ -4,10 +4,10 @@
 // same code (app-ai.mjs, which Lamp's app has do it too), so a page can't tell which answered it. Pictures and
 // hearing need Lamp's app: asked here, they say so.
 
-import { spawn, execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { accessSync, constants, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { chatBody, decidePrompt, planPrompt, planSchema, readDecision, readMessage, readPlan, readStep } from "./app-ai.mjs";
 import { DEFAULT_MODEL, OpenRouterTrouble, chat as openRouterChat, text as openRouterText } from "./openrouter.mjs";
@@ -27,8 +27,19 @@ export function engines() {
   return (wanted ? [wanted] : ["claude", "codex", "openrouter"]).filter((name) => {
     if (name === "openrouter") return !!process.env.OPENROUTER_API_KEY;
     if (name !== "claude" && name !== "codex") return false;
-    try { execFileSync("/usr/bin/which", [name], { stdio: ["ignore", "pipe", "ignore"] }); return true; } catch { return false; }
+    return !!onPath(name);
   });
+}
+
+/** Where a program is on the PATH this process has now, looked up here rather than by asking `which`, whose answer
+ *  can differ from this process's own PATH under Bun. */
+function onPath(name) {
+  for (const folder of String(process.env.PATH || "").split(delimiter)) {
+    if (!folder) continue;
+    const path = join(folder, name);
+    try { accessSync(path, constants.X_OK); if (statSync(path).isFile()) return path; } catch {}
+  }
+  return null;
 }
 
 const missing = "AI here needs Claude Code or Codex on this computer, signed in, or an OpenRouter key in OPENROUTER_API_KEY. Or open the app in Lamp.";
@@ -92,7 +103,7 @@ export function complete({ system, prompt, schema, seconds = 60, which = engine(
   const childEnv = { ...process.env, ...env };
   delete childEnv.BUN_BE_BUN;
   return new Promise((resolve, reject) => {
-    const child = spawn(tool || which, args, { cwd: folder, env: childEnv, detached: true, stdio: [input ? "pipe" : "ignore", "pipe", "pipe"] });
+    const child = spawn(tool || onPath(which) || which, args, { cwd: folder, env: childEnv, detached: true, stdio: [input ? "pipe" : "ignore", "pipe", "pipe"] });
     let text = "", trouble = null, rest = "", said = "";
     // The whole group, since an engine may leave a child holding its output.
     const stop = (kind, words) => { if (!trouble) trouble = new EngineTrouble(kind, words); try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); } };
@@ -216,15 +227,19 @@ export function modelFor(which, asked) {
 
 /** The engine and model a page's `model` goes to (`ask` and `act`): an id with its engine ("engine:claude:opus",
  *  "openrouter:opus", "engine:codex") is that engine when it can answer here; a bare id ("opus") is that model through
- *  the engine that answers first. One that can't answer is answered as one that named none, never refused. */
+ *  the engine that answers first. One that can't answer is answered as one that named none, never refused: a model
+ *  this doesn't list included, and any Codex model but its default, since Codex's own list isn't known here.
+ *  `here` is the engines the page may use (`enginesFor`). */
 export function routeFor(asked, here = engines()) {
   const first = here[0] ?? null;
   const id = String(asked || "");
   for (const which of here) {
-    const prefix = PREFIX[which];
-    if (which === "codex" ? id !== CODEX && !id.startsWith(CODEX + ":") : !id.startsWith(prefix)) continue;
-    const model = which === "codex" ? id.slice(CODEX.length + 1) : id.slice(prefix.length);
-    if (which === "codex") return { which, model: model || (which === first ? process.env.LAMP_AI_MODEL || "" : "") };
+    if (which === "codex") {
+      if (id === CODEX) return { which, model: which === first ? process.env.LAMP_AI_MODEL || "" : "" };
+      continue;
+    }
+    if (!id.startsWith(PREFIX[which])) continue;
+    const model = id.slice(PREFIX[which].length);
     if (listed(model)) return { which, model: modelFor(which, model) };
     if (which === first && model === unlisted()) return { which, model };
     break;
@@ -233,10 +248,13 @@ export function routeFor(asked, here = engines()) {
   return { which: first, model: first ? modelFor(first, bare) : "" };
 }
 
+/** The engines a request may use: every one here for the person's own page (`lamp dev`), only the one that answers
+ *  first for a page shared on lamp.dev (`page`, from `serveLocalAI`), the one the person was asked to let it use. */
+export const enginesFor = (page) => (page ? engines().slice(0, 1) : engines());
+
 /** `/ai/models`: what a page can offer to choose from here, asked of nothing. The engine that answers first comes
  *  first, then the others, each with its most capable model first. */
-export function models() {
-  const here = engines();
+export function models(here = engines()) {
   if (!here.length) return { models: [], default: null, reason: missing };
   const list = here.flatMap((which) => {
     if (which === "codex") return [{ id: CODEX, name: "ChatGPT's default model via Codex", model: "ChatGPT's default model", via: via(which), available: true }];
@@ -258,12 +276,12 @@ const GUARD_SECONDS = 600;
 const secondsFor = (body) => (typeof body?.seconds === "number" && body.seconds > 0 ? Math.min(body.seconds, GUARD_SECONDS) : GUARD_SECONDS);
 
 /** `/ai`: a text answer, or JSON when asked for it. */
-export async function ask(body) {
+export async function ask(body, here = engines()) {
   const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
   if (!prompt) return [400, { error: "Missing prompt." }];
   let system = typeof body.system === "string" ? body.system : "";
   if (body.json) system += (system ? "\n\n" : "") + "Answer with JSON only, nothing around it.";
-  const { which, model } = routeFor(body.model);
+  const { which, model } = routeFor(body.model, here);
   try { return [200, { text: await complete({ system, prompt, images: body.images, which, model, seconds: secondsFor(body) }) }]; }
   catch (error) { return [502, { error: error.message }]; }
 }
@@ -286,14 +304,14 @@ export async function decide(body) {
 // MARK: Actions (`LampAI.act`)
 
 /** `/ai/act`: one step of the page's agent loop, told and checked as Lamp's app does it (app-ai.mjs). */
-export async function act(body) {
-  const first = engine();
+export async function act(body, here = engines()) {
+  const first = here[0] ?? null;
   if (body?.probe === true) return [200, { act: !!first, route: first || "", why: first ? "" : missing }];
   if (!first) return [501, { error: missing }];
   let r;
   try { r = readStep(JSON.stringify(body ?? null)); } catch (refused) { return [refused.status ?? 400, { error: refused.message }]; }
   // The model the page named, through its own engine when that can answer here; else what answers first.
-  const { which, model } = routeFor(r.model);
+  const { which, model } = routeFor(r.model, here);
   // A step's guard against a call that has stopped answering, as Lamp's app gives it (`AppAct.turnSeconds`).
   const seconds = 600;
   const deadline = Date.now() + Math.min(r.seconds, seconds) * 1000;
@@ -323,11 +341,11 @@ export async function act(body) {
 }
 
 /** A page's AI request, by its route, as Lamp's app answers it: [status, JSON]. */
-export async function answer(path, body) {
+export async function answer(path, body, page) {
   if (path === "/ai/status") return [200, status()];
-  if (path === "/ai/models") return [200, models()];
-  if (path === "/ai") return ask(body);
-  if (path === "/ai/act") return act(body);
+  if (path === "/ai/models") return [200, models(enginesFor(page))];
+  if (path === "/ai") return ask(body, enginesFor(page));
+  if (path === "/ai/act") return act(body, enginesFor(page));
   if (path === "/ai/decide") return decide(body);
   if (path === "/ai/hear") return body?.probe === true ? [200, { hear: false, why: "Hearing needs Lamp's app." }] : [501, { error: "Hearing needs Lamp's app: open the app in Lamp." }];
   if (path === "/ai/image") return [501, { error: "Pictures need Lamp's app: open the app in Lamp.", needs: "pictures" }];
