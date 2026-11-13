@@ -66,10 +66,19 @@ enum Builder {
 
     /// The model Claude Code or Codex builds with; "" leaves it to the tool's own default (for Claude Code,
     /// the account's default, since Lamp runs it without the person's settings). Claude Code starts on
-    /// Opus, like Lamp's other builders.
+    /// Opus, like Lamp's other builders, and Codex on Sol 6.1 when the account has it, since Codex's own default
+    /// is whatever the person last chose in it.
     static func engineModel(_ engine: Engine) -> String {
-        UserDefaults.standard.string(forKey: "engineModel.\(engine.rawValue)").map(currentModel) ?? (engine == .claude ? "opus" : "")
+        if let saved = UserDefaults.standard.string(forKey: "engineModel.\(engine.rawValue)") { return currentModel(saved) }
+        switch engine {
+        case .claude: return "opus"
+        case .codex: return codexCatalog.contains { $0.slug == codexBuildModel } ? codexBuildModel : ""
+        default: return ""
+        }
     }
+
+    /// Codex's model for building, by its id in Codex's catalog.
+    static let codexBuildModel = "gpt-6.1-sol"
 
     static func setEngineModel(_ model: String, for engine: Engine) {
         UserDefaults.standard.set(model.trimmed, forKey: "engineModel.\(engine.rawValue)")
