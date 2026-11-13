@@ -319,7 +319,9 @@ and put it somewhere.
   gateway), a wish's other apps, connecting a device over Wi‑Fi, and an Android app written in Kotlin.
 
 `cli/tests/android.test.mjs` holds what lamp writes and what it asks of Gradle and adb, with stand-ins for both; it
-runs where `cli/lamps/android-host` has been written.
+runs on macOS where `cli/lamps/android-host` has been written. The nightly Mac checks run it on Node and Bun after
+the npm package step writes that host; with `LAMP_REQUIRE_ANDROID_HOST=1`, a missing host fails the check instead
+of skipping it.
 
 ## Lamp's app
 
