@@ -387,9 +387,11 @@ in place of Update on its review, waiting while another mix is saved
   `Lineup.keptHere`, read once when the copies are lined up (`Lineup.ignore`), so a mix whose copy changes them
   before it's saved isn't made, and one of theirs coming in counts from the next mix. Every version a mix saves holds
   each such file exactly as this copy's latest version does, its absence included, read by each name's bytes
-  (`Mix.keeping`); a version of either side that changed only such files isn't offered. Since such a file may be on
-  disk in no version, which the check for unsaved changes can't see, `Mix.apply` refuses a mix that would put a file
-  of theirs where one is kept, or a folder where one is (`Mix.displaced`).
+  (`Mix.keeping`), and none holds a file of theirs the disk takes as the same place by another spelling (case alone,
+  on a disk that doesn't tell case apart: `Lineup.diskKey`); a version of either side that changed only such files
+  isn't offered. Since such a file may be on disk in no version, which the check for unsaved changes can't see,
+  `Mix.apply` refuses a mix any of whose versions (Undo reaches each) would put a file of theirs where one is kept,
+  by its name or another spelling, or a folder where one is (`Mix.displaced`).
 - **What no review read.** The file's review read its code at the top of the file, their latest; a pick can come to
   something else (a change of theirs taken without a later one, a file both changed, a History/ that differs from the
   code beside it), and so can each version saved on the way, which Undo reaches at once. Mix plays the pick back once

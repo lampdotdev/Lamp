@@ -222,4 +222,70 @@ final class MixKeepsIgnoredTests: XCTestCase {
         XCTAssertEqual(try head(copies.yours), before)
         XCTAssertEqual(onDisk("Assets/data.csv", in: copies.yours), "start\n")
     }
+
+    /// On a disk that doesn't tell names apart by case (a Mac's usual), a file of theirs spelled like a kept one of yours
+    /// is that file: it doesn't come in over it, in any saved version or on disk.
+    func testTheirFileSpelledLikeAKeptOneDoesNotReplaceIt() async throws {
+        let copies = try await copies(["Sources/App.swift": lines, "Assets/data.csv": "start\n"], [
+            Step(theirs: false, title: "Keep data here", at: 150, files: [".lampignore": "/Assets/data.csv\n", "Assets/data.csv": "yours\n"]),
+            Step(theirs: true, title: "Drop data", at: 200, files: ["Assets/data.csv": nil]),
+            Step(theirs: true, title: "Their data", at: 250, files: ["Assets/Data.csv": "theirs\n", "Sources/App.swift": "A-them\nb\nc\nd\ne\n"]),
+        ])
+        let disk = try copies.yours.project.dir.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey])
+        try XCTSkipIf(disk.volumeSupportsCaseSensitiveNames == true, "this disk keeps the two names apart")
+        let lineup = try await copies.lineUp()
+        let before = try head(copies.yours)
+        try await mix(Set(lineup.changes.map(\.id)), in: lineup)
+        XCTAssertEqual(onDisk("Sources/App.swift", in: copies.yours), "A-them\nb\nc\nd\ne\n", "their other change comes in")
+        XCTAssertEqual(onDisk("Assets/data.csv", in: copies.yours), "yours\n")
+        for path in ["Assets/data.csv", "Assets/Data.csv"] {
+            XCTAssertFalse(try saved(path, in: copies.yours, since: before).contains("theirs\n"), path)
+        }
+    }
+
+    /// The same for a kept file no version holds: the mix isn't made.
+    func testTheirFileSpelledLikeAnUnsavedKeptOneIsRefused() async throws {
+        let copies = try await copies(["Sources/App.swift": lines], [
+            Step(theirs: false, title: "Keep notes here", at: 150, files: [".lampignore": "/Assets/notes.csv\n"]),
+            Step(theirs: true, title: "Their notes", at: 200, files: ["Assets/Notes.csv": "theirs\n", "Sources/App.swift": "A-them\nb\nc\nd\ne\n"]),
+        ])
+        let kept = copies.yours.project.dir.appendingPathComponent("Assets/notes.csv")
+        let disk = try copies.yours.project.dir.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey])
+        try XCTSkipIf(disk.volumeSupportsCaseSensitiveNames == true, "this disk keeps the two names apart")
+        try FileManager.default.createDirectory(at: kept.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "only here\n".write(to: kept, atomically: true, encoding: .utf8)
+        let lineup = try await copies.lineUp()
+        let before = try head(copies.yours)
+        do {
+            try await mix(Set(lineup.changes.map(\.id)), in: lineup)
+            XCTFail("the mix was made")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Assets/notes.csv"), error.localizedDescription)
+        }
+        XCTAssertEqual(try String(contentsOf: kept, encoding: .utf8), "only here\n")
+        XCTAssertEqual(try head(copies.yours), before)
+    }
+
+    /// A version on the way counts as much as the last, since Undo puts it in the folder: their file added where an
+    /// unsaved kept file's folder is, then removed again, still refuses the mix.
+    func testAMixThatWouldReplaceAnUnsavedKeptFileOnTheWayIsRefused() async throws {
+        let copies = try await copies(["Sources/App.swift": lines], [
+            Step(theirs: false, title: "Keep data here", at: 150, files: [".lampignore": "*.csv\n"]),
+            Step(theirs: true, title: "Add a helper", at: 200, files: ["Sources/Helper.swift": "// helper\n"]),
+            Step(theirs: true, title: "Drop the helper", at: 300, files: ["Sources/Helper.swift": nil, "Sources/App.swift": "A-them\nb\nc\nd\ne\n"]),
+        ])
+        let kept = copies.yours.project.dir.appendingPathComponent("Sources/Helper.swift/data.csv")
+        try FileManager.default.createDirectory(at: kept.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "only here\n".write(to: kept, atomically: true, encoding: .utf8)
+        let lineup = try await copies.lineUp()
+        let before = try head(copies.yours)
+        do {
+            try await mix(Set(lineup.changes.map(\.id)), in: lineup)
+            XCTFail("the mix was made")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Sources/Helper.swift/data.csv"), error.localizedDescription)
+        }
+        XCTAssertEqual(try String(contentsOf: kept, encoding: .utf8), "only here\n")
+        XCTAssertEqual(try head(copies.yours), before)
+    }
 }

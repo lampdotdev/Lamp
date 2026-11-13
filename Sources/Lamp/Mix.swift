@@ -64,6 +64,9 @@ enum Mix {
         /// What the mix never touches: Lamp's own files, and what those `.lampignore` files keep to this computer. Each is
         /// in every version a mix saves exactly as this copy's version had it, absence included.
         let keptHere: (String) -> Bool
+        /// Whether the wish's disk tells names apart by case alone, as git always does. On one that doesn't (a Mac's
+        /// usual), "Assets/Data.csv" of theirs is the same file as a kept "Assets/data.csv" of yours (`sameFile`).
+        let tellsCase: Bool
 
         init(project: LampProject, package: Sharing.Package, head: String, start: String, changes: [Change],
              theirPicture: URL?, yourPicture: URL?, ignore: LampIgnore.Wish) {
@@ -77,6 +80,14 @@ enum Mix {
             self.ignore = ignore
             let ignored = ignore.rules()
             keptHere = { Upstream.isLeftOut($0, in: project) || ignored($0) }
+            tellsCase = (try? project.dir.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey]))?.volumeSupportsCaseSensitiveNames == true
+        }
+
+        /// A path as the disk names it: two paths with the same key are one file (or folder) there. Composed and
+        /// decomposed letters are one name on a Mac's disk either way; case is too unless the disk tells it apart.
+        func diskKey(_ path: String) -> String {
+            let composed = path.precomposedStringWithCanonicalMapping
+            return tellsCase ? composed : composed.folding(options: [.caseInsensitive], locale: nil)
         }
 
         /// The copy is as it was lined up: at the same version, with the same `.lampignore` files.
@@ -516,7 +527,8 @@ enum Mix {
         guard prepared.folder == lineup.package.folder, prepared.head == lineup.head, await lineup.isCurrent() else { throw moved }
         guard !prepared.needsCheck || checked != nil else { throw Failure(message: "Lamp hasn't checked what this mix brings in.") }
         guard !prepared.versions.isEmpty else { return 0 }
-        if let tree = prepared.versions.last?.tree, let kept = try await displaced(by: tree, in: lineup) {
+        // Every version, not only the last: Undo puts any of them in the folder.
+        if let kept = try await displaced(by: prepared.versions.map(\.tree), in: lineup) {
             throw Failure(message: "Their copy puts something where you keep “\(kept)” on this Mac. Move it, then mix again.")
         }
         var parent = prepared.head
@@ -543,30 +555,48 @@ enum Mix {
         return saved.count
     }
 
-    /// A file this copy keeps here (`Lineup.keptHere`) that no version holds, which putting `tree` in the wish's folder
-    /// would remove: one in a folder where the tree puts a file, or one where the tree puts a folder. The mix's own trees
-    /// never touch what's kept, but git replaces whatever is in the way of what they do change, and the check for
-    /// unsaved changes can't see a file the versions never take.
-    private static func displaced(by tree: String, in lineup: Lineup) async throws -> String? {
+    /// A file this copy keeps here (`Lineup.keptHere`) that no version holds, which putting any of `trees` in the wish's
+    /// folder would remove or write over: one in a folder where a tree puts a file, one where a tree puts a folder, or one
+    /// a tree's file names by another spelling the disk takes as the same (`Lineup.diskKey`). The mix's own trees never
+    /// touch what's kept, but git replaces whatever is in the way of what they do change, and the check for unsaved
+    /// changes can't see a file the versions never take.
+    private static func displaced(by trees: [String], in lineup: Lineup) async throws -> String? {
         let fm = FileManager.default
         let project = lineup.project
-        let saved = try await entries(of: tree, in: project)
         let head = try await entries(of: try await treeID(of: lineup.head, in: project), in: project)
+        var listings: [String: [String]] = [:]
+        // What the disk holds at a path, by the names it holds it under, and whether it's a folder; nil for nothing.
+        func onDisk(_ path: String) -> (path: String, folder: Bool)? {
+            var real = ""
+            let names = path.split(separator: "/").map(String.init)
+            for (index, name) in names.enumerated() {
+                let here = listings[real] ?? ((try? fm.contentsOfDirectory(atPath: project.dir.appendingPathComponent(real).path)) ?? [])
+                listings[real] = here
+                let key = lineup.diskKey(name)
+                guard let found = here.first(where: { $0 == name }) ?? here.first(where: { lineup.diskKey($0) == key }) else { return nil }
+                real = real.isEmpty ? found : real + "/" + found
+                if index < names.count - 1, kind(real) != .typeDirectory { return (real, false) }
+            }
+            return (real, kind(real) == .typeDirectory)
+        }
         func kind(_ path: String) -> FileAttributeType? {
             (try? fm.attributesOfItem(atPath: project.dir.appendingPathComponent(path).path))?[.type] as? FileAttributeType
         }
         func isKept(_ path: String) -> Bool { head[path] == nil && lineup.keptHere(path) }
-        for (path, entry) in saved.sorted(by: { $0.key < $1.key }) where head[path] != entry {
-            if kind(path) == .typeDirectory {
-                let inside = (try? fm.subpathsOfDirectory(atPath: project.dir.appendingPathComponent(path).path)) ?? []
-                for sub in inside.sorted() where kind(path + "/" + sub) != .typeDirectory && isKept(path + "/" + sub) {
-                    return path + "/" + sub
+        var asked: Set<String> = []
+        for tree in trees {
+            let saved = try await entries(of: tree, in: project)
+            for (path, entry) in saved.sorted(by: { $0.key < $1.key }) where head[path] != entry && asked.insert(path).inserted {
+                guard let found = onDisk(path) else { continue }
+                if found.folder {
+                    let inside = (try? fm.subpathsOfDirectory(atPath: project.dir.appendingPathComponent(found.path).path)) ?? []
+                    for sub in inside.sorted() where kind(found.path + "/" + sub) != .typeDirectory && isKept(found.path + "/" + sub) {
+                        return found.path + "/" + sub
+                    }
+                } else if !found.folder, found.path != path, isKept(found.path) {
+                    // Another spelling of a kept file, or a kept file where one of the path's folders would be.
+                    return found.path
                 }
-            }
-            var folder = (path as NSString).deletingLastPathComponent
-            while !folder.isEmpty {
-                if let found = kind(folder), found != .typeDirectory, isKept(folder) { return folder }
-                folder = (folder as NSString).deletingLastPathComponent
             }
         }
         return nil
@@ -736,7 +766,26 @@ enum Mix {
     /// quotes is kept like any other.
     private static func keeping(_ own: [String: String], in tree: String, lineup: Lineup) async throws -> String {
         let now = try await entries(of: tree, in: lineup.project)
-        let gone = now.keys.filter { lineup.keptHere($0) && own[$0] == nil }
+        // A path of theirs that's a kept file of yours by another spelling on this disk, or a folder holding one, or a
+        // file where one's folder is, would be written over it: git sees two names where the disk sees one place.
+        var keptKeys: Set<String> = [], keptFolders: Set<String> = []
+        for path in own.keys {
+            let key = lineup.diskKey(path)
+            keptKeys.insert(key)
+            var folder = (key as NSString).deletingLastPathComponent
+            while !folder.isEmpty { keptFolders.insert(folder); folder = (folder as NSString).deletingLastPathComponent }
+        }
+        func overlaps(_ path: String) -> Bool {
+            let key = lineup.diskKey(path)
+            if keptKeys.contains(key) || keptFolders.contains(key) { return true }
+            var folder = (key as NSString).deletingLastPathComponent
+            while !folder.isEmpty {
+                if keptKeys.contains(folder) { return true }
+                folder = (folder as NSString).deletingLastPathComponent
+            }
+            return false
+        }
+        let gone = now.keys.filter { own[$0] == nil && (lineup.keptHere($0) || overlaps($0)) }
         let put = own.filter { now[$0.key] != $0.value }
         guard !gone.isEmpty || !put.isEmpty else { return tree }
         // "<mode> <blob>\t<path>" ended by NUL, as `update-index -z --index-info` reads it; mode 0 removes the path.
