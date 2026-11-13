@@ -73,7 +73,8 @@ back, the route's time), cancellation, questions back and the receipts. An app t
 request raises `steps:` (up to 40) and `writes:` (up to 320) on its session. Where the person might want another AI for
 the app's asking, `await LampAI.models()` lists what their setup can answer it with: a small Picker beside the Ask
 button with only the `available` ones and `defaultID` chosen, left out when there's one or none, its id passed as
-`model:` to `ask` and the session.
+`model:` to `ask` and the session. Each choice shows its `model` (the model's short name, or `name` when an older Lamp
+sends none), in a `Section` per `via?.name` only when more than one is available, with `name` as its `.help`.
 
 ```swift
 struct Rename: Decodable { let id: String; let name: String }

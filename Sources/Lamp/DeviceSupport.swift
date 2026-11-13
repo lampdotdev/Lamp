@@ -1190,18 +1190,34 @@ enum DeviceSupport {
         /** Whether this kind of AI can answer now, as `status` says. */
         isAvailable: function (capability) { return LampAI.status(capability).then(function (s) { return s.available; }); },
 
-        /** The models the person's setup can answer this app with now, asked of no model: { models: [{ id, name,
-         *  available, reason }], default, reason, help, connect }. `default` is the id that answers when a call names no
-         *  `model`; the ids are what `ask` and `act` take as `model`, and one that can't answer when it's sent is
-         *  answered as no choice, never refused. With none to offer, `models` is empty and `reason` says why; on a page
-         *  shared on lamp.dev that hasn't reached this computer yet it asks nothing and answers `connect: true`, as
-         *  `status` does: ask again once `connect` has. Keep the person's choice with the app's saved things, and go back
-         *  to `default` when it's no longer listed as available.
+        /** The models the person's setup can answer this app with now, asked of no model: { models: [{ id, name, model,
+         *  via: { id, name }, available, reason }], default, reason, help, connect }. `name` says the model with what
+         *  answers it ("Claude Sonnet via Claude Code"); `model` is the model's own short name ("Claude Sonnet") and `via`
+         *  what answers it ("claude-code" / "Claude Code", "codex" / "Codex", "openrouter" / "OpenRouter"), both left out
+         *  by an older Lamp. They come with what answers when a call names no `model` first, then by what else answers,
+         *  each with its most capable model first. Every id is the model through one harness: "engine:claude:opus",
+         *  "openrouter:opus", "engine:codex"; a bare "opus" is Opus through whatever answers by default. `default` is the
+         *  id that answers when a call names no `model`; the ids are what `ask` and `act` take as `model`, and one that
+         *  can't answer when it's sent is answered as no choice, never refused. With none to offer, `models` is empty and
+         *  `reason` says why; on a page shared on lamp.dev that hasn't reached this computer yet it asks nothing and
+         *  answers `connect: true`, as `status` does: ask again once `connect` has. Keep the person's choice with the
+         *  app's saved things, and go back to `default` when it's no longer listed as available.
          *
          *     LampAI.models().then(function (m) {
          *       var usable = m.models.filter(function (x) { return x.available; });
+         *       var harnesses = usable.map(function (x) { return x.via ? x.via.name : ''; })
+         *         .filter(function (v, i, all) { return all.indexOf(v) === i; });
          *       picker.hidden = usable.length < 2;
-         *       picker.innerHTML = usable.map(function (x) { return '<option value="' + x.id + '">' + x.name + '</option>'; }).join('');
+         *       picker.replaceChildren();
+         *       usable.forEach(function (x) {
+         *         var where = picker, label = x.via ? x.via.name : '';
+         *         if (harnesses.length > 1) {
+         *           where = [].filter.call(picker.children, function (g) { return g.label === label; })[0];
+         *           if (!where) { where = document.createElement('optgroup'); where.label = label; picker.appendChild(where); }
+         *         }
+         *         where.appendChild(new Option(x.model || x.name, x.id));
+         *         where.lastChild.title = x.name;
+         *       });
          *       picker.value = m.default;
          *     });
          *     LampAI.ask(question, { model: picker.value });
@@ -1226,6 +1242,9 @@ enum DeviceSupport {
                 return m && typeof m.id === 'string' && m.id;
               }).map(function (m) {
                 var one = { id: m.id, name: typeof m.name === 'string' && m.name ? m.name : m.id, available: m.available === true };
+                // What answers it, as its own fields: left out by a Lamp from before they were sent.
+                if (typeof m.model === 'string' && m.model) one.model = m.model;
+                if (m.via && typeof m.via.id === 'string' && m.via.id && typeof m.via.name === 'string' && m.via.name) one.via = { id: m.via.id, name: m.via.name };
                 if (!one.available && typeof m.reason === 'string') one.reason = m.reason;
                 return one;
               });
@@ -1242,7 +1261,8 @@ enum DeviceSupport {
 
         /** options: data (text from outside the app, for the AI to work on, not obey), images (pictures to look at),
          *  system, json (true asks for JSON and gives back the parsed value: describe its exact shape in the prompt),
-         *  model (an id `LampAI.models()` lists, such as "sonnet", "opus", "haiku", "claude-fable-5-2"). */
+         *  model (an id `LampAI.models()` lists, such as "engine:claude:opus" or "openrouter:sonnet"; a bare "opus" is
+         *  Opus through whatever answers by default). */
         ask: function (prompt, options) { return call(prompt, options); },
 
         /**
