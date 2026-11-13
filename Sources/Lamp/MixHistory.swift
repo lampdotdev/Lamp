@@ -81,6 +81,8 @@ struct MixHistory: Codable {
         guard listed.ok else { return try drop() }
         let titles = VersionTitles.saved(in: project)
         var versions: [Version] = []
+        // The folders of versions that touched something the .lampignore files keep here.
+        var touchedIgnored: Set<String> = []
         for line in listed.output.split(separator: "\n", omittingEmptySubsequences: true).map(String.init) {
             if line.hasPrefix("V\u{1f}") {
                 let parts = line.split(separator: "\u{1f}", maxSplits: 6, omittingEmptySubsequences: false).map(String.init)
@@ -91,23 +93,27 @@ struct MixHistory: Codable {
                                         began: parts[5] == "R" ? true : nil, folder: parts[1], changed: [], removed: []))
             } else if !versions.isEmpty, let tab = line.firstIndex(of: "\t") {
                 let status = line[..<tab], path = String(line[line.index(after: tab)...])
-                guard isSafe(path), !Upstream.isLeftOut(path, in: project), !ignored(path) else { continue }
+                guard isSafe(path), !Upstream.isLeftOut(path, in: project) else { continue }
+                if ignored(path) { touchedIgnored.insert(versions[versions.count - 1].folder); continue }
                 if status.hasPrefix("D") { versions[versions.count - 1].removed.append(path) } else { versions[versions.count - 1].changed.append(path) }
             }
         }
-        // Only plain files go; a version that changed nothing a shared file carries isn't one to mix, so one that changed
-        // only what the .lampignore files keep here doesn't go at all.
+        // Only plain files go; a version that changed nothing a shared file carries isn't one to mix. One that changed only
+        // what the .lampignore files keep here still goes, as its id, title and time with no files: another copy may have
+        // been given the file shared at it, and finds where the two met by it (`Mix.meeting`). Nothing offers it, since
+        // it changes nothing (`Mix.lineUp`).
         for index in versions.indices {
             let base = out.appendingPathComponent(versions[index].folder)
             versions[index].changed = versions[index].changed.filter { isPlainFile(base.appendingPathComponent($0)) }
         }
-        let kept = versions.filter { !$0.changed.isEmpty || !$0.removed.isEmpty }
+        let carrying = versions.filter { !$0.changed.isEmpty || !$0.removed.isEmpty }
+        let kept = versions.filter { !$0.changed.isEmpty || !$0.removed.isEmpty || touchedIgnored.contains($0.folder) }
         // Each folder holds what its version listed and nothing else: whatever else the unpacking brought (a file the
         // .lampignore files keep here among it) is removed, or nothing of the run goes.
         do {
             for version in versions {
                 let base = out.appendingPathComponent(version.folder)
-                guard kept.contains(where: { $0.folder == version.folder }) else { try fm.removeItem(at: base); continue }
+                guard carrying.contains(where: { $0.folder == version.folder }) else { try fm.removeItem(at: base); continue }
                 let wanted = Set(version.changed)
                 for case let file as URL in fm.enumerator(at: base, includingPropertiesForKeys: nil) ?? FileManager.DirectoryEnumerator() {
                     let values = try? file.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
@@ -133,7 +139,7 @@ struct MixHistory: Codable {
         // What's left is read back: every file in the folder is one history.json lists, its picture or history.json
         // itself, or nothing of the run goes.
         var allowed: Set<String> = [file, Self.picture]
-        for version in kept { allowed.formUnion(version.changed.map { version.folder + "/" + $0 }) }
+        for version in carrying { allowed.formUnion(version.changed.map { version.folder + "/" + $0 }) }
         var unread = false
         let left = fm.enumerator(at: out, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [],
                                  errorHandler: { _, _ in unread = true; return false })

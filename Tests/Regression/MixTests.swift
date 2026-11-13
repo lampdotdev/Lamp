@@ -200,6 +200,54 @@ final class MixTests: XCTestCase {
         XCTAssertNotEqual(try head(yours), original)
     }
 
+    /// A version that changed only what the .lampignore keeps here still says where a copy met this one. Shared at A,
+    /// then at B, which changed only an ignored file, to a copy on another Mac; C changes code and is shared again. That
+    /// copy finds B in the file, so it mixes, offered only C, and nothing the .lampignore names comes with it.
+    func testACopyGivenAVersionThatChangedOnlyIgnoredFilesStillMixes() async throws {
+        let sender = try escape.app(), copy = try escape.app()
+        for app in [sender, copy] {
+            try FileManager.default.removeItem(atPath: app.tool)
+            try FileManager.default.createDirectory(at: app.project.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+        }
+        func stage() throws -> URL {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-mix-test-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+            return folder
+        }
+        let kept = [".gitignore": ".lamp/\n", ".lampignore": "*.csv\n"]
+        try commit(sender, "Start", at: 100, kept.merging(["Sources/App.swift": start, "Data/scores.csv": "Example,1\n"]) { $1 })
+        Sharing.setIdentity(identity, of: sender.project)
+        try MixHistory.write(for: sender.project, credits: Credits.load(sender.project), identity: identity, into: try stage())
+        try commit(sender, "Only data", at: 200, ["Data/scores.csv": "Example,2\n"])
+        let shared = try head(sender)
+
+        // The copy on the other Mac: a history of its own, its chain naming B.
+        var credits = Credits()
+        credits.remixOf = [Credits.Remix(name: "Coin Flip", wish: identity, commit: shared)]
+        try credits.encoded().write(to: copy.project.dir.appendingPathComponent(Credits.file))
+        try commit(copy, "Imported from a shared file", at: 200, kept.merging(["Sources/App.swift": start]) { $1 })
+        Sharing.setIdentity(identity, of: copy.project)
+
+        try commit(sender, "Shout the first line", at: 300, ["Sources/App.swift": "A-them\nb\nc\nd\ne\n", "Data/scores.csv": "Example,3\n"])
+        let folder = try stage()
+        try MixHistory.write(for: sender.project, credits: Credits.load(sender.project), identity: identity, into: folder)
+        let history = try XCTUnwrap(MixHistory.read(in: folder))
+        XCTAssertTrue(history.versions.contains { $0.id == shared }, "B is in the file")
+        let carried = FileManager.default.enumerator(atPath: folder.appendingPathComponent(MixHistory.folder).path)?.allObjects as? [String] ?? []
+        XCTAssertFalse(carried.contains { $0.hasSuffix(".csv") }, "\(carried)")
+
+        let package = Sharing.Package(name: "Coin Flip", identity: identity, folder: folder, sources: [], attachments: [], fileCount: 0)
+        let met = await Mix.meeting(package, history: history, with: copy.project)
+        XCTAssertNotNil(met, "the copies meet at B")
+        let lineup = try await Mix.lineUp(package, history: history, with: copy.project)
+        XCTAssertEqual(lineup.changes.map(\.title), ["Shout the first line"])
+        XCTAssertEqual(lineup.changes.flatMap(\.files), ["Sources/App.swift"])
+        _ = try await apply(Set(lineup.changes.map(\.id)), in: lineup)
+        XCTAssertEqual(text(copy), "A-them\nb\nc\nd\ne\n")
+        XCTAssertNil(text(copy, "Data/scores.csv"))
+    }
+
     /// A file finds its wish by identity alone: one an import wouldn't update (here, no app at its root, as a wish
     /// whose apps are in folders of their own) is still the one it's mixed into.
     func testAFileFindsItsWishWhateverItsLayout() async throws {
