@@ -122,9 +122,26 @@ test("a copy's link names the link it came from, while that's up, and the link l
   await send(handler, "PUT", { ...share, from: stray.id }, { id: stray.id, secret: stray.secret });
   assert.equal(store.records.get(stray.id).from, undefined);
 
-  // A copy taken down leaves the list.
-  await send(handler, "DELETE", undefined, { id: stray.id, secret: stray.secret });
+  // Changes taken from other copies: kept by id while each is there and isn't the link itself, through a change that
+  // doesn't say, named on its page, and each copy's maker told once.
+  assert.equal(readShare({ ...share, with: ["not an id"] }), null);
+  assert.equal(readShare({ ...share, with: Array.from({ length: 21 }, () => source.id) }), null);
+  await store.setMaker(copy.id, { email: "sam@example.com", confirmed: true });
+  await send(handler, "PUT", { ...share, with: [copy.id, "2345678922", stray.id] }, { id: stray.id, secret: stray.secret });
+  assert.deepEqual(store.records.get(stray.id).with, [copy.id]);
+  assert.deepEqual([mail.length, mail[1].to[0], mail[1].subject], [2, "sam@example.com", "Someone took changes from your Plant Pal"]);
+  assert.match(mail[1].text, new RegExp(`into Plant Pal:\\n\\nhttps://lamp\\.dev/w/${stray.id}-plant-pal`));
+  await send(handler, "PUT", share, { id: stray.id, secret: stray.secret });
+  await send(handler, "PUT", { ...share, with: [copy.id] }, { id: stray.id, secret: stray.secret });
+  assert.deepEqual(store.records.get(stray.id).with, [copy.id]);
+  assert.equal(mail.length, 2, "told once, not at every share that names it");
+  assert.deepEqual((await pageOf(stray.id)).with, [{ url: `https://lamp.dev/w/${copy.id}-plant-pal`, label: "Plant Pal" }]);
+  assert.equal((await pageOf(copy.id)).with, undefined);
+
+  // A copy taken down leaves the list, and the page of a link that took from it.
   await send(handler, "DELETE", undefined, { id: copy.id, secret: copy.secret });
+  assert.equal((await pageOf(stray.id)).with, undefined);
+  await send(handler, "DELETE", undefined, { id: stray.id, secret: stray.secret });
   assert.deepEqual((await (await handler(new Request(`https://lamp.dev/api/wishes?id=${source.id}&copies=1`))).json()).copies, []);
 
   // Taken down, the source leaves the page.
@@ -361,7 +378,7 @@ test("the site and Lamp agree on the limits", () => {
   assert.ok(swift.includes(`static let filePart = ${FILE_LIMITS.part.toLocaleString("en").replaceAll(",", "_")}`), "filePart");
   assert.ok(swift.includes(`static let fileTotal = ${FILE_LIMITS.total.toLocaleString("en").replaceAll(",", "_")}`), "fileTotal");
   for (const [name, value] of Object.entries({ name: LIMITS.name, by: LIMITS.by, line: LIMITS.line, words: LIMITS.words, ideas: LIMITS.ideas, idea: LIMITS.idea, asks: LIMITS.asks, ask: LIMITS.ask,
-    releases: LIMITS.releases, releaseLines: LIMITS.releaseLines, releaseLine: LIMITS.releaseLine })) {
+    releases: LIMITS.releases, releaseLines: LIMITS.releaseLines, releaseLine: LIMITS.releaseLine, with: LIMITS.with })) {
     assert.ok(swift.includes(`static let ${name} = ${value}`), name);
   }
 });

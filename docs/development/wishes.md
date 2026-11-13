@@ -585,7 +585,11 @@ it took from whose copy. Nothing is followed by it. The credit (`PulledIn`, `.la
 link, its name and who it's by as the site says (`WishLink.Latest.by`), their file's version, and what was asked for,
 waiting for the version the turn saves (`PulledIn.settle`, after the turn's commit), so a turn that asked first credits
 the turn after; one never saved goes after a day. A release reads it by version (`PulledIn.credits(for:in:)`,
-`Credit.line`: "The water from Sam's version").
+`Credit.line`: "The water from Sam's version"). A share names every copy the wish took changes from as `with`
+(`WishLink.takenLinks`): the saved credits here (by id, whatever site the link says, since it always writes lamp.dev's
+address) and the lamp.dev links among the credits' `upstream` (`Credits.takenLinks`, as `lamp take` credits one; lamp's
+`takenLinksOf` reads both the same), never the wish's own link. Its page then says "with changes from" them, and each
+copy's maker is told once ("Where a link came from" in site/SHARED_WISHES.md). One that names none keeps what the link had.
 
 The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,
 what stops it (`needs`: this Mac can't build it yet, or its folder couldn't be made), so a quit or a failure between

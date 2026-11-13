@@ -29,6 +29,8 @@ export const LIMITS = {
   releases: 30,
   releaseLines: 5,
   releaseLine: 120,
+  /** The other people's copies on the site the app took changes from (`with`), by their ids. */
+  with: 20,
   picture: 1_500_000,
   icon: 300_000,
   /** Pixels on a side, for both pictures. */
@@ -137,11 +139,12 @@ function release(value) {
 }
 
 /** What a share sends, checked. Null when anything is off. `releases` is undefined when the share didn't say (a Lamp
- *  from before them), so a change keeps the ones the link has; `from` too, the id of the link the app is a copy of. */
+ *  from before them), so a change keeps the ones the link has; `from` too, the id of the link the app is a copy of, and
+ *  `with`, the ids of the links whose copies it took changes from (`lamp take`, Lamp's `shared_copy`). */
 const GITHUB_REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/(?!\.\.?$)[A-Za-z0-9._-]{1,100}$/;
 export function readShare(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
-  const known = ["name", "by", "line", "words", "ideas", "asks", "shape", "releases", "picture", "icon", "github", "from"];
+  const known = ["name", "by", "line", "words", "ideas", "asks", "shape", "releases", "picture", "icon", "github", "from", "with"];
   if (Object.keys(body).some((key) => !known.includes(key))) return null;
   const name = tidy(body.name, LIMITS.name);
   const words = tidy(body.words, LIMITS.words, { lines: true });
@@ -160,9 +163,10 @@ export function readShare(body) {
   // The app's public repository on GitHub, as "owner/name", which the page links to: nothing else is taken.
   const github = body.github == null || body.github === "" ? null : GITHUB_REPO.test(body.github) ? body.github : undefined;
   const from = body.from == null ? undefined : isID(body.from) ? body.from : null;
-  if (!name || !words || line == null || by == null || ideas.includes(null) || asks.includes(null) || shape === undefined || releases?.includes(null) || !shot || !icon || github === undefined || from === null) return null;
+  const taken = body.with == null ? undefined : Array.isArray(body.with) && body.with.length <= LIMITS.with && body.with.every(isID) ? [...new Set(body.with)] : null;
+  if (!name || !words || line == null || by == null || ideas.includes(null) || asks.includes(null) || shape === undefined || releases?.includes(null) || !shot || !icon || github === undefined || from === null || taken === null) return null;
   return { name, by, line, words, ideas, asks, shape, releases: releases?.sort((a, b) => b.date.localeCompare(a.date)),
-    picture: shot.bytes ? shot : null, icon: icon.bytes ? icon : null, github, from };
+    picture: shot.bytes ? shot : null, icon: icon.bytes ? icon : null, github, from, with: taken };
 }
 
 /** What anyone may see of a shared wish: never its secret. */
@@ -745,6 +749,27 @@ async function copied(kept, from, copy, origin, { env, fetcher, first }) {
   } catch {}
 }
 
+/**
+ * A link started naming copies it took changes from (`with`): each copy's maker told by email, once (the send key), at
+ * the address that confirmed their account (or the copy's own maker address), as `copied` tells a source's. Never fails
+ * the share.
+ */
+async function tookFrom(kept, ids, link, origin, { env, fetcher }) {
+  for (const id of ids) {
+    try {
+      const copy = await kept.get(id);
+      if (!copy) continue;
+      const account = copy.owner ? await kept.account(copy.owner) : null;
+      const maker = account ? null : await kept.maker(id);
+      const to = account?.email ?? (maker?.confirmed ? maker.email : null);
+      if (!to) continue;
+      const who = link.owner || link.by || "Someone";
+      await sendMail(env, fetcher, { to: [to], subject: `${who} took changes from your ${copy.name}`,
+        text: `${who} took changes from your ${copy.name} into ${link.name}:\n\n${linkOf(origin, link)}\n` }, `with-${link.id}-${id}`);
+    } catch {}
+  }
+}
+
 /** The copies of a link as its page lists them, newest first; one taken down since is let go. */
 export async function copiesOf(kept, id, origin) {
   const found = [];
@@ -834,8 +859,12 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       // The link the app is a copy of, kept only while there's such a link and it isn't this one: a share that doesn't
       // say, or names one that's gone, keeps what the record had.
       const from = share.from && share.from !== wishID && (await kept.get(share.from)) ? share.from : null;
+      // The copies it took changes from, kept only while each is there and isn't this link: a share that doesn't say
+      // keeps what the record had, and one that says none clears it.
+      const taken = share.with && (await kept.getMany(share.with.filter((one) => one !== wishID)))
+        .flatMap((record) => (record ? [record.id] : []));
       const words = { name: share.name, by: share.by, line: share.line, words: share.words, ideas: share.ideas, asks: share.asks, shape: share.shape, github: share.github,
-        ...(share.releases ? { releases: share.releases } : {}), ...(from ? { from } : {}), picture: picture || null, icon: icon || null };
+        ...(share.releases ? { releases: share.releases } : {}), ...(from ? { from } : {}), ...(taken ? { with: taken } : {}), picture: picture || null, icon: icon || null };
       // Its name under the account stays what it was first given, whatever the app is called later.
       const named = earlier?.owner ? { owner: earlier.owner, app: earlier.app }
         : owner ? { owner, app: await claimAppName(kept, owner, words.name, wishID) } : {};
@@ -845,6 +874,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
         const record = { ...earlier, ...words, ...named, updated: time };
         await kept.replace(record);
         if (record.from) await copied(kept, record.from, record, url.origin, { env, fetcher, first: !!from && earlier?.from !== from });
+        if (taken) await tookFrom(kept, taken.filter((one) => !(earlier?.with ?? []).includes(one)), record, url.origin, { env, fetcher });
         // Kept: the name is the record's now, whatever the cleanup after it does.
         uploaded = [];
         claimed = null;
@@ -860,6 +890,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       uploaded = [];
       claimed = null;
       if (from) await copied(kept, from, record, url.origin, { env, fetcher, first: true });
+      if (taken) await tookFrom(kept, taken, record, url.origin, { env, fetcher });
       return reply(201, { id: wishID, url: linkOf(url.origin, record), secret });
     } catch {
       try { await kept.removeImages(uploaded); } catch {}
@@ -1363,6 +1394,14 @@ export async function findWish(id, { env = process.env, fetcher = fetch, store, 
     try {
       const source = await kept.get(record.from);
       if (source) wish.from = { url: linkOf(origin, source), label: source.owner && source.app ? `${source.owner}/${source.app}` : source.name };
+    } catch {}
+  }
+  // The copies it took changes from, as each is known now, `with` on its page, in one round trip; one taken down since,
+  // or the source already named as `from`, is left out.
+  if (wish && origin && Array.isArray(record.with) && record.with.length) {
+    try {
+      const records = await kept.getMany(record.with.filter((one) => isID(one) && one !== id && one !== record.from));
+      wish.with = records.filter(Boolean).map((copy) => ({ url: linkOf(origin, copy), label: copy.owner && copy.app ? `${copy.owner}/${copy.app}` : copy.name }));
     } catch {}
   }
   // How many copies of it people shared, for the page's "copies" (the list itself is asked for when opened).

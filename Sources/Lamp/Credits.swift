@@ -250,6 +250,19 @@ struct Credits: Codable, Equatable {
         return nil
     }
 
+    /// The ids of the links on `site` whose copies the wish took changes from (`lamp take`'s `upstream` credits, by the
+    /// link's id, with its name after it or not), which a share names (`with`) so its page says "with changes from"
+    /// them. The link it came from (`sourceLink`) is among them only when changes were taken from it again later.
+    func takenLinks(on site: String) -> [String] {
+        guard let origin = URL(string: site), let host = origin.host else { return [] }
+        return upstream.compactMap { source in
+            guard let link = source.url.flatMap(URL.init(string:)), link.scheme == origin.scheme, link.host == host, link.port == origin.port else { return nil }
+            let parts = link.path.split(separator: "/")
+            guard parts.count == 2, parts[0] == "w", parts[1].count == 10 || parts[1].dropFirst(10).first == "-" else { return nil }
+            return WishLink.validID(String(parts[1].prefix(10)))
+        }
+    }
+
     // MARK: What a person reads
 
     /// How AI pictures are marked: "1 picture made with AI", "3 pictures made with AI".

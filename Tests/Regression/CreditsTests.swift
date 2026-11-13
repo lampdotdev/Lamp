@@ -47,6 +47,11 @@ final class CreditsTests: XCTestCase {
         XCTAssertEqual(arrived.remixOf.last?.wish, Sharing.identity(of: sender, create: false))
         XCTAssertEqual(arrived.sourceLink(on: "https://lamp.dev", own: nil), "2345678922")
         XCTAssertNil(arrived.sourceLink(on: "https://lamp.dev", own: "2345678922"), "a link is never its own source")
+        // Copies on the site it took changes from, as `lamp take` credits them: by id, with a name after it or not.
+        let took = Credits(upstream: [city, Credits.Source(name: "Racer", url: "https://lamp.dev/w/3456789abc"),
+                                      Credits.Source(name: "Boat", url: "https://lamp.dev/w/456789abcd-boat"),
+                                      Credits.Source(name: "Elsewhere", url: "https://example.com/w/56789abcde")])
+        XCTAssertEqual(took.takenLinks(on: "https://lamp.dev"), ["3456789abc", "456789abcd"])
 
         // The copy's file emptied: it still shares its whole credit, with itself added once however often it's shared.
         try Data("{}".utf8).write(to: receiver.dir.appendingPathComponent(Credits.file))

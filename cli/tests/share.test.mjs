@@ -112,6 +112,9 @@ test("a copy shared from the link is listed, held beside the app by its own file
   assert.deepEqual([creditCopy(folder, credit), creditCopy(folder, credit)], ["added", "already"]);
   assert.deepEqual(JSON.parse(readFileSync(join(folder, "credits.json"), "utf8")).upstream.filter((one) => one.url === credit.url),
     [{ name: "Harbor Racer Stadium", author: "Sam Lee", url: credit.url }]);
+  // Its next share names the copy it took changes from (here a link on a site that isn't lamp.dev, so its license is asked).
+  await share({ layout, words, github: null, anyway: true });
+  assert.deepEqual(store.records.get(source.id).with, [id]);
   rmSync(join(folder, "credits.json"));
 });
 
@@ -125,8 +128,8 @@ test("ideas sent to the link come back to whoever shared it, and sharing again k
 
   writeFileSync(join(folder, "game.js"), readFileSync(join(folder, "game.js"), "utf8") + "\n// a lighthouse\n");
   const again = await share({ layout, words: { ...words, line: "Now with a lighthouse." }, shape: 1.7778 });
-  assert.deepEqual([again.version, again.url, store.records.get(link.id).line], [2, link.url, "Now with a lighthouse."]);
-  assert.match(await (await played(link.id, 2, "game.js")).text(), /a lighthouse/);
+  assert.deepEqual([again.version, again.url, store.records.get(link.id).line], [3, link.url, "Now with a lighthouse."]);
+  assert.match(await (await played(link.id, 3, "game.js")).text(), /a lighthouse/);
 
   await unshare(layout.folder);
   assert.equal(store.records.has(link.id), false);

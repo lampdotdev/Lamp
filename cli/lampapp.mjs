@@ -402,6 +402,34 @@ export function sourceLinkOf(folder, site, own = null) {
   return null;
 }
 
+/**
+ * The ids of the links on `site` whose copies the app took changes from, which a share of its own names (`with`) so its
+ * page says "with changes from" them: each `upstream` credit there by its link (`lamp take`, by id, with a name after it
+ * or not), and each copy Lamp's app brought into a saved version (`shared_copy`, `.lamp/pulled-in.json`, which writes
+ * lamp.dev's address whichever site it fetched from). Never the app's own link (`own`). The link it was made from
+ * (`sourceLinkOf`) is named only when changes were taken from it again later, which is what such a credit says.
+ */
+export function takenLinksOf(folder, site, own = null) {
+  const app = existsSync(join(folder, ".lamp-wish", "lamp-app.json")) ? join(folder, ".lamp-wish") : folder;
+  const read = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; } };
+  let origin;
+  try { origin = new URL(site).origin; } catch { return []; }
+  const idOf = (link, anySite) => {
+    let url;
+    try { url = new URL(link); } catch { return null; }
+    const id = /^\/w\/([^/]+)$/.exec(url.pathname)?.[1]?.slice(0, 10);
+    const named = /^\/w\/[^/]{10}(?:-[^/]*)?$/.test(url.pathname);
+    return (anySite || url.origin === origin) && named && isID(id) && id !== own ? id : null;
+  };
+  const upstream = read(join(app, "credits.json"))?.upstream;
+  const pulled = read(join(folder, ".lamp", "pulled-in.json"));
+  const ids = [
+    ...(Array.isArray(upstream) ? upstream.map((source) => idOf(source?.url, false)) : []),
+    ...(Array.isArray(pulled) ? pulled.filter((credit) => typeof credit?.version === "string").map((credit) => idOf(credit?.link, true)) : []),
+  ];
+  return [...new Set(ids.filter(Boolean))].slice(0, LIMITS.with);
+}
+
 /** An object with its keys in order, at every level, as Lamp's own encoder writes its files. */
 function sortedKeys(value) {
   if (Array.isArray(value)) return value.map(sortedKeys);

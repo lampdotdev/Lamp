@@ -224,7 +224,8 @@ Only when the person asks about copies or to bring something of one in:
 - `{{lamp}} compare <link>` fetches that copy into lamp's own place for this folder and says what differs from this
   app: files only in theirs, only in yours, and changed. It answers where the copy is: read it from there.
 - `{{lamp}} take <link> "the stadium"` compares, then says how to bring in what the person asked for (leave the words
-  out only when they want everything new), and credits the copy in this app's credits.json for its next share. Bring
+  out only when they want everything new), and credits the copy in this app's credits.json, so the next share's page
+  says "with changes from" that copy and its maker hears of it. Bring
   in only that, written into this app's own files and fitted to it, never their whole app over this one; then look.
   When it's in, tell the person in a sentence what you took from whose copy. A copy shared on lamp.dev was shared for
   anyone to take from, so sharing it on never asks about its license; third-party work the copy itself credits still

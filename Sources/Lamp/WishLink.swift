@@ -30,6 +30,8 @@ enum WishLink {
         static let releases = 30
         static let releaseLines = 5
         static let releaseLine = 120
+        /// The other people's copies on the site the wish took changes from (`with`), by their ids.
+        static let with = 20
         /// The wish's file goes in parts of at most this many bytes (a request to the site's function holds 4.5 MB), and
         /// is at most `fileTotal`.
         static let filePart = 3_000_000
@@ -199,15 +201,27 @@ enum WishLink {
         return id.count == 10 && id.allSatisfy(alphabet.contains) ? id : nil
     }
 
+    /// The ids of the copies on the site the wish took changes from, oldest first: those its credits name (`lamp take`,
+    /// `Credits.takenLinks`) and those `shared_copy` brought into a saved version (`PulledIn`, which names lamp.dev
+    /// whichever site the copy was fetched from, so its id is taken as it is). Never the wish's own link.
+    static func takenLinks(of project: LampProject, own: String?) -> [String] {
+        let pulled = PulledIn.load(project).filter { $0.version != nil }.compactMap { Following.Place(kind: Following.Place.lamp, url: $0.link).link }
+        var seen: Set<String> = []
+        return (Credits.load(project).takenLinks(on: site) + pulled).filter { $0 != own && seen.insert($0).inserted }.prefix(Limit.with).map { $0 }
+    }
+
     /// Shares the wish, or changes what its link shows, and answers the link as it is now. `releases` is what's new in
     /// each version released, as `WishReleases.shown` gives it.
     /// `github`, the app's repository there as "owner/name", only when anyone can read it: the page links to it.
-    /// `project`'s credits say which link it's a copy of, if any, which its page names.
+    /// `project`'s credits say which link it's a copy of, if any, and which copies on the site it took changes from
+    /// (`takenLinks`), which its page names.
     static func publish(_ words: Words, picture: Data?, icon: Data?, releases: [[String: Any]] = [], github: String? = nil,
                         of project: LampProject? = nil, replacing earlier: Shared?) async throws -> Shared {
         var body: [String: Any] = ["name": words.name.trimmed, "line": words.line.trimmed, "words": words.words.trimmed, "releases": releases]
         if let github { body["github"] = github }
         if let project, let from = Credits.load(project).sourceLink(on: site, own: earlier?.id) { body["from"] = from }
+        // None said keeps what the link had, so a share that knows of none never takes them off its page.
+        if let project, case let taken = takenLinks(of: project, own: earlier?.id), !taken.isEmpty { body["with"] = taken }
         if let by = words.by?.trimmed, !by.isEmpty { body["by"] = by }
         if let ideas = words.ideas, !ideas.isEmpty { body["ideas"] = ideas }
         if let asks = words.asks, !asks.isEmpty { body["asks"] = asks }
