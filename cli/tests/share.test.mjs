@@ -88,6 +88,33 @@ test("a shared game plays from its link whole, and its secret stays out of its f
   assert.ok(inFolder(folder).every((file) => !readFileSync(file).includes(link.secret)));
 });
 
+test("a copy shared from the link is listed, held beside the app by its own files, and credited once", async () => {
+  const { copiesOf, latestOf } = await import("../link.mjs");
+  const { creditCopy, differences, fetchCopy } = await import("../copies.mjs");
+  const { unpack } = await import("../lampapp.mjs");
+  const source = readLink(layout.folder);
+  // Someone's copy: the link's file unpacked, changed, and shared as a link of its own.
+  const file = join(home, "racer.lampapp"), theirs = join(home, "their-racer");
+  writeFileSync(file, Buffer.from(await (await fetch((await latestOf({ id: source.id })).file)).arrayBuffer()));
+  unpack(file, theirs);
+  writeFileSync(join(theirs, "Web", "game.js"), readFileSync(join(theirs, "Web", "game.js"), "utf8") + "\n// a stadium\n");
+  writeFileSync(join(theirs, "Web", "stadium.js"), "export const seats = 400;\n");
+  const copy = await share({ layout: layoutOf(theirs), words: { ...words, name: "Harbor Racer Stadium", by: "Sam Lee" }, github: null });
+  assert.deepEqual((await copiesOf({ site: origin, id: source.id })).map((one) => [one.name, one.by, one.url]), [["Harbor Racer Stadium", "Sam Lee", copy.url]]);
+
+  const id = readLink(layoutOf(theirs).folder).id, latest = await latestOf({ id });
+  const opened = await fetchCopy(folder, latest);
+  assert.ok(opened.folder.startsWith(process.env.LAMP_DEV_HOME), "a copy is laid out in lamp's state, never in the person's folders");
+  const found = differences(folder, opened.folder);
+  assert.deepEqual([found.onlyTheirs.map((one) => one.path), found.onlyYours, found.changed.map((one) => [one.path, one.about])],
+    [["Web/stadium.js"], [], [["Web/game.js", "+2 -0 lines in theirs"]]], "Lamp's own files beside the page count in neither");
+  const credit = { name: latest.name, by: latest.by, url: `${origin}/w/${id}`, id };
+  assert.deepEqual([creditCopy(folder, credit), creditCopy(folder, credit)], ["added", "already"]);
+  assert.deepEqual(JSON.parse(readFileSync(join(folder, "credits.json"), "utf8")).upstream.filter((one) => one.url === credit.url),
+    [{ name: "Harbor Racer Stadium", author: "Sam Lee", url: credit.url }]);
+  rmSync(join(folder, "credits.json"));
+});
+
 test("ideas sent to the link come back to whoever shared it, and sharing again keeps the link", async () => {
   const link = readLink(layout.folder);
   const posted = await fetch(`${origin}/api/wish-ideas?id=${link.id}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "Add a lighthouse." }) });
