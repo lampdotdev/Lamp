@@ -56,24 +56,28 @@ struct MixHistory: Codable {
         // One sandboxed run for the whole history: each version's line, what it changed, and its changed files
         // unpacked into its folder. A run longer than the limit keeps its latest versions, and everything before them
         // goes as one version ("E"), from where the copies met to the last one left out, so the run still starts there.
-        // A remix's first version ("R") always goes on its own, ahead of them.
+        // A remix's first version ("R") always goes on its own, ahead of them. What each changed ("F") comes as git's
+        // own -z listing, as hex: git prints a name with a quote, a backslash or a character outside ASCII quoted
+        // otherwise, and that's not the file's name. Anything in it failing fails the run, so no run goes in part.
         let script = """
+        set -o pipefail
         out=\(Sandbox.quoted(out.path)); n=0
-        all=$(git rev-list --first-parent --reverse \(start.began ?? start.commit)..HEAD); count=$(printf '%s\\n' "$all" | grep -c .)
+        all=$(git rev-list --first-parent --reverse \(start.began ?? start.commit)..HEAD) || exit 3
+        count=$(printf '%s\\n' "$all" | grep -c .)
         {
           \(start.began.map { "echo \"\($0)^ \($0) R\"" } ?? ":")
           if [ "$count" -gt \(limit) ]; then
             echo "\(start.began ?? start.commit) $(printf '%s\\n' "$all" | sed -n "$((count - \(limit)))p") E"
             printf '%s\\n' "$all" | tail -n \(limit) | while read -r c; do echo "$c^ $c -"; done
           else
-            printf '%s\\n' "$all" | while read -r c; do [ -n "$c" ] && echo "$c^ $c -"; done
+            printf '%s\\n' "$all" | while read -r c; do if [ -n "$c" ]; then echo "$c^ $c -"; fi; done
           fi
         } | while read -r p c kind; do
-          n=$((n+1)); d="$out/$n"; mkdir -p "$d"
-          git log -1 --format="V%x1f$n%x1f%H%x1f%ct%x1f%(trailers:key=\(Mix.trailer),valueonly,separator=%x2C)%x1f$kind%x1f%s" "$c"
-          git -c core.quotePath=false diff-tree -r --no-renames --no-commit-id --name-status "$p" "$c"
-          git diff-tree -r --no-renames --no-commit-id --name-only -z --diff-filter=AMT "$p" "$c" > "$d.paths"
-          if [ -s "$d.paths" ]; then xargs -0 git archive --format=tar "$c" -- < "$d.paths" | /usr/bin/tar -x -C "$d"; fi
+          n=$((n+1)); d="$out/$n"; mkdir -p "$d" || exit 3
+          git log -1 --format="V%x1f$n%x1f%H%x1f%ct%x1f%(trailers:key=\(Mix.trailer),valueonly,separator=%x2C)%x1f$kind%x1f%s" "$c" || exit 3
+          printf 'F '; git diff-tree -r -z --no-renames --no-commit-id --name-status "$p" "$c" | /usr/bin/xxd -p | /usr/bin/tr -d '\\n' || exit 3; echo
+          git diff-tree -r -z --no-renames --no-commit-id --name-only --diff-filter=AMT "$p" "$c" > "$d.paths" || exit 3
+          if [ -s "$d.paths" ]; then xargs -0 git --literal-pathspecs archive --format=tar "$c" -- < "$d.paths" | /usr/bin/tar -x -C "$d" || exit 3; fi
           rm -f "$d.paths"
         done
         """
@@ -83,21 +87,30 @@ struct MixHistory: Codable {
         var versions: [Version] = []
         // The folders of versions that touched something the .lampignore files keep here.
         var touchedIgnored: Set<String> = []
+        // Each version's line, then what it changed; anything else is a run that didn't read as one.
+        var listing = false
         for line in listed.output.split(separator: "\n", omittingEmptySubsequences: true).map(String.init) {
-            if line.hasPrefix("V\u{1f}") {
+            if line.hasPrefix("V\u{1f}"), !listing {
                 let parts = line.split(separator: "\u{1f}", maxSplits: 6, omittingEmptySubsequences: false).map(String.init)
-                guard parts.count == 7, let id = Credits.validCommit(parts[2]), let seconds = TimeInterval(parts[3]) else { continue }
+                guard parts.count == 7, let id = Credits.validCommit(parts[2]), let seconds = TimeInterval(parts[3]) else { return try drop() }
                 let title = parts[5] == "E" ? "Earlier changes" : titles[id] ?? parts[6]
                 versions.append(Version(id: id, title: title, date: Date(timeIntervalSince1970: seconds),
                                         mixed: parts[5] == "E" ? nil : Credits.validCommit(parts[4].split(separator: ",").first.map(String.init)),
                                         began: parts[5] == "R" ? true : nil, folder: parts[1], changed: [], removed: []))
-            } else if !versions.isEmpty, let tab = line.firstIndex(of: "\t") {
-                let status = line[..<tab], path = String(line[line.index(after: tab)...])
-                guard isSafe(path), !Upstream.isLeftOut(path, in: project) else { continue }
-                if ignored(path) { touchedIgnored.insert(versions[versions.count - 1].folder); continue }
-                if status.hasPrefix("D") { versions[versions.count - 1].removed.append(path) } else { versions[versions.count - 1].changed.append(path) }
+                listing = true
+            } else if line.hasPrefix("F"), listing, let changes = changes(inHex: String(line.dropFirst()).trimmed) {
+                listing = false
+                let last = versions.count - 1
+                for (removed, path) in changes {
+                    guard isSafe(path), !Upstream.isLeftOut(path, in: project) else { continue }
+                    if ignored(path) { touchedIgnored.insert(versions[last].folder); continue }
+                    if removed { versions[last].removed.append(path) } else { versions[last].changed.append(path) }
+                }
+            } else {
+                return try drop()
             }
         }
+        guard !listing else { return try drop() }
         // Only plain files go; a version that changed nothing a shared file carries isn't one to mix. One that changed only
         // what the .lampignore files keep here still goes, as its id, title and time with no files: another copy may have
         // been given the file shared at it, and finds where the two met by it (`Mix.meeting`). Nothing offers it, since
@@ -150,6 +163,24 @@ struct MixHistory: Codable {
             guard allowed.contains(Sharing.relativePath(of: item, in: out)) else { return try drop() }
         }
         if unread { try drop() }
+    }
+
+    /// What `git diff-tree -r -z --no-renames --name-status` said, as hex: each file's name byte for byte, and whether
+    /// the version removed it. Nil for anything else (a rename or copy, which --no-renames rules out, a record cut
+    /// short, a name that isn't UTF-8), so a listing is read whole or not at all.
+    static func changes(inHex hex: String) -> [(removed: Bool, path: String)]? {
+        guard let bytes = Mix.hexBytes(hex) else { return nil }
+        guard let end = bytes.last else { return [] }
+        guard end == 0 else { return nil }
+        let fields = bytes.dropLast().split(separator: 0, omittingEmptySubsequences: false)
+        guard fields.count % 2 == 0 else { return nil }
+        var changes: [(removed: Bool, path: String)] = []
+        for index in stride(from: 0, to: fields.count, by: 2) {
+            guard let status = String(bytes: fields[index], encoding: .utf8), ["A", "M", "T", "D"].contains(status),
+                  let path = String(bytes: fields[index + 1], encoding: .utf8), !path.isEmpty else { return nil }
+            changes.append((status == "D", path))
+        }
+        return changes
     }
 
     /// Where the run starts. A copy (its chain names a version of this wish that isn't in its own history: the one it

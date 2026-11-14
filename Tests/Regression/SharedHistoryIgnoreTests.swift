@@ -135,4 +135,28 @@ final class SharedHistoryIgnoreTests: XCTestCase {
         XCTAssertTrue(files.contains("Web/index.html"), "the app goes at the file's root")
         XCTAssertFalse(files.contains { $0.hasSuffix("data.csv") || $0.contains("drafts/") || $0.hasSuffix("Plans.md") }, "\(files.sorted())")
     }
+
+    /// Names git prints quoted: an asset's change comes with its file, and a version that changed only an ignored file
+    /// at such a name still goes, as its id, title and time, without it.
+    func testNamesGitQuotesComeOrStayOutAsTheirRulesSay() throws {
+        let root = try newRoot()
+        let wish = try Template.scaffold(name: "Board \(UUID().uuidString.prefix(8))", platform: .mac, in: root).dir
+        let notes = "Assets/local\"notes.txt", data = "Assets/local\"data.csv"
+        try save(wish, "First", [".lampignore": "/Assets/*.csv\n", data: "name,value\nExample,1\n", "Assets/plain.txt": "first\n"])
+        XCTAssertEqual(try shared(wish).history?.versions.count, 0)
+
+        try save(wish, "Only kept here", [data: "name,value\nExample,2\n"])
+        try save(wish, "Add notes", [notes: "first\n"])
+        try save(wish, "Both", [notes: "second\n", data: nil])
+        let (files, history) = try shared(wish)
+        let run = try XCTUnwrap(history)
+        XCTAssertEqual(run.versions.map(\.title), ["Only kept here", "Add notes", "Both"])
+        XCTAssertEqual(run.versions.map(\.changed), [[], [notes], [notes]])
+        XCTAssertEqual(run.versions.map(\.removed), [[], [], []])
+        let folders = run.versions.map(\.folder)
+        guard folders.count == 3 else { return }
+        XCTAssertEqual(Set(files.filter { $0.hasPrefix(MixHistory.folder + "/") }),
+                       [MixHistory.folder + "/" + MixHistory.file, "History/\(folders[1])/\(notes)", "History/\(folders[2])/\(notes)"])
+        XCTAssertFalse(files.contains { $0.hasSuffix(".csv") }, "\(files.sorted())")
+    }
 }
