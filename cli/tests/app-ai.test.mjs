@@ -254,3 +254,35 @@ test("models say what answers each, and every id goes through its own engine", a
     for (const [name, value] of Object.entries(kept)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
   }
 });
+
+test("pictures are made with an OpenRouter key, else Codex for the person's own page, never Claude Code", async () => {
+  const { answer, pictureRoute, status } = await import("../ai.mjs");
+  const { mkdtempSync, writeFileSync, chmodSync, readFileSync: read } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const folder = mkdtempSync(join(tmpdir(), "lamp-pictures-test-"));
+  const kept = { PATH: process.env.PATH, LAMP_AI: process.env.LAMP_AI, OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY };
+  for (const name of ["LAMP_AI", "OPENROUTER_API_KEY"]) delete process.env[name];
+  process.env.PATH = folder;
+  try {
+    writeFileSync(join(folder, "claude"), "#!/bin/sh\n");
+    chmodSync(join(folder, "claude"), 0o755);
+    assert.equal(pictureRoute(), null);
+    assert.equal(status().pictures, false);
+    const [refused, said] = await answer("/ai/image", { prompt: "a fox" });
+    assert.deepEqual([refused, said.needs], [501, "pictures"]);
+    // A stand-in Codex that saves a PNG where it's run and writes down how it was run.
+    writeFileSync(join(folder, "codex"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${folder}/args"\nprintf '\\211PNG\\r\\n\\032\\n0000' > image.png\n`);
+    chmodSync(join(folder, "codex"), 0o755);
+    assert.deepEqual([pictureRoute(), pictureRoute({ id: "abc" }), status().details.pictures.route], ["codex", null, "Codex"]);
+    const [made, picture] = await answer("/ai/image", { prompt: "a fox", aspect_ratio: "1:1", images: [{ media_type: "image/png", data: "AAAA" }] });
+    assert.deepEqual([made, picture.media_type, Buffer.from(picture.image, "base64").toString("latin1", 1, 4)], [200, "image/png", "PNG"]);
+    const args = read(join(folder, "args"), "utf8");
+    assert.ok(args.includes("--ignore-user-config") && args.includes('sandbox_mode="workspace-write"') && /-i\nreference1\.png/.test(args));
+    process.env.OPENROUTER_API_KEY = "k";
+    assert.deepEqual([pictureRoute(), pictureRoute({ id: "abc" })], ["openrouter", null], "a shared page uses only the engine it was let use");
+    process.env.LAMP_AI = "openrouter";
+    assert.equal(pictureRoute({ id: "abc" }), "openrouter");
+  } finally {
+    for (const [name, value] of Object.entries(kept)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
+  }
+});

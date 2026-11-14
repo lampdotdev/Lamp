@@ -6,7 +6,18 @@
 const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 /** The model lamp answers with when none is named: the one Lamp's app offers first for apps' text. */
 export const DEFAULT_MODEL = "anthropic/claude-sonnet-5.5";
-const FILTERED = "The AI provider's content filter cut the reply off. Try rewording the request.";
+/** The image models an app may choose for its pictures, by OpenRouter's ids, first the one used when it chose none:
+ *  Lamp's app's list (`Icons.artModels`), kept the same by hand. */
+export const IMAGE_MODELS = [
+  "google/gemini-3.1-flash-image",
+  "google/gemini-nano-banana-2.1",
+  "google/gemini-3-pro-image",
+  "openai/gpt-image-2.5-sunburst",
+  "openai/gpt-image-2.5-flare",
+  "openai/gpt-image-2",
+  "google/gemini-3.1-flash-lite-image",
+];
+const FILTERED ="The AI provider's content filter cut the reply off. Try rewording the request.";
 
 /** Why OpenRouter gave no answer: `kind` "refused" (with its `status` and `reply`), "filtered", "timeout" or "stopped". */
 export class OpenRouterTrouble extends Error {
