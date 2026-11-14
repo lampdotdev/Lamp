@@ -5,7 +5,7 @@
 // it. Hearing needs Lamp's app: asked here, it says so.
 
 import { spawn } from "node:child_process";
-import { accessSync, constants, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, closeSync, constants, fstatSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -463,7 +463,12 @@ export function codexImage({ prompt, references = [], aspectRatio, seconds = PIC
     const finish = () => {
       clearTimeout(timer);
       let made = null;
-      try { made = readFileSync(join(folder, "image.png")); } catch {}
+      // Never through a link: Codex may make image.png a link to a file it couldn't read itself, which lamp could.
+      let fd = null;
+      try {
+        fd = openSync(join(folder, "image.png"), constants.O_RDONLY | constants.O_NOFOLLOW);
+        if (fstatSync(fd).isFile()) made = readFileSync(fd);
+      } catch {} finally { if (fd !== null) closeSync(fd); }
       rmSync(folder, { recursive: true, force: true });
       return made;
     };

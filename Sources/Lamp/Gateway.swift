@@ -939,7 +939,8 @@ enum AppAI {
             for case .failed(let message) in Agent.parse(line, engine: .codex) { failure = message }
         }
         if let failure { throw Failure(message: Provider.friendlyError(failure, from: Engine.codex.title)) }
-        guard let data = try? Data(contentsOf: folder.appendingPathComponent("image.png")), NSImage(data: data) != nil else {
+        // Never through a link: Codex may make image.png a link to a file it couldn't read itself, which Lamp could.
+        guard let data = AppFile.read(folder.appendingPathComponent("image.png"), inFolder: folder), NSImage(data: data) != nil else {
             throw Failure(message: "ChatGPT didn't make the picture. Check it's signed in (Lamp → Settings → Building).")
         }
         return data
