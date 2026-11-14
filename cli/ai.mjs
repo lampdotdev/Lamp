@@ -5,7 +5,7 @@
 // it. Hearing needs Lamp's app: asked here, it says so.
 
 import { spawn } from "node:child_process";
-import { accessSync, constants, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -412,12 +412,23 @@ export async function makeImage(body, page, app = {}) {
 }
 
 /**
+ * What Codex may touch while it makes a picture: the scratch folder, and the little of the system its tools need to
+ * start, nothing of the person's and no network for its commands. Its image tool needs its code tools on, and the page
+ * writes the request, so the request is never trusted with more than the folder the picture comes back from.
+ */
+export function picturePermissions(folder) {
+  const filesystem = [[":root", "deny"], [":minimal", "read"], [folder, "write"]].map(([path, access]) => `${JSON.stringify(path)}=${JSON.stringify(access)}`);
+  return `permissions.lamp={filesystem={${filesystem.join(",")}},network={enabled=false}}`;
+}
+
+/**
  * A picture from Codex's built-in image tool, asked for as Lamp's app asks (`viaCodexImage`): run in a scratch folder
- * it may write in, with none of the person's config, rules or hooks, told to save image.png there; the pictures to
+ * it may write in and nothing outside it may be read, with none of the person's config, rules or hooks, told to save image.png there; the pictures to
  * build on are attached with `-i` and named in the request. The folder goes when it's done. Takes about a minute.
  */
 export function codexImage({ prompt, references = [], aspectRatio, seconds = PICTURE_SECONDS, tool = onPath("codex") || "codex" }) {
-  const folder = mkdtempSync(join(tmpdir(), "lamp-image-"));
+  // By its real path: the profile below names it, and Codex refuses a folder reached through a link (/var is one).
+  const folder = realpathSync(mkdtempSync(join(tmpdir(), "lamp-image-")));
   const files = references.map((image, index) => {
     const name = `reference${index + 1}.${image.media_type.endsWith("png") ? "png" : "jpg"}`;
     writeFileSync(join(folder, name), Buffer.from(image.data, "base64"));
@@ -430,7 +441,7 @@ export function codexImage({ prompt, references = [], aspectRatio, seconds = PIC
       + (files.length === 1 ? "the reference: edit or build on it as the description says." : "references.");
   }
   const args = ["exec", "--json", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check", "--ephemeral",
-    "-c", 'sandbox_mode="workspace-write"', "-c", "hooks={}", "-C", folder, ...files.flatMap((name) => ["-i", name]), "--", request];
+    "-c", picturePermissions(folder), "-c", 'default_permissions="lamp"', "-c", 'approval_policy="never"', "-c", "hooks={}", "-C", folder, ...files.flatMap((name) => ["-i", name]), "--", request];
   // As `complete` runs it: never told to be Bun, which lamp itself is told.
   const env = { ...process.env };
   delete env.BUN_BE_BUN;

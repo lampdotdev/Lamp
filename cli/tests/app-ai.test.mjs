@@ -277,7 +277,7 @@ test("pictures are made with an OpenRouter key, else Codex for the person's own 
     const [made, picture] = await answer("/ai/image", { prompt: "a fox", aspect_ratio: "1:1", images: [{ media_type: "image/png", data: "AAAA" }] });
     assert.deepEqual([made, picture.media_type, Buffer.from(picture.image, "base64").toString("latin1", 1, 4)], [200, "image/png", "PNG"]);
     const args = read(join(folder, "args"), "utf8");
-    assert.ok(args.includes("--ignore-user-config") && args.includes('sandbox_mode="workspace-write"') && /-i\nreference1\.png/.test(args));
+    assert.ok(args.includes("--ignore-user-config") && args.includes('default_permissions="lamp"') && /":root"="deny"/.test(args) && !args.includes('sandbox_mode') && /-i\nreference1\.png/.test(args));
     process.env.OPENROUTER_API_KEY = "k";
     assert.deepEqual([pictureRoute(), pictureRoute({ id: "abc" })], ["openrouter", null], "a shared page uses only the engine it was let use");
     process.env.LAMP_AI = "openrouter";
