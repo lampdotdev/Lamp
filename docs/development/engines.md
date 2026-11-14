@@ -348,7 +348,10 @@ A capability given to one engine must be given to all of them that can take it, 
   input, kept nowhere there; a provider's content-filter cut-off is asked again twice within the request's time, and
   each attempt's cost comes back to be recorded. `lamp dev` and `lamp ai` send the same way with `OPENROUTER_API_KEY`.
   Pictures made through OpenRouter (`openRouterImage`) and decisions through its decision model (`openRouterDecide`)
-  go the same way; Lamp's app still chooses the model and checks that a picture is one.
+  go the same way; Lamp's app still chooses the model and checks that a picture is one. `lamp dev` makes a page's
+  pictures itself (`makeImage` in cli/ai.mjs) by the same rule as `AppAI.pictureRoute`: OpenRouter with the key
+  (the app's image model when it's one of `Icons.artModels`, kept by hand as `IMAGE_MODELS` in cli/openrouter.mjs),
+  else Codex's image tool run as `viaCodexImage` runs it, never for a shared page; Claude Code makes none.
 - **Shared pages' AI** (`SharedPagesAI`, `Store.sharedPageAI`): a page shared on lamp.dev, played in a browser on the
   Mac, asks one port of the computer's own (`NEARBY` in lamp.js). Which pages are let in is lamp's command line's
   (cli/local-ai.mjs, also `lamp ai`); Lamp keeps its `sharedPages` call running and is asked only for the person's yes

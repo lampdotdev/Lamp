@@ -901,8 +901,10 @@ enum AppAI {
         guard sharedPage == nil else {
             throw Failure(message: "Pictures for a page shared on lamp.dev can't be made with ChatGPT. Choose another picture AI in \(Edition.name).")
         }
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-image-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        // By its real path: the profile below names it, and Codex refuses a folder reached through a link (/var is one).
+        let made = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-image-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: made, withIntermediateDirectories: true)
+        let folder = made.resolvingSymlinksInPath()
         defer { try? FileManager.default.removeItem(at: folder) }
         var files: [String] = []
         for (index, image) in references.enumerated() {
@@ -921,18 +923,24 @@ enum AppAI {
         var env: [String: String] = ["PATH": ToolLocator.userPath, "LAMP_TOOL": EngineInstall.path(for: .codex) ?? "codex",
                                      "LAMP_PROMPT": request]
         env.merge(EngineInstall.environment(for: .codex)) { $1 }
+        // Its image tool needs its code tools on, and an app writes the request, so it may touch only this folder and
+        // the little of the system its tools need, with no network for its commands (`picturePermissions` in cli/ai.mjs).
+        let filesystem = [(":root", "deny"), (":minimal", "read"), (folder.path, "write")].map { "\(Agent.tomlString($0.0))=\(Agent.tomlString($0.1))" }
+        env["LAMP_CODEX_PERMISSIONS"] = "permissions.lamp={filesystem={" + filesystem.joined(separator: ",") + "},network={enabled=false}}"
+        env["LAMP_FOLDER"] = folder.path
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
         let imageArgs = files.indices.map { "-i \"$LAMP_FILE_\($0)\"" }.joined(separator: " ")
         let command = """
         "$LAMP_TOOL" exec --json --ignore-user-config --ignore-rules --skip-git-repo-check --ephemeral \\
-          -c sandbox_mode="workspace-write" -c hooks={} -C "$PWD" \(imageArgs) -- "$LAMP_PROMPT"
+          -c "$LAMP_CODEX_PERMISSIONS" -c default_permissions="lamp" -c approval_policy="never" -c hooks={} -C "$LAMP_FOLDER" \(imageArgs) -- "$LAMP_PROMPT"
         """
         var failure: String?
         _ = await Shell.run(command, cwd: folder, env: env) { line in
             for case .failed(let message) in Agent.parse(line, engine: .codex) { failure = message }
         }
         if let failure { throw Failure(message: Provider.friendlyError(failure, from: Engine.codex.title)) }
-        guard let data = try? Data(contentsOf: folder.appendingPathComponent("image.png")), NSImage(data: data) != nil else {
+        // Never through a link: Codex may make image.png a link to a file it couldn't read itself, which Lamp could.
+        guard let data = AppFile.read(folder.appendingPathComponent("image.png"), inFolder: folder), NSImage(data: data) != nil else {
             throw Failure(message: "ChatGPT didn't make the picture. Check it's signed in (Lamp → Settings → Building).")
         }
         return data

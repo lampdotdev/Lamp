@@ -1,16 +1,16 @@
 // The AI a page asks for with LampAI (lamp.js), answered by lamp itself for the pages it serves, with the person's own
 // Claude Code or Codex on this Mac: their subscription, through the program they signed in to, never a key in the page.
-// The same routes and answers Lamp's app gives (`/ai/status`, `/ai/models`, `/ai`, `/ai/act`, `/ai/decide`), told and checked by the
-// same code (app-ai.mjs, which Lamp's app has do it too), so a page can't tell which answered it. Pictures and
-// hearing need Lamp's app: asked here, they say so.
+// The same routes and answers Lamp's app gives (`/ai/status`, `/ai/models`, `/ai`, `/ai/act`, `/ai/decide`, `/ai/image`),
+// told and checked by the same code (app-ai.mjs, which Lamp's app has do it too), so a page can't tell which answered
+// it. Hearing needs Lamp's app: asked here, it says so.
 
 import { spawn } from "node:child_process";
-import { accessSync, constants, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, closeSync, constants, fstatSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { chatBody, decidePrompt, planPrompt, planSchema, readDecision, readMessage, readPlan, readStep } from "./app-ai.mjs";
-import { DEFAULT_MODEL, OpenRouterTrouble, chat as openRouterChat, text as openRouterText } from "./openrouter.mjs";
+import { DEFAULT_MODEL, IMAGE_MODELS, OpenRouterTrouble, chat as openRouterChat, image as openRouterImage, text as openRouterText } from "./openrouter.mjs";
 
 
 /**
@@ -115,13 +115,7 @@ export function complete({ system, prompt, schema, seconds = 60, which = engine(
       try { event = JSON.parse(raw); } catch { return; }
       if (which === "codex") {
         if (event.type === "item.completed" && event.item?.type === "agent_message" && typeof event.item.text === "string") text = event.item.text;
-        else if (event.type === "turn.failed" || event.type === "error") {
-          // Codex nests the service's error as JSON text: its message is what's said.
-          const words = String(event.message || event.error?.message || "Codex couldn't answer.");
-          let nested;
-          try { nested = JSON.parse(words)?.error?.message; } catch {}
-          trouble ??= new EngineTrouble("failed", nested || words);
-        }
+        else if (codexFailure(event)) trouble ??= new EngineTrouble("failed", codexFailure(event));
         return;
       }
       if (event.type !== "result") return;
@@ -152,6 +146,16 @@ export function complete({ system, prompt, schema, seconds = 60, which = engine(
   });
 }
 
+/** What Codex said went wrong in one of its events, or nothing. It nests the service's error as JSON text: its message
+ *  is what's said. */
+function codexFailure(event) {
+  if (event?.type !== "turn.failed" && event?.type !== "error") return "";
+  const words = String(event.message || event.error?.message || "Codex couldn't answer.");
+  let nested;
+  try { nested = JSON.parse(words)?.error?.message; } catch {}
+  return nested || words;
+}
+
 /** An answer from OpenRouter with the person's key (openrouter.mjs, as Lamp's app sends it), its troubles said as an engine's. */
 async function viaOpenRouter({ system, prompt, schema, seconds, model, images, signal }) {
   try {
@@ -166,15 +170,16 @@ async function viaOpenRouter({ system, prompt, schema, seconds, model, images, s
 
 // MARK: Status and asking
 
-/** `/ai/status`: what can answer here. Text, decisions and actions with an engine; pictures only in Lamp's app. */
-export function status() {
+/** `/ai/status`: what can answer here. Text, decisions and actions with an engine; pictures as `pictureRoute` says. */
+export function status(page) {
   const which = engine();
   const route = which ? named(which) : null;
   const available = (kind) => route ? { available: true, route, where: "remote" } : { available: false, reason: missing, setup: "lamp" };
+  const drawer = pictureRoute(page);
   return {
-    text: !!route, decisions: !!route, pictures: false, act: !!route,
+    text: !!route, decisions: !!route, pictures: !!drawer, act: !!route,
     details: { text: available("text"), decisions: available("decisions"), act: available("act"),
-      pictures: { available: false, reason: "Pictures need Lamp's app: open the app in Lamp.", setup: "lamp" } },
+      pictures: drawer ? { available: true, route: named(drawer), where: "remote" } : { available: false, reason: noPictures(page), setup: "lamp" } },
   };
 }
 
@@ -340,14 +345,152 @@ export async function act(body, here = engines()) {
   return [502, { error: "The AI didn't answer." }];
 }
 
-/** A page's AI request, by its route, as Lamp's app answers it: [status, JSON]. */
-export async function answer(path, body, page) {
-  if (path === "/ai/status") return [200, status()];
+// MARK: Pictures (`LampAI.makeImage`, `editImage`, `editImages`)
+
+/**
+ * What makes a page's pictures here, as Lamp's app chooses (`AppAI.pictureRoute`): OpenRouter with the person's key,
+ * else Codex's own image tool when Codex is one of the engines here (Lamp's app spends Codex on pictures only when it
+ * was chosen), else nothing: Claude Code can't make pictures. A page shared on lamp.dev gets only the engine the person
+ * let it use (`enginesFor`), and never Codex, which makes a picture by running its own tools in a folder.
+ */
+export function pictureRoute(page) {
+  const here = enginesFor(page);
+  if (process.env.OPENROUTER_API_KEY && (!page || here[0] === "openrouter")) return "openrouter";
+  if (!page && here.includes("codex")) return "codex";
+  return null;
+}
+
+/** Why nothing makes pictures here, saying what would. */
+const noPictures = (page) => page
+  ? "Pictures for a page shared on lamp.dev need an OpenRouter key here, in OPENROUTER_API_KEY with LAMP_AI=openrouter. Or open it with Lamp."
+  : "Making pictures here needs an OpenRouter key in OPENROUTER_API_KEY, or Codex on this computer, signed in. Or open the app in Lamp.";
+
+/** How long a picture may take: as long as lamp.js waits for one, and what Lamp's app gives OpenRouter (calls.mjs). */
+const PICTURE_SECONDS = 240;
+
+/** The image model a picture is asked of: the app's own choice when it's one of Lamp's, else Lamp's first, as Lamp's app does. */
+export const imageModelFor = (choice) => (IMAGE_MODELS.includes(choice) ? choice : IMAGE_MODELS[0]);
+
+/** A picture's type by its first bytes, or nothing when it isn't one: what a model hands back is checked as a picture
+ *  before a page is given it, as Lamp's app does. */
+function pictureType(bytes) {
+  if (bytes.length > 8 && bytes[0] === 0x89 && bytes.toString("latin1", 1, 4) === "PNG") return "image/png";
+  if (bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length > 12 && bytes.toString("latin1", 0, 4) === "RIFF" && bytes.toString("latin1", 8, 12) === "WEBP") return "image/webp";
+  return "";
+}
+
+/**
+ * `/ai/image`: a picture made, or edited from the pictures the page gave (`images`, base64 with their `media_type`),
+ * answered as Lamp's app answers it: `{image, media_type}`, or an error, with `needs: "pictures"` when nothing here can
+ * make one. `app.imageModel` is the app's own choice of model (its .lamp/models.json). The request's size is the
+ * server's to cap, as every AI request's is.
+ */
+export async function makeImage(body, page, app = {}) {
+  const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
+  if (!prompt) return [400, { error: "Missing prompt." }];
+  const route = pictureRoute(page);
+  if (!route) return [501, { error: noPictures(page), needs: "pictures" }];
+  const references = (Array.isArray(body.images) ? body.images : [])
+    .filter((image) => typeof image?.data === "string" && image.data && typeof image.media_type === "string");
+  const aspectRatio = typeof body.aspect_ratio === "string" && body.aspect_ratio ? body.aspect_ratio : undefined;
+  let made;
+  try {
+    if (route === "openrouter") {
+      made = Buffer.from((await openRouterImage({ key: process.env.OPENROUTER_API_KEY, model: imageModelFor(app.imageModel), prompt,
+        references, aspectRatio, seconds: PICTURE_SECONDS })).image, "base64");
+    } else {
+      made = await codexImage({ prompt, references, aspectRatio });
+    }
+  } catch (error) {
+    if (error?.kind === "timeout") return [504, { error: "The picture took too long to make." }];
+    return [502, { error: String(error?.reply?.error?.message || error.message) }];
+  }
+  const type = pictureType(made);
+  if (!type) return [502, { error: route === "codex" ? "Codex didn't make the picture. Check it's signed in." : "The image model didn't return a picture." }];
+  return [200, { image: made.toString("base64"), media_type: type }];
+}
+
+/**
+ * What Codex may touch while it makes a picture: the scratch folder, and the little of the system its tools need to
+ * start, nothing of the person's and no network for its commands. Its image tool needs its code tools on, and the page
+ * writes the request, so the request is never trusted with more than the folder the picture comes back from.
+ */
+export function picturePermissions(folder) {
+  const filesystem = [[":root", "deny"], [":minimal", "read"], [folder, "write"]].map(([path, access]) => `${JSON.stringify(path)}=${JSON.stringify(access)}`);
+  return `permissions.lamp={filesystem={${filesystem.join(",")}},network={enabled=false}}`;
+}
+
+/**
+ * A picture from Codex's built-in image tool, asked for as Lamp's app asks (`viaCodexImage`): run in a scratch folder
+ * it may write in and nothing outside it may be read, with none of the person's config, rules or hooks, told to save image.png there; the pictures to
+ * build on are attached with `-i` and named in the request. The folder goes when it's done. Takes about a minute.
+ */
+export function codexImage({ prompt, references = [], aspectRatio, seconds = PICTURE_SECONDS, tool = onPath("codex") || "codex" }) {
+  // By its real path: the profile below names it, and Codex refuses a folder reached through a link (/var is one).
+  const folder = realpathSync(mkdtempSync(join(tmpdir(), "lamp-image-")));
+  const files = references.map((image, index) => {
+    const name = `reference${index + 1}.${image.media_type.endsWith("png") ? "png" : "jpg"}`;
+    writeFileSync(join(folder, name), Buffer.from(image.data, "base64"));
+    return name;
+  });
+  let request = `Create an image and save it as image.png in the current folder, then reply with just: done.\n\nThe image: ${prompt}`;
+  if (aspectRatio) request += `\n\nAspect ratio ${aspectRatio}.`;
+  if (files.length) {
+    request += `\n\nUse the attached ${files.length === 1 ? "image" : "images"} (${files.join(", ")}) as `
+      + (files.length === 1 ? "the reference: edit or build on it as the description says." : "references.");
+  }
+  const args = ["exec", "--json", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check", "--ephemeral",
+    "-c", picturePermissions(folder), "-c", 'default_permissions="lamp"', "-c", 'approval_policy="never"', "-c", "hooks={}", "-C", folder, ...files.flatMap((name) => ["-i", name]), "--", request];
+  // As `complete` runs it: never told to be Bun, which lamp itself is told.
+  const env = { ...process.env };
+  delete env.BUN_BE_BUN;
+  return new Promise((resolve, reject) => {
+    const child = spawn(tool, args, { cwd: folder, env, detached: true, stdio: ["ignore", "pipe", "ignore"] });
+    let trouble = null, rest = "";
+    // The whole group, since Codex may leave a child of its own running.
+    const timer = setTimeout(() => {
+      trouble = new EngineTrouble("timeout", "The picture took too long to make.");
+      try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
+    }, seconds * 1000);
+    const line = (raw) => {
+      let event;
+      try { event = JSON.parse(raw); } catch { return; }
+      if (codexFailure(event)) trouble ??= new EngineTrouble("failed", codexFailure(event));
+    };
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { rest += chunk; const lines = rest.split("\n"); rest = lines.pop(); lines.forEach(line); });
+    const finish = () => {
+      clearTimeout(timer);
+      let made = null;
+      // Never through a link: Codex may make image.png a link to a file it couldn't read itself, which lamp could.
+      let fd = null;
+      try {
+        fd = openSync(join(folder, "image.png"), constants.O_RDONLY | constants.O_NOFOLLOW);
+        if (fstatSync(fd).isFile()) made = readFileSync(fd);
+      } catch {} finally { if (fd !== null) closeSync(fd); }
+      rmSync(folder, { recursive: true, force: true });
+      return made;
+    };
+    child.on("error", () => { finish(); reject(new EngineTrouble("missing", "Codex isn't on this computer.")); });
+    child.on("close", () => {
+      if (rest) line(rest);
+      const made = finish();
+      if (trouble) return reject(trouble);
+      resolve(made ?? Buffer.alloc(0));
+    });
+  });
+}
+
+/** A page's AI request, by its route, as Lamp's app answers it: [status, JSON]. `app` is what the app chose for itself
+ *  (`imageModel`), when that's known. */
+export async function answer(path, body, page, app = {}) {
+  if (path === "/ai/status") return [200, status(page)];
   if (path === "/ai/models") return [200, models(enginesFor(page))];
   if (path === "/ai") return ask(body, enginesFor(page));
   if (path === "/ai/act") return act(body, enginesFor(page));
   if (path === "/ai/decide") return decide(body);
   if (path === "/ai/hear") return body?.probe === true ? [200, { hear: false, why: "Hearing needs Lamp's app." }] : [501, { error: "Hearing needs Lamp's app: open the app in Lamp." }];
-  if (path === "/ai/image") return [501, { error: "Pictures need Lamp's app: open the app in Lamp.", needs: "pictures" }];
+  if (path === "/ai/image") return makeImage(body, page, app);
   return [404, { error: "Not found." }];
 }

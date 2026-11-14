@@ -688,7 +688,10 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       const path = typeof asked?.path === "string" ? asked.path : "";
       let given = {};
       try { given = typeof asked?.body === "string" ? JSON.parse(asked.body) : asked?.body ?? {}; } catch {}
-      const [status, reply] = await answerAI(path, given);
+      // The app's own choice of image model, which Lamp's app keeps for it (`AppModels`), read at each request as Lamp's app reads it.
+      let chosen = {};
+      try { chosen = JSON.parse(readFileSync(join(folder, ".lamp", "models.json"), "utf8")) ?? {}; } catch {}
+      const [status, reply] = await answerAI(path, given, undefined, { imageModel: chosen.image });
       return json(200, { status, body: JSON.stringify(reply) });
     }
     if (request.method === "POST" && url.pathname.startsWith("/__lamp/")) {

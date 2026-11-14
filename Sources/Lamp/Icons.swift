@@ -69,6 +69,7 @@ struct IconSpec: Codable, Equatable {
 /// Liquid Glass with dark and tinted variants; without Xcode, Lamp draws the layers itself, glass imitated.
 /// Generated artwork is cached under .lamp/art/, so undoing an icon change is instant and free.
 enum Icons {
+    /// The first is the default. lamp's command line keeps the same ids (`IMAGE_MODELS` in cli/openrouter.mjs).
     static let artModels: [(id: String, label: String)] = [
         ("google/gemini-3.1-flash-image", "Nano Banana 2 (Gemini 3.1 Flash Image)"),
         ("google/gemini-nano-banana-2.1", "Nano Banana 2.1 (newest)"),
