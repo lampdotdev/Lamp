@@ -446,13 +446,15 @@ final class MixTests: XCTestCase {
     /// Yours and theirs from one start, then `steps`; and the file theirs shares as a shared file is laid out: their
     /// latest at its top (`top` in place of a file of it, as a sender's own file could say), read as an import reads it,
     /// and their versions in History/.
-    private func shared(_ start: [String: String], _ steps: [Step], top: [String: String] = [:], tamper: (URL) throws -> Void = { _ in })
-        async throws -> (yours: HistoryEscapeTests.App, lineup: Mix.Lineup) {
+    private func shared(_ start: [String: String], _ steps: [Step], top: [String: String] = [:], gitSettings: String = "",
+                        tamper: (URL) throws -> Void = { _ in }) async throws -> (yours: HistoryEscapeTests.App, lineup: Mix.Lineup) {
         let yours = try escape.app(), theirs = try escape.app()
         for app in [yours, theirs] {
             try FileManager.default.removeItem(atPath: app.tool)
             try FileManager.default.createDirectory(at: app.project.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
         }
+        // Git's Mac-wide settings, as a person's own could say.
+        try gitSettings.write(toFile: try XCTUnwrap(ProcessInfo.processInfo.environment["GIT_CONFIG_GLOBAL"]), atomically: true, encoding: .utf8)
         var first = start
         first[".gitignore"] = ".lamp/\n"
         try commit(yours, "Start", at: 100, first)
@@ -752,7 +754,8 @@ final class MixTests: XCTestCase {
 
     /// A file of theirs at a path git would quote, or one holding a character a tool might read as a separator, is
     /// still the path it is: there, named as Lamp's own scene file so no review reads it, and carried by no shared copy,
-    /// it stays out. Lamp never writes such a path into History/, so the file is the sender's own doing.
+    /// it stays out. Lamp writes no file into History/ that a shared copy doesn't carry, nor any name with a control
+    /// character, so the file is the sender's own doing.
     private func hiddenFileStaysOut(_ hidden: String) async throws {
         let (yours, lineup) = try await shared(["Sources/App.swift": lines], [
             Step(theirs: true, title: "Add a scene", at: 200, files: ["Sources/App.swift": "A-them\nb\nc\nd\ne\n"]),
@@ -783,6 +786,81 @@ final class MixTests: XCTestCase {
 
     func testAFileWhoseNameHoldsAControlCharacterStaysOut() async throws {
         try await hiddenFileStaysOut("Sources/x\u{1e}y/LampScene.swift")
+    }
+
+    /// Names git prints quoted (with a quote, a backslash, a letter outside ASCII, a space at the end) are the names
+    /// they are, whatever git's own settings say: each version of theirs comes in History/ with those files as they were
+    /// after it, a rename as the old name removed and the new one added, and the mix writes and removes each one.
+    private func namesGitQuotesCome(quotePath: Bool) async throws {
+        let quote = "Assets/local\"notes.txt", slash = "Assets/back\\slash.txt", accent = "Assets/café notes .txt"
+        let renamed = "Assets/new\"notes.txt", mine = "Assets/my\"own.txt"
+        let (yours, lineup) = try await shared(["Sources/App.swift": lines], [
+            Step(theirs: true, title: "Add notes", at: 200, files: [quote: "one\n", slash: "slash\n", accent: "accent\n"]),
+            Step(theirs: true, title: "Edit notes", at: 300, files: [quote: "two\n"]),
+            Step(theirs: false, title: "Add mine", at: 350, files: [mine: "mine\n"]),
+            Step(theirs: true, title: "Rename notes", at: 400, files: [quote: nil, renamed: "two\n"]),
+            Step(theirs: true, title: "Shout and tidy", at: 500, files: ["Sources/App.swift": "A-them\nb\nc\nd\ne\n", slash: nil]),
+        ], gitSettings: "[core]\n\tquotePath = \(quotePath)\n[diff]\n\trenames = copies\n")
+        let history = try XCTUnwrap(MixHistory.read(in: lineup.package.folder))
+        XCTAssertEqual(history.versions.map(\.title), ["Add notes", "Edit notes", "Rename notes", "Shout and tidy"])
+        XCTAssertEqual(history.versions.map { Set($0.changed) }, [[quote, slash, accent], [quote], [renamed], ["Sources/App.swift"]])
+        XCTAssertEqual(history.versions.map(\.removed), [[], [], [quote], [slash]])
+        func carried(_ path: String, _ version: Int) -> String? {
+            guard history.versions.indices.contains(version) else { return nil }
+            return try? String(contentsOf: MixHistory.url(of: path, in: history.versions[version], package: lineup.package.folder), encoding: .utf8)
+        }
+        XCTAssertEqual([carried(quote, 0), carried(slash, 0), carried(accent, 0), carried(quote, 1), carried(renamed, 2)],
+                       ["one\n", "slash\n", "accent\n", "two\n", "two\n"])
+        XCTAssertEqual(lineup.changes.map(\.title), ["Add notes", "Edit notes", "Add mine", "Rename notes", "Shout and tidy"])
+        XCTAssertEqual(lineup.changes.first { $0.title == "Add mine" }?.files, [mine])
+
+        try await apply(Set(lineup.changes.map(\.id)), in: lineup)
+        XCTAssertEqual(text(yours), "A-them\nb\nc\nd\ne\n")
+        XCTAssertEqual([text(yours, quote), text(yours, slash), text(yours, accent), text(yours, renamed), text(yours, mine)],
+                       [nil, nil, "accent\n", "two\n", "mine\n"])
+        // Their versions are saved after yours, each with the files as they were after it.
+        let saved = try escape.loose("git log --format=%s -5", in: yours.project.dir).output.split(separator: "\n").map(String.init)
+        XCTAssertEqual(saved, ["Shout and tidy", "Rename notes", "Edit notes", "Add notes", "Add mine"])
+        func at(_ back: Int, _ path: String) throws -> String? {
+            let shown = try escape.loose("git show HEAD~\(back):\(Sandbox.quoted(path))", in: yours.project.dir)
+            return shown.status == 0 ? shown.output.trimmingCharacters(in: .newlines) : nil
+        }
+        XCTAssertEqual([try at(3, quote), try at(3, slash), try at(2, quote), try at(1, quote), try at(1, renamed), try at(1, slash), try at(0, slash)],
+                       ["one", "slash", "two", nil, "two", "slash", nil])
+        let unsaved = await Versions.hasUnsavedChanges(yours.project)
+        let status = try escape.loose("git status --porcelain -z | tr '\\0' '\\n'", in: yours.project.dir).output
+        XCTAssertFalse(unsaved, status)
+    }
+
+    func testNamesGitQuotesComeWithTheirHistory() async throws {
+        try await namesGitQuotesCome(quotePath: true)
+    }
+
+    func testNamesGitQuotesComeWithTheirHistoryWhateverGitsQuotePathSays() async throws {
+        try await namesGitQuotesCome(quotePath: false)
+    }
+
+    /// A later removal of theirs at a name git quotes, of a file you changed earlier (a clash git leaves even when told
+    /// the later change wins), removes that file, and shows your change replaced by theirs; so does their later edit
+    /// of a file you edited, at a name with a backslash.
+    func testTheirLaterRemovalAtANameGitQuotesReplacesYourEdit() async throws {
+        let quote = "Assets/local\"notes.txt", slash = "Assets/back\\slash.txt"
+        let (yours, lineup) = try await shared(["Sources/App.swift": lines, quote: lines, slash: lines], [
+            Step(theirs: false, title: "Edit notes", at: 200, files: [quote: "A-you\nb\nc\nd\ne\n", slash: "A-you\nb\nc\nd\ne\n"]),
+            Step(theirs: true, title: "Remove notes", at: 300, files: [quote: nil, slash: "A-them\nb\nc\nd\ne\n"]),
+        ])
+        XCTAssertEqual(lineup.changes.map(\.title), ["Edit notes", "Remove notes"])
+        let edit = try XCTUnwrap(lineup.changes.first { $0.title == "Edit notes" })
+        let preview = await Mix.preview(lineup.changes, in: lineup)
+        XCTAssertEqual(preview.replaced, [edit.id: "Remove notes"])
+        let played = try await Mix.replay(lineup.changes, in: lineup)
+        XCTAssertEqual(Set(played.overlaps[lineup.changes.last?.id ?? ""] ?? []), [quote, slash])
+
+        try await apply(Set(lineup.changes.map(\.id)), in: lineup)
+        XCTAssertNil(text(yours, quote), "their later removal wins")
+        XCTAssertEqual(text(yours, slash), "A-them\nb\nc\nd\ne\n")
+        let listed = try escape.loose("git ls-tree -r -z --name-only HEAD | tr '\\0' '\\n'", in: yours.project.dir).output
+        XCTAssertFalse(listed.split(separator: "\n").contains { $0 == quote }, listed)
     }
 
     /// The check reads every file the mix saves as the tree holds it: one the tree's own .gitattributes marks

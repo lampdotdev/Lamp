@@ -369,7 +369,8 @@ in place of Update on its review, waiting while another mix is saved
   the copies met (a copy's since it arrived, naming the version it was given; an original's since it was first
   shared or first remixed, `.lamp/mix-start`; a remix made on this Mac's since it was remixed, its "Remix of …" version sent to
   rebuild the rest on but never offered, so the original isn't renamed), each with its title, time and the files it
-  changed as they were after it. A run
+  changed as they were after it, each by its name's bytes: git's NUL-separated listings, never what it prints, which
+  quotes a name with a quote, a backslash or a letter outside ASCII. A run
   longer than `MixHistory.limit` keeps its latest versions and carries the rest as one ("Earlier changes"), so it
   always starts where the copies met. Only what a
   shared file carries (`Upstream.isLeftOut`), and nothing the apps' `.lampignore` files keep here, as they are when it's
@@ -381,7 +382,8 @@ in place of Update on its review, waiting while another mix is saved
   arrival when the run starts at, or passes, the version it was given (`Mix.lineUp`). Copies with no such version
   aren't mixed.
 - **Playing back.** What's in is replayed in date order from where they met with `git merge-tree -X theirs`: the
-  later change wins wherever two touch the same lines (`Mix.replay`), and the window marks an earlier change a later
+  later change wins wherever two touch the same lines (`Mix.replay`, which reads the files git couldn't settle from its
+  `-z` answer, so a later removal removes the file by its own name), and the window marks an earlier change a later
   one replaces in part. Lamp's own files stay as this copy has them, and so does whatever this copy's `.lampignore`
   files keep here, whatever their copy sent (an older Lamp's, or one written before the file was kept, sends it):
   `Lineup.keptHere`, read once when the copies are lined up (`Lineup.ignore`), so a mix whose copy changes them

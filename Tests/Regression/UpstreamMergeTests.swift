@@ -19,6 +19,26 @@ final class UpstreamMergeTests: XCTestCase {
         return try Sharing.open(unpacked: folder)
     }
 
+    /// What a shared copy never carries stays out of the trees a merge measures by, whatever its name: the chat's
+    /// attachments named with a quote or a backslash are left out like any other.
+    func testWhatASharedCopyNeverCarriesStaysOutOfTheMergeWhateverItsName() async throws {
+        let app = try escape.app()
+        let dir = app.project.dir
+        for name in ["Attachments/plain.png", "Attachments/my \"photo\".png", "Attachments/back\\slash.png"] {
+            let url = dir.appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "made-up picture\n".write(to: url, atomically: true, encoding: .utf8)
+        }
+        let made = try escape.loose("git add -A && git -c user.name=Lamp -c user.email=lamp@localhost commit -qm attach", in: dir)
+        XCTAssertEqual(made.status, 0, made.output)
+        let indexes = dir.appendingPathComponent(".lamp/merge")
+        try FileManager.default.createDirectory(at: indexes, withIntermediateDirectories: true)
+        let tree = try await Upstream.filteredTree(of: "HEAD", in: app.project, indexes: indexes)
+        let listed = try escape.loose("git ls-tree -r -z --name-only \(tree) | tr '\\0' '\\n'", in: dir).output.split(separator: "\n")
+        XCTAssertEqual(listed.filter { $0.hasPrefix("Attachments") }, [], "\(listed)")
+        XCTAssertTrue(listed.contains("Sources/App.swift"), "\(listed)")
+    }
+
     func testGitMergesEachSidesChangesAndMarksOnlyWhatBothChanged() async throws {
         let app = try escape.app()
         let file = app.project.dir.appendingPathComponent("Sources/App.swift")

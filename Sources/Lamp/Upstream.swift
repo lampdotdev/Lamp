@@ -358,12 +358,22 @@ enum Upstream {
             guard empty.status == 0, let tree = Credits.validCommit(empty.output) else { throw Failure(message: "Lamp couldn't prepare the merge.") }
             return tree
         }
-        let listed = await run("rm -f \(index) && GIT_INDEX_FILE=\(index) git read-tree \(commit) && GIT_INDEX_FILE=\(index) git ls-files", in: project)
-        guard listed.status == 0 else { throw Failure(message: "Lamp couldn't read what came from there last.") }
-        let dropped = listed.output.split(separator: "\n").map(String.init).filter { isLeftOut($0, in: project) }
+        // NUL-separated and as hex, and removed by the same bytes: git prints a name with a quote, a backslash or a
+        // character outside ASCII quoted otherwise, and that's not the file's name.
+        let listed = await run("set -o pipefail; rm -f \(index) && GIT_INDEX_FILE=\(index) git read-tree \(commit) "
+                               + "&& GIT_INDEX_FILE=\(index) git ls-files -z | /usr/bin/xxd -p | /usr/bin/tr -d '\\n'", in: project)
+        guard listed.status == 0, let bytes = Mix.hexBytes(listed.output.trimmed) else { throw Failure(message: "Lamp couldn't read what came from there last.") }
+        // "<mode> <blob>\t<path>" ended by NUL, as `update-index -z --index-info` reads it; mode 0 removes the path.
+        var dropped = Data()
+        for name in bytes.split(separator: 0) where isLeftOut(String(decoding: name, as: UTF8.self), in: project) {
+            dropped.append(Data("0 0000000000000000000000000000000000000000\t".utf8) + Data(name) + Data([0]))
+        }
         var command = ""
+        let info = indexes.appendingPathComponent("own.dropped")
+        defer { try? FileManager.default.removeItem(at: info) }
         if !dropped.isEmpty {
-            command = "GIT_INDEX_FILE=\(index) git update-index --force-remove -- " + dropped.map(Sandbox.quoted).joined(separator: " ") + " && "
+            try dropped.write(to: info)
+            command = "GIT_INDEX_FILE=\(index) git update-index -z --index-info < \(Sandbox.quoted(info.path)) && "
         }
         let written = await run(command + "GIT_INDEX_FILE=\(index) git write-tree", in: project)
         guard written.status == 0, let tree = Credits.validCommit(written.output) else { throw Failure(message: "Lamp couldn't read what came from there last.") }

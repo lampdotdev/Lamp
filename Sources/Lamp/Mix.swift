@@ -299,34 +299,44 @@ enum Mix {
         }
         let first = resuming.map { $0.trees[shared] } ?? lineup.start
         let index = try scratchIndex(in: lineup.project)
-        defer { try? FileManager.default.removeItem(at: index) }
+        let answers = [index, index.appendingPathExtension("out"), index.appendingPathExtension("later"), index.appendingPathExtension("entry")]
+        defer { for file in answers { try? FileManager.default.removeItem(at: file) } }
+        // merge-tree's answer is kept in a file and read field by field: with -z it's the tree, then each file it
+        // couldn't settle, each ended by NUL and none quoted, so every name is the file's own. Each goes out as hex.
         let script = """
-        I="$LAMP_INDEX"; t="$LAMP_START"; echo "T $t"
+        I="$LAMP_INDEX"; Z="$I.out"; L="$I.later"; E="$I.entry"; t="$LAMP_START"; echo "T $t"
         # An older git merges commits only, merge base included: each tree goes in as a commit of its own.
         mk() { git -c user.name=Lamp -c user.email=lamp@localhost commit-tree "$1" -m mix < /dev/null; }
+        merge() { git merge-tree --write-tree --name-only --no-messages -z "$@"; }
         while IFS=' ' read -r id p c; do
           [ -z "$c" ] && continue
           echo "S $id"
           pc=$(mk "$p") && tc=$(mk "$t") && cc=$(mk "$c") || exit 3
-          out=$(git merge-tree --write-tree --name-only --no-messages --merge-base="$pc" "$tc" "$cc"); s=$?
+          merge --merge-base="$pc" "$tc" "$cc" > "$Z"; s=$?
           if [ $s -eq 1 ]; then
-            printf '%s\n' "$out" | sed -n '2,$p' | while IFS= read -r f; do [ -n "$f" ] && echo "O $f"; done
+            { IFS= read -r -u 3 -d '' x || exit 3
+              while IFS= read -r -u 3 -d '' f; do
+                [ -n "$f" ] && { printf 'O '; printf '%s' "$f" | /usr/bin/xxd -p | /usr/bin/tr -d '\\n'; echo; }
+              done; } 3< "$Z"
             # The later change wins: line by line where git can (-X theirs), else whole files. A git too old for -X
             # leaves the first answer's conflicts to the whole-file way.
-            later=$(git merge-tree --write-tree --name-only --no-messages -X theirs --merge-base="$pc" "$tc" "$cc"); s=$?
-            if [ $s -le 1 ]; then out="$later"; else s=1; fi
+            merge -X theirs --merge-base="$pc" "$tc" "$cc" > "$L"; s=$?
+            if [ $s -le 1 ]; then mv -f "$L" "$Z" || exit 3; else s=1; fi
             if [ $s -eq 1 ]; then
-              GIT_INDEX_FILE="$I" git read-tree "$(printf '%s\n' "$out" | head -n 1)" || exit 3
-              printf '%s\n' "$out" | sed -n '2,$p' | while IFS= read -r f; do
-                [ -z "$f" ] && continue
-                e=$(git ls-tree "$c" -- "$f")
-                if [ -n "$e" ]; then printf '%s\n' "$e" | GIT_INDEX_FILE="$I" git update-index --index-info
-                else GIT_INDEX_FILE="$I" git update-index --force-remove -- "$f"; fi
-              done
-              out=$(GIT_INDEX_FILE="$I" git write-tree) || exit 3
+              { IFS= read -r -u 3 -d '' x || exit 3
+                GIT_INDEX_FILE="$I" git read-tree "$x" || exit 3
+                while IFS= read -r -u 3 -d '' f; do
+                  [ -z "$f" ] && continue
+                  git --literal-pathspecs ls-tree -z "$c" -- "$f" > "$E" || exit 3
+                  if [ -s "$E" ]; then GIT_INDEX_FILE="$I" git update-index -z --index-info < "$E" || exit 3
+                  else GIT_INDEX_FILE="$I" git update-index --force-remove -- "$f" || exit 3; fi
+                done; } 3< "$Z"
+              t=$(GIT_INDEX_FILE="$I" git write-tree) || exit 3
+            else
+              IFS= read -r -d '' t < "$Z" || exit 3
             fi
-          elif [ $s -ne 0 ]; then exit 3; fi
-          t=$(printf '%s\n' "$out" | head -n 1)
+          elif [ $s -eq 0 ]; then IFS= read -r -d '' t < "$Z" || exit 3
+          else exit 3; fi
           echo "T $t"
         done <<< "$LAMP_STEPS"
         """
@@ -340,7 +350,9 @@ enum Mix {
             if line.hasPrefix("T "), let id = Credits.validCommit(String(line.dropFirst(2))) { trees.append(id) }
             if line.hasPrefix("S ") { current = String(line.dropFirst(2)) }
             if line.hasPrefix("O ") {
-                let path = String(line.dropFirst(2))
+                guard let bytes = hexBytes(String(line.dropFirst(2)).trimmed) else { throw Failure(message: "Lamp couldn't play the changes back.") }
+                // A name that isn't UTF-8 is no change's file, so it overlaps none; the playback still took it whole.
+                guard let path = String(bytes: bytes, encoding: .utf8) else { continue }
                 if !lineup.keptHere(path), !(overlaps[current]?.contains(path) ?? false) { overlaps[current, default: []].append(path) }
             }
         }
@@ -627,7 +639,9 @@ enum Mix {
         return entries
     }
 
-    private static func hexBytes(_ hex: String) -> [UInt8]? {
+    /// Bytes a script printed as hex (`xxd -p`), the way a listing of names comes out of git whole: nil for anything
+    /// that isn't hex.
+    static func hexBytes(_ hex: String) -> [UInt8]? {
         let digits = Array(hex.utf8)
         guard digits.count % 2 == 0 else { return nil }
         func value(_ c: UInt8) -> UInt8? {
@@ -811,7 +825,14 @@ enum Mix {
     /// `FROM -` for the one before), applies index lines ("<mode> <blob>\t<path>", mode 0 removing the path), and ends at `@@`.
     private static func edit(_ plan: String, in project: LampProject) async throws -> [String] {
         let index = try scratchIndex(in: project)
-        defer { try? FileManager.default.removeItem(at: index) }
+        // The plan goes in a file, never the environment: a program's environment is handed over as a path would be,
+        // with every accented letter taken apart, so "é" would come out as "e" and an accent, another name to git.
+        let input = index.appendingPathExtension("plan")
+        defer {
+            try? FileManager.default.removeItem(at: index)
+            try? FileManager.default.removeItem(at: input)
+        }
+        try Data(plan.utf8).write(to: input)
         let script = """
         I="$LAMP_INDEX"; t=""; buf=""; from=""
         while IFS= read -r line; do
@@ -822,9 +843,9 @@ enum Mix {
                   t=$(GIT_INDEX_FILE="$I" git write-tree) || exit 3; echo "T $t" ;;
             *) buf="$buf$line"$'\\n' ;;
           esac
-        done <<< "$LAMP_PLAN"
+        done < "$LAMP_PLAN"
         """
-        let ran = await run(script, in: project, env: ["LAMP_INDEX": index.path, "LAMP_PLAN": plan])
+        let ran = await run(script, in: project, env: ["LAMP_INDEX": index.path, "LAMP_PLAN": input.path])
         let trees = ran.output.split(separator: "\n").compactMap { $0.hasPrefix("T ") ? Credits.validCommit(String($0.dropFirst(2))) : nil }
         guard ran.status == 0 else { throw Failure(message: "Lamp couldn't rebuild their changes.") }
         return trees
