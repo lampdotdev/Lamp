@@ -477,12 +477,13 @@ enum DeviceSupport {
             asked[id] = resolve;
             gate.postMessage(JSON.stringify({ id: id, path: m.path, body: m.body, timeout: m.timeout }));
             // A page that stops waiting tells the host, which can stop the answer (lamp dev does), and hears nothing after.
-            if (signal) signal.addEventListener('abort', function () {
+            function stop() {
               if (!asked[id]) return;
               delete asked[id];
               gate.postMessage(JSON.stringify({ id: id, cancel: true }));
               resolve({ status: 499, body: '{}' });
-            });
+            }
+            if (signal) { if (signal.aborted) stop(); else signal.addEventListener('abort', stop); }
           });
         } };
       }
@@ -677,7 +678,10 @@ enum DeviceSupport {
           if (answer.status === 200) return answer.reply;
           var message = answer.reply.error || 'The AI request failed.';
           if (window.console) console.error('LampAI ' + path + ' failed: ' + message);
-          throw new Failure(message, answer.reply.needs || null);
+          var failed = new Failure(message, answer.reply.needs || null);
+          // What was billed before it failed (a retry, a timeout), for a turn's `cost`.
+          if (typeof answer.reply.cost === 'number' && answer.reply.cost > 0) failed.cost = answer.reply.cost;
+          throw failed;
         });
       }
 
@@ -836,7 +840,8 @@ enum DeviceSupport {
         if (!signal) return promise;
         return new Promise(function (resolve, reject) {
           function stop() { reject(stoppedFailure()); }
-          if (signal.aborted) return stop();
+          // Settled either way, so a stopped ask's own failure is never left unhandled.
+          if (signal.aborted) { promise.then(null, function () {}); return stop(); }
           signal.addEventListener('abort', stop);
           promise.then(function (v) { signal.removeEventListener('abort', stop); if (!signal.aborted) resolve(v); },
                        function (e) { signal.removeEventListener('abort', stop); if (!signal.aborted) reject(e); });
@@ -848,6 +853,8 @@ enum DeviceSupport {
         var schema = o.schema && typeof o.schema === 'object' ? o.schema : null, json = !!o.json || !!schema;
         if (o.data) { var f = fenced(prompt, o.data); text = f.prompt; rules.push(f.rules); }
         return stoppable(encode(o.images).then(function (images) {
+          // Stopped before or while its pictures were read: nothing is asked.
+          if (o.signal && o.signal.aborted) throw stoppedFailure();
           var body = { prompt: text, system: rules.filter(function (r) { return r; }).join('\n\n'), json: json, images: images };
           if (schema) body.schema = schema;
           if (o.model) body.model = o.model;
@@ -1097,6 +1104,7 @@ enum DeviceSupport {
             }) ? offered.map(function (c) { return c.trim(); }) : [];
             stop(null);
           }, function (e) {
+            if (e && typeof e.cost === 'number' && e.cost > 0) out.cost += e.cost;
             var message = refused(e);
             stop(/reach Lamp|Lamp isn't|wasn't put here|put it on this device/.test(message) ? 'unreachable' : 'error', message);
           });

@@ -368,7 +368,11 @@ export async function decide(body) {
 /** `/ai/act`: one step of the page's agent loop, told and checked as Lamp's app does it (app-ai.mjs). */
 export async function act(body, here = engines()) {
   const first = here[0] ?? null;
-  if (body?.probe === true) return [200, { act: !!first, route: first || "", why: first ? "" : missing }];
+  if (body?.probe === true) {
+    // A key OpenRouter refuses can't answer a step, as `/ai/status` says too.
+    const refused = first === "openrouter" ? await keyProblem() : null;
+    return [200, { act: !!first && !refused, route: first || "", why: refused || (first ? "" : missing) }];
+  }
   if (!first) return [501, { error: missing }];
   let r;
   try { r = readStep(JSON.stringify(body ?? null)); } catch (refused) { return [refused.status ?? 400, { error: refused.message }]; }
