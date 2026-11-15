@@ -696,14 +696,14 @@ enum DeviceSupport {
         });
       }
 
-      /** Downscales to at most 1568px on the long side (the most the model uses) and JPEG-encodes. Takes an <img>, a
-       *  <canvas>, or a picture's address (a data: URL or a file of the app's). */
-      function encode(images) {
+      /** Downscales to at most 1568px on the long side (the most the model uses), or `side`, and JPEG-encodes. Takes an
+       *  <img>, a <canvas>, or a picture's address (a data: URL or a file of the app's). */
+      function encode(images, side) {
         return Promise.all((images || []).map(function (image) {
           var ready = typeof image === 'string' ? loadImage(image) : Promise.resolve(image);
           return ready.then(function (source) {
             var w = source.naturalWidth || source.width, h = source.naturalHeight || source.height;
-            var scale = Math.min(1, 1568 / Math.max(w, h, 1));
+            var scale = Math.min(1, (side || 1568) / Math.max(w, h, 1));
             var canvas = document.createElement('canvas');
             canvas.width = Math.max(1, Math.round(w * scale));
             canvas.height = Math.max(1, Math.round(h * scale));
@@ -911,6 +911,12 @@ enum DeviceSupport {
       // What a turn's reads give back in all, which every later step carries again: kept under what a step may carry
       // (`MAX_BODY` in lamp's app-ai.mjs), with room for the request, the tools and the steps' own words.
       var ACT_TURN_RESULTS = 1200000;
+      // The pictures a step carries from its tools' results (`LampAI.picture`): the newest few, each at most this many
+      // pixels on its long side, together at most this many bytes, beside the text results under the step's limit
+      // (`MAX_PICTURES`, `MAX_BODY` in lamp's app-ai.mjs). Older ones the model has seen go as no longer shown.
+      var ACT_PICTURES = 6, ACT_PICTURE_SIDE = 1024, ACT_PICTURE_BYTES = 1600000;
+      /** A picture in a tool's result, for the AI to look at (`LampAI.picture`). */
+      function ActPicture(source) { this.source = source; }
       var ACT_STEP_SECONDS = 600;
       var actRan = {};      // turn id -> call key -> the result a write gave, while this copy of the page is open
       function actId() { return 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
@@ -970,7 +976,48 @@ enum DeviceSupport {
         var ran = actRan[id];
         var started = Date.now(), deadline = asked ? started + Math.max(1, asked) * 1000 : Infinity;
         var out = { turn: id, reply: '', ask: false, choices: [], done: [], failed: [], skipped: [], reads: [], stopped: null, error: '', seconds: 0, cost: 0 };
-        var steps = [], route = null, writes = 0, over = false, settle;
+        var steps = [], route = null, writes = 0, over = false, settle, pictureCount = 0;
+        // A result with its pictures taken out: each one sent beside it, scaled down, and named in its place
+        // ("[picture 2]", numbered across the turn), so the model sees what the app drew in the middle of the turn.
+        function pictured(value) {
+          var found = [];
+          function walk(v, depth) {
+            if (v instanceof ActPicture) { found.push({ source: v.source, number: ++pictureCount }); return '[picture ' + pictureCount + ']'; }
+            if (!v || typeof v !== 'object' || depth > 8) return v;
+            if (isList(v)) return v.map(function (x) { return walk(x, depth + 1); });
+            var proto = Object.getPrototypeOf(v);
+            if (proto !== Object.prototype && proto !== null) return v;
+            var copy = {};
+            for (var k in v) if (Object.prototype.hasOwnProperty.call(v, k)) copy[k] = walk(v[k], depth + 1);
+            return copy;
+          }
+          var kept = walk(value, 0);
+          if (!found.length) return Promise.resolve({ value: value });
+          return encode(found.map(function (f) { return f.source; }), ACT_PICTURE_SIDE).then(function (encoded) {
+            return { value: kept, pictures: encoded.map(function (e, i) { return { media_type: e.media_type, data: e.data, number: found[i].number }; }) };
+          }, function () {
+            return { value: { result: kept, note: 'Its pictures couldn\'t be read, so they aren\'t shown.' } };
+          });
+        }
+        // The steps as sent: only the newest pictures go with their data, within the step's room for them.
+        function sentSteps() {
+          var room = ACT_PICTURE_BYTES, count = 0;
+          var sent = steps.map(function (s) { return { calls: s.calls, results: s.results.slice() }; });
+          for (var i = sent.length - 1; i >= 0; i--) {
+            sent[i].results = sent[i].results.map(function (r) {
+              if (!r.pictures) return r;
+              var copy = {};
+              for (var k in r) if (Object.prototype.hasOwnProperty.call(r, k)) copy[k] = r[k];
+              copy.pictures = r.pictures.slice().reverse().map(function (p) {
+                var fits = count < ACT_PICTURES && p.data.length <= room;
+                if (fits) { count++; room -= p.data.length; }
+                return { media_type: p.media_type, number: p.number, data: fits ? p.data : null };
+              }).reverse();
+              return copy;
+            });
+          }
+          return sent;
+        }
         var declared = Object.keys(tools).map(function (name) {
           var t = tools[name];
           return { name: name, about: t.about || '', reads: !!t.reads, args: t.args || {} };
@@ -1011,7 +1058,10 @@ enum DeviceSupport {
             }).then(function (value) {
               if (value === NOT_RUN) return;
               out.reads.push({ name: c.name, args: c.args });
-              results[c.id] = { id: c.id, ok: true, value: sized(value) };
+              return pictured(value).then(function (p) {
+                results[c.id] = { id: c.id, ok: true, value: sized(p.value) };
+                if (p.pictures) results[c.id].pictures = p.pictures;
+              });
             }, function (e) { results[c.id] = { id: c.id, ok: false, error: refused(e) }; });
           })).then(function () {
             var stopped = null;
@@ -1049,12 +1099,15 @@ enum DeviceSupport {
                 var running;
                 try { running = Promise.resolve(tool.run(c.args, call)); } catch (e) { running = Promise.reject(e); }
                 return running.then(function (value) {
-                  var kept = sized(value);
+                  return pictured(value).then(function (p) { return { value: value, p: p }; });
+                }).then(function (got) {
+                  var value = got.value, kept = sized(got.p.value);
                   ran[key] = kept;
                   var entry = { name: c.name, args: c.args, result: value };
                   if (value && typeof value === 'object' && value.partly) entry.partly = String(value.partly);
                   out.done.push(entry);
                   results[c.id] = { id: c.id, ok: true, value: kept };
+                  if (got.p.pictures) results[c.id].pictures = got.p.pictures;
                   tell({ kind: 'write', name: c.name, args: c.args, result: value });
                   return next(i + 1);
                 }, function (e) { return fail(refused(e)); });
@@ -1070,7 +1123,7 @@ enum DeviceSupport {
           if (left <= 500) return stop('time');
           // The step's own time: what's left of an app's turn, or the step's guard against a call that has stopped.
           var stepTime = Math.min(left, ACT_STEP_SECONDS * 1000);
-          var body = { request: String(request), about: o.about || '', now: present(), tools: declared, steps: steps,
+          var body = { request: String(request), about: o.about || '', now: present(), tools: declared, steps: sentSteps(),
                        history: (o.history || []).slice(-3), seconds: Math.floor(stepTime / 1000) };
           if (o.context !== undefined) body.context = jsonState(o.context);
           if (route) body.route = route;
@@ -1352,10 +1405,17 @@ enum DeviceSupport {
          * `call.key` is the same for the same write in the same turn: make the ids of what a write creates from it, or
          * keep it on the change, so a write asked again (or a turn tried again with `turn: r.turn`) finds it instead of
          * adding a second. The same write in one turn while the page is open isn't run twice; nothing promises more.
+         * A tool's result can show the AI what the app drew, in the middle of the turn: put `LampAI.picture(canvas)` in it
+         * (`{ rendered: [LampAI.picture(front), LampAI.picture(side)] }`), and the AI sees each picture in its place, so it
+         * can build, look and fix in one turn. The newest few are shown, smaller than drawn; older ones the AI has seen.
          * Throw `LampAI.refuse('sentence')` from `check` or `run` to say why something can't be done. `seconds` is how long
          * the turn took and `cost` what it cost in US dollars (0 when the person's own Claude Code or Codex answered).
          */
         act: function (request, options) { return act(request, options); },
+
+        /** A picture for the AI to look at, in what a tool of `act` returns: a <canvas>, an <img>, or a picture's address
+         *  (a data: URL or a file of the app's). */
+        picture: function (source) { return new ActPicture(source); },
 
         /**
          * What the person said, as text: `audio` is a WAV in base64 as `LampVoice.listen` gives it (16 kHz mono 16-bit,

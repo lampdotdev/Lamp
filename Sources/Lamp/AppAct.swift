@@ -157,9 +157,14 @@ enum AppAct {
             if let model { given["model"] = model }
             return try await LampCLI.ask("actAsk", given)
         }
-        func plan(_ way: String) async throws -> (system: String, prompt: String, schema: [String: Any]) {
+        func plan(_ way: String) async throws -> (system: String, prompt: String, schema: [String: Any], images: [AppAI.Image]) {
             let done = try await asked(way)
-            return (done["system"] as? String ?? "", done["prompt"] as? String ?? "", done["schema"] as? [String: Any] ?? [:])
+            // The pictures the tools' results showed (`LampAI.picture`), which the prompt names in order.
+            let images = (done["images"] as? [[String: Any]] ?? []).compactMap { image -> AppAI.Image? in
+                guard let type = image["media_type"] as? String, let data = image["data"] as? String else { return nil }
+                return AppAI.Image(mediaType: type, data: data)
+            }
+            return (done["system"] as? String ?? "", done["prompt"] as? String ?? "", done["schema"] as? [String: Any] ?? [:], images)
         }
         switch route.kind {
         case .openRouter(let model):
@@ -171,8 +176,8 @@ enum AppAct {
         case .engine(let engine, let model):
             let left = deadline.timeIntervalSinceNow
             guard left >= 1 else { throw OutOfTime() }
-            let (system, prompt, schema) = try await plan("plan")
-            let (text, cost) = try await AppAI.viaEngine(engine, prompt: prompt, images: [], system: system, model: model,
+            let (system, prompt, schema, images) = try await plan("plan")
+            let (text, cost) = try await AppAI.viaEngine(engine, prompt: prompt, images: images, system: system, model: model,
                                                          schema: schema, timeLimit: left)
             return (try await read(["plan": text], for: r), cost)
         }

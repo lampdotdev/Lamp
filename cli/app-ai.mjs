@@ -17,7 +17,11 @@
 // `MAX_STEPS` is the most steps an app may raise a turn to (`ACT_LIMITS_MAX` in lamp.js, `LampActSession.mostSteps`):
 // room to build something real a few calls at a time, while a turn that goes round in circles still ends. The most
 // writes follows from it, since each step holds at most `MAX_CALLS`.
-export const MAX_TOOLS = 24, MAX_CALLS = 8, MAX_STEPS = 40, MAX_BODY = 2 * 1024 * 1024, MAX_CHOICES = 4, MAX_CHOICE = 24;
+export const MAX_TOOLS = 24, MAX_CALLS = 8, MAX_STEPS = 40, MAX_BODY = 3.5 * 1024 * 1024, MAX_CHOICES = 4, MAX_CHOICE = 24;
+/** The most pictures a step carries from its tools' results (`LampAI.picture`), the newest; lamp.js sends no more, and
+ *  keeps them small enough (`ACT_PICTURE_BYTES`) for a step with its text results to stay under `MAX_BODY`. */
+export const MAX_PICTURES = 6;
+const PICTURE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 /** The longest a step may take, whatever its route, before its call is taken to have stopped answering (`ACT_STEP_SECONDS`
  *  in lamp.js, `AppAct.turnSeconds`). A turn has no time of its own unless the app gives it one. */
 export const MAX_TURN_SECONDS = 600;
@@ -69,7 +73,7 @@ function parseArg(raw, path) {
  * steps, route, seconds, final, model?}`, each tool's `args` as [name, shape] pairs by name. Throws `Refused`.
  */
 export function readStep(text) {
-  if (Buffer.byteLength(text) > MAX_BODY) throw new Refused(413, "A step can carry at most 2 MB.");
+  if (Buffer.byteLength(text) > MAX_BODY) throw new Refused(413, "A step can carry at most 3.5 MB.");
   let body;
   try { body = JSON.parse(text); } catch {}
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new Refused(400, "A step needs a JSON object.");
@@ -95,6 +99,8 @@ export function readStep(text) {
   const rawSteps = Array.isArray(body.steps) ? body.steps.filter((s) => s && typeof s === "object") : [];
   if (rawSteps.length >= MAX_STEPS) throw new Refused(400, `A turn has at most ${MAX_STEPS} steps.`);
   const seen = new Set(), steps = [];
+  // The pictures the results carry, numbered in the order the turn made them; only the newest MAX_PICTURES are shown.
+  const pictures = [];
   for (const raw of rawSteps) {
     const calls = [];
     for (const call of Array.isArray(raw.calls) ? raw.calls.filter((c) => c && typeof c === "object") : []) {
@@ -104,10 +110,30 @@ export function readStep(text) {
       calls.push({ id: call.id, name: call.name, args: call.args && typeof call.args === "object" && !Array.isArray(call.args) ? call.args : {} });
     }
     if (!calls.length || calls.length > MAX_CALLS) throw new Refused(400, `Every earlier step has 1 to ${MAX_CALLS} calls.`);
-    const results = {};
-    for (const result of Array.isArray(raw.results) ? raw.results : []) if (typeof result?.id === "string") results[result.id] = result;
-    steps.push({ calls, results });
+    const results = {}, shown = [];
+    for (const result of Array.isArray(raw.results) ? raw.results : []) {
+      if (typeof result?.id !== "string") continue;
+      const { pictures: given, ...rest } = result;
+      const call = calls.find((c) => c.id === result.id);
+      // A result's pictures go to the model beside it as pictures, never as text: the result names each one in its place.
+      for (const picture of Array.isArray(given) ? given : []) {
+        // `data` null is one the page no longer sends, which the model has seen.
+        if (!call || !PICTURE_TYPES.includes(picture?.media_type) || (picture.data !== null && (typeof picture.data !== "string" || !/^[A-Za-z0-9+/]+=*$/.test(picture.data)))) {
+          throw new Refused(400, "A result's pictures are each a `media_type` (JPEG, PNG, WebP or GIF) and its `data` in base64.");
+        }
+        // Numbered by the page, which names it so in the result ("[picture 2]"); a number that isn't one of its own is replaced.
+        const taken = new Set(pictures.map((p) => p.number));
+        const number = Number.isInteger(picture.number) && picture.number > 0 && !taken.has(picture.number) ? picture.number : Math.max(0, ...taken) + 1;
+        const one = { number, call: call.name, media_type: picture.media_type, data: picture.data };
+        pictures.push(one);
+        shown.push(one);
+      }
+      results[result.id] = rest;
+    }
+    steps.push({ calls, results, pictures: shown });
   }
+  // Older pictures than the newest few are left out: the model has seen them, and the step says they're no longer shown.
+  for (const old of [...pictures].sort((a, b) => a.number - b.number).slice(0, -MAX_PICTURES)) old.data = null;
   const history = (Array.isArray(body.history) ? body.history : []).filter((h) => h && typeof h === "object").slice(-3)
     .map((h) => ({ said: typeof h.said === "string" ? h.said : "", heard: typeof h.heard === "string" ? h.heard : "" }));
   const seconds = typeof body.seconds === "number" ? body.seconds : 60;
@@ -336,6 +362,16 @@ export function chatBody(r, tag, retry, model) {
   for (const step of r.steps) {
     messages.push({ role: "assistant", content: "", tool_calls: step.calls.map((call) => ({ id: call.id, type: "function", function: { name: call.name, arguments: json(call.args) } })) });
     for (const call of step.calls) messages.push({ role: "tool", tool_call_id: call.id, content: fence(tag, json(step.results[call.id] ?? skipped)) });
+    // A tool's result can't hold a picture on every provider, so the step's pictures follow its results as the person's
+    // message, each named as its result names it.
+    if (step.pictures.length) {
+      const content = [{ type: "text", text: picturesSaid(step.pictures) }];
+      for (const picture of step.pictures.filter((p) => p.data)) {
+        content.push({ type: "text", text: `[picture ${picture.number}], from ${picture.call}:` });
+        content.push({ type: "image_url", image_url: { url: `data:${picture.media_type};base64,${picture.data}` } });
+      }
+      messages.push({ role: "user", content });
+    }
   }
   if (retry) messages.push({ role: "user", content: `Your last answer couldn't be used: ${retry} Answer again.` });
   const tools = r.tools.map((tool) => ({ type: "function", function: { name: tool.name,
@@ -381,12 +417,24 @@ export function planPrompt(r, tag, retry) {
   system += "\n\n" + PLAN;
   if (r.final) system += '\nOnly a reply is possible now: answer {"reply": {...}}.';
   else system += "\n\nThe app's tools:\n" + r.tools.map((tool) => `- ${tool.name}: ${tool.reads ? "Looks up, changes nothing. " : "Changes the app's data. "}${tool.about}\n  Arguments: ${json(toolSchema(tool))}`).join("\n");
+  const images = [];
   r.steps.forEach((step, i) => {
     prompt += `\n\nYour answer ${i + 1} called:\n` + json(step.calls.map((c) => ({ name: c.name, args: c.args })));
     prompt += "\nWhat happened, in that order:\n" + fence(tag, json(step.calls.map((c) => ({ ...(step.results[c.id] ?? skipped), name: c.name }))));
+    if (step.pictures.length) prompt += "\n" + picturesSaid(step.pictures, true);
+    for (const picture of step.pictures) if (picture.data) images.push({ media_type: picture.media_type, data: picture.data });
   });
   if (retry) prompt += `\n\nYour last answer couldn't be used: ${retry} Answer again.`;
-  return { system, prompt };
+  return { system, prompt, images };
+}
+
+/** What's said of a step's pictures: which come with the message, in order, and which are no longer shown. */
+function picturesSaid(pictures, attached = false) {
+  const named = (list) => list.map((p) => `[picture ${p.number}] (from ${p.call})`).join(", ");
+  const sent = pictures.filter((p) => p.data), gone = pictures.filter((p) => !p.data);
+  let said = sent.length ? `${attached ? "Attached to this message, in this order" : "The pictures those results name"}: ${named(sent)}. Look at them before you answer.` : "";
+  if (gone.length) said += `${said ? " " : ""}No longer shown, as newer pictures came since: ${named(gone)}.`;
+  return said;
 }
 
 // MARK: Decisions (`LampAI.decide`) answered by a text model

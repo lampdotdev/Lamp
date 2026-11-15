@@ -289,3 +289,21 @@ test("pictures are made with an OpenRouter key, else Codex for the person's own 
     for (const [name, value] of Object.entries(kept)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
   }
 });
+
+test("a result's pictures go to the model as pictures, named in the result, the newest few", () => {
+  const look = { name: "look", about: "Renders the model.", reads: true, args: {} };
+  const shot = (number) => ({ media_type: "image/jpeg", data: "AAAA", number });
+  const steps = [1, 2, 3, 4, 5, 6, 7].map((n) => ({ calls: [{ id: `c${n}`, name: "look", args: {} }],
+    results: [{ id: `c${n}`, ok: true, value: { front: `[picture ${n}]` }, pictures: [shot(n)] }] }));
+  const r = readStep(JSON.stringify({ request: "Build a tower", tools: [look], steps }));
+  assert.ok(!JSON.stringify(r.steps[6].results).includes("AAAA"), "the result is text only");
+  // Claude Code and Codex: attached in order, the oldest no longer shown.
+  const { prompt, images } = planPrompt(r, "t", null);
+  assert.equal(images.length, 6);
+  assert.match(prompt, /No longer shown, as newer pictures came since: \[picture 1\]/);
+  assert.match(prompt, /Attached to this message, in this order: \[picture 7\] \(from look\)/);
+  // OpenRouter: a message of the step's pictures after its results.
+  const last = chatBody(r, "t", null, "m").messages.at(-1);
+  assert.deepEqual([last.role, last.content.filter((c) => c.type === "image_url").length], ["user", 1]);
+  assert.throws(() => readStep(JSON.stringify({ request: "x", tools: [look], steps: [{ ...steps[0], results: [{ id: "c1", ok: true, pictures: [{ media_type: "text/html", data: "AAAA" }] }] }] })), /pictures/);
+});

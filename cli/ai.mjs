@@ -394,8 +394,8 @@ export async function act(body, here = engines()) {
         cost += answered.cost;
         read = readMessage(answered.message, r);
       } else {
-        const { system, prompt } = planPrompt(r, tag, retry);
-        read = readPlan(await complete({ system, prompt, schema: planSchema(r), seconds: left, which, model }), r);
+        const { system, prompt, images } = planPrompt(r, tag, retry);
+        read = readPlan(await complete({ system, prompt, images, schema: planSchema(r), seconds: left, which, model }), r);
       }
     } catch (error) {
       cost += Number(error?.cost) || 0;
