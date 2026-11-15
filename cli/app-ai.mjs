@@ -352,7 +352,8 @@ export function plannedCalls(text) {
  * Reads a step's calls one at a time as the model writes them (`stream` on `LampAI.act`), with the checks `readMessage`
  * gives a whole answer: `release` gets each call that fits as soon as it's whole, with the id it would have had. One that
  * doesn't fit is held in `held`, with why: when nothing was released, the whole answer is read and asked again as
- * before; when something was, they go to the page at the end as calls that failed (`problem`), never run.
+ * before; when something was, they go to the page at the end as calls that failed (`problem`), never run. Calls past
+ * `MAX_CALLS` are left out.
  */
 export function stepReader(r, release) {
   const step = r.steps.length + 1;
@@ -367,7 +368,8 @@ export function stepReader(r, release) {
       let args = raw;
       if (typeof raw === "string") { try { args = JSON.parse(raw || "{}"); } catch { args = undefined; } }
       const hold = (problem) => reader.held.push({ id, name: String(name), args: args && typeof args === "object" && !Array.isArray(args) ? args : {}, problem });
-      if (given > MAX_CALLS) return hold(`Give at most ${MAX_CALLS} calls at once.`);
+      // Past the most a step holds, a call is left out: the AI sees what ran, and writes the rest next.
+      if (given > MAX_CALLS) return;
       if (typeof name !== "string") return hold("A call had no name.");
       if (!args || typeof args !== "object" || Array.isArray(args)) return hold(`${name}'s arguments weren't a JSON object.`);
       if (r.final) return hold("Only `reply` is possible now.");
