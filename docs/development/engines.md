@@ -313,7 +313,9 @@ A capability given to one engine must be given to all of them that can take it, 
   asks for the rest (`follow`, a long poll every host carries) until the answer; a call that doesn't fit is held, and
   goes as a failure at the end once others have run, or the whole answer is asked again as before. Lamp's app holds a
   streamed step in `LiveSteps`, its calls coming as `LampCLI` events from `engineAnswer` and `openRouterChat`; lamp in
-  `live` in cli/ai.mjs. The turn's writes, its deadline and cancel are
+  `live` in cli/ai.mjs. Both keep a step's answer after it has gone out until the step's time and a minute more have
+  passed, since the page can't say it got it: a follow whose reply was lost, asked again, gets the same answer, and
+  Lamp bills it once. The turn's writes, its deadline and cancel are
   the page's: it runs calls in the order the model wrote them, reads side by side together, each write after the calls
   before it, `check`ed right before it runs, stops at the
   deadline in every layer (the step's request, `send`'s retries) and drops an answer that comes after a cancel.

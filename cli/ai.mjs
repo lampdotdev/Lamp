@@ -383,9 +383,14 @@ export async function decide(body) {
 
 /** `/ai/act`: one step of the page's agent loop, told and checked as Lamp's app does it (app-ai.mjs). */
 // A step being streamed (`stream` on lamp.js's act), by its id: its calls so far, and its answer once it's done. The page
-// asks for what's new (`follow`) until it has the answer; a step nobody follows for a few minutes is let go.
+// asks for what's new (`follow`) until it has the answer; a step nobody follows for a few minutes is let go. Its answer
+// is kept after it has gone out until the step's own time and a little more have passed: the page can't say it got the
+// answer, and when the reply carrying it is lost, it asks again for the same thing before its time is up (Lamp's app
+// keeps them the same way, `LiveSteps`).
 const live = new Map();
 const FOLLOW_WAIT = 50_000;
+const UNFOLLOWED = 5 * 60_000;
+const GRACE = 60_000;
 
 /** What a streamed step has that the page hasn't (`have` calls): waits for something new, or the end, a while at most. */
 async function following(id, have) {
@@ -397,7 +402,10 @@ async function following(id, have) {
   }
   const calls = step.calls.slice(have);
   if (!step.done) return [200, { stream: id, more: true, calls }];
-  live.delete(id);
+  if (!step.answered) {
+    step.answered = Date.now();
+    setTimeout(() => live.delete(id), Math.max(step.until, step.answered) + GRACE - Date.now()).unref?.();
+  }
   const [status, json] = step.done;
   return [status, { ...json, stream: id, more: false, calls: [...calls, ...(Array.isArray(json.calls) ? json.calls : [])] }];
 }
@@ -422,10 +430,17 @@ export async function act(body, here = engines()) {
   // Streamed: each call goes to the page as soon as it's whole, and the page follows the step for the rest.
   if (body?.stream === true) {
     const id = "st" + randomBytes(6).toString("hex");
-    const step = { calls: [], done: null, waiting: new Set(), seen: Date.now() };
+    const step = { calls: [], done: null, waiting: new Set(), seen: Date.now(), until: deadline, answered: 0 };
     const wake = () => { for (const woken of step.waiting) woken(); step.waiting.clear(); };
+    for (const [other, kept] of live) if (!kept.answered && Date.now() - kept.seen > UNFOLLOWED) live.delete(other);
     live.set(id, step);
-    for (const [other, kept] of live) if (Date.now() - kept.seen > 5 * 60_000) live.delete(other);
+    // Let go once it can't be asked for, whether or not another step comes; an answered one has its own time (`following`).
+    const sweep = (after) => setTimeout(() => {
+      if (step.answered || live.get(id) !== step) return;
+      if (Date.now() - step.seen < UNFOLLOWED) return sweep(step.seen + UNFOLLOWED - Date.now());
+      live.delete(id);
+    }, Math.max(0, after)).unref?.();
+    sweep(Math.max(deadline - Date.now(), UNFOLLOWED) + GRACE);
     runStep(r, { which, model, tag, deadline, seconds, release: (call) => { step.calls.push(call); wake(); } })
       .then((done) => { step.done = done; wake(); });
     return following(id, 0);
