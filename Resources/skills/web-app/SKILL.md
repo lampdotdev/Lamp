@@ -105,6 +105,8 @@ whichever AI the person set up for apps' text, so don't tie it to voice: typing 
   and take only the first answer, a button, what was heard or what was typed. With none, it's answered by voice or
   typing; never guess choices from the question's wording.
 - Keep what each write changed for Undo, and undo only what's still as the write left it; say which ones it left.
+- Where the app draws something the AI builds (a scene, a layout, a chart), give it a read that returns
+  `LampAI.picture(canvas)` in its result, so it can look at its work and fix it in the same turn.
 - Show each step while it runs (`onStep`), and cancel the turn (`turn.cancel()`) when the person closes it or the page
   is hidden.
 - `about` says what the app is and its rules for asking back: which person, which day and time, which of two things
