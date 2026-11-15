@@ -375,12 +375,13 @@ export const CALLS = {
 
   /**
    * A text answer from OpenRouter for an app's AI (`AppAI.viaOpenRouter`), with the person's `key`, given on the input
-   * like everything else and kept nowhere: `prompt`, `images`, `system`, `model`, `json`, `schema`. `{text, cost}`, or
+   * like everything else and kept nowhere: `prompt`, `images`, `system`, `model`, `json`, `schema`, `effort`. `{text, cost}`, or
    * `{trouble: {kind, message, status, reply, cost}}`.
    */
   async openRouterText(given, { stopped } = {}) {
     return openRouter(() => openRouterText({ key: text(given, "key"), prompt: text(given, "prompt"), images: given.images, system: given.system ?? "",
-      model: text(given, "model"), json: given.json === true, schema: given.schema ?? undefined, seconds: seconds(given.seconds, 600, 600), signal: stopped }));
+      model: text(given, "model"), json: given.json === true, schema: given.schema ?? undefined, effort: typeof given.effort === "string" ? given.effort : undefined,
+      seconds: seconds(given.seconds, 600, 600), signal: stopped }));
   },
 
   /**
@@ -421,6 +422,7 @@ export const CALLS = {
         env: given.env && typeof given.env === "object" ? given.env : {}, system: typeof given.system === "string" ? given.system : "",
         prompt: text(given, "prompt"), schema: given.schema ?? undefined, model: typeof given.model === "string" ? given.model : "",
         images: Array.isArray(given.images) ? given.images : [], seconds: seconds(given.seconds, 600, 600), signal: stopped,
+        effort: typeof given.effort === "string" ? given.effort : undefined,
         onPartial: reader ? (so) => reader.planned(so) : undefined });
       reader?.planned(answer);
       return reader ? { text: answer, released: reader.released, held: reader.held } : { text: answer };

@@ -202,7 +202,8 @@ enum AppAct {
             guard left >= 1 else { throw OutOfTime() }
             let (system, prompt, schema, images) = try await plan("plan")
             let done = try await AppAI.engineAnswer(engine, prompt: prompt, images: images, system: system, model: model,
-                                                    schema: schema, timeLimit: left, step: live == nil ? nil : r, onEvent: heard)
+                                                    schema: schema, timeLimit: left, step: live == nil ? nil : r,
+                                                    effort: r["effort"] as? String, onEvent: heard)
             return (try await read(["plan": done["text"] as? String ?? ""].merging(streamedRead(done)) { $1 }, for: r), 0)
         }
     }

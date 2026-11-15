@@ -14915,7 +14915,9 @@ final class Store: ObservableObject {
                                                          appModel: AppAI.textChoice(asked: body["model"] as? String, app: models.text),
                                                          schema: schema,
                                                          // The page's own limit, when it asked for a quicker answer.
-                                                         timeLimit: (body["seconds"] as? Double).flatMap { $0 > 0 ? min($0, AppAI.guardSeconds) : nil })
+                                                         timeLimit: (body["seconds"] as? Double).flatMap { $0 > 0 ? min($0, AppAI.guardSeconds) : nil },
+                                                         // How hard the model thinks (`effort` on `LampAI.ask`): "fast" or "best".
+                                                         effort: ["fast": "low", "best": "high"][body["effort"] as? String ?? ""])
             if let project { record(project, cost: cost) }
             return (200, ["text": text, "cost": cost])
         } catch let failure as AppAI.Failure {

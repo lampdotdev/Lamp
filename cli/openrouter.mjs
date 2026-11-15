@@ -32,12 +32,14 @@ export class OpenRouterTrouble extends Error {
  * `json` the answer must be a JSON object, with room for a long one (a cut-off reply is what breaks apps), and with a
  * `schema` it must fit it too.
  */
-export function textBody({ prompt, images = [], system = "", model = DEFAULT_MODEL, json = false, schema } = {}) {
+export function textBody({ prompt, images = [], system = "", model = DEFAULT_MODEL, json = false, schema, effort } = {}) {
   const messages = [];
   if (String(system).trim()) messages.push({ role: "system", content: system });
   messages.push({ role: "user", content: [{ type: "text", text: prompt },
     ...(Array.isArray(images) ? images : []).filter((image) => image?.data).map((image) => ({ type: "image_url", image_url: { url: `data:${image.media_type || "image/jpeg"};base64,${image.data}` } }))] });
   const body = { model, messages, usage: { include: true } };
+  // How hard the model thinks (`effort` on `LampAI.ask`), for the models that reason: OpenRouter's own levels.
+  if (effort === "low" || effort === "high") body.reasoning = { effort };
   if (json) {
     body.response_format = schema ? { type: "json_schema", json_schema: { name: "answer", strict: true, schema } } : { type: "json_object" };
     body.max_tokens = 16000;

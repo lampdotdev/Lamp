@@ -326,3 +326,12 @@ test("a step's calls are read one at a time as they're written, one that doesn't
   none.call("nothing", "{}");
   assert.deepEqual(afterStream(none, { problem: "No." }), { problem: "No." });
 });
+
+test("effort reaches every route as low or high, and none leaves each as it was", async () => {
+  const { textBody } = await import("../openrouter.mjs");
+  const fast = step({ effort: "fast" }), plain = step({ effort: "sideways" });
+  assert.deepEqual([fast.effort, plain.effort], ["low", undefined]);
+  assert.deepEqual(chatBody(fast, "t", null, "m").reasoning, { effort: "low" });
+  assert.equal(chatBody(plain, "t", null, "m").reasoning, undefined);
+  assert.deepEqual([textBody({ prompt: "p", effort: "high" }).reasoning, textBody({ prompt: "p" }).reasoning], [{ effort: "high" }, undefined]);
+});

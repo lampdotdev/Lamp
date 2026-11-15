@@ -27,6 +27,9 @@ const PICTURE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 export const MAX_TURN_SECONDS = 600;
 /** Lamp's own tool, the way every answer that isn't a call comes back. */
 export const REPLY = "reply";
+/** The page's `effort` ("fast" or "best", on `LampAI.ask` and `act`) as each engine's level: low or high. With none, every
+ *  route thinks as it did before (`effort` in ai.mjs's `complete`). */
+export const EFFORTS = { fast: "low", best: "high" };
 const NAME = /^[a-zA-Z][a-zA-Z0-9_]{0,40}$/;
 const KINDS = ["string", "integer", "number", "boolean", "date", "datetime", "list"];
 const ARG_KEYS = new Set(["type", "oneOf", "min", "max", "optional", "about", "of"]);
@@ -143,6 +146,9 @@ export function readStep(text) {
   if ("context" in body) step.context = body.context;
   // The model the app asked for (an id `LampAI.models` lists): the answering side takes it when it can, else its default.
   if (typeof body.model === "string" && body.model) step.model = body.model;
+  // How hard the model thinks (`effort` on `LampAI.act`): "fast" or "best", else the route's own.
+  const effort = EFFORTS[body.effort];
+  if (effort) step.effort = effort;
   return step;
 }
 
@@ -471,6 +477,7 @@ export function chatBody(r, tag, retry, model) {
       properties: { text: { type: "string" }, ask: { type: "boolean" }, choices: { type: "array", maxItems: MAX_CHOICES, items: { type: "string", maxLength: MAX_CHOICE } } } } } });
   const body = { messages, tools, max_tokens: 2000 };
   if (model) Object.assign(body, { model, tool_choice: r.final ? "none" : "auto", usage: { include: true }, provider: { require_parameters: true } });
+  if (model && r.effort) body.reasoning = { effort: r.effort };
   return body;
 }
 

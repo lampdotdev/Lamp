@@ -26,7 +26,8 @@ opening comment for the whole list. What it gives:
   never call `connect()` as the page loads, since it makes the browser ask the person. For JSON the app reads, give
   `ask` a `schema` (a JSON Schema: every property in `required`, `additionalProperties: false`), which holds the AI to
   it, rather than only describing the shape. A long `ask` the person can stop takes a `signal` (an `AbortController`'s),
-  and its failure then has `stopped`, which needs no error shown.
+  and its failure then has `stopped`, which needs no error shown. Where a slow, careful model and a quick one both suit
+  (a "Quick" and a "Best" button), give `ask` and `act` an `effort`: 'fast' or 'best'.
 - **LampAI.act**: the person asks the app to do something in their own words, and the app's own reads and writes do
   it; "Doing things for the person" below, with **LampVoice** and **LampAI.hear** for saying it.
 - **LampStore**: what the app saves, as JSON on the device. Once something is saved, only ever add to it: a new field
