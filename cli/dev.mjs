@@ -345,6 +345,63 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     return page ? { page, where: "copy", fresh } : null;
   }
 
+  /**
+   * Runs code in the page (`lamp eval`), only in the browser lamp drives on this computer: the person's window, else the
+   * copy. Never through a page's own line to the server, so a page opened from another device (--lan) never runs it and
+   * no page can answer for it. The code is an expression or a function's body (with `return`), awaited: `{where, value}`
+   * (`text`, `json`, or a canvas or picture as a PNG's `picture`), or `{where, error}`, or `{problem}` with no browser.
+   */
+  async function evaluated({ code, seconds = 60 } = {}) {
+    if (typeof code !== "string" || !code.trim()) return { problem: "eval needs code to run: lamp eval \"document.title\"" };
+    const target = await watched();
+    if (!target) return { problem: `lamp eval runs code in a page lamp can drive, and there's no browser here it can. ${noBrowser()}` };
+    // The page loaded first (a copy just started is still loading, and may be between documents), or nothing runs.
+    let ready = false;
+    for (const until = Date.now() + 15000; !ready && Date.now() < until; ) {
+      ready = (await target.page.evaluate("document.readyState === 'complete'", { timeout: 2000 })) === true;
+      if (!ready) await sleep(200);
+    }
+    if (!ready) return { problem: "The page didn't finish loading in 15 s, so nothing was run in it: lamp look says what's on it." };
+    const script = `(async () => {
+      const code = ${JSON.stringify(code)};
+      const AsyncFunction = (async () => {}).constructor;
+      let run;
+      try { run = new AsyncFunction('return (' + code + '\\n)'); } catch (e) {
+        try { run = new AsyncFunction(code); } catch (e2) { return { error: 'SyntaxError: ' + e2.message }; }
+      }
+      try {
+        const value = await run();
+        const drawn = (v) => {
+          if (typeof HTMLCanvasElement !== 'undefined' && v instanceof HTMLCanvasElement) return v.toDataURL('image/png');
+          if ((typeof HTMLImageElement !== 'undefined' && v instanceof HTMLImageElement) || (typeof ImageBitmap !== 'undefined' && v instanceof ImageBitmap)) {
+            const c = document.createElement('canvas');
+            c.width = v.naturalWidth || v.width; c.height = v.naturalHeight || v.height;
+            c.getContext('2d').drawImage(v, 0, 0);
+            return c.toDataURL('image/png');
+          }
+          return null;
+        };
+        const picture = value && typeof value === 'object' ? drawn(value) : null;
+        if (picture) return { value: { picture: picture.slice(picture.indexOf(',') + 1) } };
+        if (value === undefined) return { value: { json: 'undefined' } };
+        if (typeof value === 'string') return { value: { text: value } };
+        // A function, a symbol or a toJSON that gives nothing has no JSON: it's said as text.
+        try { const json = JSON.stringify(value, null, 2); if (json !== undefined) return { value: { json } }; } catch (e) {}
+        return { value: { text: String(value) } };
+      } catch (e) {
+        return { error: e && e.stack ? String(e.stack).split('\\n').slice(0, 5).join('\\n') : String(e) };
+      }
+    })()`;
+    const answer = await target.page.evaluate(script, { timeout: Math.min(Math.max(Number(seconds) || 60, 1), 600) * 1000 });
+    if (!answer) {
+      // Code still running (a loop that never ends) would leave the page stuck for every look after: it's stopped. Code
+      // waiting on something (a timer, a fetch) can't be: it goes on when that comes, and the answer says so.
+      await target.page.send("Runtime.terminateExecution", {}, 2000).catch(() => {});
+      return { where: target.where, error: `It didn't finish in ${Math.round(Number(seconds) || 60)} s, or the page went away. Code that was waiting (on a timer, a fetch) may still finish in the page and change it after this: lamp reload starts it afresh.` };
+    }
+    return { where: target.where, ...answer };
+  }
+
   /** What the page shows now: how the changes since the last look went, a picture, the screen as text, and the log. */
   async function look({ wait = 20, reopen = false, size = null } = {}) {
     checkAll();
@@ -632,6 +689,8 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
         const asked = (await body(request)) ?? {};
         if (what === "look") return json(200, await inTurn(() => look(asked)));
         if (what === "use") return json(200, await inTurn(() => use(asked)));
+        // Not in turn with looks and uses: code may run for minutes.
+        if (what === "eval") return json(200, await evaluated(asked));
         if (what === "card") return json(200, await inTurn(() => card(asked)));
         if (what === "open") return json(200, { opened: await openWindow(), url: address });
         if (what === "changing") {
