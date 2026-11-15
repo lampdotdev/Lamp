@@ -32,7 +32,7 @@ import { tile } from "./png.mjs";
 import { Problem } from "./state.mjs";
 import { allowed as pagesAllowed, forgetPage, serveLocalAI } from "./local-ai.mjs";
 import { EngineTrouble, complete } from "./ai.mjs";
-import { OpenRouterTrouble, chat as openRouterChat, decide as openRouterDecide, image as openRouterImage, text as openRouterText } from "./openrouter.mjs";
+import { OpenRouterTrouble, chat as openRouterChat, chatStream as openRouterChatStream, decide as openRouterDecide, image as openRouterImage, text as openRouterText } from "./openrouter.mjs";
 
 /** OpenRouter's answer, or what kept it from one, as Lamp's app reads it. */
 async function openRouter(asking) {
@@ -41,7 +41,7 @@ async function openRouter(asking) {
     return { trouble: { kind: error.kind, message: error.message, status: error.status, reply: error.reply, cost: error.cost } };
   }
 }
-import { Refused as StepRefused, chatBody, decidePrompt, planPrompt, planSchema, readDecision, readMessage, readPlan, readStep } from "./app-ai.mjs";
+import { Refused as StepRefused, afterStream, chatBody, decidePrompt, planPrompt, planSchema, readDecision, readMessage, readPlan, readStep, stepReader } from "./app-ai.mjs";
 
 // Pages shared on lamp.dev asking for their AI, answered by Lamp's app (`sharedPages`): what each is waiting on from it.
 const sharedPagesWaiting = new Map();
@@ -383,9 +383,17 @@ export const CALLS = {
       model: text(given, "model"), json: given.json === true, schema: given.schema ?? undefined, seconds: seconds(given.seconds, 600, 600), signal: stopped }));
   },
 
-  /** One chat completion from OpenRouter, its request as `body` (`actAsk`'s): `{message, cost}`, or `{trouble}`. */
-  async openRouterChat(given, { stopped } = {}) {
-    return openRouter(() => openRouterChat({ key: text(given, "key"), body: given.body ?? {}, seconds: seconds(given.seconds, 60, 600), signal: stopped }));
+  /**
+   * One chat completion from OpenRouter, its request as `body` (`actAsk`'s): `{message, cost}`, or `{trouble}`. With the
+   * act `step` it's for, streamed: each call that fits is an event `{call}` as soon as it's whole, and the answer says
+   * what was `released` and what was `held` (`stepReader`), for `actRead`.
+   */
+  async openRouterChat(given, { stopped, event = () => {} } = {}) {
+    const asked = { key: text(given, "key"), body: given.body ?? {}, seconds: seconds(given.seconds, 60, 600), signal: stopped };
+    if (!given.step) return openRouter(() => openRouterChat(asked));
+    const reader = stepReader(given.step, (call) => event({ call }));
+    const done = await openRouter(() => openRouterChatStream({ ...asked, onCall: (name, args) => reader.call(name, args) }));
+    return done.trouble ? { ...done, released: reader.released } : { ...done, released: reader.released, held: reader.held };
   },
 
   /** Decisions from OpenRouter's decision model (`AppAI.decide`): `key`, `model`, `state`, `questions`. `{answers, cost}` or `{trouble}`. */
@@ -405,14 +413,19 @@ export const CALLS = {
    * the program Lamp chose (`tool`) and what it needs set (`env`), `system`, `prompt`, optional `schema`, `model`,
    * `images` and `seconds`. `{text}`, or `{trouble: {kind, message}}`; stopping the call stops the engine.
    */
-  async engineAnswer(given, { stopped } = {}) {
+  async engineAnswer(given, { stopped, event = () => {} } = {}) {
+    // With the act `step` it answers, streamed as `openRouterChat` streams it.
+    const reader = given.step ? stepReader(given.step, (call) => event({ call })) : null;
     try {
-      return { text: await complete({ which: text(given, "engine"), tool: typeof given.tool === "string" && given.tool ? given.tool : undefined,
+      const answer = await complete({ which: text(given, "engine"), tool: typeof given.tool === "string" && given.tool ? given.tool : undefined,
         env: given.env && typeof given.env === "object" ? given.env : {}, system: typeof given.system === "string" ? given.system : "",
         prompt: text(given, "prompt"), schema: given.schema ?? undefined, model: typeof given.model === "string" ? given.model : "",
-        images: Array.isArray(given.images) ? given.images : [], seconds: seconds(given.seconds, 600, 600), signal: stopped }) };
+        images: Array.isArray(given.images) ? given.images : [], seconds: seconds(given.seconds, 600, 600), signal: stopped,
+        onPartial: reader ? (so) => reader.planned(so) : undefined });
+      reader?.planned(answer);
+      return reader ? { text: answer, released: reader.released, held: reader.held } : { text: answer };
     } catch (error) {
-      if (error instanceof EngineTrouble) return { trouble: { kind: error.kind, message: error.message } };
+      if (error instanceof EngineTrouble) return { trouble: { kind: error.kind, message: error.message }, ...(reader ? { released: reader.released } : {}) };
       throw error;
     }
   },
@@ -438,9 +451,12 @@ export const CALLS = {
     return { ...planPrompt(step, tag, retry), schema: planSchema(step) };
   },
 
-  /** A step's answer read and checked: `message` from a chat with tools, or `plan`'s text. `{answer}` or `{problem}`. */
+  /** A step's answer read and checked: `message` from a chat with tools, or `plan`'s text. `{answer}` or `{problem}`; for a
+   *  streamed one, with what was `released` and `held`, only the held calls, as failures. */
   async actRead(given) {
-    return given.message !== undefined ? readMessage(given.message, given.step) : readPlan(String(given.plan ?? ""), given.step);
+    const read = given.message !== undefined ? readMessage(given.message, given.step) : readPlan(String(given.plan ?? ""), given.step);
+    // A streamed answer (`released` calls went out already): only what was held is left.
+    return Number(given.released) > 0 ? afterStream({ released: Number(given.released), held: Array.isArray(given.held) ? given.held : [] }, read) : read;
   },
 
   /** A decision asked of a text model: `{system, prompt, schema}`. */

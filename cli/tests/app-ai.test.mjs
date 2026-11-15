@@ -307,3 +307,20 @@ test("a result's pictures go to the model as pictures, named in the result, the 
   assert.deepEqual([last.role, last.content.filter((c) => c.type === "image_url").length], ["user", 1]);
   assert.throws(() => readStep(JSON.stringify({ request: "x", tools: [look], steps: [{ ...steps[0], results: [{ id: "c1", ok: true, pictures: [{ media_type: "text/html", data: "AAAA" }] }] }] })), /pictures/);
 });
+
+test("a step's calls are read one at a time as they're written, the ones that don't fit held for the end", async () => {
+  const { plannedCalls, stepReader, afterStream } = await import("../app-ai.mjs");
+  const whole = '{"calls": [{"name": "addGrocery", "args": {"name": "Milk {2}", "qty": null}}, {"name": "addGrocery", "args": {"name": 5}}, {"name": "groceries", "args": {}}], "reply": null}';
+  // Nothing until a call's closing brace has come, a brace inside text included.
+  assert.deepEqual(plannedCalls(whole.slice(0, 60)), []);
+  const r = step();
+  const released = [], reader = stepReader(r, (call) => released.push(call));
+  for (let end = 10; end <= whole.length; end += 7) reader.planned(whole.slice(0, end));
+  reader.planned(whole);
+  assert.deepEqual(released, [{ id: "s1c1", name: "addGrocery", args: { name: "Milk {2}" } }, { id: "s1c3", name: "groceries", args: {} }]);
+  assert.deepEqual(afterStream(reader, {}).answer.calls.map((c) => [c.id, c.problem]), [["s1c2", "addGrocery: `name` must be text."]]);
+  // Nothing released: the whole answer is read and asked again as before.
+  const none = stepReader(r, () => {});
+  none.call("nothing", "{}");
+  assert.deepEqual(afterStream(none, { problem: "No." }), { problem: "No." });
+});

@@ -315,12 +315,98 @@ export function readPlan(text, r) {
   return readMessage({ tool_calls: [{ function: { name: REPLY, arguments: JSON.stringify(args) } }] }, r);
 }
 
+// MARK: Calls as they're written
+
+/**
+ * The calls finished so far in an answer in `planSchema`'s shape that's still being written: each element of its `calls`
+ * whose closing brace has come, parsed, in order. What's after them (an element half written, the reply) waits.
+ */
+export function plannedCalls(text) {
+  const found = [];
+  const key = text.search(/"calls"\s*:\s*\[/);
+  if (key < 0) return found;
+  let i = text.indexOf("[", key) + 1, depth = 0, start = -1, inString = false, escaped = false;
+  for (; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (c === "\\") escaped = true;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') inString = true;
+    else if (c === "{" || c === "[") { if (depth === 0) start = i; depth++; }
+    else if (c === "}" || c === "]") {
+      if (depth === 0) break;
+      depth--;
+      if (depth === 0 && start >= 0) {
+        try { found.push(JSON.parse(text.slice(start, i + 1))); } catch { break; }
+        start = -1;
+      }
+    }
+  }
+  return found;
+}
+
+/**
+ * Reads a step's calls one at a time as the model writes them (`stream` on `LampAI.act`), with the checks `readMessage`
+ * gives a whole answer: `release` gets each call that fits as soon as it's whole, with the id it would have had. One that
+ * doesn't fit is held in `held`, with why: when nothing was released, the whole answer is read and asked again as
+ * before; when something was, they go to the page at the end as calls that failed (`problem`), never run.
+ */
+export function stepReader(r, release) {
+  const step = r.steps.length + 1;
+  let given = 0, seen = 0;
+  const reader = {
+    released: 0,
+    held: [],
+    /** One whole call, `args` its arguments as an object or as the JSON text the model wrote. */
+    call(name, raw) {
+      if (name === REPLY) return;
+      const id = `s${step}c${++given}`;
+      let args = raw;
+      if (typeof raw === "string") { try { args = JSON.parse(raw || "{}"); } catch { args = undefined; } }
+      const hold = (problem) => reader.held.push({ id, name: String(name), args: args && typeof args === "object" && !Array.isArray(args) ? args : {}, problem });
+      if (given > MAX_CALLS) return hold(`Give at most ${MAX_CALLS} calls at once.`);
+      if (typeof name !== "string") return hold("A call had no name.");
+      if (!args || typeof args !== "object" || Array.isArray(args)) return hold(`${name}'s arguments weren't a JSON object.`);
+      if (r.final) return hold("Only `reply` is possible now.");
+      const tool = r.tools.find((t) => t.name === name);
+      if (!tool) return hold(`There's no tool called ${name}.`);
+      const bad = toolProblem(tool, args);
+      if (bad) return hold(bad);
+      reader.released++;
+      release({ id, name, args });
+    },
+    /** The answer in `planSchema`'s shape as written so far: calls finished since last time are read. An optional
+     *  argument left null is left out, as `readPlan` leaves it. */
+    planned(text) {
+      const found = plannedCalls(text);
+      for (const call of found.slice(seen)) {
+        const args = call?.args && typeof call.args === "object" && !Array.isArray(call.args) ? Object.fromEntries(Object.entries(call.args).filter(([, v]) => v !== null)) : call?.args;
+        reader.call(call?.name, args);
+      }
+      seen = found.length;
+    },
+  };
+  return reader;
+}
+
+/**
+ * A streamed step's answer once the model is done: when calls were released, only what's left (the calls that didn't
+ * fit, as failures); else the whole answer read as before (`read`, from `readMessage` or `readPlan`).
+ */
+export function afterStream(reader, read) {
+  if (!reader.released) return read;
+  return { answer: { calls: reader.held.map((c) => ({ id: c.id, name: c.name, args: c.args, problem: c.problem })) } };
+}
+
 // MARK: What the model is told
 
 const RULES = `You act for the person inside this app, only through its tools.
 - Use a tool to look something up before acting on it, and use ids exactly as the tools gave them. Never invent an id.
 - Change only what the person asked for. When the request is unclear (which one, who, what day or time), ask back in the reply instead of guessing.
-- Several look-ups can go in one answer. Changes run one after another, each checked right before it runs; a change that fails stops the ones after it in that answer.
+- Several calls can go in one answer, and they run in the order you write them: look-ups side by side run together, changes run one after another, each checked right before it runs, and a change that fails stops the changes after it in that answer. A look-up after a change sees it.
 - Never say something was done unless its result says it was. If something failed or was skipped, say so.
 - When the request is met, or you need to ask, finish with \`reply\`: one or two short sentences that can be spoken aloud, no lists, no emoji, no markdown. Set \`ask\` to true only when the reply is a question for the person.
 - When your question has a few short answers (yes or no, which of two or three), give them in \`choices\`: two to four, each a word or a few, plain text, in the order to offer them. Leave \`choices\` out when any answer could do.`;

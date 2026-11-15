@@ -650,6 +650,15 @@ enum AppAI {
     static func viaEngine(_ engine: Engine, prompt: String, images: [Image],
                           system: String, model: String, schema: [String: Any]? = nil,
                           timeLimit: TimeInterval? = nil) async throws -> (String, Double) {
+        let done = try await engineAnswer(engine, prompt: prompt, images: images, system: system, model: model, schema: schema, timeLimit: timeLimit)
+        return (done["text"] as? String ?? "", 0)   // the person's sign-in: nothing billed through Lamp
+    }
+
+    /// `viaEngine`'s run, its answer as lamp's command line gives it: `text`, and for an act `step` it streams (each
+    /// call that fits heard by `onEvent` as `{call}` as soon as it's whole), what was `released` and `held`.
+    static func engineAnswer(_ engine: Engine, prompt: String, images: [Image], system: String, model: String,
+                             schema: [String: Any]? = nil, timeLimit: TimeInterval? = nil, step: [String: Any]? = nil,
+                             onEvent: (@Sendable ([String: Any]) -> Void)? = nil) async throws -> [String: Any] {
         guard engine != .pi else { throw Failure(message: noTextRoute, needs: .text) }
         var env = ["PATH": ToolLocator.userPath]
         env.merge(EngineInstall.environment(for: engine)) { $1 }
@@ -661,9 +670,10 @@ enum AppAI {
         if engine == .claude || Builder.codexModels.contains(where: { $0.id == model && !model.isEmpty }) { given["model"] = model }
         if let schema { given["schema"] = schema }
         if let timeLimit { given["seconds"] = timeLimit }
-        let done = try await LampCLI.ask("engineAnswer", given)
+        if let step { given["step"] = step }
+        let done = try await LampCLI.ask("engineAnswer", given, onEvent: onEvent)
         try Task.checkCancellation()
-        if let text = done["text"] as? String { return (text, 0) }   // the person's sign-in: nothing billed through Lamp
+        if done["text"] is String { return done }
         let trouble = done["trouble"] as? [String: Any] ?? [:]
         let message = trouble["message"] as? String ?? "The AI didn't answer."
         switch trouble["kind"] as? String {

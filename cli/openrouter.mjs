@@ -81,6 +81,77 @@ export async function chat({ key, body, seconds = 120, signal, fetcher = fetch }
   throw new OpenRouterTrouble("refused", "The AI didn't answer.", { cost });
 }
 
+/**
+ * One chat completion streamed (`stream` on `LampAI.act`): `onCall(name, argumentsText)` hears each tool call as soon as
+ * the model has finished writing it, which is when the next one starts or the answer ends. Resolves as `chat` does,
+ * `{message, cost}`, the whole message. Asked once: a provider's filter cutting it off is `filtered`, since calls may
+ * already have gone to the page.
+ */
+export async function chatStream({ key, body, seconds = 120, signal, fetcher = fetch, onCall = () => {} }) {
+  const timeout = AbortSignal.timeout(Math.max(1000, Math.floor(seconds * 1000)));
+  let answer;
+  try {
+    answer = await fetcher(ENDPOINT, { method: "POST", body: JSON.stringify({ ...body, stream: true }),
+      headers: { Authorization: `Bearer ${key || ""}`, "Content-Type": "application/json", "X-Title": "Lamp" },
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+  } catch (error) {
+    if (signal?.aborted) throw new OpenRouterTrouble("stopped", "Stopped.");
+    if (error?.name === "TimeoutError") throw new OpenRouterTrouble("timeout", "This ran out of time.");
+    throw new OpenRouterTrouble("refused", "Couldn't reach OpenRouter.");
+  }
+  if (answer.status !== 200 || !answer.body) {
+    let reply = {};
+    try { reply = await answer.json(); } catch {}
+    throw new OpenRouterTrouble("refused", "OpenRouter didn't answer.", { status: answer.status, reply });
+  }
+  const calls = [], told = new Set();
+  let content = "", cost = 0, finish = null, rest = "";
+  const tell = (upTo) => {
+    for (let i = 0; i < upTo; i++) if (calls[i] && !told.has(i)) { told.add(i); onCall(calls[i].function.name, calls[i].function.arguments); }
+  };
+  const take = (line) => {
+    if (!line.startsWith("data:")) return;
+    const data = line.slice(5).trim();
+    if (!data || data === "[DONE]") return;
+    let chunk;
+    try { chunk = JSON.parse(data); } catch { return; }
+    if (chunk.usage) cost += Number(chunk.usage.cost) || 0;
+    if (chunk.error) throw new OpenRouterTrouble("refused", "OpenRouter didn't answer.", { status: Number(chunk.error.code) || 0, reply: { error: chunk.error }, cost });
+    const choice = Array.isArray(chunk.choices) ? chunk.choices[0] : null;
+    if (!choice) return;
+    if (choice.finish_reason) finish = choice.finish_reason;
+    const delta = choice.delta ?? {};
+    if (typeof delta.content === "string") content += delta.content;
+    for (const part of Array.isArray(delta.tool_calls) ? delta.tool_calls : []) {
+      const i = Number.isInteger(part.index) ? part.index : calls.length;
+      // A call is whole once a later one starts.
+      if (!calls[i]) { tell(i); calls[i] = { id: part.id || `call_${i}`, type: "function", function: { name: "", arguments: "" } }; }
+      if (part.id) calls[i].id = part.id;
+      if (part.function?.name) calls[i].function.name += part.function.name;
+      if (part.function?.arguments) calls[i].function.arguments += part.function.arguments;
+    }
+  };
+  try {
+    const decoder = new TextDecoder();
+    for await (const bytes of answer.body) {
+      rest += decoder.decode(bytes, { stream: true });
+      const lines = rest.split("\n");
+      rest = lines.pop();
+      for (const line of lines) take(line.trim());
+    }
+    if (rest.trim()) take(rest.trim());
+  } catch (error) {
+    if (error instanceof OpenRouterTrouble) throw error;
+    if (signal?.aborted) throw new OpenRouterTrouble("stopped", "Stopped.", { cost });
+    if (error?.name === "TimeoutError" || timeout.aborted) throw new OpenRouterTrouble("timeout", "This ran out of time.", { cost });
+    throw new OpenRouterTrouble("refused", "OpenRouter stopped answering.", { cost });
+  }
+  if (finish === "content_filter") throw new OpenRouterTrouble("filtered", FILTERED, { cost });
+  tell(calls.length);
+  const message = { content, ...(calls.length ? { tool_calls: calls.filter(Boolean) } : {}) };
+  return { message, cost };
+}
+
 /** A text answer: `{text, cost}`. */
 export async function text(given) {
   const { message, cost } = await chat({ ...given, body: textBody(given) });
