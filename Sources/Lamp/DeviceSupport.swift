@@ -476,8 +476,13 @@ enum DeviceSupport {
             var id = ++askId;
             asked[id] = resolve;
             gate.postMessage(JSON.stringify({ id: id, path: m.path, body: m.body, timeout: m.timeout }));
-            // A page that stops waiting tells the host, which can stop the answer (lamp dev does).
-            if (signal) signal.addEventListener('abort', function () { if (asked[id]) gate.postMessage(JSON.stringify({ id: id, cancel: true })); });
+            // A page that stops waiting tells the host, which can stop the answer (lamp dev does), and hears nothing after.
+            if (signal) signal.addEventListener('abort', function () {
+              if (!asked[id]) return;
+              delete asked[id];
+              gate.postMessage(JSON.stringify({ id: id, cancel: true }));
+              resolve({ status: 499, body: '{}' });
+            });
           });
         } };
       }
@@ -667,6 +672,8 @@ enum DeviceSupport {
           });
         }
         return done.then(function (answer) {
+          // Stopped by the page: no failure of the AI's, so nothing is said about it.
+          if (signal && signal.aborted) throw stoppedFailure();
           if (answer.status === 200) return answer.reply;
           var message = answer.reply.error || 'The AI request failed.';
           if (window.console) console.error('LampAI ' + path + ' failed: ' + message);

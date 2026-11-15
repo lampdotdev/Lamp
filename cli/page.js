@@ -30,13 +30,13 @@
       let asked;
       try { asked = JSON.parse(text); } catch (e) { return; }
       // The page stopped waiting (lamp.js's `cancel`): the request ends, which stops lamp's answer.
-      if (asked.cancel) { const going = asking.get(asked.id); if (going) going.abort(); return; }
+      if (asked.cancel) { const going = asking.get(asked.id); if (going) { going.cancelled = true; going.abort(); } return; }
       const answer = (status, body) => { if (typeof gateway.onmessage === 'function') gateway.onmessage({ data: JSON.stringify({ id: asked.id, status, body }) }); };
       const stop = new AbortController();
       asking.set(asked.id, stop);
       const timer = later(() => stop.abort(), Math.max(1000, Number(asked.timeout) || 240000));
       ask('/__lamp/ai', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lamp-Page': '1' }, body: JSON.stringify({ path: asked.path, body: asked.body }), signal: stop.signal })
-        .then((r) => r.json()).then((r) => answer(r.status, r.body), () => answer(502, JSON.stringify({ error: 'lamp dev took too long to answer.' })))
+        .then((r) => r.json()).then((r) => answer(r.status, r.body), () => { if (!stop.cancelled) answer(502, JSON.stringify({ error: 'lamp dev took too long to answer.' })); })
         .finally(() => { unlater(timer); asking.delete(asked.id); });
     };
     try { Object.defineProperty(window, 'lampGatewayHost', { value: gateway, configurable: true }); } catch (e) {}
