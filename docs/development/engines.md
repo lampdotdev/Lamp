@@ -315,7 +315,11 @@ A capability given to one engine must be given to all of them that can take it, 
   `AppAct` keeps only the route, its time and asking it. Every text route answers: OpenRouter with tools,
   `require_parameters` and `tool_choice` "auto" ("none" for the reply-only step), so words without a call are the
   reply; Claude Code and Codex with one sealed run per step held to the step's JSON shape (`--json-schema`,
-  `--output-schema`). A question back may carry `choices` from `reply` (two to
+  `--output-schema`). A tool's result may show the model pictures (`LampAI.picture`): lamp.js takes each out of the result,
+  named in its place ("[picture 2]", numbered across the turn), scaled to 1024 pixels, and sends the newest six beside
+  it, older ones as no longer shown (`ACT_PICTURES`, `MAX_PICTURES`, a step's 3.5 MB); OpenRouter is shown a step's
+  pictures as a message after its results, Claude Code and Codex with the prompt, as an ask's pictures go
+  (`chatBody`, `planPrompt`'s `images`). A question back may carry `choices` from `reply` (two to
   four short plain-text answers, checked in app-ai.mjs and again in lamp.js); words without a call carry none.
   `LampAI.isAvailable('act')` asks `/ai/act` itself (`probe`), so it's true only when lamp.js has `act`, the app around
   the page lets the route through and the app's route can take it.
