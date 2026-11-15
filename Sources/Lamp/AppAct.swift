@@ -86,7 +86,7 @@ enum AppAct {
         }
         // A streamed step the page is following (`stream` on lamp.js's act): what it has that the page hasn't.
         if let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let id = body["follow"] as? String {
-            return await LiveSteps.follow(id, have: body["have"] as? Int ?? 0)
+            return await LiveSteps.follow(id, have: Swift.max(0, body["have"] as? Int ?? 0))
         }
         let streamed = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["stream"] as? Bool == true
         let r: Request
@@ -252,6 +252,7 @@ enum AppAct {
     /// a page reaches Lamp carries it. The answer comes with the calls it adds (those held back as failures) and its cost.
     static func follow(_ id: String, have: Int) async -> (Int, [String: Any], Double) {
         guard let step = steps[id] else { return (404, ["error": "This step is over."], 0) }
+        let have = Swift.max(0, have)
         step.seen = Date()
         let until = Date().addingTimeInterval(50)
         var (calls, done) = step.state()

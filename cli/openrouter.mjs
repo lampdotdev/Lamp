@@ -82,8 +82,9 @@ export async function chat({ key, body, seconds = 120, signal, fetcher = fetch }
 }
 
 /**
- * One chat completion streamed (`stream` on `LampAI.act`): `onCall(name, argumentsText)` hears each tool call as soon as
- * the model has finished writing it, which is when the next one starts or the answer ends. Resolves as `chat` does,
+ * One chat completion streamed (`stream` on `LampAI.act`): `onCall(name, argumentsText)` hears each tool call, in order,
+ * as soon as its arguments are whole (they read as a JSON object, which can't go on after its closing brace), or when the
+ * answer ends. Providers may send several calls' pieces interleaved, so a later call starting says nothing. Resolves as `chat` does,
  * `{message, cost}`, the whole message. Asked once: a provider's filter cutting it off is `filtered`, since calls may
  * already have gone to the page.
  */
@@ -106,8 +107,14 @@ export async function chatStream({ key, body, seconds = 120, signal, fetcher = f
   }
   const calls = [], told = new Set();
   let content = "", cost = 0, finish = null, rest = "";
-  const tell = (upTo) => {
-    for (let i = 0; i < upTo; i++) if (calls[i] && !told.has(i)) { told.add(i); onCall(calls[i].function.name, calls[i].function.arguments); }
+  const whole = (call) => { try { const args = JSON.parse(call.function.arguments); return !!call.function.name && !!args && typeof args === "object" && !Array.isArray(args); } catch { return false; } };
+  // In order: a call waits for every one before it, so they run as they were written.
+  const tell = (all = false) => {
+    for (let i = told.size; i < calls.length; i++) {
+      if (!calls[i] || (!all && !whole(calls[i]))) return;
+      told.add(i);
+      onCall(calls[i].function.name, calls[i].function.arguments);
+    }
   };
   const take = (line) => {
     if (!line.startsWith("data:")) return;
@@ -124,12 +131,12 @@ export async function chatStream({ key, body, seconds = 120, signal, fetcher = f
     if (typeof delta.content === "string") content += delta.content;
     for (const part of Array.isArray(delta.tool_calls) ? delta.tool_calls : []) {
       const i = Number.isInteger(part.index) ? part.index : calls.length;
-      // A call is whole once a later one starts.
-      if (!calls[i]) { tell(i); calls[i] = { id: part.id || `call_${i}`, type: "function", function: { name: "", arguments: "" } }; }
+      if (!calls[i]) calls[i] = { id: part.id || `call_${i}`, type: "function", function: { name: "", arguments: "" } };
       if (part.id) calls[i].id = part.id;
       if (part.function?.name) calls[i].function.name += part.function.name;
       if (part.function?.arguments) calls[i].function.arguments += part.function.arguments;
     }
+    tell();
   };
   try {
     const decoder = new TextDecoder();
@@ -147,7 +154,7 @@ export async function chatStream({ key, body, seconds = 120, signal, fetcher = f
     throw new OpenRouterTrouble("refused", "OpenRouter stopped answering.", { cost });
   }
   if (finish === "content_filter") throw new OpenRouterTrouble("filtered", FILTERED, { cost });
-  tell(calls.length);
+  tell(true);
   const message = { content, ...(calls.length ? { tool_calls: calls.filter(Boolean) } : {}) };
   return { message, cost };
 }

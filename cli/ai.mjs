@@ -400,7 +400,7 @@ async function following(id, have) {
 
 export async function act(body, here = engines()) {
   const first = here[0] ?? null;
-  if (typeof body?.follow === "string") return following(body.follow, Number(body.have) || 0);
+  if (typeof body?.follow === "string") return following(body.follow, Math.max(0, Math.floor(Number(body.have)) || 0));
   if (body?.probe === true) {
     // A key OpenRouter refuses can't answer a step, as `/ai/status` says too.
     const refused = first === "openrouter" ? await keyProblem() : null;

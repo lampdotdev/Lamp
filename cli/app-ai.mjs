@@ -351,9 +351,10 @@ export function plannedCalls(text) {
 /**
  * Reads a step's calls one at a time as the model writes them (`stream` on `LampAI.act`), with the checks `readMessage`
  * gives a whole answer: `release` gets each call that fits as soon as it's whole, with the id it would have had. One that
- * doesn't fit is held in `held`, with why: when nothing was released, the whole answer is read and asked again as
- * before; when something was, they go to the page at the end as calls that failed (`problem`), never run. Calls past
- * `MAX_CALLS` are left out.
+ * doesn't fit is held, with why (`problem`), until one that fits comes after it, which it goes before, in its place, as
+ * a call that failed: the page never runs it, and a change that failed stops the changes after it. One left held at the
+ * end goes last when calls were released (`afterStream`), or, when none was, the whole answer is read and asked again
+ * as before. Calls past `MAX_CALLS` are left out.
  */
 export function stepReader(r, release) {
   const step = r.steps.length + 1;
@@ -378,6 +379,7 @@ export function stepReader(r, release) {
       const bad = toolProblem(tool, args);
       if (bad) return hold(bad);
       reader.released++;
+      for (const held of reader.held.splice(0)) release(held);
       release({ id, name, args });
     },
     /** The answer in `planSchema`'s shape as written so far: calls finished since last time are read. An optional

@@ -1046,7 +1046,8 @@ enum DeviceSupport {
         // fails stops the writes after it in this step, which the model hears were skipped.
         // A step's calls, run as they come (`stream`) and in the order the AI wrote them: reads side by side run together,
         // a write waits for every call before it, and a read after a write sees it. A write that fails skips the writes
-        // after it in the step. A call Lamp held back as not fitting (`problem`) isn't run: the AI hears why.
+        // after it in the step. A call Lamp held back as not fitting (`problem`) isn't run: the AI hears why, and a change of
+        // that kind fails in its place.
         function stepRunner(step) {
           var results = {}, chain = Promise.resolve(), reading = [], stopped = null;
           function read(c) {
@@ -1080,6 +1081,8 @@ enum DeviceSupport {
             }
             if (late()) return;
             if (stopped) return skip(stopped);
+            // A change Lamp held back as not fitting failed, in its place.
+            if (typeof c.problem === 'string') return fail(c.problem);
             var bad = actProblem(tool, c.name, c.args);
             if (bad) return fail(bad);
             var key = 'k' + hash(id + '|' + c.name + '|' + canonical(c.args));
@@ -1115,7 +1118,7 @@ enum DeviceSupport {
           }
           return {
             add: function (c) {
-              if (typeof c.problem === 'string') { results[c.id] = { id: c.id, ok: false, error: c.problem }; return; }
+              if (typeof c.problem === 'string' && tools[c.name] && tools[c.name].reads) { results[c.id] = { id: c.id, ok: false, error: c.problem }; return; }
               if (tools[c.name] && tools[c.name].reads) {
                 var going = chain.then(function () { return read(c); });
                 reading.push(going);
