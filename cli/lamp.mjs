@@ -864,6 +864,8 @@ async function main() {
       while (!existsSync(there)) there = dirname(there);
       const real = realpathSync(there);
       if (real !== top && !real.startsWith(top + sep)) return false;
+      // Nor a hidden folder reached through a link (renders → .lamp).
+      if (real !== top && real.slice(top.length + 1).split(sep).some((part) => part.startsWith("."))) return false;
       try { if (lstatSync(file).isSymbolicLink() || !lstatSync(file).isFile()) return false; } catch {}
       return true;
     };
