@@ -993,7 +993,9 @@ enum DeviceSupport {
           }
           var kept = walk(value, 0);
           if (!found.length) return Promise.resolve({ value: value });
-          return encode(found.map(function (f) { return f.source; }), ACT_PICTURE_SIDE).then(function (encoded) {
+          // A picture that never loads costs the turn nothing: after a few seconds the result goes without it.
+          var slow = new Promise(function (resolve, reject) { browserTimeout(function () { reject(new Error('slow')); }, 10000); });
+          return Promise.race([encode(found.map(function (f) { return f.source; }), ACT_PICTURE_SIDE), slow]).then(function (encoded) {
             return { value: kept, pictures: encoded.map(function (e, i) { return { media_type: e.media_type, data: e.data, number: found[i].number }; }) };
           }, function () {
             return { value: { result: kept, note: 'Its pictures couldn\'t be read, so they aren\'t shown.' } };
@@ -1001,22 +1003,21 @@ enum DeviceSupport {
         }
         // The steps as sent: only the newest pictures go with their data, within the step's room for them.
         function sentSteps() {
-          var room = ACT_PICTURE_BYTES, count = 0;
-          var sent = steps.map(function (s) { return { calls: s.calls, results: s.results.slice() }; });
-          for (var i = sent.length - 1; i >= 0; i--) {
-            sent[i].results = sent[i].results.map(function (r) {
+          // Chosen newest first by number across every result, whatever order the results are in.
+          var room = ACT_PICTURE_BYTES, chosen = {}, all = [];
+          steps.forEach(function (s) { s.results.forEach(function (r) { (r.pictures || []).forEach(function (p) { all.push(p); }); }); });
+          all.sort(function (a, b) { return b.number - a.number; }).forEach(function (p) {
+            if (Object.keys(chosen).length < ACT_PICTURES && p.data.length <= room) { chosen[p.number] = true; room -= p.data.length; }
+          });
+          return steps.map(function (s) {
+            return { calls: s.calls, results: s.results.map(function (r) {
               if (!r.pictures) return r;
               var copy = {};
               for (var k in r) if (Object.prototype.hasOwnProperty.call(r, k)) copy[k] = r[k];
-              copy.pictures = r.pictures.slice().reverse().map(function (p) {
-                var fits = count < ACT_PICTURES && p.data.length <= room;
-                if (fits) { count++; room -= p.data.length; }
-                return { media_type: p.media_type, number: p.number, data: fits ? p.data : null };
-              }).reverse();
+              copy.pictures = r.pictures.map(function (p) { return { media_type: p.media_type, number: p.number, data: chosen[p.number] ? p.data : null }; });
               return copy;
-            });
-          }
-          return sent;
+            }) };
+          });
         }
         var declared = Object.keys(tools).map(function (name) {
           var t = tools[name];
@@ -1099,16 +1100,18 @@ enum DeviceSupport {
                 var running;
                 try { running = Promise.resolve(tool.run(c.args, call)); } catch (e) { running = Promise.reject(e); }
                 return running.then(function (value) {
-                  return pictured(value).then(function (p) { return { value: value, p: p }; });
-                }).then(function (got) {
-                  var value = got.value, kept = sized(got.p.value);
-                  ran[key] = kept;
+                  // The change is done: it's recorded now, whatever happens to its pictures after.
+                  ran[key] = { note: 'Done.' };
                   var entry = { name: c.name, args: c.args, result: value };
                   if (value && typeof value === 'object' && value.partly) entry.partly = String(value.partly);
                   out.done.push(entry);
+                  tell({ kind: 'write', name: c.name, args: c.args, result: value });
+                  return pictured(value).then(function (p) { return { p: p }; });
+                }).then(function (got) {
+                  var kept = sized(got.p.value);
+                  ran[key] = kept;
                   results[c.id] = { id: c.id, ok: true, value: kept };
                   if (got.p.pictures) results[c.id].pictures = got.p.pictures;
-                  tell({ kind: 'write', name: c.name, args: c.args, result: value });
                   return next(i + 1);
                 }, function (e) { return fail(refused(e)); });
               }, function (e) { return fail(refused(e)); });
