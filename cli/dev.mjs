@@ -180,7 +180,9 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
       if (now === null) { known.delete(path); removed.push(path); }
       else { known.set(path, now); changed.push(path); }
     }
-    if (changed.length || removed.length) broadcast(changed.sort(), removed.sort());
+    // A file no page has asked for (renders or logs a page's tests write beside it, say) is nothing an open page shows,
+    // so it opens no page again: a page that asks for it later gets it as it is then.
+    if ([...changed, ...removed].some((path) => served.has(path))) broadcast(changed.sort(), removed.sort());
   }
   // Saves are gathered for a moment, so a change of several files goes to the pages as one.
   let pending = new Set(), timer = null;
