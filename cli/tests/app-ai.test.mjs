@@ -267,19 +267,22 @@ test("pictures are made with an OpenRouter key, else Codex for the person's own 
     writeFileSync(join(folder, "claude"), "#!/bin/sh\n");
     chmodSync(join(folder, "claude"), 0o755);
     assert.equal(pictureRoute(), null);
-    assert.equal(status().pictures, false);
+    assert.equal((await status()).pictures, false);
     const [refused, said] = await answer("/ai/image", { prompt: "a fox" });
     assert.deepEqual([refused, said.needs], [501, "pictures"]);
     // A stand-in Codex that saves a PNG where it's run and writes down how it was run.
     writeFileSync(join(folder, "codex"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${folder}/args"\nprintf '\\211PNG\\r\\n\\032\\n0000' > image.png\n`);
     chmodSync(join(folder, "codex"), 0o755);
-    assert.deepEqual([pictureRoute(), pictureRoute({ id: "abc" }), status().details.pictures.route], ["codex", null, "Codex"]);
+    assert.deepEqual([pictureRoute(), pictureRoute({ id: "abc" }), (await status()).details.pictures.route], ["codex", null, "Codex"]);
     const [made, picture] = await answer("/ai/image", { prompt: "a fox", aspect_ratio: "1:1", images: [{ media_type: "image/png", data: "AAAA" }] });
     assert.deepEqual([made, picture.media_type, Buffer.from(picture.image, "base64").toString("latin1", 1, 4)], [200, "image/png", "PNG"]);
     const args = read(join(folder, "args"), "utf8");
     assert.ok(args.includes("--ignore-user-config") && args.includes('default_permissions="lamp"') && /":root"="deny"/.test(args) && !args.includes('sandbox_mode') && /-i\nreference1\.png/.test(args));
     process.env.OPENROUTER_API_KEY = "k";
     assert.deepEqual([pictureRoute(), pictureRoute({ id: "abc" })], ["openrouter", null], "a shared page uses only the engine it was let use");
+    // A key OpenRouter refuses (revoked) isn't offered: status says which setting to fix.
+    const refusedKey = (await status(undefined, async () => "Set a new key.")).details.pictures;
+    assert.deepEqual([refusedKey.available, refusedKey.reason], [false, "Set a new key."]);
     process.env.LAMP_AI = "openrouter";
     assert.equal(pictureRoute({ id: "abc" }), "openrouter");
   } finally {

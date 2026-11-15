@@ -14940,13 +14940,20 @@ final class Store: ObservableObject {
         var reply: [String: Any] = [:]
         var details: [String: Any] = [:]
         let ready = project.map(readyFor) ?? (setup.ready || (setup.hasBuilder && setup.hasAgent))
+        // A key OpenRouter refuses (revoked, or out of credit) is there but answers nothing, so what goes through it
+        // isn't offered, and the app is told which setting to fix.
+        let refused = await OpenRouterKeyCheck.problem()
+        let unanswered: [String: Any]? = refused.map { ["available": false, "where": "unknown", "reason": $0, "setup": "lamp"] }
         for capability in Capability.allCases {
             let resolution = AppAI.resolve(capability, for: project)
-            reply[capability.rawValue] = ready && resolution.tier != .none
-            details[capability.rawValue] = AppAI.details(resolution)
+            let broken = resolution.provider == "openrouter" ? unanswered : nil
+            reply[capability.rawValue] = ready && resolution.tier != .none && broken == nil
+            details[capability.rawValue] = broken ?? AppAI.details(resolution)
         }
         // Actions are asked of the same route as `/ai/act`'s probe, so the two never disagree.
-        let act = AppAct.status(appModel: (project.map(AppModels.load) ?? AppModels()).text)
+        let appText = (project.map(AppModels.load) ?? AppModels()).text
+        var act = AppAct.status(appModel: appText)
+        if let unanswered, case .success(let route) = AppAct.firstRoute(appModel: appText), AppAI.provider(of: route) == "openrouter" { act = unanswered }
         reply["act"] = ready && act["available"] as? Bool == true
         details["act"] = act
         if !ready {

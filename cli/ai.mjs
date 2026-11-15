@@ -156,6 +156,43 @@ function codexFailure(event) {
   return nested || words;
 }
 
+// MARK: The OpenRouter key
+
+const KEY_REFUSED = "OpenRouter didn't accept the key in OPENROUTER_API_KEY: it may have been revoked. Set a new one from openrouter.ai/keys.";
+const KEY_EMPTY = "The OpenRouter key in OPENROUTER_API_KEY has no credit left. Add credit at openrouter.ai.";
+let keyAsked = { key: "", at: 0, problem: null };
+
+/**
+ * What's wrong with the key in OPENROUTER_API_KEY, as OpenRouter says (as Lamp's app asks it, `openRouterVerdict`), or
+ * null: a key that's there isn't one that works (revoked, or out of credit), and `status` says so rather than offer
+ * what every call would then refuse. Asked at most every five minutes, and quickly, since a page waits on its status; when
+ * OpenRouter can't be reached in time, the key may be good.
+ */
+export async function keyProblem(fetcher = fetch) {
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) return null;
+  if (keyAsked.key === key && Date.now() - keyAsked.at < 5 * 60_000) return keyAsked.problem;
+  let problem = null;
+  try {
+    const answer = await fetcher("https://openrouter.ai/api/v1/key", { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(4000) });
+    if (answer.status === 401 || answer.status === 403) problem = KEY_REFUSED;
+    else if (answer.status === 200) {
+      const left = (await answer.json().catch(() => ({})))?.data?.limit_remaining;
+      if (typeof left === "number" && left <= 0) problem = KEY_EMPTY;
+    } else return null;
+  } catch { return null; }
+  keyAsked = { key, at: Date.now(), problem };
+  return problem;
+}
+
+/** What an OpenRouter failure says to the page: the key's trouble as the setting to fix, else what OpenRouter said. */
+function openRouterWords(error) {
+  if (error?.status === 401 || error?.status === 403) return KEY_REFUSED;
+  if (error?.status === 402) return KEY_EMPTY;
+  const words = error?.reply?.error?.message;
+  return words ? String(words) : String(error?.message || "OpenRouter didn't answer.");
+}
+
 /** An answer from OpenRouter with the person's key (openrouter.mjs, as Lamp's app sends it), its troubles said as an engine's. */
 async function viaOpenRouter({ system, prompt, schema, seconds, model, images, signal }) {
   try {
@@ -163,24 +200,21 @@ async function viaOpenRouter({ system, prompt, schema, seconds, model, images, s
       model: model || DEFAULT_MODEL, json: !!schema, schema, seconds, signal })).text;
   } catch (error) {
     if (!(error instanceof OpenRouterTrouble)) throw error;
-    const words = error.reply?.error?.message;
-    throw new EngineTrouble(error.kind === "refused" ? "failed" : error.kind, words ? String(words) : error.message);
+    throw new EngineTrouble(error.kind === "refused" ? "failed" : error.kind, error.kind === "refused" ? openRouterWords(error) : error.message);
   }
 }
 
 // MARK: Status and asking
 
-/** `/ai/status`: what can answer here. Text, decisions and actions with an engine; pictures as `pictureRoute` says. */
-export function status(page) {
-  const which = engine();
-  const route = which ? named(which) : null;
-  const available = (kind) => route ? { available: true, route, where: "remote" } : { available: false, reason: missing, setup: "lamp" };
-  const drawer = pictureRoute(page);
-  return {
-    text: !!route, decisions: !!route, pictures: !!drawer, act: !!route,
-    details: { text: available("text"), decisions: available("decisions"), act: available("act"),
-      pictures: drawer ? { available: true, route: named(drawer), where: "remote" } : { available: false, reason: noPictures(page), setup: "lamp" } },
-  };
+/** `/ai/status`: what can answer here. Text, decisions and actions with an engine; pictures as `pictureRoute` says.
+ *  What goes through OpenRouter answers only while it takes the key (`keyProblem`). */
+export async function status(page, problem = keyProblem) {
+  const which = engine(), drawer = pictureRoute(page);
+  const broken = which === "openrouter" || drawer === "openrouter" ? await problem() : null;
+  const one = (by, reason) => !by ? { available: false, reason, setup: "lamp" }
+    : by === "openrouter" && broken ? { available: false, reason: broken, setup: "lamp" } : { available: true, route: named(by), where: "remote" };
+  const details = { text: one(which, missing), decisions: one(which, missing), act: one(which, missing), pictures: one(drawer, noPictures(page)) };
+  return { text: details.text.available, decisions: details.decisions.available, pictures: details.pictures.available, act: details.act.available, details };
 }
 
 // MARK: Models (`LampAI.models`, and `model` on `ask` and `act`)
@@ -404,7 +438,7 @@ export async function makeImage(body, page, app = {}) {
     }
   } catch (error) {
     if (error?.kind === "timeout") return [504, { error: "The picture took too long to make." }];
-    return [502, { error: String(error?.reply?.error?.message || error.message) }];
+    return [502, { error: openRouterWords(error) }];
   }
   const type = pictureType(made);
   if (!type) return [502, { error: route === "codex" ? "Codex didn't make the picture. Check it's signed in." : "The image model didn't return a picture." }];
@@ -485,7 +519,7 @@ export function codexImage({ prompt, references = [], aspectRatio, seconds = PIC
 /** A page's AI request, by its route, as Lamp's app answers it: [status, JSON]. `app` is what the app chose for itself
  *  (`imageModel`), when that's known. */
 export async function answer(path, body, page, app = {}) {
-  if (path === "/ai/status") return [200, status(page)];
+  if (path === "/ai/status") return [200, await status(page)];
   if (path === "/ai/models") return [200, models(enginesFor(page))];
   if (path === "/ai") return ask(body, enginesFor(page));
   if (path === "/ai/act") return act(body, enginesFor(page));
