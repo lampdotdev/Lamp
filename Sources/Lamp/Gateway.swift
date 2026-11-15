@@ -576,7 +576,8 @@ enum AppAI {
     /// the network give up by themselves.
     static func complete(prompt: String, images: [Image], system: String, json: Bool,
                          model: String? = nil, appModel: String? = nil, engineModel: String? = nil,
-                         schema: [String: Any]? = nil, via: TextRoute? = nil, timeLimit: TimeInterval? = nil) async throws -> (String, Double) {
+                         schema: [String: Any]? = nil, via: TextRoute? = nil, timeLimit: TimeInterval? = nil,
+                         effort: String? = nil) async throws -> (String, Double) {
         let chosen: TextRoute
         if let via { chosen = via } else { chosen = await route(for: appModel) }
         var system = system
@@ -584,7 +585,7 @@ enum AppAI {
         // One budget for the whole request, its second try included: the 10-minute guard unless the caller asks for less,
         // so whoever waits on the answer (an app's page waits the guard and a little more) gets the repair too.
         let deadline = Date().addingTimeInterval(min(timeLimit ?? guardSeconds, guardSeconds))
-        var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen, engineModel: engineModel, schema: schema, timeLimit: deadline.timeIntervalSinceNow)
+        var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen, engineModel: engineModel, schema: schema, timeLimit: deadline.timeIntervalSinceNow, effort: effort)
         guard json else { return (text, cost) }
         // A JSON reply that doesn't parse (cut off, or wrapped in prose) is useless to the app: ask once more,
         // through the same provider, saying so, before giving up. Both attempts are billed, so the cost goes
@@ -595,7 +596,7 @@ enum AppAI {
             let left = deadline.timeIntervalSinceNow
             guard left > 5 else { throw Failure(message: "The AI's reply wasn't valid JSON, and there was no time left to ask again.", cost: cost) }
             do {
-                let (retry, more) = try await dispatch(prompt: again, images: images, system: system, json: true, model: model, chosen: chosen, engineModel: engineModel, schema: schema, timeLimit: left)
+                let (retry, more) = try await dispatch(prompt: again, images: images, system: system, json: true, model: model, chosen: chosen, engineModel: engineModel, schema: schema, timeLimit: left, effort: effort)
                 cost += more
                 reply = stripFences(retry)
             } catch let failure as Failure {
@@ -619,19 +620,19 @@ enum AppAI {
     /// model for Claude Code or Codex (the fast one for decisions by text).
     private static func dispatch(prompt: String, images: [Image], system: String, json: Bool, model: String?,
                                  chosen: TextRoute, engineModel: String? = nil, schema: [String: Any]? = nil,
-                                 timeLimit: TimeInterval? = nil) async throws -> (String, Double) {
+                                 timeLimit: TimeInterval? = nil, effort: String? = nil) async throws -> (String, Double) {
         if let model, Provider.hasKey {
-            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json, schema: schema, seconds: timeLimit)
+            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json, schema: schema, seconds: timeLimit, effort: effort)
         }
         switch chosen.kind {
         case .openRouter(let model):
             guard Provider.hasKey else { throw Failure(message: noTextRoute, needs: .text) }
-            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json, schema: schema, seconds: timeLimit)
+            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json, schema: schema, seconds: timeLimit, effort: effort)
         case .engine(.pi, _):
             throw Failure(message: noTextRoute, needs: .text)
         case .engine(let engine, let model):
             return try await viaEngine(engine, prompt: prompt, images: images, system: system, model: engineModel ?? model,
-                                       schema: json ? schema : nil, timeLimit: timeLimit)
+                                       schema: json ? schema : nil, timeLimit: timeLimit, effort: effort)
         }
     }
 
@@ -649,8 +650,8 @@ enum AppAI {
     /// runs, and what it needs set, are decided here (`EngineInstall`). A cancelled caller stops the run with it.
     static func viaEngine(_ engine: Engine, prompt: String, images: [Image],
                           system: String, model: String, schema: [String: Any]? = nil,
-                          timeLimit: TimeInterval? = nil) async throws -> (String, Double) {
-        let done = try await engineAnswer(engine, prompt: prompt, images: images, system: system, model: model, schema: schema, timeLimit: timeLimit)
+                          timeLimit: TimeInterval? = nil, effort: String? = nil) async throws -> (String, Double) {
+        let done = try await engineAnswer(engine, prompt: prompt, images: images, system: system, model: model, schema: schema, timeLimit: timeLimit, effort: effort)
         return (done["text"] as? String ?? "", 0)   // the person's sign-in: nothing billed through Lamp
     }
 
@@ -658,7 +659,7 @@ enum AppAI {
     /// call that fits heard by `onEvent` as `{call}` as soon as it's whole), what was `released` and `held`.
     static func engineAnswer(_ engine: Engine, prompt: String, images: [Image], system: String, model: String,
                              schema: [String: Any]? = nil, timeLimit: TimeInterval? = nil, step: [String: Any]? = nil,
-                             onEvent: (@Sendable ([String: Any]) -> Void)? = nil) async throws -> [String: Any] {
+                             effort: String? = nil, onEvent: (@Sendable ([String: Any]) -> Void)? = nil) async throws -> [String: Any] {
         guard engine != .pi else { throw Failure(message: noTextRoute, needs: .text) }
         var env = ["PATH": ToolLocator.userPath]
         env.merge(EngineInstall.environment(for: engine)) { $1 }
@@ -671,6 +672,8 @@ enum AppAI {
         if let schema { given["schema"] = schema }
         if let timeLimit { given["seconds"] = timeLimit }
         if let step { given["step"] = step }
+        // How hard it thinks: "low" or "high" (`EFFORTS` in cli/app-ai.mjs), else as it does without.
+        if let effort { given["effort"] = effort }
         let done = try await LampCLI.ask("engineAnswer", given, onEvent: onEvent)
         try Task.checkCancellation()
         if done["text"] is String { return done }
@@ -962,11 +965,12 @@ enum AppAI {
     /// one, fitting `schema` when there is one, and asked again when a provider's content filter cuts the reply off.
     private static func viaOpenRouter(prompt: String, images: [Image], system: String,
                                       model: String, json: Bool = false, schema: [String: Any]? = nil,
-                                      seconds: TimeInterval? = nil) async throws -> (String, Double) {
+                                      seconds: TimeInterval? = nil, effort: String? = nil) async throws -> (String, Double) {
         var given: [String: Any] = ["key": KeyStore.openRouterKey ?? "", "prompt": prompt, "system": system, "model": model, "json": json,
                                     "images": images.map { ["media_type": $0.mediaType, "data": $0.data] }]
         if let schema { given["schema"] = schema }
         if let seconds { given["seconds"] = max(1, seconds) }
+        if let effort { given["effort"] = effort }
         let done = try await LampCLI.ask("openRouterText", given)
         if let text = done["text"] as? String { return (text, done["cost"] as? Double ?? 0) }
         throw openRouterFailure(done["trouble"] as? [String: Any] ?? [:])

@@ -858,6 +858,7 @@ enum DeviceSupport {
           var body = { prompt: text, system: rules.filter(function (r) { return r; }).join('\n\n'), json: json, images: images };
           if (schema) body.schema = schema;
           if (o.model) body.model = o.model;
+          if (o.effort === 'fast' || o.effort === 'best') body.effort = o.effort;
           // No limit of the page's own unless it asks for one: Lamp's guard ends only a call that stopped answering.
           if (typeof o.seconds === 'number' && o.seconds > 0) body.seconds = o.seconds;
           return post('/ai', body, AI_WAIT(body.seconds), null, o.signal);
@@ -1144,6 +1145,7 @@ enum DeviceSupport {
           if (route) body.route = route;
           if (steps.length >= limits.steps - 1) body.final = true;
           if (o.model) body.model = o.model;
+          if (o.effort === 'fast' || o.effort === 'best') body.effort = o.effort;
           // Streamed: each call comes as soon as the AI has written it, and runs then; the page follows the step for the
           // rest. A Lamp from before streaming answers the whole step at once, which runs the same way.
           body.stream = true;
@@ -1388,7 +1390,8 @@ enum DeviceSupport {
          *  schema (a JSON Schema the answer must fit, which holds every AI to it, for large JSON: implies json; each object
          *  lists every property in `required` and has `additionalProperties: false`), model (an id `LampAI.models()` lists,
          *  such as "engine:claude:opus" or "openrouter:sonnet"; a bare "opus" is Opus through whatever answers by
-         *  default), signal (an AbortSignal: aborting it fails the ask at once with `error.stopped`), details (true
+         *  default), effort ('fast' or 'best': how hard the AI thinks, quicker or more careful, on any model; left out, the
+         *  model's own), signal (an AbortSignal: aborting it fails the ask at once with `error.stopped`), details (true
          *  resolves { answer, seconds, cost }: `cost` in US dollars, 0 when the person's own Claude Code or Codex
          *  answered). */
         ask: function (prompt, options) { return call(prompt, options); },
@@ -1401,7 +1404,7 @@ enum DeviceSupport {
          * `writes` (up to 320) for one that builds something real in a turn, many changes at a time, `seconds` for a
          * feature that should answer quickly, and `result` (bytes, 32 KB unless raised, up to 256 KB) for how much of a
          * read the model sees. A limit that isn't a positive number keeps its default. `model` names which AI answers,
-         * as `ask`'s does; the whole turn stays on it.
+         * as `ask`'s does; the whole turn stays on it, and `effort` ('fast' or 'best') how hard it thinks, as `ask`'s.
          *
          *     var turn = LampAI.act('Add milk', {
          *       about: 'A family dashboard: the calendar, chores and the shopping list.',

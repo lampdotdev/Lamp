@@ -9,7 +9,7 @@ import { accessSync, closeSync, constants, fstatSync, mkdtempSync, openSync, rea
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { afterStream, chatBody, decidePrompt, planPrompt, planSchema, readDecision, readMessage, readPlan, readStep, stepReader } from "./app-ai.mjs";
+import { EFFORTS, afterStream, chatBody, decidePrompt, planPrompt, planSchema, readDecision, readMessage, readPlan, readStep, stepReader } from "./app-ai.mjs";
 import { DEFAULT_MODEL, IMAGE_MODELS, OpenRouterTrouble, chat as openRouterChat, chatStream as openRouterChatStream, image as openRouterImage, text as openRouterText } from "./openrouter.mjs";
 
 
@@ -59,9 +59,11 @@ export class EngineTrouble extends Error {
  * what it needs set (`env`); on its own lamp finds the person's own on the PATH. `spent` hears what a call through
  * OpenRouter cost; one through the person's own sign-in costs nothing through Lamp. `onPartial` hears the answer to a
  * `schema` as it's written, the JSON so far, where the engine says it as it goes (Claude Code; Codex says it at the end).
+ * `effort` ("low" or "high", `EFFORTS`) is how hard the model thinks; with none, Claude Code thinks as it's set to and
+ * Codex low.
  */
-export function complete({ system, prompt, schema, seconds = 60, which = engine(), tool, env = {}, model = process.env.LAMP_AI_MODEL || "", images = [], signal, spent, onPartial } = {}) {
-  if (which === "openrouter") return viaOpenRouter({ system, prompt, schema, seconds, model, images, signal, spent });
+export function complete({ system, prompt, schema, seconds = 60, which = engine(), tool, env = {}, model = process.env.LAMP_AI_MODEL || "", images = [], signal, spent, onPartial, effort } = {}) {
+  if (which === "openrouter") return viaOpenRouter({ system, prompt, schema, seconds, model, images, signal, spent, effort });
   if (which !== "claude" && which !== "codex") return Promise.reject(new EngineTrouble("missing", missing));
   const folder = mkdtempSync(join(tmpdir(), "lamp-ai-"));
   const sayer = system || "You are a helpful assistant inside an app.";
@@ -73,6 +75,7 @@ export function complete({ system, prompt, schema, seconds = 60, which = engine(
     args = ["-p", ...(pictures.length ? [] : [prompt]), "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--restricted",
       "--strict-mcp-config", "--disable-slash-commands", "--tools", "", "--system-prompt", sayer];
     if (model) args.push("--model", model);
+    if (effort === "low" || effort === "high") args.push("--effort", effort);
     if (schema) args.push("--json-schema", JSON.stringify(schema));
     if (schema && onPartial) args.push("--include-partial-messages");
     if (pictures.length) {
@@ -87,7 +90,7 @@ export function complete({ system, prompt, schema, seconds = 60, which = engine(
     // other's, with a warning); pictures given with `-i` are part of the request, not that tool. What's left, checked
     // with Codex 0.167.1, is asking the person a question, which a run with no one to ask can't use.
     args = ["exec", "--json", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check", "--ephemeral", "-s", "read-only",
-      "-c", "hooks={}", "-c", 'model_reasoning_effort="low"', "-c", 'approval_policy="never"',
+      "-c", "hooks={}", "-c", `model_reasoning_effort="${effort === "high" ? "high" : "low"}"`, "-c", 'approval_policy="never"',
       "-c", "features.shell_tool=false", "-c", "features.unified_exec=false", "-c", 'web_search="disabled"',
       "-c", "features.apps=false", "-c", "features.multi_agent=false", "-c", "features.view_image=false",
       "-c", "tools.view_image=false", "-c", "features.goals=false",
@@ -207,10 +210,10 @@ function openRouterWords(error) {
 }
 
 /** An answer from OpenRouter with the person's key (openrouter.mjs, as Lamp's app sends it), its troubles said as an engine's. */
-async function viaOpenRouter({ system, prompt, schema, seconds, model, images, signal, spent }) {
+async function viaOpenRouter({ system, prompt, schema, seconds, model, images, signal, spent, effort }) {
   try {
     const { text, cost } = await openRouterText({ key: process.env.OPENROUTER_API_KEY, prompt, images, system: system || "You are a helpful assistant inside an app.",
-      model: model || DEFAULT_MODEL, json: !!schema, schema, seconds, signal });
+      model: model || DEFAULT_MODEL, json: !!schema, schema, seconds, signal, effort });
     spent?.(cost);
     return text;
   } catch (error) {
@@ -344,7 +347,8 @@ export async function ask(body, here = engines(), signal) {
   const spent = (more) => { cost += Number(more) || 0; };
   // One time for the whole request, its second try included, as Lamp's app gives it (`AppAI.complete`).
   const deadline = Date.now() + secondsFor(body) * 1000;
-  const once = (asked) => complete({ system, prompt: asked, schema, images: body.images, which, model, seconds: Math.max(1, (deadline - Date.now()) / 1000), signal, spent });
+  const effort = EFFORTS[body.effort];
+  const once = (asked) => complete({ system, prompt: asked, schema, images: body.images, which, model, seconds: Math.max(1, (deadline - Date.now()) / 1000), signal, spent, effort });
   try {
     let text = await once(prompt);
     // JSON that doesn't read (cut off, or with words around it) is no use to the page: asked once more, saying so.
@@ -448,7 +452,7 @@ async function runStep(r, { which, model, tag, deadline, seconds, release }) {
         read = readMessage(answered.message, r);
       } else {
         const { system, prompt, images } = planPrompt(r, tag, retry);
-        const text = await complete({ system, prompt, images, schema: planSchema(r), seconds: left, which, model, onPartial: reader ? (so) => reader.planned(so) : undefined });
+        const text = await complete({ system, prompt, images, schema: planSchema(r), seconds: left, which, model, effort: r.effort, onPartial: reader ? (so) => reader.planned(so) : undefined });
         reader?.planned(text);
         read = readPlan(text, r);
       }
