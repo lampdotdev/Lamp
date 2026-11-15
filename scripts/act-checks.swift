@@ -64,14 +64,15 @@ func settle() async { for _ in 0..<50 { await Task.yield() } }
 @main
 struct Checks {
     @MainActor static func main() async {
-        // Reads run first; each change is checked right before it runs; what's said comes from the receipts.
+        // Calls run in the order the AI wrote them, so a read after a change sees it; each change is checked right before it
+        // runs; what's said comes from the receipts.
         do {
             let lamp = Lamp(), app = Groceries()
             lamp.answers = [["calls": [call("c1", "add", ["name": "milk"]), call("c2", "items"), call("c3", "add", ["name": "eggs"])]],
                             ["reply": "I added milk, eggs and bread."]]
             let session = LampActSession(tools: app.tools, send: lamp.send)
             let result = await session.ask("add milk and eggs").result
-            expect(app.log == ["read", "check:milk", "run:milk", "check:eggs", "run:eggs"], "reads first, then each change checked right before it runs")
+            expect(app.log == ["check:milk", "run:milk", "read", "check:eggs", "run:eggs"], "in the order written, each change checked right before it runs")
             expect(result.done.map(\.receipt.summary) == ["Added milk", "Added eggs"], "done comes from the tools' receipts")
             expect(result.summary == "Added milk\nAdded eggs", "the summary is the receipts, not the AI's claim of bread")
             let steps = lamp.bodies.last?["steps"] as? [[String: Any]]

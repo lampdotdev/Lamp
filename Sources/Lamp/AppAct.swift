@@ -84,6 +84,11 @@ enum AppAct {
             case .failure(let failure): return (200, ["act": false, "route": AppAI.route(for: appModel).id, "why": failure.message], 0)
             }
         }
+        // A streamed step the page is following (`stream` on lamp.js's act): what it has that the page hasn't.
+        if let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let id = body["follow"] as? String {
+            return await LiveSteps.follow(id, have: Swift.max(0, body["have"] as? Int ?? 0))
+        }
+        let streamed = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["stream"] as? Bool == true
         let r: Request
         do { r = try await parse(data) } catch let failure as Failure { return (failure.status, ["error": failure.message], 0) } catch { return (500, ["error": error.localizedDescription], 0) }
         // The model the app asked for, when it can answer; else the app's own choice (`AppAI.textChoice`).
@@ -109,6 +114,18 @@ enum AppAct {
         // starts once it has passed, and a Claude Code or Codex run still going then is stopped.
         let seconds = turnSeconds(for: route)
         let deadline = started.addingTimeInterval(Swift.min(r["seconds"] as? Double ?? 60, seconds))
+        // Streamed: each call goes to the page as soon as it's whole, and the page follows the step for the rest.
+        if streamed {
+            let (id, live) = LiveSteps.start()
+            Task { @MainActor in live.finish(await answer(route, r, seconds: seconds, until: deadline, live: live)) }
+            return await LiveSteps.follow(id, have: 0)
+        }
+        return await answer(route, r, seconds: seconds, until: deadline, live: nil)
+    }
+
+    /// The step asked of its route, asked again once when its answer can't be used. With `live`, calls go out as they're
+    /// written, and once one has gone the answer isn't asked again.
+    @MainActor static func answer(_ route: AppAI.TextRoute, _ r: Request, seconds: Double, until deadline: Date, live: LiveSteps.Step?) async -> (Int, [String: Any], Double) {
         let tag = "outside-text-" + String(UUID().uuidString.prefix(8)).lowercased()
         var cost = 0.0
         var retry: String?
@@ -117,7 +134,7 @@ enum AppAct {
         // which stays inside the same deadline.
         for attempt in 0..<2 {
             do {
-                let (answer, more) = try await ask(route, r, tag: tag, retry: retry, until: deadline)
+                let (answer, more) = try await ask(route, r, tag: tag, retry: retry, until: deadline, live: live)
                 cost += more
                 switch answer {
                 case .success(let parsed):
@@ -150,7 +167,14 @@ enum AppAct {
     struct OutOfTime: Error { var cost = 0.0 }
 
     /// One attempt on the turn's route, its answer read but not yet asked again: the route's adapter.
-    static func ask(_ route: AppAI.TextRoute, _ r: Request, tag: String, retry: String?, until deadline: Date) async throws -> (Result<[String: Any], ParseProblem>, Double) {
+    static func ask(_ route: AppAI.TextRoute, _ r: Request, tag: String, retry: String?, until deadline: Date,
+                    live: LiveSteps.Step? = nil) async throws -> (Result<[String: Any], ParseProblem>, Double) {
+        // A streamed answer's calls, heard as each is whole; what was released and held is read with the answer.
+        let heard: (@Sendable ([String: Any]) -> Void)? = live.map { live in { event in if let call = event["call"] as? [String: Any] { live.add(call) } } }
+        func streamedRead(_ done: [String: Any]) -> [String: Any] {
+            guard live != nil else { return [:] }
+            return ["released": done["released"] as? Int ?? 0, "held": done["held"] as? [Any] ?? []]
+        }
         func asked(_ way: String, model: String? = nil) async throws -> [String: Any] {
             var given: [String: Any] = ["step": r, "tag": tag, "way": way]
             if let retry { given["retry"] = retry }
@@ -169,29 +193,80 @@ enum AppAct {
         switch route.kind {
         case .openRouter(let model):
             let body = try await asked("chat", model: model)["body"] as? [String: Any] ?? [:]
-            let (message, cost) = try await openRouterStep(body, until: deadline)
-            return (try await read(["message": message], for: r), cost)
+            let (done, cost) = try await openRouterStep(body, until: deadline, step: live == nil ? nil : r, onEvent: heard)
+            return (try await read(["message": done["message"] ?? [:]].merging(streamedRead(done)) { $1 }, for: r), cost)
         case .engine(.pi, _):
             throw AppAI.Failure(message: AppAI.noTextRoute)
         case .engine(let engine, let model):
             let left = deadline.timeIntervalSinceNow
             guard left >= 1 else { throw OutOfTime() }
             let (system, prompt, schema, images) = try await plan("plan")
-            let (text, cost) = try await AppAI.viaEngine(engine, prompt: prompt, images: images, system: system, model: model,
-                                                         schema: schema, timeLimit: left)
-            return (try await read(["plan": text], for: r), cost)
+            let done = try await AppAI.engineAnswer(engine, prompt: prompt, images: images, system: system, model: model,
+                                                    schema: schema, timeLimit: left, step: live == nil ? nil : r, onEvent: heard)
+            return (try await read(["plan": done["text"] as? String ?? ""].merging(streamedRead(done)) { $1 }, for: r), 0)
         }
     }
 
     /// One chat completion with tools, sent by lamp's command line (`openRouterChat`, cli/openrouter.mjs): the message
     /// with its tool calls, within the step's deadline, a content filter's cut-off asked again inside it.
-    static func openRouterStep(_ body: [String: Any], until deadline: Date) async throws -> ([String: Any], Double) {
+    static func openRouterStep(_ body: [String: Any], until deadline: Date, step: Request? = nil,
+                               onEvent: (@Sendable ([String: Any]) -> Void)? = nil) async throws -> ([String: Any], Double) {
         let left = deadline.timeIntervalSinceNow
         guard left >= 1 else { throw OutOfTime() }
-        let done = try await LampCLI.ask("openRouterChat", ["key": KeyStore.openRouterKey ?? "", "body": body, "seconds": left])
-        if let message = done["message"] as? [String: Any] { return (message, done["cost"] as? Double ?? 0) }
+        var given: [String: Any] = ["key": KeyStore.openRouterKey ?? "", "body": body, "seconds": left]
+        if let step { given["step"] = step }
+        let done = try await LampCLI.ask("openRouterChat", given, onEvent: onEvent)
+        if done["message"] is [String: Any] { return (done, done["cost"] as? Double ?? 0) }
         let trouble = done["trouble"] as? [String: Any] ?? [:]
         if trouble["kind"] as? String == "timeout" { throw OutOfTime(cost: trouble["cost"] as? Double ?? 0) }
         throw AppAI.openRouterFailure(trouble)
+    }
+}
+
+/// Steps being streamed (`stream` on lamp.js's act), by id: each one's calls as they're released, and its answer once it's
+/// done. The page asks for what's new (`follow`) until it has the answer; a step nobody follows for a few minutes is let go.
+@MainActor enum LiveSteps {
+    /// One streamed step. Its calls come from lamp's command line as events, off the main thread, in order.
+    final class Step: @unchecked Sendable {
+        private let lock = NSLock()
+        private var calls: [[String: Any]] = []
+        private var done: (Int, [String: Any], Double)?
+        var seen = Date()
+
+        func add(_ call: [String: Any]) { lock.lock(); calls.append(call); lock.unlock() }
+        func finish(_ answer: (Int, [String: Any], Double)) { lock.lock(); done = answer; lock.unlock() }
+        func state() -> ([[String: Any]], (Int, [String: Any], Double)?) { lock.lock(); defer { lock.unlock() }; return (calls, done) }
+    }
+
+    private static var steps: [String: Step] = [:]
+
+    static func start() -> (String, Step) {
+        steps = steps.filter { Date().timeIntervalSince($0.value.seen) < 300 }
+        let id = "st" + String(UUID().uuidString.prefix(12)).lowercased()
+        let step = Step()
+        steps[id] = step
+        return (id, step)
+    }
+
+    /// What the page hasn't had (`have` calls in): waits for a new call or the answer, 50 seconds at most, so every way
+    /// a page reaches Lamp carries it. The answer comes with the calls it adds (those held back as failures) and its cost.
+    static func follow(_ id: String, have: Int) async -> (Int, [String: Any], Double) {
+        guard let step = steps[id] else { return (404, ["error": "This step is over."], 0) }
+        let have = Swift.max(0, have)
+        step.seen = Date()
+        let until = Date().addingTimeInterval(50)
+        var (calls, done) = step.state()
+        while calls.count <= have, done == nil, Date() < until {
+            try? await Task.sleep(for: .milliseconds(100))
+            (calls, done) = step.state()
+        }
+        let new = Array(calls.dropFirst(Swift.min(have, calls.count)))
+        guard let (status, json, cost) = done else { return (200, ["stream": id, "more": true, "calls": new], 0) }
+        steps[id] = nil
+        var answer = json
+        answer["stream"] = id
+        answer["more"] = false
+        answer["calls"] = new + (json["calls"] as? [[String: Any]] ?? [])
+        return (status, answer, cost)
     }
 }

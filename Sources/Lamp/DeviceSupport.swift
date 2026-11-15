@@ -1044,17 +1044,20 @@ enum DeviceSupport {
 
         // Reads run together; then the writes, one after another, each checked right before it runs. A write that
         // fails stops the writes after it in this step, which the model hears were skipped.
-        function runCalls(calls, step) {
-          var results = {}, reads = [], changes = [];
-          calls.forEach(function (c) { (tools[c.name] && tools[c.name].reads ? reads : changes).push(c); });
-          return Promise.all(reads.map(function (c) {
+        // A step's calls, run as they come (`stream`) and in the order the AI wrote them: reads side by side run together,
+        // a write waits for every call before it, and a read after a write sees it. A write that fails skips the writes
+        // after it in the step. A call Lamp held back as not fitting (`problem`) isn't run: the AI hears why, and a change of
+        // that kind fails in its place.
+        function stepRunner(step) {
+          var results = {}, chain = Promise.resolve(), reading = [], stopped = null;
+          function read(c) {
             if (late()) return null;
             var tool = tools[c.name], bad = actProblem(tool, c.name, c.args);
             if (bad) { results[c.id] = { id: c.id, ok: false, error: bad }; return null; }
             tell({ kind: 'read', name: c.name, args: c.args });
             var NOT_RUN = {};
             return Promise.resolve().then(function () {
-              // Reads start together, but each one only while there's time: an earlier one can be slow.
+              // Each read starts only while there's time: an earlier one can be slow.
               return late() ? NOT_RUN : tool.run(c.args, { turn: id, step: step, id: c.id });
             }).then(function (value) {
               if (value === NOT_RUN) return;
@@ -1064,60 +1067,69 @@ enum DeviceSupport {
                 if (p.pictures) results[c.id].pictures = p.pictures;
               });
             }, function (e) { results[c.id] = { id: c.id, ok: false, error: refused(e) }; });
-          })).then(function () {
-            var stopped = null;
-            function next(i) {
-              if (i >= changes.length) return results;
-              var c = changes[i], tool = tools[c.name];
-              function skip(reason) {
-                out.skipped.push({ name: c.name, args: c.args, reason: reason });
-                results[c.id] = { id: c.id, ok: false, skipped: reason };
-                return next(i + 1);
-              }
-              function fail(reason) {
-                out.failed.push({ name: c.name, args: c.args, reason: reason });
-                results[c.id] = { id: c.id, ok: false, error: reason };
-                stopped = stopped || 'An earlier change in this step didn\'t go through.';
-                return next(i + 1);
-              }
-              if (late()) return results;
-              if (stopped) return skip(stopped);
-              var bad = actProblem(tool, c.name, c.args);
-              if (bad) return fail(bad);
-              var key = 'k' + hash(id + '|' + c.name + '|' + canonical(c.args));
-              // The same change asked again in this turn gets its first result, and doesn't run again.
-              // Its result is in an earlier step, which every request carries: pointed to, not sent again.
-              if (ran.hasOwnProperty(key)) { results[c.id] = { id: c.id, ok: true, repeat: true, value: { note: 'Already done in this request: its result is in an earlier step.' } }; return next(i + 1); }
-              if (writes >= limits.writes) return fail('Over this turn\'s limit of ' + limits.writes + ' changes.');
-              var call = { turn: id, key: key, step: step, id: c.id };
-              return Promise.resolve().then(function () { return tool.check ? tool.check(c.args, call) : null; }).then(function (problem) {
-                if (problem) return fail(String(problem));
-                // Cancel and the time are looked at again right before the change, never in the middle of it.
-                if (late()) return results;
-                tell({ kind: 'write', name: c.name, args: c.args });
-                if (late()) return results;
-                writes++;
-                var running;
-                try { running = Promise.resolve(tool.run(c.args, call)); } catch (e) { running = Promise.reject(e); }
-                return running.then(function (value) {
-                  // The change is done: it's recorded now, whatever happens to its pictures after.
-                  ran[key] = { note: 'Done.' };
-                  var entry = { name: c.name, args: c.args, result: value };
-                  if (value && typeof value === 'object' && value.partly) entry.partly = String(value.partly);
-                  out.done.push(entry);
-                  tell({ kind: 'write', name: c.name, args: c.args, result: value });
-                  return pictured(value).then(function (p) { return { p: p }; });
-                }).then(function (got) {
-                  var kept = sized(got.p.value);
+          }
+          function write(c) {
+            var tool = tools[c.name];
+            function skip(reason) {
+              out.skipped.push({ name: c.name, args: c.args, reason: reason });
+              results[c.id] = { id: c.id, ok: false, skipped: reason };
+            }
+            function fail(reason) {
+              out.failed.push({ name: c.name, args: c.args, reason: reason });
+              results[c.id] = { id: c.id, ok: false, error: reason };
+              stopped = stopped || 'An earlier change in this step didn\'t go through.';
+            }
+            if (late()) return;
+            if (stopped) return skip(stopped);
+            // A change Lamp held back as not fitting failed, in its place.
+            if (typeof c.problem === 'string') return fail(c.problem);
+            var bad = actProblem(tool, c.name, c.args);
+            if (bad) return fail(bad);
+            var key = 'k' + hash(id + '|' + c.name + '|' + canonical(c.args));
+            // The same change asked again in this turn gets its first result, and doesn't run again.
+            // Its result is in an earlier step, which every request carries: pointed to, not sent again.
+            if (ran.hasOwnProperty(key)) { results[c.id] = { id: c.id, ok: true, repeat: true, value: { note: 'Already done in this request: its result is in an earlier step.' } }; return; }
+            if (writes >= limits.writes) return fail('Over this turn\'s limit of ' + limits.writes + ' changes.');
+            var call = { turn: id, key: key, step: step, id: c.id };
+            return Promise.resolve().then(function () { return tool.check ? tool.check(c.args, call) : null; }).then(function (problem) {
+              if (problem) return fail(String(problem));
+              // Cancel and the time are looked at again right before the change, never in the middle of it.
+              if (late()) return;
+              tell({ kind: 'write', name: c.name, args: c.args });
+              if (late()) return;
+              writes++;
+              var running;
+              try { running = Promise.resolve(tool.run(c.args, call)); } catch (e) { running = Promise.reject(e); }
+              return running.then(function (value) {
+                // The change is done: it's recorded now, whatever happens to its pictures after.
+                ran[key] = { note: 'Done.' };
+                var entry = { name: c.name, args: c.args, result: value };
+                if (value && typeof value === 'object' && value.partly) entry.partly = String(value.partly);
+                out.done.push(entry);
+                tell({ kind: 'write', name: c.name, args: c.args, result: value });
+                return pictured(value).then(function (p) {
+                  var kept = sized(p.value);
                   ran[key] = kept;
                   results[c.id] = { id: c.id, ok: true, value: kept };
-                  if (got.p.pictures) results[c.id].pictures = got.p.pictures;
-                  return next(i + 1);
-                }, function (e) { return fail(refused(e)); });
-              }, function (e) { return fail(refused(e)); });
-            }
-            return next(0);
-          });
+                  if (p.pictures) results[c.id].pictures = p.pictures;
+                });
+              }, function (e) { fail(refused(e)); });
+            }, function (e) { fail(refused(e)); });
+          }
+          return {
+            add: function (c) {
+              if (typeof c.problem === 'string' && tools[c.name] && tools[c.name].reads) { results[c.id] = { id: c.id, ok: false, error: c.problem }; return; }
+              if (tools[c.name] && tools[c.name].reads) {
+                var going = chain.then(function () { return read(c); });
+                reading.push(going);
+              } else {
+                var before = [chain].concat(reading);
+                reading = [];
+                chain = Promise.all(before).then(function () { return write(c); });
+              }
+            },
+            finish: function () { return Promise.all([chain].concat(reading)).then(function () { return results; }); }
+          };
         }
 
         function step() {
@@ -1132,19 +1144,29 @@ enum DeviceSupport {
           if (route) body.route = route;
           if (steps.length >= limits.steps - 1) body.final = true;
           if (o.model) body.model = o.model;
-          post('/ai/act', body, stepTime, Date.now() + stepTime).then(function (answer) {
+          // Streamed: each call comes as soon as the AI has written it, and runs then; the page follows the step for the
+          // rest. A Lamp from before streaming answers the whole step at once, which runs the same way.
+          body.stream = true;
+          var n = steps.length + 1, calls = [], ids = {}, runner = stepRunner(n), until = Date.now() + stepTime;
+          function heard(answer) {
             // What the step cost through a key, paid for whether or not its answer still runs.
             if (typeof answer.cost === 'number' && answer.cost > 0) out.cost += answer.cost;
             // Cancelled, out of time or already over: an answer that comes late runs nothing.
             if (late()) return;
             route = answer.route || route;
-            if (answer.calls && answer.calls.length) {
-              var calls = answer.calls, n = steps.length + 1, ids = {};
-              for (var i = 0; i < calls.length; i++) {
-                if (ids[calls[i].id]) return stop('error', 'The AI gave two calls the same id.');
-                ids[calls[i].id] = true;
-              }
-              return runCalls(calls, n).then(function (results) {
+            var given = answer.calls || [];
+            for (var i = 0; i < given.length; i++) {
+              if (ids[given[i].id]) return stop('error', 'The AI gave two calls the same id.');
+              ids[given[i].id] = true;
+              calls.push(given[i]);
+              runner.add(given[i]);
+            }
+            if (answer.more === true && typeof answer.stream === 'string') {
+              var have = calls.length;
+              return post('/ai/act', { follow: answer.stream, have: have }, Math.max(1000, until - Date.now()), until).then(heard, failed);
+            }
+            if (calls.length) {
+              return runner.finish().then(function (results) {
                 if (late()) return;
                 steps.push({ calls: calls, results: calls.map(function (c) { return results[c.id] || { id: c.id, ok: false, skipped: 'Not run.' }; }) });
                 if (steps.length >= limits.steps) return stop('steps');
@@ -1159,11 +1181,13 @@ enum DeviceSupport {
               return typeof c === 'string' && c.trim() && c.length <= 24 && !/[<>*_`#\[\]{}|\\\n\r\t]/.test(c);
             }) ? offered.map(function (c) { return c.trim(); }) : [];
             stop(null);
-          }, function (e) {
+          }
+          function failed(e) {
             if (e && typeof e.cost === 'number' && e.cost > 0) out.cost += e.cost;
             var message = refused(e);
             stop(/reach Lamp|Lamp isn't|wasn't put here|put it on this device/.test(message) ? 'unreachable' : 'error', message);
-          });
+          }
+          post('/ai/act', body, stepTime, until).then(heard, failed);
         }
         step();
         return { id: id, result: result, cancel: function () { stop('cancelled'); } };
@@ -1398,10 +1422,12 @@ enum DeviceSupport {
          *     turn.cancel();
          *
          * An argument's shape is { type: 'string' | 'integer' | 'number' | 'boolean' | 'date' | 'datetime' | 'list',
-         * oneOf: [strings], min, max, optional, about, of (a list's item) }. A tool with `reads: true` changes nothing;
-         * reads in one step run together. Writes run one after another, each with its `check` right before it: a write
-         * that fails stops the writes after it in that step (`skipped`). Cancel and the time stop the turn between
-         * calls, never in the middle of a write; an answer that comes after runs nothing.
+         * oneOf: [strings], min, max, optional, about, of (a list's item) }. A tool with `reads: true` changes nothing.
+         * Each call runs as soon as the AI has written it, before the rest of its answer has come, so a build shows as
+         * it's made; calls run in the order the AI wrote them. Reads side by side run together; a write waits for the
+         * calls before it, with its `check` right before it, and a read after it sees it. A write that fails stops the
+         * writes after it in that step (`skipped`). Cancel and the time stop the turn between calls, never in the middle
+         * of a write; an answer that comes after runs nothing.
          *
          * Say what happened from `done`, `failed` and `skipped`, never from `reply`: they're what the page ran. A question
          * back (`ask`) may come with `choices`, two to four short answers to offer as buttons; with none, any answer goes.

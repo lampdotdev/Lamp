@@ -15551,23 +15551,25 @@ enum Template {
             func callInfo(_ call: [String: Any], key: String) -> LampActCall {
                 LampActCall(key: key, id: call["id"] as! String, request: op.request, deadline: deadline)
             }
-            for call in calls where tool(call)?.reads != false {
-                let id = call["id"] as! String
-                if let stop = over() { out.stopped = stop; return results }
-                guard let tool = tool(call) else { results[id] = ["id": id, "ok": false, "error": "There's no tool called \(call["name"] as? String ?? "")."]; continue }
-                if let bad = tool.problem(args(call)) { results[id] = ["id": id, "ok": false, "error": bad]; continue }
-                onStep(.reading(tool.name))
-                do {
-                    let value = try await tool.perform(args(call), callInfo(call, key: ""))
-                    let kept = Self.cut(value, max: max(1024, min(resultBytes, op.resultsLeft)))
-                    op.resultsLeft = max(0, op.resultsLeft - ((try? JSONSerialization.data(withJSONObject: [kept]))?.count ?? 0))
-                    results[id] = ["id": id, "ok": true, "value": kept]
-                } catch {
-                    results[id] = ["id": id, "ok": false, "error": Self.words(error)]
-                }
-            }
+            // In the order the AI wrote them, so a read after a change sees it (the rule it's given, cli/app-ai.mjs).
             var stopped: String?
-            for call in calls where tool(call)?.reads == false {
+            for call in calls {
+                if tool(call)?.reads != false {
+                    let id = call["id"] as! String
+                    if let stop = over() { out.stopped = stop; return results }
+                    guard let tool = tool(call) else { results[id] = ["id": id, "ok": false, "error": "There's no tool called \(call["name"] as? String ?? "")."]; continue }
+                    if let bad = tool.problem(args(call)) { results[id] = ["id": id, "ok": false, "error": bad]; continue }
+                    onStep(.reading(tool.name))
+                    do {
+                        let value = try await tool.perform(args(call), callInfo(call, key: ""))
+                        let kept = Self.cut(value, max: max(1024, min(resultBytes, op.resultsLeft)))
+                        op.resultsLeft = max(0, op.resultsLeft - ((try? JSONSerialization.data(withJSONObject: [kept]))?.count ?? 0))
+                        results[id] = ["id": id, "ok": true, "value": kept]
+                    } catch {
+                        results[id] = ["id": id, "ok": false, "error": Self.words(error)]
+                    }
+                    continue
+                }
                 let id = call["id"] as! String, tool = tool(call)!, given = args(call)
                 func miss(_ reason: String, skipped: Bool = false, partly: Bool = false) {
                     let entry = LampActMiss(tool: tool.name, reason: reason, partly: partly)

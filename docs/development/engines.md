@@ -307,8 +307,15 @@ A capability given to one engine must be given to all of them that can take it, 
   that says it couldn't), and a reply-only step on the turn's last (`final`, which the page sends; Lamp holds every turn
   to 40 steps, `MAX_STEPS` in cli/app-ai.mjs). A turn takes 4 steps and 6 writes unless the app raises them
   (`limits: { steps, writes }` in lamp.js, `LampActSession(steps:writes:)`), up to 40 and 320, the most 40 steps of
-  eight calls can hold. The turn's writes, its deadline and cancel are
-  the page's: it runs reads together and writes one after another, each `check`ed right before it runs, stops at the
+  eight calls can hold. A step is streamed (`stream`, which a Lamp from before it ignores): each call that fits goes to
+  the page as soon as the model has written it (`stepReader` in cli/app-ai.mjs: OpenRouter's streamed tool calls,
+  Claude Code's JSON as it's written with `--include-partial-messages`; Codex says its answer at the end), and the page
+  asks for the rest (`follow`, a long poll every host carries) until the answer; a call that doesn't fit is held, and
+  goes as a failure at the end once others have run, or the whole answer is asked again as before. Lamp's app holds a
+  streamed step in `LiveSteps`, its calls coming as `LampCLI` events from `engineAnswer` and `openRouterChat`; lamp in
+  `live` in cli/ai.mjs. The turn's writes, its deadline and cancel are
+  the page's: it runs calls in the order the model wrote them, reads side by side together, each write after the calls
+  before it, `check`ed right before it runs, stops at the
   deadline in every layer (the step's request, `send`'s retries) and drops an answer that comes after a cancel.
   What the model is told and how its answer is read and checked is in one place, `cli/app-ai.mjs`, which Lamp's app
   has do it through `LampCLI` (`actStep`, `actAsk`, `actRead`) and lamp's own answers use directly (`cli/ai.mjs`);

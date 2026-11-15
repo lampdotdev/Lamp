@@ -9,8 +9,8 @@ import { accessSync, closeSync, constants, fstatSync, mkdtempSync, openSync, rea
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { chatBody, decidePrompt, planPrompt, planSchema, readDecision, readMessage, readPlan, readStep } from "./app-ai.mjs";
-import { DEFAULT_MODEL, IMAGE_MODELS, OpenRouterTrouble, chat as openRouterChat, image as openRouterImage, text as openRouterText } from "./openrouter.mjs";
+import { afterStream, chatBody, decidePrompt, planPrompt, planSchema, readDecision, readMessage, readPlan, readStep, stepReader } from "./app-ai.mjs";
+import { DEFAULT_MODEL, IMAGE_MODELS, OpenRouterTrouble, chat as openRouterChat, chatStream as openRouterChatStream, image as openRouterImage, text as openRouterText } from "./openrouter.mjs";
 
 
 /**
@@ -57,9 +57,10 @@ export class EngineTrouble extends Error {
  * request itself: to Claude Code in its input, to Codex as attachments, never through a tool that reads files.
  * Lamp's app runs it this way too (`engineAnswer` in calls.mjs, `AppAI.viaEngine`), naming the program (`tool`) and
  * what it needs set (`env`); on its own lamp finds the person's own on the PATH. `spent` hears what a call through
- * OpenRouter cost; one through the person's own sign-in costs nothing through Lamp.
+ * OpenRouter cost; one through the person's own sign-in costs nothing through Lamp. `onPartial` hears the answer to a
+ * `schema` as it's written, the JSON so far, where the engine says it as it goes (Claude Code; Codex says it at the end).
  */
-export function complete({ system, prompt, schema, seconds = 60, which = engine(), tool, env = {}, model = process.env.LAMP_AI_MODEL || "", images = [], signal, spent } = {}) {
+export function complete({ system, prompt, schema, seconds = 60, which = engine(), tool, env = {}, model = process.env.LAMP_AI_MODEL || "", images = [], signal, spent, onPartial } = {}) {
   if (which === "openrouter") return viaOpenRouter({ system, prompt, schema, seconds, model, images, signal, spent });
   if (which !== "claude" && which !== "codex") return Promise.reject(new EngineTrouble("missing", missing));
   const folder = mkdtempSync(join(tmpdir(), "lamp-ai-"));
@@ -73,6 +74,7 @@ export function complete({ system, prompt, schema, seconds = 60, which = engine(
       "--strict-mcp-config", "--disable-slash-commands", "--tools", "", "--system-prompt", sayer];
     if (model) args.push("--model", model);
     if (schema) args.push("--json-schema", JSON.stringify(schema));
+    if (schema && onPartial) args.push("--include-partial-messages");
     if (pictures.length) {
       args.push("--input-format", "stream-json");
       const content = [{ type: "text", text: prompt }, ...pictures.map((image) => ({ type: "image",
@@ -105,7 +107,7 @@ export function complete({ system, prompt, schema, seconds = 60, which = engine(
   delete childEnv.BUN_BE_BUN;
   return new Promise((resolve, reject) => {
     const child = spawn(tool || onPath(which) || which, args, { cwd: folder, env: childEnv, detached: true, stdio: [input ? "pipe" : "ignore", "pipe", "pipe"] });
-    let text = "", trouble = null, rest = "", said = "";
+    let text = "", trouble = null, rest = "", said = "", partial = "";
     // The whole group, since an engine may leave a child holding its output.
     const stop = (kind, words) => { if (!trouble) trouble = new EngineTrouble(kind, words); try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); } };
     const timer = setTimeout(() => stop("timeout", `${named(which)} took too long to answer.`), Math.max(1, seconds) * 1000);
@@ -117,6 +119,16 @@ export function complete({ system, prompt, schema, seconds = 60, which = engine(
       if (which === "codex") {
         if (event.type === "item.completed" && event.item?.type === "agent_message" && typeof event.item.text === "string") text = event.item.text;
         else if (codexFailure(event)) trouble ??= new EngineTrouble("failed", codexFailure(event));
+        return;
+      }
+      // The schema's answer as it's written: its JSON, a piece at a time.
+      if (event.type === "stream_event" && onPartial) {
+        const inner = event.event ?? {};
+        if (inner.type === "content_block_start") partial = "";
+        else if (inner.type === "content_block_delta" && inner.delta?.type === "input_json_delta" && typeof inner.delta.partial_json === "string") {
+          partial += inner.delta.partial_json;
+          try { onPartial(partial); } catch {}
+        }
         return;
       }
       if (event.type !== "result") return;
@@ -366,8 +378,29 @@ export async function decide(body) {
 // MARK: Actions (`LampAI.act`)
 
 /** `/ai/act`: one step of the page's agent loop, told and checked as Lamp's app does it (app-ai.mjs). */
+// A step being streamed (`stream` on lamp.js's act), by its id: its calls so far, and its answer once it's done. The page
+// asks for what's new (`follow`) until it has the answer; a step nobody follows for a few minutes is let go.
+const live = new Map();
+const FOLLOW_WAIT = 50_000;
+
+/** What a streamed step has that the page hasn't (`have` calls): waits for something new, or the end, a while at most. */
+async function following(id, have) {
+  const step = live.get(id);
+  if (!step) return [404, { error: "This step is over." }];
+  step.seen = Date.now();
+  if (step.calls.length <= have && !step.done) {
+    await new Promise((woken) => { const timer = setTimeout(woken, FOLLOW_WAIT); step.waiting.add(() => { clearTimeout(timer); woken(); }); });
+  }
+  const calls = step.calls.slice(have);
+  if (!step.done) return [200, { stream: id, more: true, calls }];
+  live.delete(id);
+  const [status, json] = step.done;
+  return [status, { ...json, stream: id, more: false, calls: [...calls, ...(Array.isArray(json.calls) ? json.calls : [])] }];
+}
+
 export async function act(body, here = engines()) {
   const first = here[0] ?? null;
+  if (typeof body?.follow === "string") return following(body.follow, Math.max(0, Math.floor(Number(body.have)) || 0));
   if (body?.probe === true) {
     // A key OpenRouter refuses can't answer a step, as `/ai/status` says too.
     const refused = first === "openrouter" ? await keyProblem() : null;
@@ -382,21 +415,44 @@ export async function act(body, here = engines()) {
   const seconds = 600;
   const deadline = Date.now() + Math.min(r.seconds, seconds) * 1000;
   const tag = "outside-text-" + randomBytes(4).toString("hex");
+  // Streamed: each call goes to the page as soon as it's whole, and the page follows the step for the rest.
+  if (body?.stream === true) {
+    const id = "st" + randomBytes(6).toString("hex");
+    const step = { calls: [], done: null, waiting: new Set(), seen: Date.now() };
+    const wake = () => { for (const woken of step.waiting) woken(); step.waiting.clear(); };
+    live.set(id, step);
+    for (const [other, kept] of live) if (Date.now() - kept.seen > 5 * 60_000) live.delete(other);
+    runStep(r, { which, model, tag, deadline, seconds, release: (call) => { step.calls.push(call); wake(); } })
+      .then((done) => { step.done = done; wake(); });
+    return following(id, 0);
+  }
+  return runStep(r, { which, model, tag, deadline, seconds });
+}
+
+/** A step asked of its route, asked again once when its answer can't be used: [status, json]. With `release`, calls go
+ *  out as they're written, and once one has gone the answer isn't asked again. */
+async function runStep(r, { which, model, tag, deadline, seconds, release }) {
   let retry = null, cost = 0;
   for (let attempt = 0; attempt < 2; attempt++) {
     const left = (deadline - Date.now()) / 1000;
     if (left < 1) return [504, { error: "This step ran out of time.", cost }];
     let read;
+    const reader = release ? stepReader(r, release) : null;
     try {
       if (which === "openrouter") {
         const body = chatBody(r, tag, retry, model);
-        const answered = await openRouterChat({ key: process.env.OPENROUTER_API_KEY, body, seconds: left });
+        const answered = reader
+          ? await openRouterChatStream({ key: process.env.OPENROUTER_API_KEY, body, seconds: left, onCall: (name, args) => reader.call(name, args) })
+          : await openRouterChat({ key: process.env.OPENROUTER_API_KEY, body, seconds: left });
         cost += answered.cost;
         read = readMessage(answered.message, r);
       } else {
         const { system, prompt, images } = planPrompt(r, tag, retry);
-        read = readPlan(await complete({ system, prompt, images, schema: planSchema(r), seconds: left, which, model }), r);
+        const text = await complete({ system, prompt, images, schema: planSchema(r), seconds: left, which, model, onPartial: reader ? (so) => reader.planned(so) : undefined });
+        reader?.planned(text);
+        read = readPlan(text, r);
       }
+      if (reader) read = afterStream(reader, read);
     } catch (error) {
       cost += Number(error?.cost) || 0;
       const words = error instanceof OpenRouterTrouble && error.kind === "refused" ? openRouterWords(error) : error?.reply?.error?.message || error.message;
