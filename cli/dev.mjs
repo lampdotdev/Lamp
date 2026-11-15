@@ -355,8 +355,13 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
     if (typeof code !== "string" || !code.trim()) return { problem: "eval needs code to run: lamp eval \"document.title\"" };
     const target = await watched();
     if (!target) return { problem: `lamp eval runs code in a page lamp can drive, and there's no browser here it can. ${noBrowser()}` };
-    // A copy just started has its page still loading.
-    if (target.fresh) await target.page.evaluate("document.readyState === 'complete' || new Promise(done => addEventListener('load', () => done(true), { once: true }))", { timeout: 15000 });
+    // The page loaded first (a copy just started is still loading, and may be between documents), or nothing runs.
+    let ready = false;
+    for (const until = Date.now() + 15000; !ready && Date.now() < until; ) {
+      ready = (await target.page.evaluate("document.readyState === 'complete'", { timeout: 2000 })) === true;
+      if (!ready) await sleep(200);
+    }
+    if (!ready) return { problem: "The page didn't finish loading in 15 s, so nothing was run in it: lamp look says what's on it." };
     const script = `(async () => {
       const code = ${JSON.stringify(code)};
       const AsyncFunction = (async () => {}).constructor;
@@ -380,16 +385,19 @@ export async function serve({ folder: given, port: asked, lan = false, quiet = f
         if (picture) return { value: { picture: picture.slice(picture.indexOf(',') + 1) } };
         if (value === undefined) return { value: { json: 'undefined' } };
         if (typeof value === 'string') return { value: { text: value } };
-        try { return { value: { json: JSON.stringify(value, null, 2) } }; } catch (e) { return { value: { text: String(value) } }; }
+        // A function, a symbol or a toJSON that gives nothing has no JSON: it's said as text.
+        try { const json = JSON.stringify(value, null, 2); if (json !== undefined) return { value: { json } }; } catch (e) {}
+        return { value: { text: String(value) } };
       } catch (e) {
         return { error: e && e.stack ? String(e.stack).split('\\n').slice(0, 5).join('\\n') : String(e) };
       }
     })()`;
     const answer = await target.page.evaluate(script, { timeout: Math.min(Math.max(Number(seconds) || 60, 1), 600) * 1000 });
     if (!answer) {
-      // Code still running (a loop that never ends) would leave the page stuck for every look after: it's stopped.
+      // Code still running (a loop that never ends) would leave the page stuck for every look after: it's stopped. Code
+      // waiting on something (a timer, a fetch) can't be: it goes on when that comes, and the answer says so.
       await target.page.send("Runtime.terminateExecution", {}, 2000).catch(() => {});
-      return { where: target.where, error: `It didn't finish in ${Math.round(Number(seconds) || 60)} s, so it was stopped, or the page went away.` };
+      return { where: target.where, error: `It didn't finish in ${Math.round(Number(seconds) || 60)} s, or the page went away. Code that was waiting (on a timer, a fetch) may still finish in the page and change it after this: lamp reload starts it afresh.` };
     }
     return { where: target.where, ...answer };
   }

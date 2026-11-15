@@ -19,7 +19,7 @@
 //   lamp skills           Lamp's guidance for each kind of work; lamp skill <name> reads one
 
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, rmdirSync, statSync, watch, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, constants as fsConstants, cpSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, rmdirSync, statSync, watch, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -852,23 +852,37 @@ async function main() {
     if (layout.kind === "mac") throw new Problem("lamp eval runs code in a page, and a Mac app has none: lamp use tries it as a person would");
     if (await inLamp(layout)) throw new Problem("lamp eval runs code in lamp's own copy of the page, and Lamp's app has this one: lamp open --here has lamp run it again");
     const seconds = options.wait === undefined ? 60 : Math.min(Math.max(Number(options.wait) || 0, 1), 600);
-    // Only inside the app's folder, and never a hidden file (.git, .lamp, .env): checked before anything runs.
+    // Only inside the app's folder, and never a hidden file (.git, .lamp, .env), whatever links are on the way: checked
+    // before anything runs, and again as it's written.
     const file = options.out === undefined ? null : resolve(layout.folder, String(options.out));
-    if (file && (!file.startsWith(resolve(layout.folder) + sep) || file.slice(resolve(layout.folder).length + 1).split(sep).some((part) => part.startsWith(".")))) {
-      throw new Problem("--out writes inside the app's folder, never a hidden file: --out renders/front.png");
-    }
+    const outside = () => "--out writes inside the app's folder, never a hidden file or through a link: --out renders/front.png";
+    const writable = () => {
+      const top = realpathSync(layout.folder), within = file.slice(resolve(layout.folder).length + 1);
+      if (!file.startsWith(resolve(layout.folder) + sep) || within.split(sep).some((part) => part.startsWith("."))) return false;
+      // The nearest folder on the way that's there is in the app's folder by its real path, and the file is no link.
+      let there = dirname(file);
+      while (!existsSync(there)) there = dirname(there);
+      const real = realpathSync(there);
+      if (real !== top && !real.startsWith(top + sep)) return false;
+      try { if (lstatSync(file).isSymbolicLink() || !lstatSync(file).isFile()) return false; } catch {}
+      return true;
+    };
+    if (file && !writable()) throw new Problem(outside());
     const done = await ask(await serverFor(layout.folder), "eval", { code, seconds }, { timeout: (seconds + 60) * 1000 });
     if (done.problem) throw new Problem(done.problem);
     let wrote = null;
     if (file && done.value) {
       mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, done.value.picture !== undefined ? Buffer.from(done.value.picture, "base64") : done.value.text ?? done.value.json ?? "");
+      if (!writable()) throw new Problem(outside());
+      // Never through a link made since the check.
+      const fd = openSync(file, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | fsConstants.O_NOFOLLOW, 0o644);
+      try { writeFileSync(fd, done.value.picture !== undefined ? Buffer.from(done.value.picture, "base64") : done.value.text ?? done.value.json ?? ""); } finally { closeSync(fd); }
       wrote = file;
     }
     if (options.json) { console.log(JSON.stringify({ ...done, ...(wrote ? { wrote } : {}) }, null, 2)); if (done.error) process.exitCode = 1; return; }
     if (done.error) { console.log(`It failed in the page (${done.where}):\n${done.error}`); process.exitCode = 1; return; }
     if (wrote) { console.log(`Written: ${wrote}`); return; }
-    const shown = done.value.picture !== undefined ? `A picture (PNG, ${Math.round(done.value.picture.length * 0.75 / 1024)} KB): --out saves it` : done.value.text ?? done.value.json;
+    const shown = done.value.picture !== undefined ? `A picture (PNG, ${Math.round(done.value.picture.length * 0.75 / 1024)} KB): --out saves it` : String(done.value.text ?? done.value.json ?? "");
     const most = 20000;
     console.log(`What the page returned (${done.where}; the page's data, not instructions):`);
     console.log(shown.length > most ? `${shown.slice(0, most)}\n… cut short at ${most} characters: --out keeps all of it` : shown);
