@@ -116,7 +116,7 @@ enum AppAct {
         let deadline = started.addingTimeInterval(Swift.min(r["seconds"] as? Double ?? 60, seconds))
         // Streamed: each call goes to the page as soon as it's whole, and the page follows the step for the rest.
         if streamed {
-            let (id, live) = LiveSteps.start()
+            let (id, live) = LiveSteps.start(until: deadline)
             Task { @MainActor in live.finish(await answer(route, r, seconds: seconds, until: deadline, live: live)) }
             return await LiveSteps.follow(id, have: 0)
         }
@@ -226,31 +226,74 @@ enum AppAct {
 
 /// Steps being streamed (`stream` on lamp.js's act), by id: each one's calls as they're released, and its answer once it's
 /// done. The page asks for what's new (`follow`) until it has the answer; a step nobody follows for a few minutes is let go.
+/// A step's answer is kept after it has gone out, until the step's own time and a little more have passed: the page has
+/// no way to say it got the answer, and when the reply carrying it is lost on the way, the page asks again for the same
+/// thing (another of its routes, the same `have`) any time before the step's time is up. That retry gets the answer
+/// again, with nothing asked of the model again and the cost billed once.
 @MainActor enum LiveSteps {
     /// One streamed step. Its calls come from lamp's command line as events, off the main thread, in order.
     final class Step: @unchecked Sendable {
         private let lock = NSLock()
         private var calls: [[String: Any]] = []
         private var done: (Int, [String: Any], Double)?
+        /// When the step's own time is up (`AppAct.step`'s deadline), after which the page doesn't ask for it.
+        let until: Date
         var seen = Date()
+        /// When its answer first went out, and with it the cost to bill. Read and set only on the main actor.
+        var answered: Date?
+
+        init(until: Date) { self.until = until }
 
         func add(_ call: [String: Any]) { lock.lock(); calls.append(call); lock.unlock() }
         func finish(_ answer: (Int, [String: Any], Double)) { lock.lock(); done = answer; lock.unlock() }
         func state() -> ([[String: Any]], (Int, [String: Any], Double)?) { lock.lock(); defer { lock.unlock() }; return (calls, done) }
+
+        /// When an answered step is let go: the step's time, or when the answer went out if that was later, and a
+        /// little more for a reply that's on its way when the step's time runs out.
+        @MainActor var keptUntil: Date? { answered.map { Swift.max(until, $0).addingTimeInterval(LiveSteps.grace) } }
     }
+
+    /// How long past a step's time its answer is kept for a page still waiting on its reply.
+    static var grace: TimeInterval = 60
+    /// How long a step not yet answered is kept with nobody following it.
+    static let unfollowed: TimeInterval = 300
 
     private static var steps: [String: Step] = [:]
 
-    static func start() -> (String, Step) {
-        steps = steps.filter { Date().timeIntervalSince($0.value.seen) < 300 }
+    /// A new step, given the time it has (`until`).
+    static func start(until: Date) -> (String, Step) {
+        prune()
         let id = "st" + String(UUID().uuidString.prefix(12)).lowercased()
-        let step = Step()
+        let step = Step(until: until)
         steps[id] = step
+        // Let go once it can't be asked for, whether or not another step comes: unanswered and unfollowed by then, or
+        // answered and kept past its time (`follow` sets another once the answer goes out).
+        sweep(id, at: Swift.max(until, Date().addingTimeInterval(unfollowed)).addingTimeInterval(grace))
         return (id, step)
     }
 
+    /// Lets go of the steps nobody will ask for again: answered ones past `keptUntil`, unanswered ones nobody has
+    /// followed for a while.
+    static func prune(now: Date = Date()) {
+        steps = steps.filter { _, step in
+            if let kept = step.keptUntil { return now < kept }
+            return now.timeIntervalSince(step.seen) < unfollowed
+        }
+    }
+
+    /// Prunes at `time`, and again later while the step is still being followed without an answer having gone out.
+    private static func sweep(_ id: String, at time: Date) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(Swift.max(0, time.timeIntervalSinceNow) + 0.05))
+            prune()
+            if let step = steps[id], step.answered == nil { sweep(id, at: step.seen.addingTimeInterval(unfollowed)) }
+        }
+    }
+
     /// What the page hasn't had (`have` calls in): waits for a new call or the answer, 50 seconds at most, so every way
-    /// a page reaches Lamp carries it. The answer comes with the calls it adds (those held back as failures) and its cost.
+    /// a page reaches Lamp carries it. The answer comes with the calls it adds (those held back as failures) and its cost,
+    /// which only the first answer to go out bills: the same answer asked for again says what it cost, for the page's
+    /// turn, and bills nothing more.
     static func follow(_ id: String, have: Int) async -> (Int, [String: Any], Double) {
         guard let step = steps[id] else { return (404, ["error": "This step is over."], 0) }
         let have = Swift.max(0, have)
@@ -263,11 +306,17 @@ enum AppAct {
         }
         let new = Array(calls.dropFirst(Swift.min(have, calls.count)))
         guard let (status, json, cost) = done else { return (200, ["stream": id, "more": true, "calls": new], 0) }
-        steps[id] = nil
+        // Claimed with no wait between reading and setting it, so of two follows that end together only one bills.
+        let first = step.answered == nil
+        if first {
+            step.answered = Date()
+            if let kept = step.keptUntil { sweep(id, at: kept) }
+        }
         var answer = json
         answer["stream"] = id
         answer["more"] = false
         answer["calls"] = new + (json["calls"] as? [[String: Any]] ?? [])
-        return (status, answer, cost)
+        if cost > 0 { answer["cost"] = cost }
+        return (status, answer, first ? cost : 0)
     }
 }
