@@ -14867,8 +14867,10 @@ final class Store: ObservableObject {
             return (status, json)
         }
         if request.path == "/ai/act" {
-            let (status, json, cost) = await AppAct.step(request.body, appModel: models.text)
+            var (status, json, cost) = await AppAct.step(request.body, appModel: models.text)
             if cost > 0, let project { record(project, cost: cost) }
+            // What the step cost, for the turn's result (`cost` in lamp.js's act).
+            if cost > 0 { json["cost"] = cost }
             return (status, json)
         }
         if request.path == "/ai/decide" {
@@ -14905,14 +14907,17 @@ final class Store: ObservableObject {
                     return (200, ["image": png.base64EncodedString(), "media_type": "image/png"])
                 }
             }
+            // A JSON Schema the answer must fit (`schema` on `LampAI.ask`), which every route holds the model to.
+            let schema = body["schema"] as? [String: Any]
             let (text, cost) = try await AppAI.complete(prompt: prompt, images: images,
                                                          system: body["system"] as? String ?? "",
-                                                         json: body["json"] as? Bool ?? false,
+                                                         json: body["json"] as? Bool ?? false || schema != nil,
                                                          appModel: AppAI.textChoice(asked: body["model"] as? String, app: models.text),
+                                                         schema: schema,
                                                          // The page's own limit, when it asked for a quicker answer.
                                                          timeLimit: (body["seconds"] as? Double).flatMap { $0 > 0 ? min($0, AppAI.guardSeconds) : nil })
             if let project { record(project, cost: cost) }
-            return (200, ["text": text])
+            return (200, ["text": text, "cost": cost])
         } catch let failure as AppAI.Failure {
             if failure.cost > 0, let project { record(project, cost: failure.cost) }   // billed even though it failed
             return failed(failure, for: project)

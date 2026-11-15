@@ -56,10 +56,11 @@ export class EngineTrouble extends Error {
  * computer is read or run whatever the prompt asks. Pictures (`images`, base64 with their `media_type`) go with the
  * request itself: to Claude Code in its input, to Codex as attachments, never through a tool that reads files.
  * Lamp's app runs it this way too (`engineAnswer` in calls.mjs, `AppAI.viaEngine`), naming the program (`tool`) and
- * what it needs set (`env`); on its own lamp finds the person's own on the PATH.
+ * what it needs set (`env`); on its own lamp finds the person's own on the PATH. `spent` hears what a call through
+ * OpenRouter cost; one through the person's own sign-in costs nothing through Lamp.
  */
-export function complete({ system, prompt, schema, seconds = 60, which = engine(), tool, env = {}, model = process.env.LAMP_AI_MODEL || "", images = [], signal } = {}) {
-  if (which === "openrouter") return viaOpenRouter({ system, prompt, schema, seconds, model, images, signal });
+export function complete({ system, prompt, schema, seconds = 60, which = engine(), tool, env = {}, model = process.env.LAMP_AI_MODEL || "", images = [], signal, spent } = {}) {
+  if (which === "openrouter") return viaOpenRouter({ system, prompt, schema, seconds, model, images, signal, spent });
   if (which !== "claude" && which !== "codex") return Promise.reject(new EngineTrouble("missing", missing));
   const folder = mkdtempSync(join(tmpdir(), "lamp-ai-"));
   const sayer = system || "You are a helpful assistant inside an app.";
@@ -194,12 +195,15 @@ function openRouterWords(error) {
 }
 
 /** An answer from OpenRouter with the person's key (openrouter.mjs, as Lamp's app sends it), its troubles said as an engine's. */
-async function viaOpenRouter({ system, prompt, schema, seconds, model, images, signal }) {
+async function viaOpenRouter({ system, prompt, schema, seconds, model, images, signal, spent }) {
   try {
-    return (await openRouterText({ key: process.env.OPENROUTER_API_KEY, prompt, images, system: system || "You are a helpful assistant inside an app.",
-      model: model || DEFAULT_MODEL, json: !!schema, schema, seconds, signal })).text;
+    const { text, cost } = await openRouterText({ key: process.env.OPENROUTER_API_KEY, prompt, images, system: system || "You are a helpful assistant inside an app.",
+      model: model || DEFAULT_MODEL, json: !!schema, schema, seconds, signal });
+    spent?.(cost);
+    return text;
   } catch (error) {
     if (!(error instanceof OpenRouterTrouble)) throw error;
+    spent?.(error.cost);
     throw new EngineTrouble(error.kind === "refused" ? "failed" : error.kind, error.kind === "refused" ? openRouterWords(error) : error.message);
   }
 }
@@ -315,15 +319,34 @@ const GUARD_SECONDS = 600;
 const secondsFor = (body) => (typeof body?.seconds === "number" && body.seconds > 0 ? Math.min(body.seconds, GUARD_SECONDS) : GUARD_SECONDS);
 
 /** `/ai`: a text answer, or JSON when asked for it. */
-export async function ask(body, here = engines()) {
+export async function ask(body, here = engines(), signal) {
   const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
   if (!prompt) return [400, { error: "Missing prompt." }];
+  // A JSON Schema the answer must fit (`LampAI.ask`'s `schema`): every engine holds the model to it.
+  const schema = body.schema && typeof body.schema === "object" && !Array.isArray(body.schema) ? body.schema : undefined;
+  const json = !!body.json || !!schema;
   let system = typeof body.system === "string" ? body.system : "";
-  if (body.json) system += (system ? "\n\n" : "") + "Answer with JSON only, nothing around it.";
+  if (json) system += (system ? "\n\n" : "") + "Answer with JSON only, nothing around it.";
   const { which, model } = routeFor(body.model, here);
-  try { return [200, { text: await complete({ system, prompt, images: body.images, which, model, seconds: secondsFor(body) }) }]; }
-  catch (error) { return [502, { error: error.message }]; }
+  let cost = 0;
+  const spent = (more) => { cost += Number(more) || 0; };
+  // One time for the whole request, its second try included, as Lamp's app gives it (`AppAI.complete`).
+  const deadline = Date.now() + secondsFor(body) * 1000;
+  const once = (asked) => complete({ system, prompt: asked, schema, images: body.images, which, model, seconds: Math.max(1, (deadline - Date.now()) / 1000), signal, spent });
+  try {
+    let text = await once(prompt);
+    // JSON that doesn't read (cut off, or with words around it) is no use to the page: asked once more, saying so.
+    if (json && !readsAsJSON(text)) {
+      if (deadline - Date.now() < 5000) return [502, { error: "The AI's reply wasn't valid JSON, and there was no time left to ask again.", cost }];
+      text = await once(`${prompt}\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only.`);
+      if (!readsAsJSON(text)) return [502, { error: "The AI's reply wasn't valid JSON, even on a second try. Ask for less at once.", cost }];
+    }
+    return [200, { text: json ? unfenced(text) : text, cost }];
+  } catch (error) { return [502, { error: error.message, cost }]; }
 }
+
+const unfenced = (text) => String(text).trim().replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
+function readsAsJSON(text) { try { JSON.parse(unfenced(text)); return true; } catch { return false; } }
 
 // MARK: Decisions
 
@@ -355,26 +378,29 @@ export async function act(body, here = engines()) {
   const seconds = 600;
   const deadline = Date.now() + Math.min(r.seconds, seconds) * 1000;
   const tag = "outside-text-" + randomBytes(4).toString("hex");
-  let retry = null;
+  let retry = null, cost = 0;
   for (let attempt = 0; attempt < 2; attempt++) {
     const left = (deadline - Date.now()) / 1000;
-    if (left < 1) return [504, { error: "This step ran out of time." }];
+    if (left < 1) return [504, { error: "This step ran out of time.", cost }];
     let read;
     try {
       if (which === "openrouter") {
         const body = chatBody(r, tag, retry, model);
-        read = readMessage((await openRouterChat({ key: process.env.OPENROUTER_API_KEY, body, seconds: left })).message, r);
+        const answered = await openRouterChat({ key: process.env.OPENROUTER_API_KEY, body, seconds: left });
+        cost += answered.cost;
+        read = readMessage(answered.message, r);
       } else {
         const { system, prompt } = planPrompt(r, tag, retry);
         read = readPlan(await complete({ system, prompt, schema: planSchema(r), seconds: left, which, model }), r);
       }
     } catch (error) {
-      const words = error?.reply?.error?.message || error.message;
-      return Date.now() >= deadline || error?.kind === "timeout" ? [504, { error: "This step ran out of time." }] : [502, { error: String(words) }];
+      cost += Number(error?.cost) || 0;
+      const words = error instanceof OpenRouterTrouble && error.kind === "refused" ? openRouterWords(error) : error?.reply?.error?.message || error.message;
+      return Date.now() >= deadline || error?.kind === "timeout" ? [504, { error: "This step ran out of time.", cost }] : [502, { error: String(words), cost }];
     }
-    if (read.answer) return [200, { ...read.answer, route: which, seconds }];
+    if (read.answer) return [200, { ...read.answer, route: which, seconds, cost }];
     if (attempt === 0) { retry = read.problem; continue; }
-    return [200, { reply: "I couldn't work out how to do that.", ask: false, route: which, seconds, trouble: read.problem }];
+    return [200, { reply: "I couldn't work out how to do that.", ask: false, route: which, seconds, trouble: read.problem, cost }];
   }
   return [502, { error: "The AI didn't answer." }];
 }
@@ -517,11 +543,11 @@ export function codexImage({ prompt, references = [], aspectRatio, seconds = PIC
 }
 
 /** A page's AI request, by its route, as Lamp's app answers it: [status, JSON]. `app` is what the app chose for itself
- *  (`imageModel`), when that's known. */
-export async function answer(path, body, page, app = {}) {
+ *  (`imageModel`), when that's known; `signal` stops an answer the page no longer waits for. */
+export async function answer(path, body, page, app = {}, signal) {
   if (path === "/ai/status") return [200, await status(page)];
   if (path === "/ai/models") return [200, models(enginesFor(page))];
-  if (path === "/ai") return ask(body, enginesFor(page));
+  if (path === "/ai") return ask(body, enginesFor(page), signal);
   if (path === "/ai/act") return act(body, enginesFor(page));
   if (path === "/ai/decide") return decide(body);
   if (path === "/ai/hear") return body?.probe === true ? [200, { hear: false, why: "Hearing needs Lamp's app." }] : [501, { error: "Hearing needs Lamp's app: open the app in Lamp." }];

@@ -471,8 +471,14 @@ enum DeviceSupport {
           delete asked[m.id];
           waiting({ status: m.status, body: m.body });
         };
-        bridge = { postMessage: function (m) {
-          return new Promise(function (resolve) { var id = ++askId; asked[id] = resolve; gate.postMessage(JSON.stringify({ id: id, path: m.path, body: m.body, timeout: m.timeout })); });
+        bridge = { postMessage: function (m, signal) {
+          return new Promise(function (resolve) {
+            var id = ++askId;
+            asked[id] = resolve;
+            gate.postMessage(JSON.stringify({ id: id, path: m.path, body: m.body, timeout: m.timeout }));
+            // A page that stops waiting tells the host, which can stop the answer (lamp dev does).
+            if (signal) signal.addEventListener('abort', function () { if (asked[id]) gate.postMessage(JSON.stringify({ id: id, cancel: true })); });
+          });
         } };
       }
       var preferred = null;
@@ -638,14 +644,14 @@ enum DeviceSupport {
       // with a little more for the answer to come back.
       function AI_WAIT(seconds) { return (typeof seconds === 'number' && seconds > 0 ? Math.min(seconds, 600) : 600) * 1000 + 15000; }
 
-      function post(path, body, timeout, deadline) {
+      function post(path, body, timeout, deadline, signal) {
         timeout = timeout || 240000;
         var done;
         if (!bridge && shared()) {
           done = nearby(path, body, timeout, deadline);
         } else if (bridge) {
           // The TV preview on the Mac answers for Lamp itself.
-          done = bridge.postMessage({ path: path, body: JSON.stringify(body), timeout: timeout }).then(function (r) {
+          done = bridge.postMessage({ path: path, body: JSON.stringify(body), timeout: timeout }, signal).then(function (r) {
             var reply = {};
             try { reply = JSON.parse(r.body) || {}; } catch (e) {}
             return { status: r.status, reply: reply };
@@ -816,21 +822,41 @@ enum DeviceSupport {
         score: function (question, levels) { return { type: 'score', instructions: question, criteria: levels }; }
       };
 
+      function stoppedFailure() { var f = new Failure('Stopped.'); f.stopped = true; return f; }
+
+      // A promise the page can stop waiting for with an AbortSignal: it fails at once with `stopped`, whatever comes after.
+      function stoppable(promise, signal) {
+        if (!signal) return promise;
+        return new Promise(function (resolve, reject) {
+          function stop() { reject(stoppedFailure()); }
+          if (signal.aborted) return stop();
+          signal.addEventListener('abort', stop);
+          promise.then(function (v) { signal.removeEventListener('abort', stop); if (!signal.aborted) resolve(v); },
+                       function (e) { signal.removeEventListener('abort', stop); if (!signal.aborted) reject(e); });
+        });
+      }
+
       function call(prompt, options) {
-        var o = options || {}, text = prompt, rules = [o.system || '', present()];
+        var o = options || {}, text = prompt, rules = [o.system || '', present()], started = Date.now(), cost = 0;
+        var schema = o.schema && typeof o.schema === 'object' ? o.schema : null, json = !!o.json || !!schema;
         if (o.data) { var f = fenced(prompt, o.data); text = f.prompt; rules.push(f.rules); }
-        return encode(o.images).then(function (images) {
-          var body = { prompt: text, system: rules.filter(function (r) { return r; }).join('\n\n'), json: !!o.json, images: images };
+        return stoppable(encode(o.images).then(function (images) {
+          var body = { prompt: text, system: rules.filter(function (r) { return r; }).join('\n\n'), json: json, images: images };
+          if (schema) body.schema = schema;
           if (o.model) body.model = o.model;
           // No limit of the page's own unless it asks for one: Lamp's guard ends only a call that stopped answering.
           if (typeof o.seconds === 'number' && o.seconds > 0) body.seconds = o.seconds;
-          return post('/ai', body, AI_WAIT(body.seconds));
+          return post('/ai', body, AI_WAIT(body.seconds), null, o.signal);
         }).then(function (reply) {
           if (typeof reply.text !== 'string') throw new Failure('The AI request failed.');
-          if (!o.json) return reply.text;
-          try { return JSON.parse(reply.text.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, '')); }
-          catch (e) { throw new Failure('The AI\'s answer wasn\'t in the expected format. Try again.'); }
-        });
+          cost = typeof reply.cost === 'number' && reply.cost > 0 ? reply.cost : 0;
+          var answer = reply.text;
+          if (json) {
+            try { answer = JSON.parse(reply.text.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, '')); }
+            catch (e) { throw new Failure('The AI\'s answer wasn\'t in the expected format. Try again.'); }
+          }
+          return o.details ? { answer: answer, seconds: Math.round((Date.now() - started) / 100) / 10, cost: cost } : answer;
+        }), o.signal);
       }
 
       function image(prompt, images, aspectRatio) {
@@ -929,7 +955,7 @@ enum DeviceSupport {
         }
         var ran = actRan[id];
         var started = Date.now(), deadline = asked ? started + Math.max(1, asked) * 1000 : Infinity;
-        var out = { turn: id, reply: '', ask: false, choices: [], done: [], failed: [], skipped: [], reads: [], stopped: null, error: '' };
+        var out = { turn: id, reply: '', ask: false, choices: [], done: [], failed: [], skipped: [], reads: [], stopped: null, error: '', seconds: 0, cost: 0 };
         var steps = [], route = null, writes = 0, over = false, settle;
         var declared = Object.keys(tools).map(function (name) {
           var t = tools[name];
@@ -941,6 +967,7 @@ enum DeviceSupport {
           over = true;
           out.stopped = reason || null;
           if (error) out.error = error;
+          out.seconds = Math.round((Date.now() - started) / 100) / 10;
           settle(out);
         }
         // Over, or past the deadline by the clock even if its timer hasn't run yet (a slow write can carry the turn past
@@ -1036,6 +1063,8 @@ enum DeviceSupport {
           if (steps.length >= limits.steps - 1) body.final = true;
           if (o.model) body.model = o.model;
           post('/ai/act', body, stepTime, Date.now() + stepTime).then(function (answer) {
+            // What the step cost through a key, paid for whether or not its answer still runs.
+            if (typeof answer.cost === 'number' && answer.cost > 0) out.cost += answer.cost;
             // Cancelled, out of time or already over: an answer that comes late runs nothing.
             if (late()) return;
             route = answer.route || route;
@@ -1261,8 +1290,12 @@ enum DeviceSupport {
 
         /** options: data (text from outside the app, for the AI to work on, not obey), images (pictures to look at),
          *  system, json (true asks for JSON and gives back the parsed value: describe its exact shape in the prompt),
-         *  model (an id `LampAI.models()` lists, such as "engine:claude:opus" or "openrouter:sonnet"; a bare "opus" is
-         *  Opus through whatever answers by default). */
+         *  schema (a JSON Schema the answer must fit, which holds every AI to it, for large JSON: implies json; each object
+         *  lists every property in `required` and has `additionalProperties: false`), model (an id `LampAI.models()` lists,
+         *  such as "engine:claude:opus" or "openrouter:sonnet"; a bare "opus" is Opus through whatever answers by
+         *  default), signal (an AbortSignal: aborting it fails the ask at once with `error.stopped`), details (true
+         *  resolves { answer, seconds, cost }: `cost` in US dollars, 0 when the person's own Claude Code or Codex
+         *  answered). */
         ask: function (prompt, options) { return call(prompt, options); },
 
         /**
@@ -1290,7 +1323,7 @@ enum DeviceSupport {
          *       model: picker.value,                                           // optional: an id from LampAI.models()
          *       onStep: function (s) { … }                                     // { kind, name, args[, result] }
          *     });
-         *     turn.result.then(function (r) { r.reply; r.ask; r.choices; r.done; r.failed; r.skipped; r.stopped; });
+         *     turn.result.then(function (r) { r.reply; r.ask; r.choices; r.done; r.failed; r.skipped; r.stopped; r.seconds; r.cost; });
          *     turn.cancel();
          *
          * An argument's shape is { type: 'string' | 'integer' | 'number' | 'boolean' | 'date' | 'datetime' | 'list',
@@ -1304,7 +1337,8 @@ enum DeviceSupport {
          * `call.key` is the same for the same write in the same turn: make the ids of what a write creates from it, or
          * keep it on the change, so a write asked again (or a turn tried again with `turn: r.turn`) finds it instead of
          * adding a second. The same write in one turn while the page is open isn't run twice; nothing promises more.
-         * Throw `LampAI.refuse('sentence')` from `check` or `run` to say why something can't be done.
+         * Throw `LampAI.refuse('sentence')` from `check` or `run` to say why something can't be done. `seconds` is how long
+         * the turn took and `cost` what it cost in US dollars (0 when the person's own Claude Code or Codex answered).
          */
         act: function (request, options) { return act(request, options); },
 

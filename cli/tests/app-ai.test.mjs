@@ -246,8 +246,8 @@ test("models say what answers each, and every id goes through its own engine", a
     // A page shared on lamp.dev uses only what it was let use, the engine that answers first.
     const [, shared] = await answer("/ai/models", {}, { id: "abc" });
     assert.deepEqual([...new Set(shared.models.map((m) => m.via.id))], ["claude-code"]);
-    assert.deepEqual(await answer("/ai", { prompt: "Hello", model: "openrouter:opus" }, { id: "abc" }), [200, { text: "Hi" }]);
-    assert.deepEqual(await ask({ prompt: "Hello", model: "engine:claude:haiku" }), [200, { text: "Hi" }]);
+    assert.deepEqual(await answer("/ai", { prompt: "Hello", model: "openrouter:opus" }, { id: "abc" }), [200, { text: "Hi", cost: 0 }]);
+    assert.deepEqual(await ask({ prompt: "Hello", model: "engine:claude:haiku" }), [200, { text: "Hi", cost: 0 }]);
     const args = read(join(folder, "args"), "utf8").split("\n");
     assert.equal(args[args.indexOf("--model") + 1], "haiku");
   } finally {
