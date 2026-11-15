@@ -1892,3 +1892,28 @@ struct ModelPicker: View {
         if model.isEmpty, let first = models.first { model = first }
     }
 }
+
+/// Whether OpenRouter still takes the key Lamp keeps, for `LampAI.status`: a key that's there may have been revoked or
+/// run out of credit since it was saved, and every call through it would then fail. Asked at most every five minutes;
+/// when OpenRouter can't be reached the key may well be good, so nothing is said.
+enum OpenRouterKeyCheck {
+    @MainActor private static var last: (key: String, at: Date, problem: String?)?
+
+    @MainActor static func problem() async -> String? {
+        guard let key = KeyStore.openRouterKey, !key.isEmpty else { return nil }
+        if let last, last.key == key, Date().timeIntervalSince(last.at) < 300 { return last.problem }
+        // Quickly, since a page waits on its status: an answer slower than this says nothing.
+        var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/key")!)
+        request.timeoutInterval = 4
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        guard let (data, response) = try? await URLSession.shared.data(for: request) else { return nil }
+        let problem: String?
+        switch SetupView.verdict(status: (response as? HTTPURLResponse)?.statusCode ?? 0, body: data) {
+        case .accepted: problem = nil
+        case .refused: problem = "OpenRouter didn't accept \(Edition.name)'s key: it may have been revoked or run out of credit. Add a new one in \(Edition.name) → Settings (⌘,)."
+        case .unchecked: return nil
+        }
+        last = (key, Date(), problem)
+        return problem
+    }
+}

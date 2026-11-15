@@ -107,6 +107,11 @@ test("a new game is given what only Lamp's app writes, and a file that isn't the
 test("a saved change reaches the open page, and one saved while a page was opening reaches it too", async () => {
   const open = await line(0);
   await open.next("hello");
+  // Only what a page has asked for is a change to it: renders a page's tests write beside it open no page again.
+  await fetch(`${server.url}main.js`);
+  mkdirSync(join(folder, "Web", "renders"), { recursive: true });
+  writeFileSync(join(folder, "Web", "renders", "one.png"), "not the page");
+  await new Promise((done) => setTimeout(done, 300));
   writeFileSync(join(folder, "Web", "main.js"), "export const n = 2;\n");
   const first = JSON.parse(await open.next("change"));
   assert.deepEqual([first.gen, first.changed, first.removed], [1, ["main.js"], []]);
@@ -133,6 +138,7 @@ test("saving APP.md is no change to the page, whether the watcher or a look find
   await open.next("hello");
   writeFileSync(join(folder, "Web", "APP.md"), "# T\n\nWhat the app is, and more.\n");
   await new Promise((done) => setTimeout(done, 400));
+  await fetch(`${server.url}notes.md`);
   writeFileSync(join(folder, "Web", "notes.md"), "Markdown the page may load.\n");
   // Changes go out in order: the first one this page hears of is the Markdown it may load, never APP.md.
   assert.deepEqual(JSON.parse(await open.next("change")).changed, ["notes.md"]);

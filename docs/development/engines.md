@@ -289,7 +289,9 @@ A capability given to one engine must be given to all of them that can take it, 
   pickers, the sharing review, the keys a phone takes away (`keysForPhone`) and the agent's status line
   all read it; don't work any of that out again elsewhere. A failure for want of setup carries
   `AppAI.Failure.needs`; the gateway passes it to the app (`LampAI.Failure.needsSetup`, and
-  `LampAI.isAvailable` asks `/ai/status`) and offers a setup card in the app's chat (`Store.offerSetup`,
+  `LampAI.isAvailable` asks `/ai/status`, which counts what goes through an OpenRouter key OpenRouter refuses, revoked or
+  out of credit, as not there, saying which setting to fix: `OpenRouterKeyCheck`, `keyProblem` in cli/ai.mjs, asked at most
+  every five minutes) and offers a setup card in the app's chat (`Store.offerSetup`,
   `SetupCard`, once per app and capability; "Not Now" keeps Lamp's own offers away from every app). The
   agent is told what the app has at the end of a request (`AIStatus.brief`, beside `Memory.brief` and sent
   the same way: once per conversation and when it changes) and raises the same card with `offer_setup`.
@@ -317,6 +319,12 @@ A capability given to one engine must be given to all of them that can take it, 
   four short plain-text answers, checked in app-ai.mjs and again in lamp.js); words without a call carry none.
   `LampAI.isAvailable('act')` asks `/ai/act` itself (`probe`), so it's true only when lamp.js has `act`, the app around
   the page lets the route through and the app's route can take it.
+- **An app's own asking** (`LampAI.ask` in lamp.js, `/ai`): `schema` holds the answer to a JSON Schema on every route
+  (OpenRouter's structured output, `--json-schema`, `--output-schema`), JSON that doesn't read is asked again once
+  (`AppAI.complete`, `ask` in cli/ai.mjs), and the answer comes back with its `cost` (0 through the person's own
+  sign-in), as each `/ai/act` step's does, for `details` on `ask` and the turn's `cost`. A page stops waiting with
+  `signal`: `lamp dev` then ends the request and the engine's run with it (`cancel` through `lampGatewayHost`); Lamp's
+  app lets the answer finish, as it does a cancelled act step.
 - **An app's own model choice** (`LampAI.models()` in lamp.js and LampSupport, `/ai/models`): what the person's setup
   can answer the app with now, asked of no model: Lamp's app lists every text route by its id with whether it can
   answer and which answers the app when it names none (`AppAI.modelChoices`, built by `AppAI.modelList`); `lamp dev`

@@ -566,8 +566,9 @@ enum AppAI {
 
     /// `model` overrides the in-app model (an OpenRouter model ID), e.g. for Lamp's own import review.
     /// `appModel` is an app's own text model (an id from `models`), when it has one.
-    /// `schema` is a JSON Schema the reply must fit. OpenRouter holds the model to it; the other routes
-    /// can't, so a caller that depends on the shape still checks the reply.
+    /// `schema` is a JSON Schema the reply must fit, which every route holds the model to (OpenRouter's structured
+    /// output, Claude Code's `--json-schema`, Codex's `--output-schema`); a caller that depends on the shape still checks
+    /// the reply.
     /// `via` is a route the caller has already settled on, for one that must know what answered: the call
     /// goes that way or fails, and nothing is looked up again.
     /// `timeLimit` ends a call through Claude Code or Codex that hasn't answered by then, for a caller that would

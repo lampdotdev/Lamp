@@ -75,7 +75,12 @@ enum AppAct {
         let started = Date()
         if let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], body["probe"] as? Bool == true {
             switch firstRoute(appModel: appModel) {
-            case .success(let route): return (200, ["act": true, "route": route.id, "why": ""], 0)
+            case .success(let route):
+                // A key OpenRouter refuses can't answer a step, as `/ai/status` says too.
+                if AppAI.provider(of: route) == "openrouter", let refused = await OpenRouterKeyCheck.problem() {
+                    return (200, ["act": false, "route": route.id, "why": refused], 0)
+                }
+                return (200, ["act": true, "route": route.id, "why": ""], 0)
             case .failure(let failure): return (200, ["act": false, "route": AppAI.route(for: appModel).id, "why": failure.message], 0)
             }
         }

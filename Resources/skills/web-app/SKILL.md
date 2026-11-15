@@ -23,7 +23,10 @@ opening comment for the whole list. What it gives:
   heard of Lamp finds out how. Where it answers `connect: true` (a page on lamp.dev that hasn't reached this computer
   yet), also show a small "Connect AI" button that calls `LampAI.connect(capability)` with the same kind of AI you asked
   `status` about (`LampAI.connect('pictures')` for pictures) and use the answer it gives as `status`'s;
-  never call `connect()` as the page loads, since it makes the browser ask the person.
+  never call `connect()` as the page loads, since it makes the browser ask the person. For JSON the app reads, give
+  `ask` a `schema` (a JSON Schema: every property in `required`, `additionalProperties: false`), which holds the AI to
+  it, rather than only describing the shape. A long `ask` the person can stop takes a `signal` (an `AbortController`'s),
+  and its failure then has `stopped`, which needs no error shown.
 - **LampAI.act**: the person asks the app to do something in their own words, and the app's own reads and writes do
   it; "Doing things for the person" below, with **LampVoice** and **LampAI.hear** for saying it.
 - **LampStore**: what the app saves, as JSON on the device. Once something is saved, only ever add to it: a new field
