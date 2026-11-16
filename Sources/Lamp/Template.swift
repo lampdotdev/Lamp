@@ -3597,18 +3597,16 @@ enum Template {
                 payload["max_tokens"] = 16_000
             }
             request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-            let outOfTime = "The AI didn't answer in the time this asked for."
+            // Whatever stops an attempt (the app's time, the network, a cancel) keeps what earlier attempts cost.
+            func kept(_ error: Error) -> LampAI.Failure {
+                if let failure = error as? LampAI.Failure { return LampAI.Failure(message: failure.message, stopped: failure.stopped, cost: cost) }
+                if Task.isCancelled { return LampAI.Failure(message: "Stopped.", stopped: true, cost: cost) }
+                return LampAI.Failure(message: "Couldn't reach the AI: \(error.localizedDescription)", cost: cost)
+            }
             // The provider's content filter sometimes refuses an ordinary request at random: ask again, within the app's limit.
             for attempt in 0..<3 {
-                if let deadline {
-                    let left = deadline.timeIntervalSinceNow
-                    guard left >= 1 else { throw LampAI.Failure(message: outOfTime, cost: cost) }
-                    request.timeoutInterval = min(120, left)
-                }
                 let data: Data, response: URLResponse
-                do { (data, response) = try await URLSession.shared.data(for: request) } catch let error as URLError where error.code == .timedOut && deadline != nil {
-                    throw LampAI.Failure(message: outOfTime, cost: cost)
-                }
+                do { (data, response) = try await fetch(request, until: deadline) } catch { throw kept(error) }
                 let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
                 // What OpenRouter billed for this attempt, answered or not.
                 cost += ((obj["usage"] as? [String: Any])?["cost"] as? Double).map { max(0, $0) } ?? 0
@@ -3617,12 +3615,37 @@ enum Template {
                     throw LampAI.Failure(message: friendly(status, (obj["error"] as? [String: Any])?["message"] as? String), cost: cost)
                 }
                 if choice["finish_reason"] as? String == "content_filter" {
-                    if attempt < 2 { try await Task.sleep(for: .milliseconds(400 << attempt)); continue }
+                    if attempt < 2 {
+                        do { try await Task.sleep(for: .milliseconds(400 << attempt)) } catch { throw kept(error) }
+                        continue
+                    }
                     throw LampAI.Failure(message: "The AI provider's content filter cut the reply off. Try rewording the request.", cost: cost)
                 }
                 return (choice["message"] as? [String: Any])?["content"] as? String ?? ""
             }
-            throw LampAI.Failure(message: "The AI didn't answer.")
+            throw LampAI.Failure(message: "The AI didn't answer.", cost: cost)
+        }
+
+        /// One request, ended at `deadline` however it's going: the request's own timeout only notices a stall, so the
+        /// app's time is raced beside it, and whichever ends first cancels the other.
+        private static func fetch(_ request: URLRequest, until deadline: Date?) async throws -> (Data, URLResponse) {
+            guard let deadline else { return try await URLSession.shared.data(for: request) }
+            let outOfTime = LampAI.Failure(message: "The AI didn't answer in the time this asked for.")
+            let left = deadline.timeIntervalSinceNow
+            guard left > 0 else { throw outOfTime }
+            var request = request
+            request.timeoutInterval = min(120, left)
+            return try await withThrowingTaskGroup(of: (Data, URLResponse)?.self) { group in
+                group.addTask { [request] in try await URLSession.shared.data(for: request) }
+                group.addTask { try await Task.sleep(for: .seconds(left)); return nil }
+                defer { group.cancelAll() }
+                do {
+                    guard let first = try await group.next(), let done = first else { throw outOfTime }
+                    return done
+                } catch let error as URLError where error.code == .timedOut {
+                    throw outOfTime
+                }
+            }
         }
         /// The answers' shape as a JSON schema the model is held to: every question's key, and a choice's own options.
         private static func decisionSchema(_ questions: [String: Any]) -> [String: Any] {
