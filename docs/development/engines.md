@@ -324,7 +324,7 @@ A capability given to one engine must be given to all of them that can take it, 
   `AppAct` keeps only the route, its time and asking it. Every text route answers: OpenRouter with tools,
   `require_parameters` and `tool_choice` "auto" ("none" for the reply-only step), so words without a call are the
   reply; Claude Code and Codex with one sealed run per step held to the step's JSON shape (`--json-schema`,
-  `--output-schema`). A tool's result may show the model pictures (`LampAI.picture`): lamp.js takes each out of the result,
+  `--output-schema`). A tool's result may show the model pictures (`LampAI.picture`): lamp.js and LampSupport's `LampActSession` take each out of the result,
   named in its place ("[picture 2]", numbered across the turn), scaled to 1024 pixels, and sends the newest six beside
   it, older ones as no longer shown (`ACT_PICTURES`, `MAX_PICTURES`, a step's 3.5 MB); OpenRouter is shown a step's
   pictures as a message after its results, Claude Code and Codex with the prompt, as an ask's pictures go
@@ -337,8 +337,9 @@ A capability given to one engine must be given to all of them that can take it, 
   (`AppAI.complete`, `ask` in cli/ai.mjs), and the answer comes back with its `cost` (0 through the person's own
   sign-in), as each `/ai/act` step's does, for `details` on `ask` and the turn's `cost`. `effort` ("fast" or "best", on
   `ask` and `act`) is how hard the model thinks, low or high on every route (`EFFORTS` in cli/app-ai.mjs): Claude Code's
-  `--effort`, Codex's `model_reasoning_effort` (low without one, as before), OpenRouter's `reasoning`. A page stops waiting with
-  `signal`: `lamp dev` then ends the request and the engine's run with it (`cancel` through `lampGatewayHost`); Lamp's
+  `--effort`, Codex's `model_reasoning_effort` (low without one, as before), OpenRouter's `reasoning`. LampSupport's `ask` takes the same (`schema:`, `effort:`, `seconds:`, cost and time from `LampAI.answer(to:)`), and the
+  phone answering for itself away from the Mac sends `effort` as `reasoning` too. A page stops waiting with
+  `signal` (a Swift app by cancelling the task that asks): `lamp dev` then ends the request and the engine's run with it (`cancel` through `lampGatewayHost`); Lamp's
   app lets the answer finish, as it does a cancelled act step.
 - **An app's own model choice** (`LampAI.models()` in lamp.js and LampSupport, `/ai/models`): what the person's setup
   can answer the app with now, asked of no model: Lamp's app lists every text route by its id with whether it can

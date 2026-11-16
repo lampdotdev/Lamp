@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 // The native `LampActSession` from LampSupport.swift, against a stand-in for Lamp that answers each `/ai/act` step from
 // a script: the answers a model can't be relied on to give (a change asked twice, an answer after a cancel, a second
@@ -265,6 +265,25 @@ struct Checks {
             let result = await turn.result
             expect(result.stopped == .cancelled && !result.summary.contains("before changing anything"),
                    "a change that failed partway is never summed up as nothing changed")
+        }
+
+        // A read's pictures go beside its result, named in its place; only the newest six carry their data. The effort
+        // asked goes with every step, and each step's cost adds up.
+        do {
+            let lamp = Lamp(), app = Groceries()
+            let dot = NSImage(size: NSSize(width: 2000, height: 1000), flipped: false) { rect in NSColor.red.setFill(); rect.fill(); return true }
+            let look = LampActTool.read("look", "What the app drew.") { ["drawn": [LampAI.picture(dot), LampAI.picture(dot)]] }
+            lamp.answers = (1...4).map { ["calls": [call("c\($0)", "look")], "cost": 0.01] } + [["reply": "Looks right.", "cost": 0.01]]
+            let result = await LampActSession(tools: app.tools + [look], steps: 10, effort: .best, send: lamp.send).ask("check it").result
+            let last = lamp.bodies.last ?? [:]
+            let results = (last["steps"] as? [[String: Any]] ?? []).flatMap { $0["results"] as? [[String: Any]] ?? [] }
+            let pictures = results.flatMap { $0["pictures"] as? [[String: Any]] ?? [] }
+            let sent = pictures.filter { $0["data"] is String }.compactMap { $0["number"] as? Int }.sorted()
+            let named = ((results.first?["value"] as? [String: Any])?["drawn"] as? [String]) ?? []
+            expect(named == ["[picture 1]", "[picture 2]"], "a picture is named in its place in the result")
+            expect(pictures.count == 8 && sent == [3, 4, 5, 6, 7, 8], "only the newest six pictures carry their data")
+            expect(lamp.bodies.allSatisfy { $0["effort"] as? String == "best" }, "the effort asked goes with every step")
+            expect(abs(result.cost - 0.05) < 0.0001 && result.seconds >= 0, "a request's cost adds up its steps'")
         }
 
         print(failures == 0 ? "All act checks passed." : "\(failures) act check(s) failed.")

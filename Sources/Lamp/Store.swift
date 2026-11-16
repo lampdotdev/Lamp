@@ -14932,6 +14932,8 @@ final class Store: ObservableObject {
     /// which capability (`needs`, so LampAI can say so) and the person is offered a way in the app's chat.
     private func failed(_ failure: AppAI.Failure, for project: LampProject?) -> (Int, [String: Any]) {
         var reply: [String: Any] = ["error": failure.message]
+        // What was billed before it failed, for the app's own count (`cost` on LampAI's failures).
+        if failure.cost > 0 { reply["cost"] = failure.cost }
         if let needs = failure.needs {
             reply["needs"] = needs.rawValue
             guard let project else { return (502, reply) }

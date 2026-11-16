@@ -3531,8 +3531,8 @@ enum Template {
             fputs("LampAI \(path): Lamp isn't reachable, using the key kept on this phone\n", stderr)
             switch path {
             case "/ai":
-                let text = try await complete(body, key: key, model: keys["text_model"] as? String ?? "anthropic/claude-sonnet-5.5")
-                return ["text": text]
+                let (text, cost) = try await complete(body, key: key, model: keys["text_model"] as? String ?? "anthropic/claude-sonnet-5.5")
+                return ["text": text, "cost": cost]
             case "/ai/decide":
                 if keys["decision_provider"] as? String == "text" {
                     return ["answers": try await decideByText(body, key: key, model: keys["text_model"] as? String ?? "anthropic/claude-sonnet-5.5")]
@@ -3546,25 +3546,33 @@ enum Template {
             }
         }
 
-        private static func complete(_ body: [String: Any], key: String, model: String) async throws -> String {
+        /// The answer and what it cost at OpenRouter, within the app's own limit (`seconds`) when it set one.
+        private static func complete(_ body: [String: Any], key: String, model: String) async throws -> (text: String, cost: Double) {
             let prompt = body["prompt"] as? String ?? ""
             var system = body["system"] as? String ?? ""
             let json = body["json"] as? Bool ?? false
             if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
             let schema = body["schema"] as? [String: Any]
-            var text = try await chat(prompt: prompt, system: system, images: body["images"] as? [[String: String]] ?? [], json: json, schema: schema, key: key, model: model)
-            guard json else { return text }
+            // How hard the model thinks, as Lamp asks OpenRouter (`effort` on `LampAI.ask`).
+            let effort = ["fast": "low", "best": "high"][body["effort"] as? String ?? ""]
+            let deadline = (body["seconds"] as? Double).flatMap { $0 > 0 ? Date().addingTimeInterval($0) : nil }
+            var cost = 0.0
+            var text = try await chat(prompt: prompt, system: system, images: body["images"] as? [[String: String]] ?? [], json: json, schema: schema,
+                                      effort: effort, deadline: deadline, cost: &cost, key: key, model: model)
+            guard json else { return (text, cost) }
             // A JSON reply that doesn't parse is useless to the app: once more, saying so.
             text = unfenced(text)
             if !isJSON(text) {
                 let again = "\(prompt)\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only."
-                text = unfenced(try await chat(prompt: again, system: system, images: body["images"] as? [[String: String]] ?? [], json: true, schema: schema, key: key, model: model))
-                if !isJSON(text) { throw LampAI.Failure(message: "The AI's reply wasn't valid JSON, even on a second try. Ask for less at once.") }
+                text = unfenced(try await chat(prompt: again, system: system, images: body["images"] as? [[String: String]] ?? [], json: true, schema: schema,
+                                               effort: effort, deadline: deadline, cost: &cost, key: key, model: model))
+                if !isJSON(text) { throw LampAI.Failure(message: "The AI's reply wasn't valid JSON, even on a second try. Ask for less at once.", cost: cost) }
             }
-            return text
+            return (text, cost)
         }
 
         private static func chat(prompt: String, system: String, images: [[String: String]], json: Bool, schema: [String: Any]? = nil,
+                                 effort: String? = nil, deadline: Date? = nil, cost: inout Double,
                                  key: String, model: String) async throws -> String {
             var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
             request.httpMethod = "POST"
@@ -3579,7 +3587,9 @@ enum Template {
                 return ["type": "image_url", "image_url": ["url": "data:\(type);base64,\(data)"]]
             }
             messages.append(["role": "user", "content": content])
-            var payload: [String: Any] = ["model": model, "messages": messages]
+            // `usage` asks OpenRouter to say what the answer cost, as Lamp does (cli/openrouter.mjs).
+            var payload: [String: Any] = ["model": model, "messages": messages, "usage": ["include": true]]
+            if let effort { payload["reasoning"] = ["effort": effort] }
             if json {
                 // With a schema, the reply must fit it (a decision's every key, its exact options).
                 payload["response_format"] = schema.map { ["type": "json_schema", "json_schema": ["name": "answer", "strict": true, "schema": $0]] }
@@ -3587,21 +3597,55 @@ enum Template {
                 payload["max_tokens"] = 16_000
             }
             request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-            // The provider's content filter sometimes refuses an ordinary request at random: ask again.
+            // Whatever stops an attempt (the app's time, the network, a cancel) keeps what earlier attempts cost.
+            func kept(_ error: Error) -> LampAI.Failure {
+                if let failure = error as? LampAI.Failure { return LampAI.Failure(message: failure.message, stopped: failure.stopped, cost: cost) }
+                if Task.isCancelled { return LampAI.Failure(message: "Stopped.", stopped: true, cost: cost) }
+                return LampAI.Failure(message: "Couldn't reach the AI: \(error.localizedDescription)", cost: cost)
+            }
+            // The provider's content filter sometimes refuses an ordinary request at random: ask again, within the app's limit.
             for attempt in 0..<3 {
-                let (data, response) = try await URLSession.shared.data(for: request)
+                let data: Data, response: URLResponse
+                do { (data, response) = try await fetch(request, until: deadline) } catch { throw kept(error) }
                 let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+                // What OpenRouter billed for this attempt, answered or not.
+                cost += ((obj["usage"] as? [String: Any])?["cost"] as? Double).map { max(0, $0) } ?? 0
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 guard status == 200, let choice = (obj["choices"] as? [[String: Any]])?.first else {
-                    throw LampAI.Failure(message: friendly(status, (obj["error"] as? [String: Any])?["message"] as? String))
+                    throw LampAI.Failure(message: friendly(status, (obj["error"] as? [String: Any])?["message"] as? String), cost: cost)
                 }
                 if choice["finish_reason"] as? String == "content_filter" {
-                    if attempt < 2 { try await Task.sleep(for: .milliseconds(400 << attempt)); continue }
-                    throw LampAI.Failure(message: "The AI provider's content filter cut the reply off. Try rewording the request.")
+                    if attempt < 2 {
+                        do { try await Task.sleep(for: .milliseconds(400 << attempt)) } catch { throw kept(error) }
+                        continue
+                    }
+                    throw LampAI.Failure(message: "The AI provider's content filter cut the reply off. Try rewording the request.", cost: cost)
                 }
                 return (choice["message"] as? [String: Any])?["content"] as? String ?? ""
             }
-            throw LampAI.Failure(message: "The AI didn't answer.")
+            throw LampAI.Failure(message: "The AI didn't answer.", cost: cost)
+        }
+
+        /// One request, ended at `deadline` however it's going: the request's own timeout only notices a stall, so the
+        /// app's time is raced beside it, and whichever ends first cancels the other.
+        private static func fetch(_ request: URLRequest, until deadline: Date?) async throws -> (Data, URLResponse) {
+            guard let deadline else { return try await URLSession.shared.data(for: request) }
+            let outOfTime = LampAI.Failure(message: "The AI didn't answer in the time this asked for.")
+            let left = deadline.timeIntervalSinceNow
+            guard left > 0 else { throw outOfTime }
+            var request = request
+            request.timeoutInterval = min(120, left)
+            return try await withThrowingTaskGroup(of: (Data, URLResponse)?.self) { group in
+                group.addTask { [request] in try await URLSession.shared.data(for: request) }
+                group.addTask { try await Task.sleep(for: .seconds(left)); return nil }
+                defer { group.cancelAll() }
+                do {
+                    guard let first = try await group.next(), let done = first else { throw outOfTime }
+                    return done
+                } catch let error as URLError where error.code == .timedOut {
+                    throw outOfTime
+                }
+            }
         }
         /// The answers' shape as a JSON schema the model is held to: every question's key, and a choice's own options.
         private static func decisionSchema(_ questions: [String: Any]) -> [String: Any] {
@@ -3661,7 +3705,7 @@ enum Template {
             how concentrated the probabilities are.
             """
             let text = try await complete(["prompt": "State:\n\(stateJSON)\n\nQuestions:\n\(questionsJSON)", "system": system, "json": true,
-                                           "schema": decisionSchema(questions)], key: key, model: model)
+                                           "schema": decisionSchema(questions)], key: key, model: model).text
             guard let raw = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
                 throw LampAI.Failure(message: "The model's decision wasn't valid JSON.")
             }
@@ -14461,16 +14505,39 @@ enum Template {
     /// `await LampAI.models()` lists what their setup can answer it with now. Show a small Picker beside the app's Ask
     /// button with only the `available` ones and `defaultID` chosen, and pass the chosen id as `model:` to `ask` and to a
     /// `LampActSession`. Leave the picker out when there's one or none to choose from.
+    ///
+    /// More on `ask`: `schema:` is a JSON Schema the answer must fit, which holds every AI to it (for large JSON; each
+    /// object lists all its properties in `required` with `additionalProperties: false`). `effort:` is how hard the AI
+    /// thinks: `.fast` for a quick answer, `.best` for a hard one (a "Quick" and a "Best" button); leave it out
+    /// otherwise. `seconds:` limits the call's time, for a feature that should answer quickly. Cancelling the task that
+    /// asks (a view's `.task` going away, a Stop button) fails the call at once with `stopped` set on its `Failure`.
+    /// `LampAI.answer(to:)` takes the same and also says how long the answer took and what it cost, in US dollars (0
+    /// when the person's own sign-in answered).
     enum LampAI {
         struct Failure: LocalizedError {
             let message: String
             /// What isn't set up, when that's why the call failed.
             var needsSetup: Capability? = nil
+            /// The task asking was cancelled: nothing went wrong, so say nothing or "Stopped".
+            var stopped = false
+            /// What was billed before it failed, in US dollars.
+            var cost: Double = 0
             var errorDescription: String? { message }
         }
 
         /// `act`: the app's own tools doing what the person asks (`LampAI.act`).
         enum Capability: String { case text, decisions, pictures, act }
+
+        /// How hard the AI thinks: fast for a quick answer, best for a hard one.
+        enum Effort: String { case fast, best }
+
+        /// An answer with how long it took and what it cost (`LampAI.answer(to:)`).
+        struct Answer {
+            let text: String
+            let seconds: Double
+            /// In US dollars: 0 when the person's own sign-in answered.
+            let cost: Double
+        }
 
         /// Whether this kind of AI can answer now. False when Lamp can't be reached and the phone has no key.
         static func isAvailable(_ capability: Capability) async -> Bool {
@@ -14483,15 +14550,29 @@ enum Template {
         /// "openrouter:sonnet", …; a bare "opus" is Opus through whatever answers by default); one that can't answer
         /// now is answered as no choice, never refused.
         static func ask(_ prompt: String, data: String? = nil, images: [LampImage] = [],
-                        system: String? = nil, model: String? = nil) async throws -> String {
-            try await call(prompt: prompt, data: data, images: images, system: system, json: false, model: model)
+                        system: String? = nil, model: String? = nil, schema: [String: Any]? = nil,
+                        effort: Effort? = nil, seconds: Double? = nil) async throws -> String {
+            try await answer(to: prompt, data: data, images: images, system: system, model: model, schema: schema,
+                             effort: effort, seconds: seconds).text
         }
 
-        /// Asks for JSON and decodes it. Describe the exact JSON shape in the prompt. `Date` properties
-        /// decode from the ISO 8601 text the AI writes.
+        /// `ask`, saying also how long the answer took and what it cost. With a `schema`, `text` is its JSON.
+        static func answer(to prompt: String, data: String? = nil, images: [LampImage] = [],
+                           system: String? = nil, model: String? = nil, schema: [String: Any]? = nil,
+                           effort: Effort? = nil, seconds: Double? = nil) async throws -> Answer {
+            let started = Date()
+            let (text, cost) = try await call(prompt: prompt, data: data, images: images, system: system, json: schema != nil,
+                                              model: model, schema: schema, effort: effort, seconds: seconds)
+            return Answer(text: text, seconds: (Date().timeIntervalSince(started) * 10).rounded() / 10, cost: cost)
+        }
+
+        /// Asks for JSON and decodes it. Describe the exact JSON shape in the prompt, or give it as `schema`. `Date`
+        /// properties decode from the ISO 8601 text the AI writes.
         static func ask<T: Decodable>(_ prompt: String, data: String? = nil, images: [LampImage] = [],
-                                      system: String? = nil, as type: T.Type) async throws -> T {
-            let text = try await call(prompt: prompt, data: data, images: images, system: system, json: true)
+                                      system: String? = nil, model: String? = nil, schema: [String: Any]? = nil,
+                                      effort: Effort? = nil, seconds: Double? = nil, as type: T.Type) async throws -> T {
+            let (text, cost) = try await call(prompt: prompt, data: data, images: images, system: system, json: true,
+                                              model: model, schema: schema, effort: effort, seconds: seconds)
             do {
                 let decoder = JSONDecoder()
                 decoder.dateDecodingStrategy = .custom { decoder in
@@ -14504,7 +14585,7 @@ enum Template {
                 }
                 return try decoder.decode(T.self, from: Data(text.utf8))
             } catch {
-                throw Failure(message: "The AI's answer wasn't in the expected format. Try again.")
+                throw Failure(message: "The AI's answer wasn't in the expected format. Try again.", cost: cost)
             }
         }
 
@@ -14832,7 +14913,7 @@ enum Template {
         }
 
         private static func image(prompt: String, images: [LampImage], aspectRatio: String?) async throws -> LampImage {
-            var body: [String: Any] = ["prompt": prompt, "images": images.compactMap(encode)]
+            var body: [String: Any] = ["prompt": prompt, "images": images.compactMap { encode($0) }]
             if let aspectRatio { body["aspect_ratio"] = aspectRatio }
             let reply = try await post("/ai/image", body)
             guard let base64 = reply["image"] as? String, let data = Data(base64Encoded: base64),
@@ -14842,8 +14923,11 @@ enum Template {
             return picture
         }
 
-        private static func call(prompt: String, data: String?, images: [LampImage], system: String?,
-                                 json: Bool, model: String? = nil) async throws -> String {
+        private static func call(prompt: String, data: String?, images: [LampImage], system: String?, json: Bool,
+                                 model: String?, schema: [String: Any]?, effort: Effort?,
+                                 seconds: Double?) async throws -> (text: String, cost: Double) {
+            // Cancelled before anything was asked: nothing is.
+            if Task.isCancelled { throw Failure(message: "Stopped.", stopped: true) }
             var prompt = prompt
             var rules = [system ?? "", present]
             if let data, !data.isEmpty {
@@ -14853,13 +14937,21 @@ enum Template {
             }
             var body: [String: Any] = [
                 "prompt": prompt, "system": rules.filter { !$0.isEmpty }.joined(separator: "\n\n"), "json": json,
-                "images": images.compactMap(encode),
+                "images": images.compactMap { encode($0) },
             ]
             if let model { body["model"] = model }
-            // As long as Lamp's guard on the call: a real answer is never cut off, however long the model takes.
-            let reply = try await post("/ai", body, timeout: 615)
+            if let schema { body["schema"] = schema }
+            if let effort { body["effort"] = effort.rawValue }
+            let limit = seconds.flatMap { $0 > 0 ? min($0, 600) : nil }
+            if let limit { body["seconds"] = limit }
+            // As long as Lamp's guard on the call (or the app's own limit, and a moment for the reply): a real answer is
+            // never cut off, however long the model takes.
+            let reply: [String: Any]
+            do { reply = try await post("/ai", body, timeout: limit.map { $0 + 15 } ?? 615) } catch where Task.isCancelled {
+                throw Failure(message: "Stopped.", stopped: true, cost: (error as? Failure)?.cost ?? 0)
+            }
             guard let text = reply["text"] as? String else { throw Failure(message: "The AI request failed.") }
-            return text
+            return (text, (reply["cost"] as? Double).map { max(0, $0) } ?? 0)
         }
 
         fileprivate static func post(_ path: String, _ body: [String: Any],
@@ -14902,7 +14994,8 @@ enum Template {
                     if (response as? HTTPURLResponse)?.statusCode == 200 { return reply }
                     let message = reply["error"] as? String ?? "The AI request failed."
                     fputs("LampAI \(path) failed: \(message)\n", stderr)
-                    throw Failure(message: message, needsSetup: (reply["needs"] as? String).flatMap(Capability.init(rawValue:)))
+                    throw Failure(message: message, needsSetup: (reply["needs"] as? String).flatMap(Capability.init(rawValue:)),
+                                  cost: (reply["cost"] as? Double).map { max(0, $0) } ?? 0)
                 } catch let error as URLError where error.code == .cannotConnectToHost && attempt == 0 {
                     // Lamp isn't running: start it in the background, then retry once. (A phone can't start
                     // it; the simulator app just waits a moment in case Lamp is coming up.)
@@ -14924,10 +15017,10 @@ enum Template {
             #endif
         }
 
-        /// Downscales to at most 1568px on the long side (the most the model uses) and JPEG-encodes.
-        private static func encode(_ image: LampImage) -> [String: String]? {
+        /// Downscales to at most 1568px on the long side (the most the model uses), or `side`, and JPEG-encodes.
+        fileprivate static func encode(_ image: LampImage, side: Double = 1568) -> [String: String]? {
             guard let cg = image.lampCGImage else { return nil }
-            let scale = min(1, 1568 / Double(max(cg.width, cg.height)))
+            let scale = min(1, side / Double(max(cg.width, cg.height)))
             let width = max(1, Int(Double(cg.width) * scale)), height = max(1, Int(Double(cg.height) * scale))
             guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
                                           space: CGColorSpaceCreateDeviceRGB(),
@@ -15077,7 +15170,40 @@ enum Template {
             (session ?? LampActSession(about: about, tools: tools, model: model)).ask(request, context: context, onStep: onStep)
         }
 
+        /// A picture in a tool's result, for the AI to look at in the middle of a request: what the app drew, a
+        /// chart, a page it made. Put it in what a read returns or in a receipt's `details`, and the AI sees it beside
+        /// the result, named there "[picture 2]", so it can check its work and fix it in the same request.
+        @MainActor static func picture(_ image: LampImage) -> LampActPicture { LampActPicture.keep(image) }
+
         fileprivate static var actPresent: String { present }
+    }
+
+    /// A picture in a tool's result (`LampAI.picture`). It stands in the result as a token until the session takes it
+    /// out to send beside the result, so it fits in any Encodable value a read returns.
+    struct LampActPicture: Encodable {
+        fileprivate let token: String
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encode(token)
+        }
+
+        fileprivate static let prefix = "\u{1}lamp-picture:"
+        /// The pictures waiting to be taken out of a result, newest last: a few dozen at most, since one that is never
+        /// sent (a result the app made but didn't return) shouldn't be kept.
+        @MainActor private static var waiting: [(token: String, image: LampImage)] = []
+
+        @MainActor fileprivate static func keep(_ image: LampImage) -> LampActPicture {
+            let token = prefix + UUID().uuidString
+            waiting.append((token, image))
+            if waiting.count > 32 { waiting.removeFirst(waiting.count - 32) }
+            return LampActPicture(token: token)
+        }
+
+        @MainActor fileprivate static func take(_ token: String) -> LampImage? {
+            guard let index = waiting.firstIndex(where: { $0.token == token }) else { return nil }
+            return waiting.remove(at: index).image
+        }
     }
 
     /// The shape of one argument of a tool, as Lamp checks it before the app sees the call.
@@ -15264,6 +15390,10 @@ enum Template {
         var skipped: [LampActMiss] = []
         var stopped: Stop?
         var error: String?
+        /// How long it took.
+        var seconds: Double = 0
+        /// What it cost, in US dollars: 0 when the person's own sign-in answered.
+        var cost: Double = 0
 
         /// What to tell the person, from what the app did: the receipts, what failed or was skipped, and why it
         /// stopped. The AI's reply is added only for a question or when nothing changed.
@@ -15332,8 +15462,9 @@ enum Template {
     /// steps between questions, 6 changes in all and 3 questions back, with no time limit unless the app sets one
     /// (`seconds:`): a real answer is never cut off. An app that builds something real in one request raises `steps:`
     /// (up to 40) and `writes:` (up to 320); a value that isn't positive keeps the default. `model:` names which AI
-    /// answers, an id from `LampAI.models()`. Each step stops only when a call has stopped answering (`stepSeconds`).
-    /// Asking something new, cancelling or closing ends it.
+    /// answers, an id from `LampAI.models()`, and `effort:` how hard it thinks (`.fast` or `.best`). Each step stops only
+    /// when a call has stopped answering (`stepSeconds`). Asking something new, cancelling or closing ends it. A tool's
+    /// result can show the AI a picture (`LampAI.picture`): the newest few are sent, each scaled down.
     @MainActor final class LampActSession {
         /// A request's steps and changes unless the app raises them: few, so a request that goes wrong ends soon and
         /// changes little.
@@ -15385,15 +15516,23 @@ enum Template {
         let writeLimit: Int
         /// Which AI answers, by an id `LampAI.models()` lists; nil for the app's own.
         let model: String?
+        /// How hard it thinks; nil for the route's own.
+        let effort: LampAI.Effort?
+        /// The pictures a step carries from its tools' results: the newest few, each at most this many pixels on its long
+        /// side, together at most this many bytes (`ACT_PICTURES` in lamp.js, `MAX_PICTURES` in lamp's app-ai.mjs).
+        static let maxPictures = 6
+        static let pictureSide: Double = 1024
+        static let pictureBytes = 1_600_000
         private var receiptLimit: Int { max(Self.maxReceipts, writeLimit * 10) }
 
         /// `seconds` limits each request's time, for a feature that should answer quickly; leave it out for no limit.
         /// `resultBytes` raises how much of a read the AI sees (32 KB unless given, 256 KB at most).
         /// `steps` and `writes` raise a request's AI steps (4 unless given, 40 at most) and changes (6, 320 at most).
-        /// `model` names which AI answers, an id from `LampAI.models()`; leave it out for the app's own.
+        /// `model` names which AI answers, an id from `LampAI.models()`; leave it out for the app's own. `effort` is how
+        /// hard it thinks.
         /// `send` stands in for Lamp in a test; leave it out.
         init(about: String = "", tools: [LampActTool], seconds: Double? = nil, resultBytes: Int? = nil,
-             steps: Int? = nil, writes: Int? = nil, model: String? = nil,
+             steps: Int? = nil, writes: Int? = nil, model: String? = nil, effort: LampAI.Effort? = nil,
              send: (([String: Any], TimeInterval) async throws -> [String: Any])? = nil) {
             self.about = about
             self.tools = tools
@@ -15402,6 +15541,7 @@ enum Template {
             self.stepLimit = min(steps.flatMap { $0 > 0 ? $0 : nil } ?? Self.maxSteps, Self.mostSteps)
             self.writeLimit = min(writes.flatMap { $0 > 0 ? $0 : nil } ?? Self.maxWrites, Self.mostWrites)
             self.model = model.flatMap { $0.isEmpty ? nil : $0 }
+            self.effort = effort
             self.send = send ?? { body, timeout in try await LampAI.post("/ai/act", body, timeout: timeout) }
         }
 
@@ -15477,25 +15617,30 @@ enum Template {
             if !earlier.isEmpty { request += "\n\nAlready done for this request (don't do these again): " + earlier.joined(separator: "; ") }
             var steps: [[String: Any]] = []
             var route: String?
+            var pictures = 0
             while true {
                 if let stop = over() { out.stopped = stop; break }
                 let left = min(deadline.timeIntervalSinceNow, Self.stepSeconds)
                 if left <= 0.5 { out.stopped = .time; break }
                 var body: [String: Any] = ["request": request, "about": about, "now": LampAI.actPresent,
-                                           "tools": tools.map(\.declared), "steps": steps, "seconds": Int(left)]
+                                           "tools": tools.map(\.declared), "steps": Self.sent(steps), "seconds": Int(left)]
                 if let context { body["context"] = context }
                 if let route { body["route"] = route }
                 if let model { body["model"] = model }
+                if let effort { body["effort"] = effort.rawValue }
                 if steps.count >= stepLimit - 1 { body["final"] = true }
                 onStep(.thinking)
                 let answer: [String: Any]
                 do { answer = try await send(body, left) } catch {
+                    // What the step cost through a key, paid for whether or not it answered.
+                    out.cost += (error as? LampAI.Failure)?.cost ?? 0
                     if let stop = over() { out.stopped = stop; break }
                     let message = (error as? LampAI.Failure)?.message ?? error.localizedDescription
                     out.stopped = message.contains("reach Lamp") ? .unreachable : .error
                     out.error = message
                     break
                 }
+                out.cost += (answer["cost"] as? Double).map { Swift.max(0, $0) } ?? 0
                 // Cancelled, out of time or replaced: an answer that comes late runs nothing.
                 if let stop = over() { out.stopped = stop; break }
                 route = answer["route"] as? String ?? route
@@ -15506,7 +15651,7 @@ enum Template {
                         out.error = "The AI gave two calls the same id."
                         break
                     }
-                    let results = await runCalls(calls, op: &op, out: &out, deadline: deadline, over: over, onStep: onStep)
+                    let results = await runCalls(calls, op: &op, out: &out, pictures: &pictures, deadline: deadline, over: over, onStep: onStep)
                     operation = turn == generation ? op : operation
                     steps.append(["calls": calls, "results": calls.map { call -> [String: Any] in
                         let id = call["id"] as! String
@@ -15535,14 +15680,73 @@ enum Template {
                 break
             }
             if turn == generation { operation = op }
+            out.seconds = (Date().timeIntervalSince(started) * 10).rounded() / 10
             return out
+        }
+
+        /// The steps as sent: only the newest pictures go with their data, within the step's room for them, chosen newest
+        /// first by number across every result; older ones go as no longer shown.
+        private static func sent(_ steps: [[String: Any]]) -> [[String: Any]] {
+            var all: [(number: Int, size: Int)] = []
+            for step in steps {
+                for result in step["results"] as? [[String: Any]] ?? [] {
+                    for picture in result["pictures"] as? [[String: Any]] ?? [] {
+                        all.append((picture["number"] as? Int ?? 0, (picture["data"] as? String)?.utf8.count ?? 0))
+                    }
+                }
+            }
+            guard !all.isEmpty else { return steps }
+            var room = pictureBytes, chosen = Set<Int>()
+            for picture in all.sorted(by: { $0.number > $1.number }) where chosen.count < maxPictures && picture.size <= room {
+                chosen.insert(picture.number)
+                room -= picture.size
+            }
+            return steps.map { step in
+                var step = step
+                step["results"] = (step["results"] as? [[String: Any]] ?? []).map { result in
+                    guard let pictures = result["pictures"] as? [[String: Any]] else { return result }
+                    var result = result
+                    result["pictures"] = pictures.map { picture in
+                        var picture = picture
+                        if !chosen.contains(picture["number"] as? Int ?? 0) { picture["data"] = NSNull() }
+                        return picture
+                    }
+                    return result
+                }
+                return step
+            }
+        }
+
+        /// A result with its pictures taken out (`LampAI.picture`): each one scaled down to send beside it, and named in
+        /// its place ("[picture 2]", numbered across the request), so the AI sees what the app drew.
+        private static func pictured(_ value: Any, count: inout Int) -> (value: Any, pictures: [[String: Any]]) {
+            var found: [[String: Any]] = []
+            func walk(_ v: Any) -> Any {
+                let token: String?
+                if let picture = v as? LampActPicture { token = picture.token }
+                else if let text = v as? String, text.hasPrefix(LampActPicture.prefix) { token = text }
+                else { token = nil }
+                if let token {
+                    guard let image = LampActPicture.take(token), let encoded = LampAI.encode(image, side: pictureSide) else {
+                        return "[a picture that couldn't be read]"
+                    }
+                    count += 1
+                    found.append(["media_type": encoded["media_type"] ?? "image/jpeg", "data": encoded["data"] ?? "", "number": count])
+                    return "[picture \(count)]"
+                }
+                if let dictionary = v as? [String: Any] { return dictionary.mapValues(walk) }
+                if let array = v as? [Any] { return array.map(walk) }
+                return v
+            }
+            let kept = walk(value)
+            return (kept, found)
         }
 
         private static func prefix(_ op: Operation) -> String { "k" + String(op.id.prefix(8)).lowercased() }
 
         /// Reads first, one after another; then the changes, each checked right before it runs. A change that fails
         /// skips the ones after it in this step, which the AI is told.
-        private func runCalls(_ calls: [[String: Any]], op: inout Operation, out: inout LampActResult, deadline: Date,
+        private func runCalls(_ calls: [[String: Any]], op: inout Operation, out: inout LampActResult, pictures: inout Int, deadline: Date,
                               over: () -> LampActResult.Stop?, onStep: (LampActStep) -> Void) async -> [String: [String: Any]] {
             var results: [String: [String: Any]] = [:]
             func tool(_ call: [String: Any]) -> LampActTool? { tools.first { $0.name == call["name"] as? String } }
@@ -15562,9 +15766,11 @@ enum Template {
                     onStep(.reading(tool.name))
                     do {
                         let value = try await tool.perform(args(call), callInfo(call, key: ""))
-                        let kept = Self.cut(value, max: max(1024, min(resultBytes, op.resultsLeft)))
+                        let shown = Self.pictured(value, count: &pictures)
+                        let kept = Self.cut(shown.value, max: max(1024, min(resultBytes, op.resultsLeft)))
                         op.resultsLeft = max(0, op.resultsLeft - ((try? JSONSerialization.data(withJSONObject: [kept]))?.count ?? 0))
                         results[id] = ["id": id, "ok": true, "value": kept]
+                        if !shown.pictures.isEmpty { results[id]?["pictures"] = shown.pictures }
                     } catch {
                         results[id] = ["id": id, "ok": false, "error": Self.words(error)]
                     }
@@ -15605,7 +15811,8 @@ enum Template {
                 do {
                     let receipt = try await tool.perform(given, info) as! LampActReceipt
                     // Done is done, even if the turn was cancelled while it ran: it's kept and shown.
-                    var value = receipt.details.filter { JSONSerialization.isValidJSONObject([$0.value]) }
+                    let drawn = Self.pictured(receipt.details, count: &pictures)
+                    var value = (drawn.value as? [String: Any] ?? [:]).filter { JSONSerialization.isValidJSONObject([$0.value]) }
                     value["summary"] = receipt.summary
                     // What the AI is shown of it draws on the request's allowance as a read does, since every later
                     // step carries it again; the receipt keeps it whole for the app.
@@ -15616,6 +15823,7 @@ enum Template {
                     out.done.append(done)
                     receipts.append(done)
                     results[id] = ["id": id, "ok": true, "value": shown]
+                    if !drawn.pictures.isEmpty { results[id]?["pictures"] = drawn.pictures }
                     onStep(.changed(done))
                 } catch {
                     ran[key] = ["failedWhileRunning": Self.words(error)]
