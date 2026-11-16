@@ -3531,8 +3531,8 @@ enum Template {
             fputs("LampAI \(path): Lamp isn't reachable, using the key kept on this phone\n", stderr)
             switch path {
             case "/ai":
-                let text = try await complete(body, key: key, model: keys["text_model"] as? String ?? "anthropic/claude-sonnet-5.5")
-                return ["text": text]
+                let (text, cost) = try await complete(body, key: key, model: keys["text_model"] as? String ?? "anthropic/claude-sonnet-5.5")
+                return ["text": text, "cost": cost]
             case "/ai/decide":
                 if keys["decision_provider"] as? String == "text" {
                     return ["answers": try await decideByText(body, key: key, model: keys["text_model"] as? String ?? "anthropic/claude-sonnet-5.5")]
@@ -3546,7 +3546,8 @@ enum Template {
             }
         }
 
-        private static func complete(_ body: [String: Any], key: String, model: String) async throws -> String {
+        /// The answer and what it cost at OpenRouter, within the app's own limit (`seconds`) when it set one.
+        private static func complete(_ body: [String: Any], key: String, model: String) async throws -> (text: String, cost: Double) {
             let prompt = body["prompt"] as? String ?? ""
             var system = body["system"] as? String ?? ""
             let json = body["json"] as? Bool ?? false
@@ -3554,20 +3555,25 @@ enum Template {
             let schema = body["schema"] as? [String: Any]
             // How hard the model thinks, as Lamp asks OpenRouter (`effort` on `LampAI.ask`).
             let effort = ["fast": "low", "best": "high"][body["effort"] as? String ?? ""]
-            var text = try await chat(prompt: prompt, system: system, images: body["images"] as? [[String: String]] ?? [], json: json, schema: schema, effort: effort, key: key, model: model)
-            guard json else { return text }
+            let deadline = (body["seconds"] as? Double).flatMap { $0 > 0 ? Date().addingTimeInterval($0) : nil }
+            var cost = 0.0
+            var text = try await chat(prompt: prompt, system: system, images: body["images"] as? [[String: String]] ?? [], json: json, schema: schema,
+                                      effort: effort, deadline: deadline, cost: &cost, key: key, model: model)
+            guard json else { return (text, cost) }
             // A JSON reply that doesn't parse is useless to the app: once more, saying so.
             text = unfenced(text)
             if !isJSON(text) {
                 let again = "\(prompt)\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only."
-                text = unfenced(try await chat(prompt: again, system: system, images: body["images"] as? [[String: String]] ?? [], json: true, schema: schema, effort: effort, key: key, model: model))
-                if !isJSON(text) { throw LampAI.Failure(message: "The AI's reply wasn't valid JSON, even on a second try. Ask for less at once.") }
+                text = unfenced(try await chat(prompt: again, system: system, images: body["images"] as? [[String: String]] ?? [], json: true, schema: schema,
+                                               effort: effort, deadline: deadline, cost: &cost, key: key, model: model))
+                if !isJSON(text) { throw LampAI.Failure(message: "The AI's reply wasn't valid JSON, even on a second try. Ask for less at once.", cost: cost) }
             }
-            return text
+            return (text, cost)
         }
 
         private static func chat(prompt: String, system: String, images: [[String: String]], json: Bool, schema: [String: Any]? = nil,
-                                 effort: String? = nil, key: String, model: String) async throws -> String {
+                                 effort: String? = nil, deadline: Date? = nil, cost: inout Double,
+                                 key: String, model: String) async throws -> String {
             var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
             request.httpMethod = "POST"
             request.timeoutInterval = 120
@@ -3581,7 +3587,8 @@ enum Template {
                 return ["type": "image_url", "image_url": ["url": "data:\(type);base64,\(data)"]]
             }
             messages.append(["role": "user", "content": content])
-            var payload: [String: Any] = ["model": model, "messages": messages]
+            // `usage` asks OpenRouter to say what the answer cost, as Lamp does (cli/openrouter.mjs).
+            var payload: [String: Any] = ["model": model, "messages": messages, "usage": ["include": true]]
             if let effort { payload["reasoning"] = ["effort": effort] }
             if json {
                 // With a schema, the reply must fit it (a decision's every key, its exact options).
@@ -3590,17 +3597,28 @@ enum Template {
                 payload["max_tokens"] = 16_000
             }
             request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-            // The provider's content filter sometimes refuses an ordinary request at random: ask again.
+            let outOfTime = "The AI didn't answer in the time this asked for."
+            // The provider's content filter sometimes refuses an ordinary request at random: ask again, within the app's limit.
             for attempt in 0..<3 {
-                let (data, response) = try await URLSession.shared.data(for: request)
+                if let deadline {
+                    let left = deadline.timeIntervalSinceNow
+                    guard left >= 1 else { throw LampAI.Failure(message: outOfTime, cost: cost) }
+                    request.timeoutInterval = min(120, left)
+                }
+                let data: Data, response: URLResponse
+                do { (data, response) = try await URLSession.shared.data(for: request) } catch let error as URLError where error.code == .timedOut && deadline != nil {
+                    throw LampAI.Failure(message: outOfTime, cost: cost)
+                }
                 let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+                // What OpenRouter billed for this attempt, answered or not.
+                cost += ((obj["usage"] as? [String: Any])?["cost"] as? Double).map { max(0, $0) } ?? 0
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 guard status == 200, let choice = (obj["choices"] as? [[String: Any]])?.first else {
-                    throw LampAI.Failure(message: friendly(status, (obj["error"] as? [String: Any])?["message"] as? String))
+                    throw LampAI.Failure(message: friendly(status, (obj["error"] as? [String: Any])?["message"] as? String), cost: cost)
                 }
                 if choice["finish_reason"] as? String == "content_filter" {
                     if attempt < 2 { try await Task.sleep(for: .milliseconds(400 << attempt)); continue }
-                    throw LampAI.Failure(message: "The AI provider's content filter cut the reply off. Try rewording the request.")
+                    throw LampAI.Failure(message: "The AI provider's content filter cut the reply off. Try rewording the request.", cost: cost)
                 }
                 return (choice["message"] as? [String: Any])?["content"] as? String ?? ""
             }
@@ -3664,7 +3682,7 @@ enum Template {
             how concentrated the probabilities are.
             """
             let text = try await complete(["prompt": "State:\n\(stateJSON)\n\nQuestions:\n\(questionsJSON)", "system": system, "json": true,
-                                           "schema": decisionSchema(questions)], key: key, model: model)
+                                           "schema": decisionSchema(questions)], key: key, model: model).text
             guard let raw = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
                 throw LampAI.Failure(message: "The model's decision wasn't valid JSON.")
             }
@@ -14530,8 +14548,8 @@ enum Template {
         static func ask<T: Decodable>(_ prompt: String, data: String? = nil, images: [LampImage] = [],
                                       system: String? = nil, model: String? = nil, schema: [String: Any]? = nil,
                                       effort: Effort? = nil, seconds: Double? = nil, as type: T.Type) async throws -> T {
-            let text = try await call(prompt: prompt, data: data, images: images, system: system, json: true,
-                                      model: model, schema: schema, effort: effort, seconds: seconds).text
+            let (text, cost) = try await call(prompt: prompt, data: data, images: images, system: system, json: true,
+                                              model: model, schema: schema, effort: effort, seconds: seconds)
             do {
                 let decoder = JSONDecoder()
                 decoder.dateDecodingStrategy = .custom { decoder in
@@ -14544,7 +14562,7 @@ enum Template {
                 }
                 return try decoder.decode(T.self, from: Data(text.utf8))
             } catch {
-                throw Failure(message: "The AI's answer wasn't in the expected format. Try again.")
+                throw Failure(message: "The AI's answer wasn't in the expected format. Try again.", cost: cost)
             }
         }
 
