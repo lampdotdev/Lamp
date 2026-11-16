@@ -585,28 +585,37 @@ enum AppAI {
         // One budget for the whole request, its second try included: the 10-minute guard unless the caller asks for less,
         // so whoever waits on the answer (an app's page waits the guard and a little more) gets the repair too.
         let deadline = Date().addingTimeInterval(min(timeLimit ?? guardSeconds, guardSeconds))
-        var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen, engineModel: engineModel, schema: schema, timeLimit: deadline.timeIntervalSinceNow, effort: effort)
-        guard json else { return (text, cost) }
-        // A JSON reply that doesn't parse (cut off, or wrapped in prose) is useless to the app: ask once more,
-        // through the same provider, saying so, before giving up. Both attempts are billed, so the cost goes
-        // with the failure too.
-        var reply = stripFences(text)
+        let first = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen, engineModel: engineModel, schema: schema, timeLimit: deadline.timeIntervalSinceNow, effort: effort)
+        guard json else { return first }
+        return try await repairingJSON(first, prompt: prompt, deadline: deadline) { again, left in
+            try await dispatch(prompt: again, images: images, system: system, json: true, model: model, chosen: chosen, engineModel: engineModel, schema: schema, timeLimit: left, effort: effort)
+        }
+    }
+
+    /// A JSON reply that doesn't parse (cut off, or wrapped in prose) is useless to the app: ask once more, through the
+    /// same provider (`askAgain`, given the prompt and the seconds left), saying so, before giving up. Both attempts are
+    /// billed, so a failure carries what both cost, the second's own failure included.
+    static func repairingJSON(_ first: (String, Double), prompt: String, deadline: Date,
+                              askAgain: (String, TimeInterval) async throws -> (String, Double)) async throws -> (String, Double) {
+        var (reply, cost) = (stripFences(first.0), first.1)
+        guard !isJSON(reply) else { return (reply, cost) }
+        let again = "\(prompt)\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only."
+        let left = deadline.timeIntervalSinceNow
+        guard left > 5 else { throw Failure(message: "The AI's reply wasn't valid JSON, and there was no time left to ask again.", cost: cost) }
+        do {
+            let (retry, more) = try await askAgain(again, left)
+            cost += more
+            reply = stripFences(retry)
+        } catch var failure as Failure {
+            // A second try that fails can still be billed (OpenRouter charges for a refused or cut-off reply): its charge
+            // joins the first's, and the rest of what it says (that nothing is set up, say) stays as it was.
+            failure.cost += cost
+            throw failure
+        } catch {
+            throw Failure(message: error.localizedDescription, cost: cost)
+        }
         if !isJSON(reply) {
-            let again = "\(prompt)\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only."
-            let left = deadline.timeIntervalSinceNow
-            guard left > 5 else { throw Failure(message: "The AI's reply wasn't valid JSON, and there was no time left to ask again.", cost: cost) }
-            do {
-                let (retry, more) = try await dispatch(prompt: again, images: images, system: system, json: true, model: model, chosen: chosen, engineModel: engineModel, schema: schema, timeLimit: left, effort: effort)
-                cost += more
-                reply = stripFences(retry)
-            } catch let failure as Failure {
-                throw Failure(message: failure.message, cost: cost)
-            } catch {
-                throw Failure(message: error.localizedDescription, cost: cost)
-            }
-            if !isJSON(reply) {
-                throw Failure(message: "The AI's reply wasn't valid JSON, even on a second try. Ask for less at once.", cost: cost)
-            }
+            throw Failure(message: "The AI's reply wasn't valid JSON, even on a second try. Ask for less at once.", cost: cost)
         }
         return (reply, cost)
     }
