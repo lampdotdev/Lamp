@@ -61,7 +61,10 @@ generating text, understanding what a picture means), use `LampAI.ask(...)` from
 comment for usage. Never call AI APIs directly, never ask the user for API keys. It accepts `images:` (`NSImage` on
 the Mac, `UIImage` on iPhone, `LampImage` in an app for both) when the AI needs to look at photos or screenshots. To
 create or edit pictures, use `LampAI.makeImage(...)`, `LampAI.editImage(...)` or `LampAI.editImages(...)`; these take
-10–60 seconds. Show a ProgressView while waiting and show errors in the UI.
+10–60 seconds. Show a ProgressView while waiting and show errors in the UI. For large JSON, give `ask(as:)` a `schema:`
+that holds every AI to its shape. Where the person picks between a quick answer and a careful one (a "Quick" and a
+"Best" button), pass `effort: .fast` or `.best`. A Stop button cancels the task that asks; its failure has `stopped` set,
+so say nothing or "Stopped". `LampAI.answer(to:)` also says how long an answer took and what it cost.
 
 ## Doing what the person asks: checked actions
 
@@ -70,7 +73,9 @@ things up and writes that change them, each a few lines over the app's data and 
 calls, Lamp checks their shapes, the app's `check` says whether that exact change is allowed now, and its `run` makes it
 and returns a receipt. Lamp keeps the loop, its limits (4 AI steps between questions, 6 changes a request, 3 questions
 back, the route's time), cancellation, questions back and the receipts. An app that builds something real in one
-request raises `steps:` (up to 40) and `writes:` (up to 320) on its session. Where the person might want another AI for
+request raises `steps:` (up to 40) and `writes:` (up to 320) on its session. An app that draws what it builds (a chart,
+a design, a page) puts `LampAI.picture(image)` in a tool's result, so the AI can look at its work and fix it in the
+same request. A session takes `effort:` as `ask` does, and its result says what the request took (`seconds`, `cost`). Where the person might want another AI for
 the app's asking, `await LampAI.models()` lists what their setup can answer it with: a small Picker beside the Ask
 button with only the `available` ones and `defaultID` chosen, left out when there's one or none, its id passed as
 `model:` to `ask` and the session. Each choice shows its `model` (the model's short name, or `name` when an older Lamp
