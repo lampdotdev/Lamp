@@ -104,9 +104,10 @@ share sends that link's id as `from`. The site keeps it only when there's such a
 change that doesn't send it keeps it. The page draws "from <maker>/<app>" (or the source's name, with no username)
 beside the name, linking to the source as it's known now (`findWish`), and nothing once the source is taken down.
 
-The other way round, a link keeps the copies shared from it (`addCopy`, a sorted set by its id, scored by when each was last shared, and added again at every share of a copy, so one missing from it comes back). Its page counts
-them ("3 copies" in the header) and lists them when that's opened (`GET /api/wishes?id=<id>&copies=1`, `copiesOf`): name,
-who made it, when it last changed, the newest 200 first and read in one round trip (`getMany`), public as every link is. A copy taken down since is let go when listed.
+The other way round, a link keeps the copies shared from it (`addCopy`, a sorted set by its id, scored by when each was last shared, and added again at every share of a copy, so one missing from it comes back). Only the link's maker sees them,
+in Lamp's Share popover and `lamp copies` (`GET /api/wishes?id=<id>&copies=1` with the link's secret, `copiesOf`): name,
+who made it, when it last changed, the newest 200 first and read in one round trip (`getMany`). They're never on the
+link's page, so sharing a copy never puts anyone's words on someone else's page. A copy taken down since is let go when listed.
 The first time a share names a link as its source, that link's maker is told by email (`copied`): at the address that
 confirmed their account, else the link's own maker address once confirmed; a copy shared again doesn't tell them again.
 

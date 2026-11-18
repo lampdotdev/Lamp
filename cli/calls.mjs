@@ -217,9 +217,9 @@ export const CALLS = {
     return { latest: await latestOf(named ? { site: siteOf(given), user: given.user, app: given.app } : { site: siteOf(given), id: text(given, "id") }) };
   },
 
-  /** The copies people shared of a link, newest first, as its page lists them: asked with nothing of the person's. */
+  /** The copies people shared of a link, newest first: only its maker's, with its secret. */
   async linkCopies(given) {
-    return { copies: await copiesOf({ site: siteOf(given), id: text(given, "id") }) };
+    return { copies: await copiesOf({ site: siteOf(given), link: linkOf(given) }) };
   },
 
   /** The link's file (or with `page`, its playable page), from a file of Lamp's at `file`, sent in parts. */

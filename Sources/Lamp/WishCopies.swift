@@ -1,8 +1,8 @@
 import SwiftUI
 import LampSidebarKit
 
-/// The copies people shared of each wish's link, as its page on the site lists them, for the chat's Share popover to
-/// show (`SidebarToolbar.copies`). The chat's state is made many times a second while a turn runs, so the site is asked
+/// The copies people shared of each wish's link, which only its maker sees (read with the link's secret), for the chat's
+/// Share popover to show (`SidebarToolbar.copies`). The chat's state is made many times a second while a turn runs, so the site is asked
 /// only when what's kept is old (`stale`), or sooner when the popover opens (`fresh`), never once per state; a link
 /// asked about stays asked once until the answer comes. When the site can't be asked, what was known stays, and a link
 /// never answered shows none.
@@ -26,22 +26,23 @@ final class WishCopies: ObservableObject {
 
     /// The copies known of the wish's link, newest first; nil with no link or none known. Asks again when they're old.
     func rows(for project: LampProject) -> [SharedCopyRow]? {
-        guard let id = WishLink.kept(for: project)?.id else { return nil }
-        ask(id, olderThan: Self.stale)
-        return kept[id]?.rows.flatMap { $0.isEmpty ? nil : $0 }
+        guard let shared = WishLink.kept(for: project) else { return nil }
+        ask(shared, olderThan: Self.stale)
+        return kept[shared.id]?.rows.flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// The popover opened: asks again unless it was just asked.
     func refresh(_ project: LampProject) {
-        guard let id = WishLink.kept(for: project)?.id else { return }
-        ask(id, olderThan: Self.fresh)
+        guard let shared = WishLink.kept(for: project) else { return }
+        ask(shared, olderThan: Self.fresh)
     }
 
-    private func ask(_ id: String, olderThan age: TimeInterval) {
+    private func ask(_ shared: WishLink.Shared, olderThan age: TimeInterval) {
+        let id = shared.id
         if let known = kept[id], Date().timeIntervalSince(known.asked) < age { return }
         guard asking.insert(id).inserted else { return }
         Task {
-            let rows = await WishLink.copies(of: id)
+            let rows = await WishLink.copies(for: shared)
             asking.remove(id)
             // Published changes reach every chat showing the wish (`SidebarServer.start`).
             objectWillChange.send()

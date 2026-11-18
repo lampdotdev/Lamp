@@ -100,7 +100,7 @@ test("a copy shared from the link is listed, held beside the app by its own file
   writeFileSync(join(theirs, "Web", "game.js"), readFileSync(join(theirs, "Web", "game.js"), "utf8") + "\n// a stadium\n");
   writeFileSync(join(theirs, "Web", "stadium.js"), "export const seats = 400;\n");
   const copy = await share({ layout: layoutOf(theirs), words: { ...words, name: "Harbor Racer Stadium", by: "Sam Lee" }, github: null });
-  assert.deepEqual((await copiesOf({ site: origin, id: source.id })).map((one) => [one.name, one.by, one.url]), [["Harbor Racer Stadium", "Sam Lee", copy.url]]);
+  assert.deepEqual((await copiesOf({ site: origin, link: source })).map((one) => [one.name, one.by, one.url]), [["Harbor Racer Stadium", "Sam Lee", copy.url]]);
 
   const id = readLink(layoutOf(theirs).folder).id, latest = await latestOf({ id });
   const opened = await fetchCopy(folder, latest);

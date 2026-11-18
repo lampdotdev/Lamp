@@ -983,6 +983,7 @@ enum Gallery {
         share("From someone's link", link: true, sendTo: "Send to Sam Lee…"),
         share("Copies shared from it", link: true, copies: Array(shareCopies.prefix(3))),
         share("More copies than fit", link: true, copies: shareCopies),
+        share("Every copy shown", link: true, copies: shareCopies, allShown: true),
     ]
 
     /// Made-up copies of a link, newest first, the way the site answers them.
@@ -996,9 +997,9 @@ enum Gallery {
         }
     }()
 
-    private static func share(_ name: String, link: Bool = false, canContribute: Bool = false, sendTo: String? = nil, copies: [SharedCopyRow] = []) -> Entry {
+    private static func share(_ name: String, link: Bool = false, canContribute: Bool = false, sendTo: String? = nil, copies: [SharedCopyRow] = [], allShown: Bool = false) -> Entry {
         Entry(group: "Share", name: name) {
-            AnyView(SharePopover(link: link ? URL(string: "https://lamp.dev/w/AyTkit4xCc") : nil, copies: copies, canContribute: canContribute, sendTo: sendTo) { _ in }
+            AnyView(SharePopover(link: link ? URL(string: "https://lamp.dev/w/AyTkit4xCc") : nil, copies: copies, canContribute: canContribute, sendTo: sendTo, allShown: allShown) { _ in }
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)

@@ -266,10 +266,10 @@ enum WishLink {
                       file: (said["file"] as? String).flatMap(URL.init(string:)))
     }
 
-    /// The copies people shared of a link (`copiesOf` in cli/link.mjs), newest first, as its page lists them. Nil when the
-    /// site can't be asked. Asked with nothing of the person's.
-    static func copies(of id: String) async -> [SharedCopyRow]? {
-        guard let said = (try? await ask("linkCopies", ["id": id]))?["copies"] as? [[String: Any]] else { return nil }
+    /// The copies people shared of the wish's link (`copiesOf` in cli/link.mjs), newest first: its maker's alone, read
+    /// with the link's secret, never on its page. Nil when the site can't be asked.
+    static func copies(for shared: Shared) async -> [SharedCopyRow]? {
+        guard let said = (try? await ask("linkCopies", secret(shared)))?["copies"] as? [[String: Any]] else { return nil }
         return said.compactMap { copy in
             guard let url = copy["url"] as? String, !url.isEmpty else { return nil }
             return SharedCopyRow(url: url, name: copy["name"] as? String ?? "", by: copy["by"] as? String ?? "", updated: copy["updated"] as? String)

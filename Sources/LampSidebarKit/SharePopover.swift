@@ -20,8 +20,8 @@ public struct SharePopover: View {
         }
     }
 
-    /// `openCopy` opens a copy's page, `allCopies` the link's own page (which lists every copy), and `compare` asks the
-    /// agent what a copy changed.
+    /// `openCopy` opens a copy's page and `compare` asks the agent what a copy changed. `allCopies` is no longer sent
+    /// (More shows every copy in place, since the link's page doesn't list them); a Lamp still handles it from an older chat.
     public enum Action: Equatable {
         case copyLink, makeLink, editLink, send(Way), contribute, copyFile, export
         /// Send to <maker>…: an idea, with the person's changes, for the maker of the link the wish came from.
@@ -40,8 +40,11 @@ public struct SharePopover: View {
     let now: Date
     let act: (Action) -> Void
     @State private var copied = false
+    /// "N More" opened: every copy, in a list that scrolls. Only the link's maker sees them, never its page.
+    @State private var allShown = false
 
-    public init(link: URL?, copies: [SharedCopyRow] = [], canContribute: Bool, sendTo: String? = nil, now: Date = Date(), act: @escaping (Action) -> Void) {
+    public init(link: URL?, copies: [SharedCopyRow] = [], canContribute: Bool, sendTo: String? = nil, now: Date = Date(), allShown: Bool = false, act: @escaping (Action) -> Void) {
+        _allShown = State(initialValue: allShown)
         self.link = link
         self.copies = copies.filter { URL(string: $0.url) != nil }
         self.canContribute = canContribute
@@ -112,18 +115,28 @@ public struct SharePopover: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("COPIES").font(.system(size: 10.5, weight: .bold)).tracking(1.1).foregroundStyle(Paper.label)
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(copies.prefix(Self.copiesShown)) { copy in
-                    if let url = URL(string: copy.url) {
-                        CopyRow(name: copy.name.isEmpty ? "Untitled" : copy.name, detail: detail(of: copy), url: url,
-                                open: { act(.openCopy(url)) }, compare: { act(.compare(url)) })
+                if allShown {
+                    ScrollView { rows(copies) }.frame(maxHeight: 300)
+                } else {
+                    rows(Array(copies.prefix(Self.copiesShown)))
+                    if copies.count > Self.copiesShown {
+                        Row("\(copies.count - Self.copiesShown) More", "ellipsis") { allShown = true }
+                            .help("Show every copy")
                     }
-                }
-                if copies.count > Self.copiesShown {
-                    Row("\(copies.count - Self.copiesShown) More", "ellipsis") { act(.allCopies) }
-                        .help("See every copy on the link's page")
                 }
             }
             .padding(.horizontal, -6)
+        }
+    }
+
+    private func rows(_ shown: [SharedCopyRow]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(shown) { copy in
+                if let url = URL(string: copy.url) {
+                    CopyRow(name: copy.name.isEmpty ? "Untitled" : copy.name, detail: detail(of: copy), url: url,
+                            open: { act(.openCopy(url)) }, compare: { act(.compare(url)) })
+                }
+            }
         }
     }
 

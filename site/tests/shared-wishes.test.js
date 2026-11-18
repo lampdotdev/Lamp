@@ -92,7 +92,7 @@ test("a wish is shared, changed and taken down only with its secret", async () =
   assert.equal(store.records.has(id), false);
 });
 
-test("a copy's link names the link it came from, while that's up, and the link lists its copies", async () => {
+test("a copy's link names the link it came from, while that's up, and the link's maker alone sees its copies", async () => {
   const store = memoryStore(), mail = [];
   const fetcher = async (url, request) => { mail.push(JSON.parse(request.body)); return new Response("{}", { status: 200 }); };
   const handler = createShareHandler({ store, limited: false, env: { RESEND_API_KEY: "test", LAMP_IDEAS_FROM: "Lamp <ideas@lamp.dev>" }, fetcher });
@@ -107,9 +107,10 @@ test("a copy's link names the link it came from, while that's up, and the link l
   assert.equal(store.records.get(copy.id).from, source.id);
   // Its maker hears of it once, and the link lists it, and its page counts it.
   assert.deepEqual([mail.length, mail[0].to[0], mail[0].subject], [1, "alex@example.com", "Sam made their own Plant Pal"]);
-  const listed = await (await handler(new Request(`https://lamp.dev/api/wishes?id=${source.id}&copies=1`))).json();
-  assert.deepEqual(listed.copies.map((one) => [one.name, one.by, one.url]), [["Plant Pal Too", "Sam", `https://lamp.dev/w/${copy.id}-plant-pal-too`]]);
-  assert.equal((await pageOf(source.id)).copies, 1);
+  const copiesOf = (secret = source.secret) => handler(new Request(`https://lamp.dev/api/wishes?id=${source.id}&copies=1`, secret ? { headers: { authorization: `Bearer ${secret}` } } : {}));
+  assert.equal((await copiesOf(null)).status, 404, "never for anyone but the link's maker");
+  assert.deepEqual((await (await copiesOf()).json()).copies.map((one) => [one.name, one.by, one.url]), [["Plant Pal Too", "Sam", `https://lamp.dev/w/${copy.id}-plant-pal-too`]]);
+  assert.equal((await pageOf(source.id)).copies, undefined, "nor on its page");
   assert.deepEqual((await pageOf(copy.id)).from, { url: `https://lamp.dev/w/${source.id}-plant-pal`, label: "Plant Pal" });
   assert.equal((await pageOf(source.id)).from, undefined);
 
@@ -142,7 +143,7 @@ test("a copy's link names the link it came from, while that's up, and the link l
   await send(handler, "DELETE", undefined, { id: copy.id, secret: copy.secret });
   assert.equal((await pageOf(stray.id)).with, undefined);
   await send(handler, "DELETE", undefined, { id: stray.id, secret: stray.secret });
-  assert.deepEqual((await (await handler(new Request(`https://lamp.dev/api/wishes?id=${source.id}&copies=1`))).json()).copies, []);
+  assert.deepEqual((await (await copiesOf()).json()).copies, []);
 
   // Taken down, the source leaves the page.
   const again = await (await send(handler, "POST", { ...share, from: source.id })).json();
@@ -802,7 +803,7 @@ test("an idea can carry a change: its sender's private copy, read only by the ma
   assert.equal(store.records.get(copy.id).owner, "sam");
   assert.equal(store.records.get(copy.id).app, undefined);
   assert.equal(mail.length, 0);
-  assert.deepEqual((await (await shares(new Request(`https://lamp.dev/api/wishes?id=${source.id}&copies=1`))).json()).copies, []);
+  assert.deepEqual((await (await shares(new Request(`https://lamp.dev/api/wishes?id=${source.id}&copies=1`, { headers: { authorization: `Bearer ${source.secret}` } }))).json()).copies, []);
   assert.equal((await shares(new Request(`https://lamp.dev/api/wishes?id=${copy.id}`))).status, 404, "nobody else follows it");
   const page = await createPageHandler({ store, template: async () => "<html><head></head><body></body></html>" })(new Request(`https://lamp.dev/api/wish-page?id=${copy.id}`));
   assert.equal(page.status, 404);
@@ -850,5 +851,5 @@ test("an idea can carry a change: its sender's private copy, read only by the ma
 
   // Listed later, it's a copy like any other.
   await send(shares, "PUT", { ...share, private: false }, { id: copy.id, secret: copy.secret });
-  assert.deepEqual((await (await shares(new Request(`https://lamp.dev/api/wishes?id=${source.id}&copies=1`))).json()).copies.map((one) => one.url), [`https://lamp.dev/sam/plant-pal`]);
+  assert.deepEqual((await (await shares(new Request(`https://lamp.dev/api/wishes?id=${source.id}&copies=1`, { headers: { authorization: `Bearer ${source.secret}` } }))).json()).copies.map((one) => one.url), [`https://lamp.dev/sam/plant-pal`]);
 });

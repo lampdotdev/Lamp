@@ -601,7 +601,7 @@ the chat, compared and mixed in); an idea with a change joins the two rather tha
 
 - **The change is a copy.** It's the sender's copy shared as any copy is (`POST /api/wishes` with `from` naming the
   maker's link, the file sent by `api/wish-file.js` with History/), only **private**: the share says `private: true`,
-  so the copy isn't among the link's public copies, its maker gets no "made their own" email, it has no page or card,
+  so the copy isn't among the link's copies (which only its maker sees), its maker gets no "made their own" email, it has no page or card,
   and asking for its latest without its secret finds nothing. It carries no playable page. Lamp and `lamp send`
   always send it private; a sender who wants their copy public shares it with Share Link, as a link of its own. The idea
   names the copy and the version of the maker's link it starts from (`base`, which Lamp knows from what it last brought
@@ -649,7 +649,7 @@ the chat, compared and mixed in); an idea with a change joins the two rather tha
 It comes in phases: (1) the site, where an idea carries a private copy and its base, the maker reads it with the
 link's secret, sending again moves the idea on, code needs a username and a change has a size cap (built); (2) Lamp's
 Send to… with Try It and Take It in `IdeasPanel`, and `lamp send`, in one change (built; Try It opens the copy beside the
-wish rather than in the suggested-change panel's trial, which is built around a pull request's commits); (3) public copies folding into the
+wish rather than in the suggested-change panel's trial, which is built around a pull request's commits); (3) the copies shared of a link folding into the
 same inbox ("Sam made a copy: 3 changes", with Compare and Try It); (4) Contribute kept only as the GitHub fallback, with
 Help and the guides changed to match. Later: the idea box on a shared page taking a file someone made elsewhere as the
 change.
