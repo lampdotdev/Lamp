@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { deflateSync, crc32 } from "node:zlib";
-import { createShareHandler, createFileHandler, createIdeasHandler, createIdeaMailHandler, replyWords, IDEA_LIMITS, createPlayHandler, pictureScript, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, slugFor, wishIDFrom, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
+import { createShareHandler, createFileHandler, hashSecret, createIdeasHandler, createIdeaMailHandler, replyWords, IDEA_LIMITS, createPlayHandler, pictureScript, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, slugFor, wishIDFrom, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
 import { createPageHandler } from "../lib/shared-wish-page.js";
 import { createCardHandler } from "../lib/wish-card.js";
 
@@ -778,4 +778,77 @@ test("what's put behind an idea's picture is the first background that isn't see
     assert.equal(behind(seeThrough, "rgb(0, 0, 255)"), "rgb(0, 0, 255)", seeThrough);
   }
   assert.equal(behind("rgba(0, 0, 0, 0)"), "#fff", "none at all is white, as the browser draws a page");
+});
+
+test("an idea can carry a change: its sender's private copy, read only by the maker, moved on by sending again", async () => {
+  const store = memoryStore(), mail = [];
+  const fetcher = async (_url, request) => { mail.push(JSON.parse(request.body)); return new Response("{}", { status: 200 }); };
+  const env = { RESEND_API_KEY: "test", LAMP_IDEAS_FROM: "Lamp <ideas@lamp.dev>" };
+  const shares = createShareHandler({ store, limited: false, env, fetcher });
+  const files = createFileHandler({ store, limited: false });
+  const ideas = createIdeasHandler({ store, limited: false, env, fetcher });
+  await store.createAccount({ name: "sam", email: "sam@example.com" });
+  await store.createAccount({ name: "kim", email: "kim@example.com" });
+  const samKey = "s".repeat(43), kimKey = "k".repeat(43);
+  await store.addAccountKey(hashSecret(samKey), "sam");
+  await store.addAccountKey(hashSecret(kimKey), "kim");
+  const as = (key, request) => { request.headers.set("x-lamp-account", key); return request; };
+
+  const source = await (await send(shares, "POST", share)).json();
+  await store.setMaker(source.id, { email: "alex@example.com", confirmed: true, key: "0".repeat(20) });
+  // Sam's copy, shared privately under their account: off the source's list, no email, no page, no name claimed.
+  const copy = await (await shares(as(samKey, new Request("https://lamp.dev/api/wishes", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...share, from: source.id, private: true }) })))).json();
+  assert.equal(store.records.get(copy.id).owner, "sam");
+  assert.equal(store.records.get(copy.id).app, undefined);
+  assert.equal(mail.length, 0);
+  assert.deepEqual((await (await shares(new Request(`https://lamp.dev/api/wishes?id=${source.id}&copies=1`))).json()).copies, []);
+  assert.equal((await shares(new Request(`https://lamp.dev/api/wishes?id=${copy.id}`))).status, 404, "nobody else follows it");
+  const page = await createPageHandler({ store, template: async () => "<html><head></head><body></body></html>" })(new Request(`https://lamp.dev/api/wish-page?id=${copy.id}`));
+  assert.equal(page.status, 404);
+  const upload = async (bytes, what = "") => {
+    const auth = { authorization: `Bearer ${copy.secret}` };
+    const put = await files(new Request(`https://lamp.dev/api/wish-file?id=${copy.id}&part=0&of=1${what}`, { method: "PUT", headers: { "content-type": "application/octet-stream", ...auth }, body: bytes }));
+    return put.status === 204 ? files(new Request(`https://lamp.dev/api/wish-file?id=${copy.id}${what}`, { method: "POST", headers: auth })) : put;
+  };
+  assert.equal((await upload(zip("index.html", Buffer.from("<p>hi</p>")), "&what=page")).status, 409, "no page to play");
+  assert.equal((await upload(zip("lamp-app.json", Buffer.alloc(100, 1)))).status, 200);
+
+  const post = (key, body, n) => ideas(as(key, new Request(`https://lamp.dev/api/wish-ideas?id=${source.id}${n ? `&n=${n}` : ""}`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })));
+  const change = { copy: copy.id, base: 0 };
+  assert.equal((await post("", { text: "Rain sounds", change })).status, 401, "code needs a username");
+  assert.equal((await post(kimKey, { text: "Rain sounds", change })).status, 400, "only the account's own copy");
+  assert.equal((await post(samKey, { text: "Rain sounds", change: { ...change, base: 5 } })).status, 400, "from a version the link has had");
+  const sent = await (await post(samKey, { text: "Rain sounds", change })).json();
+  assert.match(mail.at(-1).text, /with their changes/);
+
+  // The maker reads it with the link's secret: the copy's link and file as they are now.
+  const list = async () => (await (await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${source.id}`, { headers: { authorization: `Bearer ${source.secret}` } }))).json()).ideas;
+  const [idea] = await list();
+  assert.deepEqual([idea.user, idea.change.copy, idea.change.version, idea.change.sent, idea.change.base], ["sam", copy.id, 1, 1, 0]);
+  assert.match(idea.change.file, /^data:/);
+
+  // Sending again moves it to the new version, one conversation, back with the maker even once it's dismissed.
+  await ideas(new Request(`https://lamp.dev/api/wish-ideas?id=${source.id}&n=${sent.n}`, { method: "DELETE", headers: { authorization: `Bearer ${source.secret}` } }));
+  assert.equal((await upload(zip("lamp-app.json", Buffer.alloc(200, 2)))).status, 200);
+  assert.equal((await post(kimKey, { text: "Mine now", change }, sent.n)).status, 400, "only its sender's");
+  const again = await post(samKey, { text: "Softer rain", change }, sent.n);
+  assert.deepEqual(await again.json(), { n: sent.n, version: 2 });
+  const [moved] = await list();
+  assert.equal(moved.wantsNews, true, "its sender hears back again, though the dismissal let their address go");
+  assert.deepEqual([moved.waiting, moved.change.sent, moved.thread.at(-1)], [true, 2, { by: "sender", text: "Softer rain", at: moved.thread.at(-1).at, version: 2 }]);
+  assert.match(mail.at(-1).text, /new version of their changes/);
+
+  // A listed copy made private stops playing its page.
+  const listed = await (await send(shares, "POST", { ...share, from: source.id })).json();
+  store.records.get(listed.id).page = { version: 1, files: { "index.html": "memory:x" } };
+  await send(shares, "PUT", { ...share, private: true }, { id: listed.id, secret: listed.secret });
+  assert.equal(store.records.get(listed.id).page, undefined);
+  const play = await createPlayHandler({ store, anyHost: true })(new Request(`https://x.play.lamp.dev/?id=${listed.id}&v=1`));
+  assert.equal(play.status, 404);
+
+  // Listed later, it's a copy like any other.
+  await send(shares, "PUT", { ...share, private: false }, { id: copy.id, secret: copy.secret });
+  assert.deepEqual((await (await shares(new Request(`https://lamp.dev/api/wishes?id=${source.id}&copies=1`))).json()).copies.map((one) => one.url), [`https://lamp.dev/sam/plant-pal`]);
 });

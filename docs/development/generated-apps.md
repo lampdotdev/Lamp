@@ -542,7 +542,9 @@ carries it, `Upstream.filteredTree`); else nothing. A part the package brings th
 kept tree (staged as the app it will be) but not in what's merged. The review sheet says so (`ImportReviewCard.changedHere`, "Already here,
 changed here" in the gallery).
 
-A wish that came from a repository can send its changes back: Send Changes Back… in the chat's Share popover
+An idea that carries a change is taking this over ("Ideas that carry a change" in [wishes](wishes.md)): Send Changes Back stays
+only as the fallback for an app from someone's GitHub repository with no lamp.dev link. Until then, a wish that came from
+a repository can send its changes back: Send Changes Back… in the chat's Share popover
 (`SidebarToolbar.canContribute`, `Contribute`, its card `ContributeCards` and `ContributeCard`, shaped as Put on
 GitHub's). What goes is only what the wish changed, on top of where the repository is now, worked out before the card
 offers to send (`Contribute.prepare`) from the saved version the card shows, which must still be the wish's when it
