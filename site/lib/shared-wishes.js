@@ -765,7 +765,7 @@ async function copied(kept, from, copy, origin, { env, fetcher, first }) {
     const who = copy.owner || copy.by || "Someone";
     const theirs = linkOf(origin, copy), yours = linkOf(origin, source);
     await sendMail(env, fetcher, { to: [to], subject: `${who} made their own ${source.name}`,
-      text: `${who} made their own copy of ${source.name} and shared it:\n\n${theirs}\n\nLamp lists the copies of ${yours} under Share, for you to compare.\n` }, `copy-${from}-${copy.id}`);
+      text: `${who} made their own copy of ${source.name} and shared it:\n\n${theirs}\n\nLamp shows the copies of ${yours} with the ideas people send you, to compare and try.\n` }, `copy-${from}-${copy.id}`);
   } catch {}
 }
 

@@ -28,6 +28,28 @@ enum WishIdeas {
         UserDefaults.standard.set(all, forKey: seenKey)
     }
 
+    /// The copies people shared of a wish's link, as the panel showed them, by their page and when each last changed: one
+    /// that changed since is new again. Kept by the link as well as the wish, as ideas are.
+    private static let copiesSeenKey = "LampCopiesSeen"
+    /// Copies the maker hid (Hide), by their page and when each last changed: one that changes after shows again.
+    private static let copiesHiddenKey = "LampCopiesHidden"
+    static func copyKey(_ copy: SharedCopyRow) -> String { "\(copy.url) \(copy.updated ?? "")" }
+    private static func copies(_ key: String, of project: LampProject) -> Set<String> {
+        guard let id = seenID(project) else { return [] }
+        return Set((UserDefaults.standard.dictionary(forKey: key)?[id] as? [String]) ?? [])
+    }
+    private static func addCopies(_ copies: [SharedCopyRow], to key: String, of project: LampProject) {
+        guard let id = seenID(project) else { return }
+        var all = UserDefaults.standard.dictionary(forKey: key) ?? [:]
+        // Only those still listed, so what's kept never grows past the link's copies.
+        all[id] = Array(copies.map(copyKey).reduce(into: Self.copies(key, of: project)) { $0.insert($1) }).suffix(400)
+        UserDefaults.standard.set(all, forKey: key)
+    }
+    static func seenCopies(_ project: LampProject) -> Set<String> { copies(copiesSeenKey, of: project) }
+    static func markCopiesSeen(_ copies: [SharedCopyRow], in project: LampProject) { addCopies(copies, to: copiesSeenKey, of: project) }
+    static func hiddenCopies(_ project: LampProject) -> Set<String> { copies(copiesHiddenKey, of: project) }
+    static func hideCopy(_ copy: SharedCopyRow, in project: LampProject) { addCopies([copy], to: copiesHiddenKey, of: project) }
+
     /// When it came, in words ("5 minutes ago"): the site writes the time with its milliseconds.
     static func when(_ at: String) -> String? {
         let precise = ISO8601DateFormatter()
@@ -64,11 +86,11 @@ enum WishIdeas {
 
     /// An idea's change as bytes: the sender's shared file, from the site's store (or written into its address when the
     /// site runs locally), no bigger than a change may be.
-    static func changeData(_ address: String) async -> Data? {
+    static func changeData(_ address: String, limit: Int = changeLimit) async -> Data? {
         if address.hasPrefix("data:") { return inlineData(address) }
         guard let url = URL(string: address), url.scheme == "https" else { return nil }
         guard let (data, response) = try? await URLSession.shared.data(from: url),
-              (response as? HTTPURLResponse)?.statusCode == 200, data.count <= changeLimit else { return nil }
+              (response as? HTTPURLResponse)?.statusCode == 200, data.count <= limit else { return nil }
         return data
     }
     /// The most a change sent with an idea holds (`CHANGE_LIMITS.file` on the site).
@@ -123,6 +145,8 @@ extension Store {
 
     func checkIdeas(_ project: LampProject) {
         guard let shared = WishLink.kept(for: project) else { return }
+        // The copies people shared of the link come to the same inbox, asked as often.
+        WishCopies.shared.refresh(project)
         Task {
             guard let found = try? await WishLink.ideas(for: shared) else { return }
             // A link taken down (or made again) while this was on its way: its ideas are gone with it, so an answer
@@ -136,10 +160,25 @@ extension Store {
     /// most new first, then those with ideas waiting.
     var wishesWithIdeas: [LampProject] {
         projects.filter { !$0.isPart && WishLink.kept(for: $0) != nil }.sorted {
-            let one = (newIdeas($0), ideas[$0.id]?.count ?? 0), other = (newIdeas($1), ideas[$1.id]?.count ?? 0)
+            let one = (newInIdeas($0), ideas[$0.id]?.count ?? 0), other = (newInIdeas($1), ideas[$1.id]?.count ?? 0)
             return one != other ? one > other : $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
     }
+
+    /// The copies people shared of the wish's link that the panel shows, newest first: those the maker hid aren't.
+    func copies(_ project: LampProject) -> [SharedCopyRow] {
+        let hidden = WishIdeas.hiddenCopies(project)
+        return (WishCopies.shared.rows(for: project) ?? []).filter { !hidden.contains(WishIdeas.copyKey($0)) }
+    }
+
+    /// Copies not seen in the panel yet, or changed since.
+    func newCopies(_ project: LampProject) -> Int {
+        let seen = WishIdeas.seenCopies(project)
+        return copies(project).filter { !seen.contains(WishIdeas.copyKey($0)) }.count
+    }
+
+    /// What waits in the panel for a wish: new ideas, ideas answered since, and new copies.
+    func newInIdeas(_ project: LampProject) -> Int { newIdeas(project) + newCopies(project) }
 
     /// Ideas not seen yet, and those whose sender has answered since: each waits on the maker.
     func newIdeas(_ project: LampProject) -> Int {
@@ -147,7 +186,7 @@ extension Store {
         return (ideas[project.id] ?? []).filter { $0.n > seen || $0.waiting == true }.count
     }
 
-    var newIdeasInAll: Int { projects.reduce(0) { $0 + newIdeas($1) } }
+    var newIdeasInAll: Int { projects.reduce(0) { $0 + newInIdeas($1) } }
 
     /// The panel showed these: every idea up to the newest shown counts as seen.
     func sawIdeas(_ project: LampProject) {
@@ -248,8 +287,28 @@ extension Store {
         guard let shared = WishLink.kept(for: project),
               let fresh = (try? await WishLink.ideas(for: shared))?.first(where: { $0.n == idea.n })?.change ?? idea.change,
               fresh.gone != true, let address = fresh.file, let data = await WishIdeas.changeData(address) else { return false }
+        return openFetched(data, named: "\(project.name) from \(idea.name ?? "them")", aside: aside)
+    }
+
+    /// Try It on a copy someone shared of the wish's link: its latest file, fetched as following fetches it, opened beside
+    /// the wish as an app of its own after the review any shared app gets. False when it couldn't be fetched.
+    func tryCopy(_ copy: SharedCopyRow, of project: LampProject) async -> Bool {
+        guard let id = await SharedCopies.resolvedPlace(from: copy.url)?.link, let latest = await WishLink.latest(id),
+              let address = latest.file?.absoluteString, let data = await WishIdeas.changeData(address, limit: WishLink.Limit.fileTotal) else { return false }
+        return openFetched(data, named: "\(copy.name.isEmpty ? project.name : copy.name)", aside: true)
+    }
+
+    /// Compare on a copy: asked of the wish's chat as if the person typed it, as the Share popover's Compare asks.
+    func compareCopy(_ copy: SharedCopyRow, of project: LampProject) {
+        let wish = wish(of: project)
+        send(Sharing.compareRequest(copy.url), to: wish)
+        showChat(wish.id)
+    }
+
+    /// A shared app's file fetched for Try It or Take It, written where its review reads it, and opened.
+    private func openFetched(_ data: Data, named name: String, aside: Bool) -> Bool {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let file = folder.appendingPathComponent("\(project.name) from \(idea.name ?? "them").lampapp")
+        let file = folder.appendingPathComponent("\(name.replacingOccurrences(of: "/", with: " ")).lampapp")
         guard (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil,
               (try? data.write(to: file)) != nil else { return false }
         importApp(from: file, aside: aside)
@@ -270,6 +329,8 @@ struct IdeasPanel: View {
     let back: () -> Void
     /// The gallery's made-up app and ideas, in place of the store's.
     var preview: (project: LampProject, ideas: [WishLink.Idea], new: Set<Int>)? = nil
+    /// The gallery's made-up copies of the link.
+    var previewCopies: [SharedCopyRow] = []
     /// The gallery's made-up ideas seen to, under Earlier.
     var previewEarlier: [WishLink.Idea]? = nil
     /// The gallery's made-up address for the maker's own emails.
@@ -291,11 +352,17 @@ struct IdeasPanel: View {
     @State private var earlierFailed = false
     /// Conversations shown whole, by number: a long one shows its last messages until asked.
     @State private var opened: Set<Int> = []
+    /// Copies new when the panel opened, by `WishIdeas.copyKey`; the copy being fetched for Try It, and one that failed.
+    @State private var newCopies: Set<String> = []
+    @State private var trying: String?
+    @State private var failedCopy: String?
+    @ObservedObject private var sharedCopies = WishCopies.shared
     /// The idea whose change is being fetched for Try It or Take It.
     @State private var opening: Int?
 
     private var project: LampProject? { preview?.project ?? store.projects.first { $0.id == wish } }
     private var shown: [WishLink.Idea] { (preview?.ideas ?? store.ideas[wish] ?? []).sorted { $0.n > $1.n } }
+    private var copies: [SharedCopyRow] { preview == nil ? project.map { store.copies($0) } ?? [] : previewCopies }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -303,11 +370,12 @@ struct IdeasPanel: View {
             Divider().overlay(Paper.rule)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
-                    if shown.isEmpty {
+                    if shown.isEmpty, copies.isEmpty {
                         Text("No ideas here right now.").foregroundStyle(Paper.muted)
                             .frame(maxWidth: .infinity).padding(.vertical, 40)
                     }
                     ForEach(shown) { line($0) }
+                    copiesSection
                     earlierSection
                 }
                 .padding(18)
@@ -319,6 +387,7 @@ struct IdeasPanel: View {
         .onAppear {
             if let preview {
                 newHere = preview.new
+                newCopies = Set(previewCopies.prefix(1).map(WishIdeas.copyKey))
                 if previewEarlier != nil { showingEarlier = true; loadEarlier() }
                 return
             }
@@ -326,9 +395,11 @@ struct IdeasPanel: View {
             let seen = WishIdeas.seen(project)
             newHere = Set(shown.filter { $0.n > seen }.map(\.n))
             store.sawIdeas(project)
+            sawCopies(project)
             store.checkIdeas(project)
         }
         .onChange(of: shown.map(\.n)) { if preview == nil, let project { store.sawIdeas(project) } }
+        .onChange(of: copies) { if preview == nil, let project { sawCopies(project) } }
     }
 
     private var header: some View {
@@ -346,12 +417,76 @@ struct IdeasPanel: View {
                 Text(project?.name ?? "Ideas").font(.system(size: 17, weight: .bold)).foregroundStyle(Paper.ink)
             }
             .menuStyle(.borderlessButton).fixedSize()
-            Text("\(shown.count) \(shown.count == 1 ? "idea" : "ideas") from people playing it")
+            Text(verbatim: [shown.isEmpty ? nil : "\(shown.count) \(shown.count == 1 ? "idea" : "ideas")", copies.isEmpty ? nil : "\(copies.count) \(copies.count == 1 ? "copy" : "copies")"]
+                .compactMap { $0 }.joined(separator: " and ").nilIfEmpty.map { "\($0) from people playing it" } ?? "Nothing from people playing it yet")
                 .font(.system(size: 13)).foregroundStyle(Paper.muted).lineLimit(1)
             Spacer()
             if let project { IdeasByEmail(project: project, preview: preview == nil ? nil : previewMaker) }
         }
         .padding(.horizontal, 18).padding(.vertical, 12)
+    }
+
+    /// Copies new when they were first shown here stay marked while the panel is open; the rest count as seen.
+    private func sawCopies(_ project: LampProject) {
+        let seen = WishIdeas.seenCopies(project)
+        newCopies.formUnion(copies.map(WishIdeas.copyKey).filter { !seen.contains($0) })
+        WishIdeas.markCopiesSeen(copies, in: project)
+        store.objectWillChange.send()
+    }
+
+    /// The copies people shared of the link, newest first, which only its maker sees: each with Compare (the chat says
+    /// what it does differently), Try It (opened beside the wish, after the review any shared app gets) and Hide.
+    @ViewBuilder private var copiesSection: some View {
+        if !copies.isEmpty {
+            Text("COPIES PEOPLE MADE").font(.system(size: 10.5, weight: .bold)).tracking(1.1).foregroundStyle(Paper.label).padding(.top, 8)
+            ForEach(copies) { copy in copyLine(copy) }
+        }
+    }
+
+    private func copyLine(_ copy: SharedCopyRow) -> some View {
+        let changed = copy.updated.flatMap(WishIdeas.when).map { "changed \($0)" }
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                if newCopies.contains(WishIdeas.copyKey(copy)) { tag("NEW") }
+                Text(verbatim: [copy.by.isEmpty ? "Someone made a copy" : "\(copy.by) made a copy", changed].compactMap { $0 }.joined(separator: " · "))
+                    .font(.system(size: 11.5)).foregroundStyle(Paper.muted).lineLimit(1)
+            }
+            Text(verbatim: copy.name.isEmpty ? "Untitled" : copy.name).font(.system(size: 14, weight: .semibold)).foregroundStyle(Paper.ink)
+            HStack(spacing: 8) {
+                Button("Compare") {
+                    guard preview == nil, let project else { return }
+                    store.compareCopy(copy, of: project)
+                }
+                .buttonStyle(PaperButtonStyle(.outline, height: 28))
+                .help("Asks the chat what their copy does differently")
+                Button(trying == copy.url ? "Opening…" : "Try It") {
+                    guard preview == nil, let project, trying == nil else { return }
+                    trying = copy.url
+                    failedCopy = nil
+                    Task {
+                        if !(await store.tryCopy(copy, of: project)) { failedCopy = copy.url }
+                        trying = nil
+                    }
+                }
+                .buttonStyle(PaperButtonStyle(.outline, height: 28))
+                .disabled(trying != nil)
+                .help("Opens their copy as an app of its own, beside yours, after Lamp looks it over")
+                Button("Hide") {
+                    guard preview == nil, let project else { return }
+                    WishIdeas.hideCopy(copy, in: project)
+                    store.objectWillChange.send()
+                }
+                .buttonStyle(PaperButtonStyle(.outline, height: 28))
+                .help("Takes it off this list until they change it")
+                if failedCopy == copy.url {
+                    Text("Couldn't fetch it. Try again.").font(.system(size: 12)).foregroundStyle(Paper.muted)
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Paper.card, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Paper.rule))
     }
 
     /// Earlier: the ideas seen to, the latest word first, each with its conversation, to look back on or answer again.
@@ -692,7 +827,16 @@ extension Gallery {
         ideas("Ideas by email", only: 3, maker: WishLink.Maker(email: "maker@example.com", confirmed: true), width: 640),
         ideas("An idea with their changes", only: 4),
         ideas("Their changes, taken down", only: 5),
+        ideas("Copies people made", only: 3, copies: madeUpCopies),
+        ideas("Only copies", ideas: [], copies: madeUpCopies),
     ]
+
+    /// Made-up copies of the made-up app's link, the way the site answers them.
+    private static let madeUpCopies: [SharedCopyRow] = [
+        ("https://lamp.dev/riley-park/harbor-racer-night", "Harbor Racer Night Edition", "riley-park", 0.2),
+        ("https://lamp.dev/w/Dk3mxTp7vB-harbor-racer-with-boats", "Harbor Racer with Boats", "Jun Ito", 30),
+        ("https://lamp.dev/w/Dk4mxTp7vB-tiny-harbor", "Tiny Harbor", "", 200),
+    ].map { SharedCopyRow(url: $0.0, name: $0.1, by: $0.2, updated: ISO8601DateFormatter().string(from: Date().addingTimeInterval(-$0.3 * 3600))) }
 
     /// The card for sending an idea with one's changes to the maker of the link a wish came from, in each of its states.
     static let sendToEntries: [Entry] = [
@@ -719,7 +863,7 @@ extension Gallery {
 
     private static func ideas(_ name: String, ideas: [WishLink.Idea]? = nil, only: Int? = nil, earlier: Bool = false,
                               maker: WishLink.Maker = .init(email: nil, confirmed: false),
-                              unconfirmed: [Int: WishIdeas.Unconfirmed] = [:], width: CGFloat = 940) -> Entry {
+                              unconfirmed: [Int: WishIdeas.Unconfirmed] = [:], copies: [SharedCopyRow] = [], width: CGFloat = 940) -> Entry {
         Entry(group: "Sent to you", name: name) {
             let project = LampProject(id: "gallery-harbor-racer", name: "Harbor Racer", exe: "HarborRacer", dir: URL(fileURLWithPath: "/nonexistent"))
             let now = Date()
@@ -746,7 +890,7 @@ extension Gallery {
                     .init(by: "maker", text: "Headlights are in now too.", at: at(20)),
                 ]),
             ]
-            return AnyView(IdeasPanel(wish: project.id, back: {}, preview: (project, made.filter { only == nil || $0.n == only }, [3]), previewEarlier: seenTo, previewMaker: maker, previewUnconfirmed: unconfirmed)
+            return AnyView(IdeasPanel(wish: project.id, back: {}, preview: (project, made.filter { only == nil || $0.n == only }, [3]), previewCopies: copies, previewEarlier: seenTo, previewMaker: maker, previewUnconfirmed: unconfirmed)
                 .frame(width: width, height: 600)
                 .background(Paper.page)
                 .environmentObject(Store.shared))
