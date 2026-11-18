@@ -1906,15 +1906,20 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
               if ((n / PAGE_UPLOADS) % 10 === 9) console.log(`Page ${version} of ${id}: ${stored.length} of ${files.length} stored, ${Math.round((Date.now() - began) / 1000)}s`);
             }
             console.log(`Page ${version} of ${id}: all ${files.length} stored in ${Math.round((Date.now() - began) / 1000)}s`);
-            // As the record is now, not as it was when the parts were read: the link may have changed meanwhile.
-            const current = await kept.get(id);
-            if (!current || !secretMatches(bearer(request), current.secret) || current.private) throw new Error("Gone");
-            // The page it replaces stays playable as the version before, so a game open on it goes on finding its
-            // files (a game loads its map as the player moves); the one before that goes now.
-            const { pageParts: _pageParts, ...rest } = current;
-            const previousPage = current.page ? { version: current.page.version, files: current.page.files, sizes: current.page.sizes } : undefined;
-            if (!(await kept.replace({ ...rest, page: { version, files: urls, sizes }, ...(previousPage ? { previousPage } : {}),
-              pageVersion: Math.max(version, current.pageVersion ?? 0), updated: now().toISOString() }))) throw new Error("Gone");
+            // As the record is now, not as it was when the parts were read: the link may have changed meanwhile, and is
+            // written only while it's still as read, so a change made meanwhile (made private, say) is never undone.
+            let current;
+            for (let attempt = 0; ; attempt++) {
+              current = await kept.get(id);
+              if (!current || !secretMatches(bearer(request), current.secret) || current.private) throw new Error("Gone");
+              // The page it replaces stays playable as the version before, so a game open on it goes on finding its
+              // files (a game loads its map as the player moves); the one before that goes now.
+              const { pageParts: _pageParts, ...rest } = current;
+              const previousPage = current.page ? { version: current.page.version, files: current.page.files, sizes: current.page.sizes } : undefined;
+              if (await kept.swap(current, { ...rest, page: { version, files: urls, sizes }, ...(previousPage ? { previousPage } : {}),
+                pageVersion: Math.max(version, current.pageVersion ?? 0), updated: now().toISOString() })) break;
+              if (attempt === 4) throw new Error("Busy");
+            }
             await kept.removeImages([...Object.values(current.previousPage?.files ?? {}), ...partBlobs(parts)]);
             await kept.forget(id);
           } catch (error) {
