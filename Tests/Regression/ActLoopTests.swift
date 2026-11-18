@@ -49,15 +49,16 @@ final class ActLoopTests: XCTestCase {
     private func value(_ context: JSContext, _ script: String) -> Any? { context.evaluateScript("JSON.stringify(\(script))")?.toString().flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8), options: .fragmentsAllowed) } }
     private func log(_ context: JSContext) -> [String] { value(context, "log") as? [String] ?? [] }
 
-    func testReadsComeFirstThenEachWriteIsCheckedRightBeforeItRuns() throws {
+    func testCallsRunInOrderAndEachWriteIsCheckedRightBeforeItRuns() throws {
         let c = try page()
         c.evaluateScript("answers = [{ calls: [call('s1c1', 'add', { name: 'milk' }), call('s1c2', 'groceries'), call('s1c3', 'add', { name: 'eggs' })] }, { reply: 'Added milk and eggs.' }]; go('Add milk and eggs');")
         settle(c)
-        XCTAssertEqual(log(c), ["read", "check:milk", "run:milk", "check:eggs", "run:eggs"])
+        XCTAssertEqual(log(c), ["check:milk", "run:milk", "read", "check:eggs", "run:eggs"])
         XCTAssertEqual(value(c, "outcome.done.map(function (d) { return d.args.name; })") as? [String], ["milk", "eggs"])
         XCTAssertEqual(value(c, "outcome.reply") as? String, "Added milk and eggs.")
         // The second step carried what the first did, for the model to see.
         XCTAssertEqual(value(c, "requests[1].body.steps[0].results.map(function (r) { return r.ok; })") as? [Bool], [true, true, true])
+        XCTAssertEqual(value(c, "requests[1].body.steps[0].results[1].value") as? [String], ["milk"])
     }
 
     func testAFailedWriteSkipsTheWritesAfterItAndSaysSo() throws {
