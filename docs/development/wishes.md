@@ -647,8 +647,8 @@ the chat, compared and mixed in); an idea with a change joins the two rather tha
   2 days ago", `Store.copies`, from `WishCopies`, asked when the ideas are), each with **Compare** (the chat says what it
   does differently, as the Share popover's Compare asks), **Try It** (its latest file, fetched as following fetches it,
   opened beside the wish after the review, `Store.tryCopy`) and **Hide** (off the list until it changes,
-  `WishIdeas.hideCopy`). A copy is new until the panel shows it, and again once it changes (`WishIdeas.seenCopies`, by
-  its page and when it last changed); new ones count with the ideas waiting, on the desk's Ideas line and as "1 new copy
+  `WishIdeas.hideCopy`). A copy is new until the panel shows it, and again once it changes (`WishIdeas.isSeen`, by
+  its page and when it last changed, kept only for the copies listed now); new ones count with the ideas waiting, on the desk's Ideas line and as "1 new copy
   made" under the app's row (`Store.newInIdeas`, `newCopies`).
 - **GitHub.** A pull request stays only as a quiet fallback behind the same Send to… button, for an app that came from
   someone's GitHub repository and has no lamp.dev link (`Contribute`). A maker whose app is mirrored on GitHub pushes

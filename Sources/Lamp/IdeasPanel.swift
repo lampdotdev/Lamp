@@ -34,21 +34,30 @@ enum WishIdeas {
     /// Copies the maker hid (Hide), by their page and when each last changed: one that changes after shows again.
     private static let copiesHiddenKey = "LampCopiesHidden"
     static func copyKey(_ copy: SharedCopyRow) -> String { "\(copy.url) \(copy.updated ?? "")" }
-    private static func copies(_ key: String, of project: LampProject) -> Set<String> {
-        guard let id = seenID(project) else { return [] }
-        return Set((UserDefaults.standard.dictionary(forKey: key)?[id] as? [String]) ?? [])
+    /// Each copy's page and when it last changed, as kept under `key` for the wish's link.
+    private static func copies(_ key: String, of project: LampProject) -> [String: String] {
+        guard let id = seenID(project) else { return [:] }
+        return (UserDefaults.standard.dictionary(forKey: key)?[id] as? [String: String]) ?? [:]
     }
-    private static func addCopies(_ copies: [SharedCopyRow], to key: String, of project: LampProject) {
+    private static func keep(_ copies: [String: String], as key: String, of project: LampProject) {
         guard let id = seenID(project) else { return }
         var all = UserDefaults.standard.dictionary(forKey: key) ?? [:]
-        // Only those still listed, so what's kept never grows past the link's copies.
-        all[id] = Array(copies.map(copyKey).reduce(into: Self.copies(key, of: project)) { $0.insert($1) }).suffix(400)
+        all[id] = copies
         UserDefaults.standard.set(all, forKey: key)
     }
-    static func seenCopies(_ project: LampProject) -> Set<String> { copies(copiesSeenKey, of: project) }
-    static func markCopiesSeen(_ copies: [SharedCopyRow], in project: LampProject) { addCopies(copies, to: copiesSeenKey, of: project) }
-    static func hiddenCopies(_ project: LampProject) -> Set<String> { copies(copiesHiddenKey, of: project) }
-    static func hideCopy(_ copy: SharedCopyRow, in project: LampProject) { addCopies([copy], to: copiesHiddenKey, of: project) }
+    static func isSeen(_ copy: SharedCopyRow, in project: LampProject) -> Bool { copies(copiesSeenKey, of: project)[copy.url] == (copy.updated ?? "") }
+    static func isHidden(_ copy: SharedCopyRow, in project: LampProject) -> Bool { copies(copiesHiddenKey, of: project)[copy.url] == (copy.updated ?? "") }
+    /// The copies listed now, all seen: what's kept is only those, so it never outgrows the link's list.
+    static func markCopiesSeen(_ listed: [SharedCopyRow], in project: LampProject) {
+        keep(Dictionary(listed.map { ($0.url, $0.updated ?? "") }, uniquingKeysWith: { first, _ in first }), as: copiesSeenKey, of: project)
+    }
+    /// Hides `copy` as it is now, keeping only the hidden copies still among `listed` (the site's whole list, hidden ones too).
+    static func hideCopy(_ copy: SharedCopyRow, among listed: [SharedCopyRow]?, in project: LampProject) {
+        let urls = listed.map { Set($0.map(\.url)) }
+        var hidden = copies(copiesHiddenKey, of: project).filter { urls?.contains($0.key) ?? true }
+        hidden[copy.url] = copy.updated ?? ""
+        keep(hidden, as: copiesHiddenKey, of: project)
+    }
 
     /// When it came, in words ("5 minutes ago"): the site writes the time with its milliseconds.
     static func when(_ at: String) -> String? {
@@ -167,14 +176,12 @@ extension Store {
 
     /// The copies people shared of the wish's link that the panel shows, newest first: those the maker hid aren't.
     func copies(_ project: LampProject) -> [SharedCopyRow] {
-        let hidden = WishIdeas.hiddenCopies(project)
-        return (WishCopies.shared.rows(for: project) ?? []).filter { !hidden.contains(WishIdeas.copyKey($0)) }
+        (WishCopies.shared.rows(for: project) ?? []).filter { !WishIdeas.isHidden($0, in: project) }
     }
 
     /// Copies not seen in the panel yet, or changed since.
     func newCopies(_ project: LampProject) -> Int {
-        let seen = WishIdeas.seenCopies(project)
-        return copies(project).filter { !seen.contains(WishIdeas.copyKey($0)) }.count
+        copies(project).filter { !WishIdeas.isSeen($0, in: project) }.count
     }
 
     /// What waits in the panel for a wish: new ideas, ideas answered since, and new copies.
@@ -428,8 +435,9 @@ struct IdeasPanel: View {
 
     /// Copies new when they were first shown here stay marked while the panel is open; the rest count as seen.
     private func sawCopies(_ project: LampProject) {
-        let seen = WishIdeas.seenCopies(project)
-        newCopies.formUnion(copies.map(WishIdeas.copyKey).filter { !seen.contains($0) })
+        // Only once the site has answered: an empty list while it hasn't would forget what was seen.
+        guard WishCopies.shared.rows(for: project) != nil else { return }
+        newCopies.formUnion(copies.filter { !WishIdeas.isSeen($0, in: project) }.map(WishIdeas.copyKey))
         WishIdeas.markCopiesSeen(copies, in: project)
         store.objectWillChange.send()
     }
@@ -473,7 +481,7 @@ struct IdeasPanel: View {
                 .help("Opens their copy as an app of its own, beside yours, after Lamp looks it over")
                 Button("Hide") {
                     guard preview == nil, let project else { return }
-                    WishIdeas.hideCopy(copy, in: project)
+                    WishIdeas.hideCopy(copy, among: WishCopies.shared.rows(for: project), in: project)
                     store.objectWillChange.send()
                 }
                 .buttonStyle(PaperButtonStyle(.outline, height: 28))
