@@ -58,6 +58,8 @@ struct SharePopoverWithCopies: View {
     @ObservedObject private var copies = WishCopies.shared
 
     var body: some View {
-        SharePopover(link: link, copies: copies.rows(for: project) ?? [], canContribute: Contribute.canContribute(project), act: act)
+        SharePopover(link: link, copies: copies.rows(for: project) ?? [], canContribute: Contribute.canContribute(project),
+                     sendTo: SendToMaker.menuTitle(project), act: act)
+            .onAppear { SendToMaker.shared.refreshMaker(project) }
     }
 }

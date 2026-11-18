@@ -13,6 +13,7 @@
 //   lamp share [folder]   a link on lamp.dev to play it, and lamp ideas for what people send back
 //   lamp play <link>      play an app shared on lamp.dev here, its AI answered on this computer
 //   lamp copies [folder]  the copies people shared of a link; lamp compare and lamp take bring part of one in
+//   lamp send [folder] "words"  an idea, with your changes, to the maker of the app this one came from
 //   lamp ai               the AI of pages shared on lamp.dev, played here, from the person's own Claude Code, Codex or OpenRouter key
 //   lamp devices          the person's devices; lamp open --on xbox, or --on android, puts a page on one
 //   lamp setup            teach the coding agents on this computer to work this way
@@ -25,7 +26,9 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Problem, RESOURCES, layoutOf, manifestOf, projectOf, stateOf, running, ask } from "./state.mjs";
 import { macActions, serveMac, writeMacStarter } from "./mac.mjs";
-import { MAX_ARCHIVE, exportApp, unpack } from "./lampapp.mjs";
+import { MAX_ARCHIVE, exportApp, sourceLinkOf, unpack } from "./lampapp.mjs";
+import { keepPlayedFrom, keepSent, playedFrom, sendToMaker, sentFor } from "./send.mjs";
+import { imageInfo } from "../site/lib/shared-wishes.js";
 import { copiesOf, latestOf } from "./link.mjs";
 import { briefLines, comparisonLines, creditCopy, creditedIn, differences, fetchCopy, whenOf } from "./copies.mjs";
 import { updateNotice, versionLine } from "./update.mjs";
@@ -160,6 +163,11 @@ Mac app Lamp made in Swift, built and run on this Mac.
   lamp take <link> ["what"] [folder]
       Compare, then say how to bring in only what was asked (everything new, when nothing's said), and credit the
       copy in this app's credits.json, once, so the next share credits it.
+  lamp send [folder] "words" [--no-changes] [--list] [--picture file.png]
+      Send the maker of the app this one came from on lamp.dev an idea, with your changes: your copy goes up
+      privately (only the maker sees it, through the idea; --list lists it on their link too), and they can try
+      it and take what they like. It needs your lamp.dev username (lamp account). Sending again moves the same
+      idea on to your copy as it is now, the words going on its conversation. --no-changes sends the words alone.
   lamp ai [--forget]
       Answer the AI of pages shared on lamp.dev, played in a browser on this computer, with your own Claude Code
       or Codex, or OpenRouter with your key in OPENROUTER_API_KEY, until stopped. Lamp does the same while it's
@@ -1172,6 +1180,8 @@ async function main() {
       if (opened.project.kind === "page") lampsFilesBeside(opened.project.root, { game: opened.project.game || manifestOf(folder)?.platform === "game" });
       mkdirSync(dirname(playedFile), { recursive: true });
       writeFileSync(playedFile, folder);
+      // Where a change sent back from this folder starts (`lamp send`).
+      keepPlayedFrom(folder, id, latest.version);
       console.log(`"${opened.name}", version ${latest.version}, is in ${folder}.`);
     }
     const opened = await ask(await serverFor(projectOf(folder).folder), "open", {}, { timeout: 30_000 });
@@ -1202,6 +1212,38 @@ async function main() {
     console.log(`${copies.length === 1 ? "1 copy" : `${copies.length} copies`} shared from ${shown}, newest first:`);
     for (const copy of copies) console.log(`  "${copy.name}"${copy.by ? ` by ${copy.by}` : ""}, changed ${whenOf(copy.updated)}\n    ${copy.url}`);
     console.log(`Each is someone else's work, public on lamp.dev. ${lampCommand()} compare <link> shows what one changed; ${lampCommand()} take <link> "what" brings part of one in.`);
+    return;
+  }
+
+  if (command === "send") {
+    const { options, rest } = parse(args, ["picture"]);
+    // The words come last: a first word that's a folder is the folder.
+    const given = rest.length > 1 && existsSync(rest[0]) && statSync(rest[0]).isDirectory() ? rest.shift() : ".";
+    const text = rest.join(" ").trim();
+    if (!text) throw new Problem('send takes the words for the maker: lamp send "Rain makes the boats rock"');
+    const folder = projectOf(given).folder, site = siteOrigin();
+    lampsLink(folder);
+    const source = sourceLinkOf(folder, site, readLink(folder)?.id);
+    if (!source) throw new Problem("this app didn't come from a link on lamp.dev, so there's no maker to send to there");
+    const account = accountFor(site)?.key;
+    let picture = null;
+    if (options.picture) {
+      try { picture = readFileSync(resolve(options.picture)); } catch { throw new Problem(`${options.picture} couldn't be read`); }
+      if (!imageInfo(picture)) throw new Problem("the picture has to be a PNG or a JPEG");
+    }
+    let change = null;
+    if (!options["no-changes"]) {
+      if (!account) throw new Problem(`sending your changes needs a lamp.dev username: ${lampCommand()} account <username> --email you@example.com makes one, or --no-changes sends the words alone`);
+      const app = exportApp(folder, { anyway: options.anyway === true });
+      change = { bytes: app.bytes, base: playedFrom(folder, source), listed: options.list === true, body: { name: app.name, words: text, ...(sharer() ? { by: sharer() } : {}) } };
+    }
+    const earlier = sentFor(folder, site, source);
+    const sent = await sendToMaker({ site, source, text, picture, change, earlier, account, said: (line) => console.log(line) });
+    if (sent.copy) keepSent(folder, site, source, { copy: { id: sent.copy.id, secret: sent.copy.secret, url: sent.copy.url }, n: sent.n });
+    const again = change && earlier?.n === sent.n;
+    console.log(again ? `Sent again: idea ${sent.n} now has your copy as it is, version ${sent.version}.`
+      : change ? `Sent, with your changes: the maker sees it in Lamp${options.list ? ", and your copy is listed on their link" : ""}. Sending again moves the same idea on.`
+      : "Sent: the maker sees it in Lamp.");
     return;
   }
 

@@ -275,6 +275,7 @@ final class SidebarServer {
         watching = Store.shared.objectWillChange.merge(with: AskProgresses.shared.objectWillChange)
             .merge(with: WishLinkCards.shared.objectWillChange)
             .merge(with: ContributeCards.shared.objectWillChange)
+            .merge(with: SendToMaker.shared.objectWillChange)
             .merge(with: WishCopies.shared.objectWillChange).sink { [weak self] _ in
             DispatchQueue.main.async { self?.scheduleUpdate() }
         }
@@ -463,6 +464,7 @@ final class SidebarServer {
             var toolbar = SidebarToolbar(canUndo: !busy && (history?.undoable ?? false), canShare: store.canShare(project) && made,
                                          hasVersions: history?.saved ?? false, details: details)
             toolbar.canContribute = Contribute.canContribute(project) && made ? true : nil
+            toolbar.sendTo = made ? SendToMaker.menuTitle(project) : nil
             // A chat of an earlier Lamp then leaves its Put on GitHub… out: Release Update puts the wish there now.
             toolbar.onGitHub = true
             toolbar.shareLink = WishLink.kept(for: project)?.url.absoluteString
@@ -1377,6 +1379,8 @@ final class SidebarServer {
             case .copy: cards.copy(project)
             case .close: cards.close(project)
             }
+        case .sendTo:
+            SendToMaker.shared.open(project)
         case .tryOn(let id):
             // One of the wish's other apps: "part:<its id>:<what>".
             if id.hasPrefix("part:"), let part = store.parts(of: project).first(where: { id.hasPrefix("part:\($0.id):") }) {
@@ -1393,6 +1397,7 @@ final class SidebarServer {
             scheduleUpdate()
         case .shareOpened:
             WishCopies.shared.refresh(project)
+            SendToMaker.shared.refreshMaker(project)
         case .compare(let link):
             // Sent as the person's own message, not through the box, so what they were writing stays there; it waits in
             // line while a turn runs, as anything they send does. Only a copy the popover listed, which came from the site.
