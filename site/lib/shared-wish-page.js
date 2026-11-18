@@ -83,7 +83,6 @@ export function wishPage(template, wish, { origin, playOrigin = null }) {
     ...(wish.from ? { from: wish.from } : {}),
     // The copies it took changes from, while each is up: "with changes from <maker>/<app>" after that.
     ...(wish.with?.length ? { with: wish.with } : {}),
-    ...(wish.copies ? { copies: wish.copies } : {}),
     ...(plays ? { play: `${playOrigin}/w/${wish.id}/play/${wish.page.version}/`, ...(wish.shape ? { shape: wish.shape } : {}) } : {}),
   }).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   return head

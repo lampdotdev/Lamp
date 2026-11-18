@@ -346,7 +346,6 @@ export function cloudStore(env, fetcher = fetch) {
     /** Kept by when each was last shared, so the newest come first however many there are. */
     async addCopy(id, copy, at = Date.now()) { await command(["ZADD", copiesKey(id), String(at), copy]); },
     async copies(id, count = 200) { const ids = await command(["ZREVRANGE", copiesKey(id), "0", String(count - 1)]); return Array.isArray(ids) ? ids : []; },
-    async copyCount(id) { const n = await command(["ZCARD", copiesKey(id)]); return Number(n) || 0; },
     async removeCopy(id, copy) { await command(["ZREM", copiesKey(id), copy]); },
     /** Several records at once, in one round trip, null for one that's gone. */
     async getMany(ids) {
@@ -650,7 +649,6 @@ export function memoryStore() {
     async remove(id) { records.delete(id); ideas.delete(id); makers.delete(id); copies.delete(id); },
     async addCopy(id, copy, at = Date.now()) { if (!copies.has(id)) copies.set(id, new Map()); copies.get(id).set(copy, at); },
     async copies(id, count = 200) { return [...(copies.get(id) ?? new Map())].sort((a, b) => b[1] - a[1]).slice(0, count).map(([copy]) => copy); },
-    async copyCount(id) { return copies.get(id)?.size ?? 0; },
     async removeCopy(id, copy) { copies.get(id)?.delete(copy); },
     async getMany(ids) { return ids.map((id) => (records.has(id) ? structuredClone(records.get(id)) : null)); },
     async maker(id) { return makers.has(id) ? structuredClone(makers.get(id)) : null; },
@@ -767,7 +765,7 @@ async function copied(kept, from, copy, origin, { env, fetcher, first }) {
     const who = copy.owner || copy.by || "Someone";
     const theirs = linkOf(origin, copy), yours = linkOf(origin, source);
     await sendMail(env, fetcher, { to: [to], subject: `${who} made their own ${source.name}`,
-      text: `${who} made their own copy of ${source.name} and shared it:\n\n${theirs}\n\nEvery copy of yours is listed on its page: ${yours}\n` }, `copy-${from}-${copy.id}`);
+      text: `${who} made their own copy of ${source.name} and shared it:\n\n${theirs}\n\nLamp lists the copies of ${yours} under Share, for you to compare.\n` }, `copy-${from}-${copy.id}`);
   } catch {}
 }
 
@@ -828,9 +826,14 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
     if (method === "GET") {
       let kept;
       try { kept = store ?? cloudStore(env, fetcher); } catch { return reply(503, { error: "service_unavailable" }); }
-      // The copies people shared of this link, newest first: public, as every link is.
+      // The copies people shared of this link, newest first: for its maker alone, with the link's secret, never on its
+      // page, so nobody can put words on someone else's page by sharing a copy of it.
       if (url.searchParams.get("copies") === "1" && isID(id)) {
-        try { return reply(200, { copies: await copiesOf(kept, id, url.origin) }); } catch { return reply(503, { error: "service_unavailable" }); }
+        try {
+          const record = await kept.get(id);
+          if (!record || !secretMatches(bearer(request), record.secret)) return reply(404, { error: "not_found" });
+          return reply(200, { copies: await copiesOf(kept, id, url.origin) });
+        } catch { return reply(503, { error: "service_unavailable" }); }
       }
       try {
         const found = byName ? await kept.appID(user, app) : id;
@@ -1505,8 +1508,6 @@ export async function findWish(id, { env = process.env, fetcher = fetch, store, 
       wish.with = records.filter((copy) => copy && !copy.private).map((copy) => ({ url: linkOf(origin, copy), label: copy.owner && copy.app ? `${copy.owner}/${copy.app}` : copy.name }));
     } catch {}
   }
-  // How many copies of it people shared, for the page's "copies" (the list itself is asked for when opened).
-  if (wish && origin) { try { wish.copies = await kept.copyCount(id); } catch {} }
   return wish;
 }
 

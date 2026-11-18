@@ -119,10 +119,10 @@ export async function latestOf({ site = siteOrigin(), id, user, app }) {
 
 /**
  * The copies people shared from a link (each one's `from` names it), newest first: each its address, name, who made it
- * and when it last changed, as the link's page lists them. Public, so asked with nothing of the person's.
+ * and when it last changed. Only the link's secret reads them: they're its maker's, never on its page.
  */
-export async function copiesOf({ site = siteOrigin(), id }) {
-  const { said } = await call("GET", `${site}/api/wishes?id=${encodeURIComponent(id)}&copies=1`, { seconds: 30 });
+export async function copiesOf({ site = siteOrigin(), link }) {
+  const { said } = await call("GET", `${site}/api/wishes?id=${encodeURIComponent(link.id)}&copies=1`, { secret: link.secret, seconds: 30 });
   if (!Array.isArray(said.copies)) throw new Problem("the site's answer couldn't be read");
   return said.copies.map((copy) => ({
     url: onSite(site, copy?.url), name: typeof copy?.name === "string" ? copy.name.slice(0, LIMITS.name) : "",
