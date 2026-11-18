@@ -787,7 +787,7 @@ enum Contribute {
     }
 }
 
-/// The Send Changes Back card of each wish while it's open, in the chat's place. Preparing it finds `gh` and the
+/// The pull-request card of each wish (Send to… for an app from someone's repository on GitHub) while it's open, in the chat's place. Preparing it finds `gh` and the
 /// person's sign-in, looks for their fork and works out what would go with its checks (`Contribute.prepare`), so the
 /// card shows exactly what will go before the person confirms.
 @MainActor final class ContributeCards: ObservableObject {
@@ -817,7 +817,7 @@ enum Contribute {
         /// What this submission did on GitHub so far; set once a send begins, and the screenshot stays as it is from then.
         var progress: Contribute.Progress?
 
-        /// Ready, or failed with what would go still prepared, so Send Changes Back tries again.
+        /// Ready, or failed with what would go still prepared, so Send tries again.
         var canSend: Bool {
             switch stage {
             case .ready: true
@@ -1010,7 +1010,7 @@ enum Contribute {
 
     private func set(_ project: LampProject, _ stage: ContributeCard.Stage) { cards[project.id]?.stage = stage }
 
-    /// Send Changes Back (or Retry Upload), with the screenshot the chat showed ticked (`shown`) when it's the one held;
+    /// Send (or Retry Upload), with the screenshot the chat showed ticked (`shown`) when it's the one held;
     /// `shown` nil sends without one, and clears Include Screenshot so a later try doesn't take it either.
     func send(_ project: LampProject, shown: String?, wire: Int) {
         guard let card = cards[project.id], card.canSend, let prepared = card.prepared, let source = card.source,

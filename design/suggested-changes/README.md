@@ -1,6 +1,6 @@
 # Suggested changes: receiving what others send back
 
-Someone remixes an app, changes it, and presses Send Changes Back. Lamp opens a pull request on the owner's
+Someone remixes an app, changes it, and presses Send to… (Send Changes Back before it). Lamp opens a pull request on the owner's
 repository (`Contribute.send`). Merged with GitHub's button, the change reaches the app without its agent
 hearing of it, and the next release refuses until Bring In Changes (`BringIn`) fetches what GitHub merged.
 

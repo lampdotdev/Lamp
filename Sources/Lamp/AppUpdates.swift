@@ -116,7 +116,7 @@ enum AppUpdates {
         var asking: Bool
     }
 
-    /// `sending` is whether the wish's Send Changes Back card is working out what would go; `settingUp` whether its update's
+    /// `sending` is whether the wish's pull-request card (Send to… on GitHub) is working out what would go; `settingUp` whether its update's
     /// copy is being made. A copy that stopped or failed says nothing here: Review, beside what was last heard of its
     /// updates, tries it again.
     static func deskLine(wish: String, sending: Bool, settingUp: Bool, copy: CopyState?, outcome: Outcome?) -> DeskLine? {
@@ -559,7 +559,7 @@ extension Store {
         }
     }
 
-    /// An update to the wish is in: the desk says so, and a Send Changes Back card put aside for it comes back.
+    /// An update to the wish is in: the desk says so, and a pull-request card put aside for it comes back.
     func updateApplied(_ project: LampProject) {
         updateOutcomes[project.id] = .applied
         ContributeCards.shared.updateApplied(project)
@@ -591,7 +591,7 @@ extension Store {
     /// Review Update…: a wish in a repository is fetched and reviewed as when it was opened; a wish made from someone's
     /// project has its update prepared by the agent in a copy of its own, once the person has agreed to what that costs,
     /// and reviewed from there. An update already being prepared is shown where it is: its copy's chat, or its review.
-    /// `ofRepository` is Review Update… from a Send Changes Back card blocked by the repository's newer changes: a
+    /// `ofRepository` is Review Update… from a pull-request card blocked by the repository's newer changes: a
     /// starter's copy then reviews those, not the starter this Lamp pins, which may not have them.
     func reviewUpdate(_ project: LampProject, ofRepository: Bool = false) {
         updateOutcomes[project.id] = nil

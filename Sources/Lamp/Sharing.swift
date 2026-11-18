@@ -990,7 +990,7 @@ enum Sharing {
         return try installIcon(package, into: project)
     }
 
-    /// Where the manifest a wish's files last arrived with is kept, in Lamp's own folder: what Send Changes Back measures a
+    /// Where the manifest a wish's files last arrived with is kept, in Lamp's own folder: what Send to…'s pull request measures a
     /// change of the wish's line, kind or apps from (`Contribute.baseManifest`), since the files don't hold the manifest.
     static let arrivedManifest = ".lamp/manifest-arrived.json"
 

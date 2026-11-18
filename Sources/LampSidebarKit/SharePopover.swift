@@ -35,7 +35,8 @@ public struct SharePopover: View {
     let link: URL?
     let copies: [SharedCopyRow]
     let canContribute: Bool
-    /// "Send to Sam…", for a wish that came from a lamp.dev link: it takes Send Changes Back's place.
+    /// "Send to Sam…": the maker of the lamp.dev link the wish came from, or the owner of the GitHub repository it came from.
+    /// A Lamp from before sends none, and its chat offers Send Changes Back… for a repository's wish instead (`canContribute`).
     let sendTo: String?
     let now: Date
     let act: (Action) -> Void

@@ -7,7 +7,7 @@
 # ever goes up in place of the latest), one commit of the difference goes up (none when there's none),
 # and the starter's pin moves to it (Resources/Starters/<folder>/starter.md: `repository:` and `commit:`, with the tree
 # fetched). Every copy of a starter made by a Lamp built from then on names that commit on its chain, which Update
-# from GitHub… merges against and Send Changes Back… goes on top of.
+# from GitHub… merges against and Send to…'s pull request goes on top of.
 #
 #   ./build.sh && scripts/publish-starters.sh                    every starter
 #   scripts/publish-starters.sh newyork hours                    some, by folder name

@@ -38,7 +38,7 @@ click goes the same way, `Store.openChat`); a wish that opens no Mac window is u
 panel, beside the simulator, the emulator or Lamp's preview that shows it, or on its own where nothing on this Mac does
 (`ChatPanel`, "The chat's one screen" in the chat guide); one still coming true, or waiting on an answer, opens its
 chat. With VoiceOver a row is picked as a click picks it, and opened by its Open action. A right-click has Open and then what ⋯ has
-(`DeskWishMenu`): Duplicate…, New Copy of the Original, Update from the Original, Start Over, Send to <maker>… (for a wish that started from a lamp.dev link) or Send Changes Back… and Check for Updates…
+(`DeskWishMenu`): Duplicate…, New Copy of the Original, Update from the Original, Start Over, Send to <maker>… (the maker of the lamp.dev link a wish started from, or else the owner of the GitHub repository it came from, as a pull request) and Check for Updates…
 (Review Update… once there's one, for a wish that follows a repository on GitHub: `DeskEntry.followsRepository`) where they apply, Follow a Copy… ("Sharing a copy and following others" in the wishes guide), then the wish's own menu (`AppMenu`: Rename…, Delete… and the rest).
 A row under Starter apps has no ⋯ (above), and its side panel offers Open and Remix it; the arrows move the pick through
 both sections, and File's commands act on no wish while a starter not on the desk yet is picked.
@@ -72,9 +72,9 @@ request starts fresh, told the original's APP.md, and the chat goes down to one 
 original" (`Store.startConversationAgain`). Both are kept with the version the restore made, so Undo of it brings back
 the code, the old chat and the old conversations together. For a starter there's
 also New Copy of the Original (`Store.duplicateOriginal`), on every copy of one this Lamp ships, changed or not: a fresh
-copy of the starter as this Lamp ships it, put on the desk as a remix link puts one, beside the copy. Send Changes Back… is
-in the menu only for such a wish that came from a repository (`Contribute.canContribute`), and opens its card in the
-wish's chat as the chat's Share popover does. A remix link from the site lands the same way: it opens the person's own
+copy of the starter as this Lamp ships it, put on the desk as a remix link puts one, beside the copy. Send to <owner>… is
+in the menu for such a wish that came from a repository (`Contribute.canContribute`, `SendToMaker.menuTitle`), and opens
+its pull-request card in the wish's chat as the chat's Share popover does. A remix link from the site lands the same way: it opens the person's own
 untouched copy of the starter with the request written into its box (`openCopy`), to be sent in place.
 
 Remix means changing the wish itself, everywhere Lamp says it: the desk, the site's and a README's remix links (which
@@ -300,7 +300,7 @@ leaves the storyboards and reels out (build.sh).
 
 **Changing a starter.** Its repository is the starter; Lamp pins a commit of it. A change is best made in Lamp Dev,
 where it's played as it's made: open the starter with File → Open from GitHub… (github.com/lampdotdev/<folder>), ask
-for the change, then File → Send Changes Back…, which opens a pull request on the repository (a member of the account's
+for the change, then Share → Send to lampdotdev…, which opens a pull request on the repository (a member of the account's
 starters team, which has push access to every starter's repository, can release to it directly with Also update GitHub). A change made in a clone and pushed is as good. Once the repository has moved on,
 `scripts/pull-starters.sh [<folder>]` moves the pin to its latest commit and fetches the tree: look at what changed
 (`git -C Resources/Starters/<folder>/tree log`, or the repository), run `scripts/check-starters.sh <folder>` and

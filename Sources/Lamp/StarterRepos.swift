@@ -3,7 +3,7 @@ import Foundation
 import LampSidebarKit
 
 /// Lamp's starters as repositories on GitHub (`Starters.account`, one each), where the starters are made: a change to
-/// one goes to its repository (from Lamp, Send Changes Back…; or a push by whoever has access), and Lamp pins the
+/// one goes to its repository (from Lamp, Send to…; or a push by whoever has access), and Lamp pins the
 /// commit it ships (`scripts/pull-starters.sh` moves the pin, `scripts/fetch-starters.sh` fetches the tree). Each is
 /// laid out as Lamp lays a wish out on GitHub (`GitHubRepo.stage`: the shared file's contents with its checks, Lamp's
 /// own files so `zsh build.sh` builds it, a README, an MIT license), so it opens with File → Open from GitHub…, and a
