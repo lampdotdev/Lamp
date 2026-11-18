@@ -419,7 +419,8 @@ enum WishLink {
     struct SentIdea: Codable, Equatable {
         var source: String
         var copy: Copy?
-        var n: Int
+        /// Nil while the copy is up but the idea hasn't gone yet (a send that failed after the copy was made).
+        var n: Int?
 
         struct Copy: Codable, Equatable {
             var id: String
@@ -432,19 +433,26 @@ enum WishLink {
     /// version `base`, its copy named `name` and listed on their link too if `listed`. `earlier` is the last such send
     /// for this link, whose copy and idea it moves on. Thrown with lamp's own words for what the site turned down.
     static func sendIdea(source: String, text: String, picture: URL?, file: URL?, base: Int, name: String, by: String, listed: Bool,
-                         earlier: SentIdea?, said: (@Sendable (String) -> Void)? = nil) async throws -> SentIdea {
+                         earlier: SentIdea?, said: (@Sendable (String) -> Void)? = nil,
+                         madeCopy: (@Sendable (SentIdea.Copy) -> Void)? = nil) async throws -> SentIdea {
         var given: [String: Any] = ["site": site, "source": source, "text": text, "base": base, "listed": listed,
                                     "body": ["name": clip(name, Limit.name), "words": clip(text, Limit.words), "by": clip(by, Limit.by)]]
         if let picture { given["picture"] = picture.path }
         if let file { given["file"] = file.path }
         if let earlier, earlier.source == source {
-            var kept: [String: Any] = ["n": earlier.n]
+            var kept: [String: Any] = [:]
+            if let n = earlier.n { kept["n"] = n }
             if let copy = earlier.copy { kept["copy"] = ["id": copy.id, "secret": copy.secret] }
             given["earlier"] = kept
         }
         let done: [String: Any]
         do {
-            done = try await LampCLI.ask("ideaSend", given) { event in if let line = event["said"] as? String { said?(line) } }
+            done = try await LampCLI.ask("ideaSend", given) { event in
+                if let line = event["said"] as? String { said?(line) }
+                if let copy = event["copy"] as? [String: Any], let id = copy["id"] as? String, let secret = copy["secret"] as? String {
+                    madeCopy?(SentIdea.Copy(id: id, secret: secret))
+                }
+            }
         } catch let failure as LampCLI.Failure {
             if failure.kind == "unreachable" { throw Failure(message: "Lamp couldn't reach lamp.dev. Try again in a moment.") }
             let words = failure.message.trimmed

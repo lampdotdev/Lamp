@@ -50,6 +50,7 @@ import SwiftUI
 
     func open(_ project: LampProject) {
         guard let source = Self.source(of: project), let id = source.place.link else { return }
+        if cards[project.id] != nil { refreshAccount(project) }
         if cards[project.id] == nil {
             let earlier = Self.sent(for: project)
             cards[project.id] = Card(values: .init(name: project.name, maker: nil, words: "", stage: .drafting, includePicture: true,
@@ -74,6 +75,18 @@ import SwiftUI
         if cards[project.id]?.values.words.isEmpty == true { cards[project.id]?.values.words = words }
         if cards[project.id]?.values.account == nil { cards[project.id]?.values.includeChanges = false }
         cards[project.id]?.values.stage = .ready
+    }
+
+    /// The person's username asked again, when the card comes forward: one set up from Set Up… since it opened turns
+    /// Include my changes on, without the note being lost.
+    func refreshAccount(_ project: LampProject) {
+        guard let card = cards[project.id], card.values.account == nil, card.values.stage != .drafting else { return }
+        Task {
+            guard let found = (try? await WishLink.account()) ?? nil, found.confirmed == true, cards[project.id]?.values.account == nil else { return }
+            let username = found.username
+            cards[project.id]?.values.account = username
+            cards[project.id]?.values.includeChanges = true
+        }
     }
 
     /// The words Lamp offers: what the person changed since the wish arrived, said to the maker in a few plain lines.
@@ -104,8 +117,9 @@ import SwiftUI
         if case .failed = cards[project.id]?.values.stage { cards[project.id]?.values.stage = .ready }
     }
 
+    /// Not while sending; while the note is being drafted it closes, and what comes back is dropped (`prepare`).
     func close(_ project: LampProject) {
-        guard cards[project.id]?.values.stage.isBusy != true else { return }
+        guard cards[project.id]?.values.stage.isSending != true else { return }
         cards[project.id] = nil
         SendToMakerWindows.shared.close(project)
     }
@@ -131,10 +145,15 @@ import SwiftUI
                 // The wish as it is now, with the versions it carries for mixing (`MixHistory`), which a maker's Take It lines up.
                 let file = values.includeChanges ? try await Store.offMain { Result { try Sharing.export(project, withHistory: true) } }.get() : nil
                 defer { if let file { try? FileManager.default.removeItem(at: file) } }
-                let sent = try await WishLink.sendIdea(source: card.source, text: values.words.trimmed, picture: pictureFile, file: file, base: card.base,
-                                                       name: project.name, by: WishLink.sharer, listed: values.listed, earlier: values.includeChanges ? earlier : nil) { line in
+                let source = card.source
+                let sent = try await WishLink.sendIdea(source: source, text: values.words.trimmed, picture: pictureFile, file: file, base: card.base,
+                                                       name: project.name, by: WishLink.sharer, listed: values.listed, earlier: values.includeChanges ? earlier : nil,
+                                                       said: { line in
                     Task { @MainActor in if case .sending = self.cards[project.id]?.values.stage { self.cards[project.id]?.values.stage = .sending(line) } }
-                }
+                }, madeCopy: { copy in
+                    // Kept as soon as it's up, without an idea yet, so a send that fails after it sends to it again.
+                    Task { @MainActor in Self.keep(WishLink.SentIdea(source: source, copy: copy, n: nil), for: project) }
+                })
                 if sent.copy != nil { Self.keep(sent, for: project) }
                 cards[project.id]?.values.stage = .sent(again: values.includeChanges && earlier?.n == sent.n && earlier?.source == card.source)
                 cards[project.id]?.values.again = sent.copy != nil ? sent.n : cards[project.id]?.values.again
@@ -225,7 +244,14 @@ extension WishLink {
 
     func windowShouldClose(_ window: NSWindow) -> Bool {
         guard let id = windows.first(where: { $0.value === window })?.key else { return true }
-        return SendToMaker.shared.cards[id]?.values.stage.isBusy != true
+        return SendToMaker.shared.cards[id]?.values.stage.isSending != true
+    }
+
+    /// Back from Set Up… (or anywhere), the card asks again whether there's a username now.
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, let id = windows.first(where: { $0.value === window })?.key,
+              let project = Store.shared.projects.first(where: { $0.id == id }) else { return }
+        SendToMaker.shared.refreshAccount(project)
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -274,7 +300,8 @@ struct SendIdeaCard: View {
 
     enum Stage: Equatable {
         case drafting, ready, sending(String), sent(again: Bool), failed(String)
-        var isBusy: Bool { if case .sending = self { true } else { self == .drafting } }
+        var isBusy: Bool { isSending || self == .drafting }
+        var isSending: Bool { if case .sending = self { true } else { false } }
     }
 
     let values: Values
@@ -341,7 +368,7 @@ struct SendIdeaCard: View {
                 default: EmptyView()
                 }
                 Spacer()
-                Button(isSent ? "Done" : "Cancel", action: close).buttonStyle(PaperButtonStyle(.outline)).disabled(values.stage.isBusy && values.stage != .drafting)
+                Button(isSent ? "Done" : "Cancel", action: close).buttonStyle(PaperButtonStyle(.outline)).disabled(values.stage.isSending)
                     .keyboardShortcut(.cancelAction)
                 if !isSent {
                     Button("Send", action: send).buttonStyle(PaperButtonStyle(.ink))

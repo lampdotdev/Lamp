@@ -271,7 +271,8 @@ export const CALLS = {
     const change = bytes ? { bytes, base: Number.isInteger(given.base) ? given.base : 0, listed: given.listed === true, body: given.body ?? {} } : null;
     const earlier = given.earlier && typeof given.earlier === "object" ? given.earlier : null;
     const sent = await sendToMaker({ site, source: text(given, "source"), text: text(given, "text"), picture: read("picture"), change, earlier,
-      account: typeof given.account === "string" ? given.account : accountFor(site)?.key, said: (line) => how.event?.({ said: line }) });
+      account: typeof given.account === "string" ? given.account : accountFor(site)?.key, said: (line) => how.event?.({ said: line }),
+      madeCopy: (copy) => how.event?.({ copy: { id: copy.id, secret: copy.secret } }) });
     return { copy: sent.copy, n: sent.n, version: sent.version ?? null };
   },
 

@@ -1238,7 +1238,9 @@ async function main() {
       change = { bytes: app.bytes, base: playedFrom(folder, source), listed: options.list === true, body: { name: app.name, words: text, ...(sharer() ? { by: sharer() } : {}) } };
     }
     const earlier = sentFor(folder, site, source);
-    const sent = await sendToMaker({ site, source, text, picture, change, earlier, account, said: (line) => console.log(line) });
+    // A new copy is kept as soon as it's up, without an idea yet, so a send that fails after it sends to it again.
+    const sent = await sendToMaker({ site, source, text, picture, change, earlier, account, said: (line) => console.log(line),
+      madeCopy: (copy) => keepSent(folder, site, source, { copy: { id: copy.id, secret: copy.secret, url: copy.url }, n: null }) });
     if (sent.copy) keepSent(folder, site, source, { copy: { id: sent.copy.id, secret: sent.copy.secret, url: sent.copy.url }, n: sent.n });
     const again = change && earlier?.n === sent.n;
     console.log(again ? `Sent again: idea ${sent.n} now has your copy as it is, version ${sent.version}.`

@@ -18,14 +18,17 @@ const megabytes = (bytes) => `${(bytes / 1_000_000).toFixed(bytes < 10_000_000 ?
  * maker's link like any copy. `earlier` is what the last send kept (`{ copy: { id, secret }, n }`): the same copy is
  * changed, and the same idea moved on to it, rather than new ones made. A change needs the account's key.
  * Answers what to keep for the next send: the copy (null without a change), the idea's number, and the copy's version.
+ * `madeCopy` is told the copy as soon as it's up, before its file and the idea go, so a send that fails after it keeps
+ * the copy to send to again rather than leaving it on the site with its secret lost.
  */
-export async function sendToMaker({ site, source, text, picture = null, change = null, earlier = null, account, said = () => {} }) {
+export async function sendToMaker({ site, source, text, picture = null, change = null, earlier = null, account, said = () => {}, madeCopy = () => {} }) {
   if (!change) return { copy: null, ...(await sendIdea({ site, id: source, text, picture, account })) };
   if (!account) throw Object.assign(new Problem("sending your changes needs a lamp.dev username: lamp account makes one"), { status: 401 });
   if (change.bytes.length > CHANGE_LIMITS.file) throw new Problem(`the app is ${megabytes(change.bytes.length)}, and the site takes ${megabytes(CHANGE_LIMITS.file)} with an idea`);
   said("Putting your copy up for the maker…");
   const body = { ...change.body, words: change.body.words || text, from: source, private: !change.listed };
   const copy = await publishLink({ site, body, earlier: earlier?.copy ?? null, account });
+  if (copy.id !== earlier?.copy?.id) madeCopy(copy);
   const version = await sendFile({ site, link: copy, bytes: change.bytes, said });
   const sent = { copy: copy.id, base: change.base };
   // The same idea, if the last send made it with this copy; one the maker's link no longer has is sent anew.
