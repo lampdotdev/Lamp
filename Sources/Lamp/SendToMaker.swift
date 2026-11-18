@@ -56,7 +56,7 @@ import SwiftUI
         if cards[project.id] == nil {
             let earlier = Self.sent(for: project)
             cards[project.id] = Card(values: .init(name: project.name, maker: nil, words: "", stage: .drafting, includePicture: true,
-                                                   includeChanges: true, listed: false, account: nil, again: earlier?.source == id ? earlier?.n : nil,
+                                                   includeChanges: true, account: nil, again: earlier?.source == id ? earlier?.n : nil,
                                                    noLicense: ShareCheck.warningLine(Credits.load(project))),
                                      picture: WishLink.picture(of: project), source: id, base: Int(source.brought ?? "") ?? 0)
             let token = cards[project.id]!.token
@@ -150,7 +150,7 @@ import SwiftUI
                 defer { if let file { try? FileManager.default.removeItem(at: file) } }
                 let source = card.source
                 let sent = try await WishLink.sendIdea(source: source, text: values.words.trimmed, picture: pictureFile, file: file, base: card.base,
-                                                       name: project.name, by: WishLink.sharer, listed: values.listed, earlier: values.includeChanges ? earlier : nil,
+                                                       name: project.name, by: WishLink.sharer, earlier: values.includeChanges ? earlier : nil,
                                                        said: { line in
                     Task { @MainActor in if case .sending = self.cards[project.id]?.values.stage { self.cards[project.id]?.values.stage = .sending(line) } }
                 }, madeCopy: { copy in
@@ -281,8 +281,7 @@ private struct SendToMakerContent: View {
     }
 }
 
-/// The card: the words to the maker, a picture of the app, whether the person's changes go and whether their copy is
-/// listed on the maker's link too, then Send. Plain values, so the gallery draws it as people see it.
+/// The card: the words to the maker, a picture of the app and whether the person's changes go, then Send. Plain values, so the gallery draws it as people see it.
 struct SendIdeaCard: View {
     struct Values: Equatable {
         var name: String
@@ -292,7 +291,6 @@ struct SendIdeaCard: View {
         var stage: Stage
         var includePicture: Bool
         var includeChanges: Bool
-        var listed: Bool
         /// The person's lamp.dev username, confirmed; nil without one, and changes can't go then.
         var account: String?
         /// The idea an earlier send made, which this one moves on.
@@ -353,8 +351,6 @@ struct SendIdeaCard: View {
                     }
                 }
                 if values.includeChanges {
-                    Toggle("Also list my copy on their page", isOn: Binding(get: { values.listed }, set: { on in edit { $0.listed = on } }))
-                        .toggleStyle(.checkbox).font(.system(size: 13)).padding(.leading, 20)
                     if let noLicense = values.noLicense {
                         Text(noLicense).font(.system(size: 12)).foregroundStyle(Paper.muted).fixedSize(horizontal: false, vertical: true).padding(.leading, 20)
                     }

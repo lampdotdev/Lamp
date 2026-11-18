@@ -602,8 +602,8 @@ the chat, compared and mixed in); an idea with a change joins the two rather tha
 - **The change is a copy.** It's the sender's copy shared as any copy is (`POST /api/wishes` with `from` naming the
   maker's link, the file sent by `api/wish-file.js` with History/), only **private**: the share says `private: true`,
   so the copy isn't among the link's public copies, its maker gets no "made their own" email, it has no page or card,
-  and asking for its latest without its secret finds nothing. It carries no playable page. The sender can choose to
-  list it publicly as well, which shares it again without `private`, and then it's a copy like any other. The idea
+  and asking for its latest without its secret finds nothing. It carries no playable page. Lamp and `lamp send`
+  always send it private; a sender who wants their copy public shares it with Share Link, as a link of its own. The idea
   names the copy and the version of the maker's link it starts from (`base`, which Lamp knows from what it last brought
   in, `Following.brought`); the site keeps the copy's file version with it.
 - **Code needs a username.** An idea with a change comes only from an account (the `X-Lamp-Account` key Lamp's and

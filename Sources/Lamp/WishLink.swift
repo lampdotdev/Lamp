@@ -430,12 +430,12 @@ enum WishLink {
 
     /// An idea for the maker of the link `source` (`ideaSend` in cli/calls.mjs): `text`, the picture at `picture` if
     /// there is one, and with `file` (the wish's shared file, with its history) its change, starting from the maker's
-    /// version `base`, its copy named `name` and listed on their link too if `listed`. `earlier` is the last such send
+    /// version `base`, its copy named `name`, private to the maker. `earlier` is the last such send
     /// for this link, whose copy and idea it moves on. Thrown with lamp's own words for what the site turned down.
-    static func sendIdea(source: String, text: String, picture: URL?, file: URL?, base: Int, name: String, by: String, listed: Bool,
+    static func sendIdea(source: String, text: String, picture: URL?, file: URL?, base: Int, name: String, by: String,
                          earlier: SentIdea?, said: (@Sendable (String) -> Void)? = nil,
                          madeCopy: (@Sendable (SentIdea.Copy) -> Void)? = nil) async throws -> SentIdea {
-        var given: [String: Any] = ["site": site, "source": source, "text": text, "base": base, "listed": listed,
+        var given: [String: Any] = ["site": site, "source": source, "text": text, "base": base,
                                     "body": ["name": clip(name, Limit.name), "words": clip(text, Limit.words), "by": clip(by, Limit.by)]]
         if let picture { given["picture"] = picture.path }
         if let file { given["file"] = file.path }

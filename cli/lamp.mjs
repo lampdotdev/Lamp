@@ -163,9 +163,9 @@ Mac app Lamp made in Swift, built and run on this Mac.
   lamp take <link> ["what"] [folder]
       Compare, then say how to bring in only what was asked (everything new, when nothing's said), and credit the
       copy in this app's credits.json, once, so the next share credits it.
-  lamp send [folder] "words" [--no-changes] [--list] [--picture file.png]
+  lamp send [folder] "words" [--no-changes] [--picture file.png]
       Send the maker of the app this one came from on lamp.dev an idea, with your changes: your copy goes up
-      privately (only the maker sees it, through the idea; --list lists it on their link too), and they can try
+      privately (only the maker sees it, through the idea), and they can try
       it and take what they like. It needs your lamp.dev username (lamp account). Sending again moves the same
       idea on to your copy as it is now, the words going on its conversation. --no-changes sends the words alone.
   lamp ai [--forget]
@@ -1235,7 +1235,7 @@ async function main() {
     if (!options["no-changes"]) {
       if (!account) throw new Problem(`sending your changes needs a lamp.dev username: ${lampCommand()} account <username> --email you@example.com makes one, or --no-changes sends the words alone`);
       const app = exportApp(folder, { anyway: options.anyway === true });
-      change = { bytes: app.bytes, base: playedFrom(folder, source), listed: options.list === true, body: { name: app.name, words: text, ...(sharer() ? { by: sharer() } : {}) } };
+      change = { bytes: app.bytes, base: playedFrom(folder, source), body: { name: app.name, words: text, ...(sharer() ? { by: sharer() } : {}) } };
     }
     const earlier = sentFor(folder, site, source);
     // A new copy is kept as soon as it's up, without an idea yet, so a send that fails after it sends to it again.
@@ -1244,7 +1244,7 @@ async function main() {
     if (sent.copy) keepSent(folder, site, source, { copy: { id: sent.copy.id, secret: sent.copy.secret, url: sent.copy.url }, n: sent.n });
     const again = change && earlier?.n === sent.n;
     console.log(again ? `Sent again: idea ${sent.n} now has your copy as it is, version ${sent.version}.`
-      : change ? `Sent, with your changes: the maker sees it in Lamp${options.list ? ", and your copy is listed on their link" : ""}. Sending again moves the same idea on.`
+      : change ? "Sent, with your changes: only the maker sees them, in Lamp. Sending again moves the same idea on."
       : "Sent: the maker sees it in Lamp.");
     return;
   }

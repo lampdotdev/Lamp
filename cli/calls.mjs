@@ -261,14 +261,14 @@ export const CALLS = {
   /**
    * An idea for the maker of the link `source` (`sendToMaker`): `text`, a picture from a file of Lamp's at `picture`,
    * and with `file` (Lamp's shared file of the wish, with its history) the change, starting from the maker's version
-   * `base`, its copy's words in `body` and `listed` for a copy listed on the maker's link too. `earlier` is what the last
+   * `base`, its copy's words in `body`. `earlier` is what the last
    * send answered (`{ copy: { id, secret }, n }`). Sent with the maker's account key unless the call names another.
    */
   async ideaSend(given, how = {}) {
     const site = siteOf(given);
     const read = (name) => (typeof given[name] === "string" && given[name] ? readFileSync(given[name]) : null);
     const bytes = read("file");
-    const change = bytes ? { bytes, base: Number.isInteger(given.base) ? given.base : 0, listed: given.listed === true, body: given.body ?? {} } : null;
+    const change = bytes ? { bytes, base: Number.isInteger(given.base) ? given.base : 0, body: given.body ?? {} } : null;
     const earlier = given.earlier && typeof given.earlier === "object" ? given.earlier : null;
     const sent = await sendToMaker({ site, source: text(given, "source"), text: text(given, "text"), picture: read("picture"), change, earlier,
       account: typeof given.account === "string" ? given.account : accountFor(site)?.key, said: (line) => how.event?.({ said: line }),

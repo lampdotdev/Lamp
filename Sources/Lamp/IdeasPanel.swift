@@ -710,7 +710,7 @@ extension Gallery {
         Entry(group: "Sent to you", name: "Send to: " + name) {
             let picture = madeUpPicture().flatMap(WishIdeas.inlineData).flatMap(NSImage.init(data:))
             return AnyView(SendIdeaCard(values: .init(name: "Harbor Racer", maker: stage == .drafting ? nil : "Alex Kim", words: words, stage: stage, includePicture: true,
-                                                      includeChanges: includeChanges, listed: false, account: account, again: again),
+                                                      includeChanges: includeChanges, account: account, again: again),
                                         picture: picture, edit: { _ in }, send: {}, setUp: {}, close: {})
                 .frame(width: 440)
                 .fixedSize(horizontal: false, vertical: true))
