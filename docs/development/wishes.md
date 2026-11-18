@@ -592,6 +592,52 @@ address) and the lamp.dev links among the credits' `upstream` (`Credits.takenLin
 `takenLinksOf` reads both the same), never the wish's own link. Its page then says "with changes from" them, and each
 copy's maker is told once ("Where a link came from" in site/SHARED_WISHES.md). One that names none keeps what the link had.
 
+**Ideas that carry a change.** An idea is words, an optional picture and an optional change, and one sent with a change
+is how someone gives a maker what they made of their app, GitHub or not. It replaces Send Changes Back ("Generated
+apps"), which only worked by forking the app's repository and opening a pull request, so someone who copied an app
+without GitHub couldn't send anything back. Ideas already carry delivery and the conversation (the thread, email both
+ways, an outcome), and shared copies already carry the change (a shared file with History/ since the copies met, never
+the chat, compared and mixed in); an idea with a change joins the two rather than adding a third way.
+
+- **The change is a copy.** It's the sender's copy shared as any copy is (`POST /api/wishes` with `from` naming the
+  maker's link, the file sent by `api/wish-file.js` with History/), only **private**: the share says `private: true`,
+  so the copy isn't among the link's public copies, its maker gets no "made their own" email, it has no page or card,
+  and asking for its latest without its secret finds nothing. It carries no playable page. The sender can choose to
+  list it publicly as well, which shares it again without `private`, and then it's a copy like any other. The idea
+  names the copy and the version of the maker's link it starts from (`base`, which Lamp knows from what it last brought
+  in, `Following.brought`); the site keeps the copy's file version with it.
+- **Code needs a username.** An idea with a change comes only from an account (the `X-Lamp-Account` key Lamp's and
+  lamp's own shares send, or a signed-in browser), and only with a copy that's that account's (`owner`), shared from
+  this link, and holding its file. Words alone can stay anonymous, as today. A change's file is at most
+  `CHANGE_LIMITS.file`, smaller than any shared file may be, since the maker is asked to take it in.
+- **Only the maker reads it.** The ideas the maker reads with the link's secret carry `change`: the copy's link, its
+  file's address and version, its base and size. Nobody else sees the copy through the idea.
+- **Sending again** to the same idea (`POST /api/wish-ideas?id=&n=` from the same account) moves it to the copy's new
+  version, with the sender's words for it on the idea's thread (marked with that version) and the idea back in the
+  maker's panel as answered, outcome or not, so one change is one conversation: a review without a pull request. The
+  maker's emails say so as for any reply.
+- **Sending, from Lamp.** "Send to <maker>…" in the chat's Share popover, for a wish that follows a lamp.dev link,
+  replaces Send Changes Back. Lamp drafts the words from what changed, as Release Update drafts What's New, attaches a
+  picture of the app, and the person can change the words or turn off "Include my changes" (then it's an idea of words
+  and a picture). From the person's own coding agent: `lamp send [folder] "words"` in cli/. From a shared page without
+  Lamp: words and a picture, as now.
+- **Receiving.** The Ideas panel stays the one inbox. An idea without a change keeps Build It. One with a change also
+  gets **Try It**, the suggested-change panel's summary and trial (`SuggestionTrial`, on a copy to the side, after the
+  review any shared file gets), and **Take It**, which mixes it in (`MixModel`, `Mix.lineUp` from the base it names) so
+  parts can be left out; if the maker moved on since, the mix's timeline lines both up. Build It stays too: it asks the
+  chat to do it the maker's own way, with the sender's change to read (`shared_copy`). It's In, Dismiss and notes work as
+  for any idea, and a link that took a change names that copy as `with`, so its sender is told.
+- **GitHub.** A pull request stays only as a quiet fallback behind the same Send to… button, for an app that came from
+  someone's GitHub repository and has no lamp.dev link (`Contribute`). A maker whose app is mirrored on GitHub pushes
+  what they took with their next Release Update.
+
+It comes in phases: (1) the site, where an idea carries a private copy and its base, the maker reads it with the
+link's secret, sending again moves the idea on, code needs a username and a change has a size cap (built); (2) Lamp's
+Send to… with Try It and Take It in `IdeasPanel`, and `lamp send`, in one change; (3) public copies folding into the
+same inbox ("Sam made a copy: 3 changes", with Compare and Try It); (4) Contribute kept only as the GitHub fallback, with
+Help and the guides changed to match. Later: the idea box on a shared page taking a file someone made elsewhere as the
+change.
+
 The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,
 what stops it (`needs`: this Mac can't build it yet, or its folder couldn't be made), so a quit or a failure between
 asking for an app and making it loses nothing. The list is in meta.json, which no version holds, so every version Lamp

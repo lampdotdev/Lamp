@@ -117,6 +117,31 @@ site keeps those that are there and aren't the link itself, and a change that do
 leaving out one taken down and the source already named by "from". The first time a link names a copy there, that
 copy's maker is told by email (`tookFrom`), at the same address as `copied` uses, once.
 
+## Ideas that carry a change
+
+An idea can carry a change: its sender's own copy of the app, sent to the maker rather than listed (the design is
+"Ideas that carry a change" in docs/development/wishes.md).
+
+- **A private copy.** A share with `private: true` is a copy like any other (its `from`, its file sent through
+  `api/wish-file.js`, History/ and all), except that it's kept off its source's copies (`addCopy` isn't called, and
+  `copiesOf` lets one go), its source's maker gets no `copied` email, `findWish` doesn't find it (no page, no card, not
+  named under "with changes from"), following it (`GET /api/wishes?id=`) needs its own secret, it takes no page
+  (`what=page` is refused, 409) and its file is at most `CHANGE_LIMITS.file` (24 MB). Under an account it's that
+  account's (`owner`) without a name there; shared again with `private: false` it's listed, its source's maker is told
+  as of a new copy, and it takes its name. A share that doesn't say keeps what the link was.
+- **Sent with an idea.** `POST /api/wish-ideas?id=<maker's link>` with `change: {copy, base}`: the copy's id and the
+  version of the maker's file it starts from. Only from an account (`X-Lamp-Account`, or a signed-in browser), and only
+  with that account's private or listed copy of this link that has its file, within the cap (401 `account_required`,
+  400 `invalid_change`, 413 `change_too_large`). The idea keeps the copy, its file's version then (`sent`) and the base.
+  The maker's email says it comes with changes.
+- **Read by the maker** with the link's secret: each idea's `change` gives the copy's id and link, its file's address,
+  size and version now, the version sent and the base, or `gone` once the copy is taken down. Nobody else sees it.
+- **Sent again**: the same POST with `&n=<the idea>` from the same account moves the idea to the copy's file version
+  now, puts the words on its thread (with that `version`) and leaves it waiting on the maker, outcome or not; the
+  maker's own address hears of it as of a reply. Another account's is 404.
+
+Ideas without a change work as before, from the page and from today's Lamps.
+
 ## Setup (one time)
 
 In the **lamp** Vercel project:

@@ -41,6 +41,9 @@ export const MAX_BODY_BYTES = 2_600_000;
 
 /** The wish itself, a shared file: sent in parts, since a request to a function holds 4.5 MB at most. */
 export const FILE_LIMITS = { part: 3_000_000, parts: 16, total: 48_000_000 };
+/** A change sent to a maker with an idea (a private copy's file): smaller than any shared file, since the maker is asked
+ *  to take it in. */
+export const CHANGE_LIMITS = { file: 24_000_000 };
 
 // Enough to share and reshare a few wishes in an hour; overall, a ceiling on what a flood could store in a day.
 export const QUOTAS = [
@@ -144,7 +147,7 @@ function release(value) {
 const GITHUB_REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/(?!\.\.?$)[A-Za-z0-9._-]{1,100}$/;
 export function readShare(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
-  const known = ["name", "by", "line", "words", "ideas", "asks", "shape", "releases", "picture", "icon", "github", "from", "with"];
+  const known = ["name", "by", "line", "words", "ideas", "asks", "shape", "releases", "picture", "icon", "github", "from", "with", "private"];
   if (Object.keys(body).some((key) => !known.includes(key))) return null;
   const name = tidy(body.name, LIMITS.name);
   const words = tidy(body.words, LIMITS.words, { lines: true });
@@ -164,9 +167,12 @@ export function readShare(body) {
   const github = body.github == null || body.github === "" ? null : GITHUB_REPO.test(body.github) ? body.github : undefined;
   const from = body.from == null ? undefined : isID(body.from) ? body.from : null;
   const taken = body.with == null ? undefined : Array.isArray(body.with) && body.with.length <= LIMITS.with && body.with.every(isID) ? [...new Set(body.with)] : null;
-  if (!name || !words || line == null || by == null || ideas.includes(null) || asks.includes(null) || shape === undefined || releases?.includes(null) || !shot || !icon || github === undefined || from === null || taken === null) return null;
+  // A copy sent to its source's maker with an idea, kept off its source's list and every page (true), or listed (false);
+  // undefined when the share doesn't say, so a change keeps what the link was.
+  const hidden = body.private === undefined ? undefined : typeof body.private === "boolean" ? body.private : null;
+  if (!name || !words || line == null || by == null || ideas.includes(null) || asks.includes(null) || shape === undefined || releases?.includes(null) || !shot || !icon || github === undefined || from === null || taken === null || hidden === null) return null;
   return { name, by, line, words, ideas, asks, shape, releases: releases?.sort((a, b) => b.date.localeCompare(a.date)),
-    picture: shot.bytes ? shot : null, icon: icon.bytes ? icon : null, github, from, with: taken };
+    picture: shot.bytes ? shot : null, icon: icon.bytes ? icon : null, github, from, with: taken, private: hidden };
 }
 
 /** What anyone may see of a shared wish: never its secret. */
@@ -436,7 +442,8 @@ export function cloudStore(env, fetcher = fetch) {
      * One step in an idea's conversation, answering the idea as it was before it, or null when it's gone or the step
      * doesn't apply: "say" adds a message to its thread (one of a message id already there, or past
      * `IDEA_LIMITS.thread`, doesn't), and an answer from its sender leaves it waiting on the maker; "settle" says the
-     * maker has seen to it; "box" gives it its mailbox and the subject of the first email, unless another call gave it
+     * maker has seen to it; "resend", from the account that sent it, moves the change it carries to a new version, with
+     * its sender's words for it on the thread, and leaves it waiting on the maker; "box" gives it its mailbox and the subject of the first email, unless another call gave it
      * one first (whose is in what's answered), and "makerbox" the same for its maker's mailbox; "stop", with its mailbox,
      * lets its address go.
      */
@@ -462,6 +469,17 @@ export function cloudStore(env, fetcher = fetch) {
           idea.last = said.at
           if said.by == "sender" then idea.waiting = true else idea.waiting = nil end
         elseif op == "settle" then idea.waiting = nil
+        elseif op == "resend" then
+          -- Its sender's new version of the change it carries, with their words for it: only from the account that sent it.
+          local given = cjson.decode(ARGV[3])
+          if not idea.user or idea.user ~= given.user then return false end
+          local thread = idea.thread or {}
+          if #thread >= tonumber(ARGV[4]) then return false end
+          table.insert(thread, given.said)
+          idea.thread = thread
+          idea.change = given.change
+          idea.last = given.said.at
+          idea.waiting = true
         elseif op == "box" then
           if idea.mailbox then return text end
           idea.mailbox = ARGV[3]; idea.subject = ARGV[4]
@@ -674,7 +692,10 @@ export function memoryStore() {
         idea.last = value.at;
         if (value.by === "sender") idea.waiting = true; else delete idea.waiting;
       } else if (op === "settle") delete idea.waiting;
-      else if (op === "box") { if (!idea.mailbox) Object.assign(idea, { mailbox: value, subject: extra }); }
+      else if (op === "resend") {
+        if (!idea.user || idea.user !== value.user || (idea.thread ?? []).length >= IDEA_LIMITS.thread) return null;
+        Object.assign(idea, { thread: [...(idea.thread ?? []), value.said], change: value.change, last: value.said.at, waiting: true });
+      } else if (op === "box") { if (!idea.mailbox) Object.assign(idea, { mailbox: value, subject: extra }); }
       else if (op === "makerbox") { if (!idea.makerBox) idea.makerBox = value; }
       else if (op === "stop" && idea.mailbox === value) delete idea.email;
       else return null;
@@ -784,7 +805,7 @@ export async function copiesOf(kept, id, origin) {
   const records = await kept.getMany(ids);
   for (const [i, copy] of ids.entries()) {
     const record = records[i];
-    if (!record || record.from !== id) { try { await kept.removeCopy(id, copy); } catch {} continue; }
+    if (!record || record.from !== id || record.private) { try { await kept.removeCopy(id, copy); } catch {} continue; }
     found.push({ url: linkOf(origin, record), name: record.name, by: record.owner || record.by || "", updated: record.updated ?? record.created ?? null });
   }
   return found.sort((a, b) => String(b.updated).localeCompare(String(a.updated)));
@@ -813,6 +834,8 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       try {
         const found = byName ? await kept.appID(user, app) : id;
         const record = found ? await kept.get(found) : null;
+        // A private copy is its sender's and its source's maker's alone: only its own secret finds it here.
+        if (record?.private && !secretMatches(bearer(request), record.secret)) return reply(404, { error: "not_found" });
         return record ? reply(200, latest(record)) : reply(404, { error: "not_found" });
       } catch { return reply(503, { error: "service_unavailable" }); }
     }
@@ -870,16 +893,23 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       const taken = share.with && (await kept.getMany(share.with.filter((one) => one !== wishID)))
         .flatMap((record) => (record ? [record.id] : []));
       const words = { name: share.name, by: share.by, line: share.line, words: share.words, ideas: share.ideas, asks: share.asks, shape: share.shape, github: share.github,
-        ...(share.releases ? { releases: share.releases } : {}), ...(from ? { from } : {}), ...(taken ? { with: taken } : {}), picture: picture || null, icon: icon || null };
-      // Its name under the account stays what it was first given, whatever the app is called later.
-      const named = earlier?.owner ? { owner: earlier.owner, app: earlier.app }
-        : owner ? { owner, app: await claimAppName(kept, owner, words.name, wishID) } : {};
+        ...(share.releases ? { releases: share.releases } : {}), ...(from ? { from } : {}), ...(taken ? { with: taken } : {}), picture: picture || null, icon: icon || null,
+        ...(share.private !== undefined ? { private: share.private } : {}) };
+      // Its name under the account stays what it was first given, whatever the app is called later. A private copy is
+      // its account's without a name there (it has no page), and takes one once it's listed.
+      const hidden = words.private ?? earlier?.private ?? false;
+      const named = earlier?.app ? { owner: earlier.owner, app: earlier.app }
+        : (owner ?? earlier?.owner) && !hidden ? { owner: owner ?? earlier.owner, app: await claimAppName(kept, owner ?? earlier.owner, words.name, wishID) }
+        : owner ?? earlier?.owner ? { owner: owner ?? earlier.owner } : {};
       // A name claimed for this share now, let go again if the record can't be kept.
-      if (!earlier?.owner && named.owner) claimed = named;
+      if (!earlier?.app && named.app) claimed = named;
       if (method === "PUT") {
         const record = { ...earlier, ...words, ...named, updated: time };
+        if (!record.private) delete record.private;
         await kept.replace(record);
-        if (record.from) await copied(kept, record.from, record, url.origin, { env, fetcher, first: !!from && earlier?.from !== from });
+        // A private copy is kept off its source's list; one listed now is told about as a new copy would be.
+        if (record.from && record.private) { try { await kept.removeCopy(record.from, id); } catch {} }
+        else if (record.from) await copied(kept, record.from, record, url.origin, { env, fetcher, first: (!!from && earlier?.from !== from) || !!earlier?.private });
         if (taken) await tookFrom(kept, taken.filter((one) => !(earlier?.with ?? []).includes(one)), record, url.origin, { env, fetcher });
         // Kept: the name is the record's now, whatever the cleanup after it does.
         uploaded = [];
@@ -890,12 +920,13 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       }
       const secret = newSecret();
       const record = { id: wishID, ...words, ...named, secret: hashSecret(secret), created: time, updated: time };
+      if (!record.private) delete record.private;
       if (!(await kept.create(record))) {
         throw new Error("Id taken");
       }
       uploaded = [];
       claimed = null;
-      if (from) await copied(kept, from, record, url.origin, { env, fetcher, first: true });
+      if (from && !record.private) await copied(kept, from, record, url.origin, { env, fetcher, first: true });
       if (taken) await tookFrom(kept, taken, record, url.origin, { env, fetcher });
       return reply(201, { id: wishID, url: linkOf(url.origin, record), secret });
     } catch {
@@ -1025,7 +1056,9 @@ export async function writeToMaker(kept, wishID, idea, record, link, { env = pro
   const text = (kind === "idea"
     ? `${idea.name || "Someone"} playing ${record.name} sent an idea:\n\n${idea.text}\n\n` +
       (typeof idea.picture === "string" && idea.picture.startsWith("https://") ? `The app as they saw it: ${idea.picture}\n\n` : "") +
+      (idea.change ? "It comes with their changes to the app, to try in Lamp.\n\n" : "") +
       (idea.email ? "They'd like to hear back.\n\n" : "They left no address, so what you say shows on the link's page.\n\n")
+    : said.version ? `${idea.name || "They"} sent a new version of their changes to ${record.name}:\n\n${said.text}\n\nTheir idea: ${idea.text}\n\n`
     : `${idea.name || "They"} answered about their idea for ${record.name}:\n\n${said.text}\n\nTheir idea: ${idea.text}\n\n`) +
     (replies ? "Reply to this email to answer them. It's in Lamp too.\n" : "Answer them in Lamp.\n") +
     `Play it: ${link}\n\nNo more emails about ideas for ${record.name}: ${stop}`;
@@ -1052,7 +1085,13 @@ export function readIdea(body) {
   // Their name, if they gave one, for the maker: shown in Lamp and in the maker's emails, where the address never is.
   const name = body.name == null || body.name === "" ? "" : tidy(body.name, IDEA_LIMITS.name);
   if (name == null) return null;
-  const idea = { text, ...(name ? { name } : {}), ...(shot.bytes ? { picture: shot } : {}) };
+  // The change it carries, if any: the sender's private copy of the app, by its id, and the version of this link's file
+  // it starts from.
+  const change = body.change == null ? undefined : body.change && typeof body.change === "object" && !Array.isArray(body.change)
+    && Object.keys(body.change).every((key) => ["copy", "base"].includes(key)) && isID(body.change.copy)
+    && Number.isInteger(body.change.base) && body.change.base >= 0 && body.change.base < 1_000_000 ? { copy: body.change.copy, base: body.change.base } : null;
+  if (change === null) return null;
+  const idea = { text, ...(name ? { name } : {}), ...(shot.bytes ? { picture: shot } : {}), ...(change ? { change } : {}) };
   if (body.email == null || body.email === "") return idea;
   const email = tidy(body.email, IDEA_LIMITS.email);
   return email && EMAIL.test(email) ? { ...idea, email } : null;
@@ -1138,15 +1177,42 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
 
     try {
       const record = await kept.get(id);
-      if (!record) return reply(404, { error: "not_found" });
+      // A private copy has no page to send ideas from.
+      if (!record || (record.private && method === "POST")) return reply(404, { error: "not_found" });
       if (method === "POST") {
+        // From Lamp, by the account its key is (`X-Lamp-Account`); from a browser, by the one it's signed in to.
+        const user = await accountOf(kept, request.headers.get("x-lamp-account") ?? cookieKey(request));
+        // A change comes only from an account, and only as that account's private copy of this link, with its file.
+        let change = null;
+        if (idea.change) {
+          if (!user) return reply(401, { error: "account_required" });
+          const copy = await kept.get(idea.change.copy);
+          if (!copy || copy.from !== id || copy.owner !== user || !copy.file) return reply(400, { error: "invalid_change" });
+          if ((copy.file.size ?? 0) > CHANGE_LIMITS.file) return reply(413, { error: "change_too_large" });
+          if (idea.change.base > (record.file?.version ?? record.fileVersion ?? 0)) return reply(400, { error: "invalid_change" });
+          change = { copy: copy.id, version: copy.file.version ?? 1, base: idea.change.base };
+        }
+        // Sent again to an idea of theirs (`n`): the change moves to its new version, their words on its thread.
+        const again = url.searchParams.get("n");
+        if (again != null) {
+          const n = Number(again);
+          if (!Number.isInteger(n) || n < 1 || !change) return reply(400, { error: "invalid_idea" });
+          const said = { by: "sender", text: idea.text, at: now().toISOString(), version: change.version };
+          const was = await kept.talk(id, n, "resend", { user, said, change });
+          if (!was) return (await kept.ideas(id)).some((one) => one.n === n && one.user === user) ? reply(429, { error: "full" }) : reply(404, { error: "not_found" });
+          try {
+            const maker = await kept.maker(id);
+            if (maker?.confirmed) await writeToMaker(kept, id, { ...was, n, change }, record, linkOf(url.origin, record), { env, fetcher, kind: "reply", said, origin: url.origin, maker, once: `maker-${id}-${n}-v${change.version}` });
+          } catch {}
+          return reply(200, { n, version: change.version });
+        }
         const token = randomBytes(12).toString("base64url");
         // The picture goes to the store first, at an address with a random part, and goes again if the idea can't.
-        const { picture: shot, ...given } = idea;
-        // From a signed-in browser, it's by that username, and its news goes to the account's address. Otherwise an
-        // address not yet confirmed is asked to be, once the idea is kept.
+        const { picture: shot, change: _change, ...asked } = idea;
+        const given = change ? { ...asked, change } : asked;
+        // From an account, it's by that username, and its news goes to the account's address. Otherwise an address not
+        // yet confirmed is asked to be, once the idea is kept.
         let words = given, confirming = false;
-        const user = await accountOf(kept, cookieKey(request));
         const account = user ? await kept.account(user) : null;
         if (account) words = { ...given, name: user, user, email: account.email };
         else if (given.email) confirming = !(await kept.accountForEmail(given.email.toLowerCase()));
@@ -1196,9 +1262,9 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
         if (url.searchParams.get("earlier") === "1") {
           const settled = all.filter((one) => one.status && !one.waiting && !old.includes(one))
             .sort((a, b) => String(b.last ?? b.done).localeCompare(String(a.last ?? a.done)));
-          return reply(200, { ideas: settled.slice(0, IDEA_LIMITS.earlier).map(shownToMaker) });
+          return reply(200, { ideas: await withChanges(kept, settled.slice(0, IDEA_LIMITS.earlier).map(shownToMaker), url.origin) });
         }
-        return reply(200, { ideas: all.filter((one) => !one.status || one.waiting).map(shownToMaker) });
+        return reply(200, { ideas: await withChanges(kept, all.filter((one) => !one.status || one.waiting).map(shownToMaker), url.origin) });
       }
       const link = linkOf(url.origin, record);
       const write = (to, kind, said, once) => writeToSender(kept, id, to, record, link, { env, fetcher, kind, said, origin: url.origin, once });
@@ -1276,10 +1342,28 @@ const shownToMaker = ({ email, token: _token, mailbox: _mailbox, makerBox: _make
   const shown = note && !given.thread ? { ...given, thread: [{ by: "maker", text: note, at: given.done ?? given.at }] } : given;
   return {
   ...shown,
-  ...(shown.thread ? { thread: shown.thread.map(({ by, text, at }) => ({ by, text, at })) } : {}),
+  ...(shown.thread ? { thread: shown.thread.map(({ by, text, at, version }) => ({ by, text, at, ...(version ? { version } : {}) })) } : {}),
   ...(email ? { wantsNews: true } : {}),
   };
 };
+
+/**
+ * The changes ideas carry, as their maker reads them: the copy's link, and its file's address, version and size as they
+ * are now, read in one round trip, with the version the idea was last sent at and the base it starts from. A copy taken
+ * down since is `gone`.
+ */
+async function withChanges(kept, ideas, origin) {
+  const ids = [...new Set(ideas.filter((one) => one.change).map((one) => one.change.copy))];
+  const copies = new Map((await kept.getMany(ids)).map((copy, i) => [ids[i], copy]));
+  return ideas.map((one) => {
+    if (!one.change) return one;
+    const copy = copies.get(one.change.copy);
+    const { copy: copyID, version, base } = one.change;
+    return { ...one, change: copy?.file
+      ? { copy: copyID, url: linkOf(origin, copy), file: copy.file.url, size: copy.file.size, version: copy.file.version ?? 1, sent: version, base }
+      : { copy: copyID, sent: version, base, gone: true } };
+  });
+}
 
 /** The address in a From line, in lower case: `Someone <a@b.c>` or `a@b.c`. */
 const addressIn = (from) => (/<([^<>\s]+@[^<>\s]+)>/.exec(from ?? "")?.[1] ?? String(from ?? "").trim()).toLowerCase();
@@ -1393,6 +1477,8 @@ export async function findWish(id, { env = process.env, fetcher = fetch, store, 
   let kept, record;
   try { kept = store ?? cloudStore(env, fetcher); record = await kept.get(id); }
   catch { return undefined; }
+  // A private copy (sent with an idea) has no page or card.
+  if (record?.private) return null;
   const wish = shown(record);
   // Asked with the site's origin (the page): the link it came from, as that link is known now, `from` on its page. One
   // taken down since, or that can't be read just now, is left out.
@@ -1407,7 +1493,7 @@ export async function findWish(id, { env = process.env, fetcher = fetch, store, 
   if (wish && origin && Array.isArray(record.with) && record.with.length) {
     try {
       const records = await kept.getMany(record.with.filter((one) => isID(one) && one !== id && one !== record.from));
-      wish.with = records.filter(Boolean).map((copy) => ({ url: linkOf(origin, copy), label: copy.owner && copy.app ? `${copy.owner}/${copy.app}` : copy.name }));
+      wish.with = records.filter((copy) => copy && !copy.private).map((copy) => ({ url: linkOf(origin, copy), label: copy.owner && copy.app ? `${copy.owner}/${copy.app}` : copy.name }));
     } catch {}
   }
   // How many copies of it people shared, for the page's "copies" (the list itself is asked for when opened).
@@ -1735,6 +1821,8 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
     try {
       const record = await kept.get(id);
       if (!record || !secretMatches(bearer(request), record.secret)) return reply(404, { error: "not_found" });
+      // A private copy is only for its source's maker to take in: it has no page to play.
+      if (page && record.private && method !== "DELETE") return reply(409, { error: "private" });
       if (method === "PUT") {
         const at = await kept.putFile(id, `${page ? "page-part" : "part"}-${part.n}`, part.bytes);
         uploaded.push(at);
@@ -1777,7 +1865,7 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
       const pieces = [];
       for (let n = 0; n < parts.of; n++) pieces.push(await kept.readFile(parts.urls[n]));
       const bytes = Buffer.concat(pieces);
-      if (bytes.length > FILE_LIMITS.total) return reply(413, { error: "file_too_large" });
+      if (bytes.length > (record.private ? CHANGE_LIMITS.file : FILE_LIMITS.total)) return reply(413, { error: "file_too_large" });
       if (page) {
         const files = readPage(bytes);
         if (!files) return reply(400, { error: "invalid_page" });
