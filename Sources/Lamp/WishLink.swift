@@ -360,6 +360,10 @@ enum WishLink {
         var waiting: Bool? = nil
         /// What's been said about it since, each way, oldest first.
         var thread: [Said]? = nil
+        /// The sender's lamp.dev username, when it came from an account (every idea with a change does).
+        var user: String? = nil
+        /// The change it carries, if any: the sender's own copy of the app, shared privately for the maker.
+        var change: Change? = nil
         var id: Int { n }
 
         struct Said: Codable, Equatable, Sendable {
@@ -367,6 +371,22 @@ enum WishLink {
             var by: String
             var text: String
             var at: String
+            /// The version of the sender's copy this message came with, when they sent it again.
+            var version: Int? = nil
+        }
+
+        /// The sender's copy as the site has it now: its link (private, so only through this idea), its file's address,
+        /// size and version, the version the idea last named, and the maker's version it starts from. `gone` once the
+        /// sender took it down.
+        struct Change: Codable, Equatable, Sendable {
+            var copy: String
+            var url: String? = nil
+            var file: String? = nil
+            var size: Int? = nil
+            var version: Int? = nil
+            var sent: Int? = nil
+            var base: Int? = nil
+            var gone: Bool? = nil
         }
     }
 
@@ -392,6 +412,58 @@ enum WishLink {
         var given: [String: Any] = ["n": number]
         if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty { given["note"] = note }
         return try await ask("linkReplyIdea", secret(shared).merging(given) { $1 })["notified"] as? Bool ?? false
+    }
+
+    /// What a wish keeps of its last idea with a change for the maker of the link it came from: the private copy it went
+    /// up as (its secret too, so a send again changes it) and the idea's number, so sending again moves that idea on.
+    struct SentIdea: Codable, Equatable {
+        var source: String
+        var copy: Copy?
+        /// Nil while the copy is up but the idea hasn't gone yet (a send that failed after the copy was made).
+        var n: Int?
+
+        struct Copy: Codable, Equatable {
+            var id: String
+            var secret: String
+        }
+    }
+
+    /// An idea for the maker of the link `source` (`ideaSend` in cli/calls.mjs): `text`, the picture at `picture` if
+    /// there is one, and with `file` (the wish's shared file, with its history) its change, starting from the maker's
+    /// version `base`, its copy named `name`, private to the maker. `earlier` is the last such send
+    /// for this link, whose copy and idea it moves on. Thrown with lamp's own words for what the site turned down.
+    static func sendIdea(source: String, text: String, picture: URL?, file: URL?, base: Int, name: String, by: String,
+                         earlier: SentIdea?, said: (@Sendable (String) -> Void)? = nil,
+                         madeCopy: (@Sendable (SentIdea.Copy) -> Void)? = nil) async throws -> SentIdea {
+        var given: [String: Any] = ["site": site, "source": source, "text": text, "base": base,
+                                    "body": ["name": clip(name, Limit.name), "words": clip(text, Limit.words), "by": clip(by, Limit.by)]]
+        if let picture { given["picture"] = picture.path }
+        if let file { given["file"] = file.path }
+        if let earlier, earlier.source == source {
+            var kept: [String: Any] = [:]
+            if let n = earlier.n { kept["n"] = n }
+            if let copy = earlier.copy { kept["copy"] = ["id": copy.id, "secret": copy.secret] }
+            given["earlier"] = kept
+        }
+        let done: [String: Any]
+        do {
+            done = try await LampCLI.ask("ideaSend", given) { event in
+                if let line = event["said"] as? String { said?(line) }
+                if let copy = event["copy"] as? [String: Any], let id = copy["id"] as? String, let secret = copy["secret"] as? String {
+                    madeCopy?(SentIdea.Copy(id: id, secret: secret))
+                }
+            }
+        } catch let failure as LampCLI.Failure {
+            if failure.kind == "unreachable" { throw Failure(message: "Lamp couldn't reach lamp.dev. Try again in a moment.") }
+            let words = failure.message.trimmed
+            throw Failure(message: words.prefix(1).uppercased() + words.dropFirst() + (words.hasSuffix(".") ? "" : "."))
+        }
+        guard let n = done["n"] as? Int else { throw Failure(message: "lamp.dev's answer couldn't be read.") }
+        let copy = (done["copy"] as? [String: Any]).flatMap { copy -> SentIdea.Copy? in
+            guard let id = copy["id"] as? String, let secret = copy["secret"] as? String else { return nil }
+            return SentIdea.Copy(id: id, secret: secret)
+        }
+        return SentIdea(source: source, copy: copy, n: n)
     }
 
     /// The maker's own address for the link's ideas and replies, which lamp.dev writes to once it's confirmed.

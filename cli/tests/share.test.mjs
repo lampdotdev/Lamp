@@ -177,3 +177,30 @@ test("with an account, a link goes under its maker's username, and moves there a
   assert.equal(again.url, `${origin}/alex-kim/harbor-racer`);
   await unshare(layout.folder);
 });
+
+test("lamp send gives the maker an idea with the sender's own copy, and sending again moves the same idea on", async () => {
+  const { latestOf, ideasOf } = await import("../link.mjs");
+  const { unpack } = await import("../lampapp.mjs");
+  // The account from the test before signs the copy; the maker's link is the folder's, shared again.
+  await share({ layout, words, github: null, anyway: true });
+  const source = readLink(layout.folder);
+  const file = join(home, "racer-send.lampapp"), theirs = join(home, "racer-sent");
+  writeFileSync(file, Buffer.from(await (await fetch((await latestOf({ id: source.id })).file)).arrayBuffer()));
+  unpack(file, theirs);
+  writeFileSync(join(theirs, "Web", "rain.js"), "export const drops = 300;\n");
+  // Run alongside the site, which answers in this same process.
+  const { execFile } = await import("node:child_process");
+  const send = (...words) => new Promise((done) => execFile(process.execPath, [join(import.meta.dirname, "..", "lamp.mjs"), "send", theirs, ...words],
+    { env: process.env }, (error, _out, stderr) => done({ status: error ? error.code ?? 1 : 0, stderr })));
+  const first = await send("Rain on the harbor");
+  assert.equal(first.status, 0, first.stderr);
+  const [idea] = await ideasOf({ site: origin, link: source });
+  assert.deepEqual([idea.text, idea.user, idea.change.version], ["Rain on the harbor", "alex-kim", 1]);
+  assert.equal(store.records.get(idea.change.copy).private, true, "only the maker sees the copy");
+  assert.ok(!readFileSync(join(theirs, "credits.json"), "utf8").includes(idea.change.copy), "nothing of the copy's link in the folder");
+  const again = await send("Softer rain");
+  assert.equal(again.status, 0, again.stderr);
+  const [moved] = await ideasOf({ site: origin, link: source });
+  assert.deepEqual([moved.n, moved.change.copy, moved.change.version, moved.thread.at(-1).text], [idea.n, idea.change.copy, 2, "Softer rain"]);
+  await unshare(layout.folder);
+});

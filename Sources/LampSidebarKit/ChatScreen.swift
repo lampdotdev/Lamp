@@ -887,7 +887,7 @@ struct ChatBar: View {
             .disabled(!toolbar.canShare)
             .help("Share this app")
             .popover(isPresented: $sharingOpen, arrowEdge: .bottom) {
-                SharePopover(link: shareLink, copies: toolbar.copies ?? [], canContribute: toolbar.canContribute == true) { shareAction($0, link: shareLink) }
+                SharePopover(link: shareLink, copies: toolbar.copies ?? [], canContribute: toolbar.canContribute == true, sendTo: toolbar.sendTo) { shareAction($0, link: shareLink) }
                     // Lamp asks the site again for the link's copies, so ones shared since come in while it's open.
                     .onAppear { link.send(.shareOpened) }
             }
@@ -904,6 +904,7 @@ struct ChatBar: View {
             return
         case .makeLink, .editLink: link.send(.wishLink(.open))
         case .contribute: link.send(.contribute(.open))
+        case .sendTo: link.send(.sendTo)
         case .copyFile: link.send(.copyWishFile)
         case .export: link.send(.export)
         case .openCopy(let page): NSWorkspace.shared.open(page)

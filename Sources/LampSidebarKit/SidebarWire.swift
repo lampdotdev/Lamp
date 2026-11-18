@@ -10,8 +10,9 @@ public enum SidebarWire {
     /// credited under their own terms (`SidebarContribute.terms`). 14: Send Changes Back's card says why it's blocked and
     /// offers what settles it (`ContributeCard.Stage.blocked`, `SidebarContributeCommand.settle`). 15: Send Changes Back's card shows
     /// a screenshot of the app it can put in the pull request (`SidebarContribute.screenshot`), which goes only when the
-    /// chat names the one it showed (`SidebarContributeCommand.sendShowing`).
-    public static let version = 15
+    /// chat names the one it showed (`SidebarContributeCommand.sendShowing`). 16: Send to <maker>… for a wish that came from a
+    /// lamp.dev link (`SidebarToolbar.sendTo`, `SidebarCommand.sendTo`), in Send Changes Back's place.
+    public static let version = 16
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -236,6 +237,8 @@ public struct SidebarToolbar: Codable, Equatable {
     public var canShare: Bool
     /// Its changes can go back to the repository it came from: the share menu offers Send Changes Back.
     public var canContribute: Bool?
+    /// "Send to Sam…" for a wish that came from a lamp.dev link: the share menu offers it in Send Changes Back's place.
+    public var sendTo: String?
     /// Always true now: a chat of an earlier Lamp then leaves Put on GitHub… out of its share menu, since putting a wish
     /// on GitHub is Release Update's (`WishLinkCard`). This chat doesn't read it.
     public var onGitHub: Bool?
@@ -640,6 +643,8 @@ public enum SidebarCommand: Codable, Equatable {
     case repo(SidebarRepoCommand)
     /// The Send Changes Back card: open it, or what was done on it.
     case contribute(SidebarContributeCommand)
+    /// Send to <maker>…: Lamp opens its card, in a window of its own.
+    case sendTo
     /// A Try On choice, by its id (`SidebarTryOn.Item.id`).
     case tryOn(String)
     /// The share button's popover opened: Lamp asks the site again for the copies of the wish's link, if it's been a while.
