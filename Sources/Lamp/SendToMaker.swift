@@ -17,6 +17,8 @@ import SwiftUI
         /// The maker's link this goes to, and the version of their file the wish starts from.
         var source: String
         var base: Int
+        /// This opening of the card: what a preparation for an earlier one brings back is dropped.
+        var token = UUID()
     }
 
     @Published private(set) var cards: [String: Card] = [:]
@@ -57,18 +59,19 @@ import SwiftUI
                                                    includeChanges: true, listed: false, account: nil, again: earlier?.source == id ? earlier?.n : nil,
                                                    noLicense: ShareCheck.warningLine(Credits.load(project))),
                                      picture: WishLink.picture(of: project), source: id, base: Int(source.brought ?? "") ?? 0)
-            Task { await prepare(project, id: id) }
+            let token = cards[project.id]!.token
+            Task { await prepare(project, id: id, token: token) }
         }
         SendToMakerWindows.shared.show(project)
     }
 
     /// Who the maker is (as their link says), the person's account, and the words Lamp drafts from what changed.
-    private func prepare(_ project: LampProject, id: String) async {
+    private func prepare(_ project: LampProject, id: String, token: UUID) async {
         async let latest = WishLink.latest(id)
         async let account = try? WishLink.account()
         async let drafted = Self.draft(for: project)
         let (maker, signedIn, words) = await (latest, account, drafted)
-        guard cards[project.id] != nil else { return }
+        guard cards[project.id]?.token == token, cards[project.id]?.values.stage == .drafting else { return }
         cards[project.id]?.values.maker = maker?.by
         if let by = maker?.by { makers[id] = by }
         cards[project.id]?.values.account = signedIn.flatMap { $0 ?? nil }.flatMap { $0.confirmed == true ? $0.username : nil }
