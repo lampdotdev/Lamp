@@ -44,8 +44,10 @@ final class WishCopies: ObservableObject {
         Task {
             let rows = await WishLink.copies(for: shared)
             asking.remove(id)
-            // Published changes reach every chat showing the wish (`SidebarServer.start`).
+            // Published changes reach every chat showing the wish (`SidebarServer.start`), and the desk, which counts new
+            // copies with the ideas waiting (`Store.newCopies`).
             objectWillChange.send()
+            Store.shared.objectWillChange.send()
             kept[id] = Kept(rows: rows ?? kept[id]?.rows, asked: Date())
         }
     }

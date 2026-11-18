@@ -642,6 +642,14 @@ the chat, compared and mixed in); an idea with a change joins the two rather tha
   other fetched copies (`SharedCopies.lay`, after `Sharing.open`'s checks), named in the request as someone else's work.
   A message sent with a new version says so in the conversation ("sent version 2"). It's In, Dismiss and notes work as
   for any idea, and a link that took a change names that copy as `with`, so its sender is told.
+- **Copies, in the same inbox.** The copies people shared of the link (only its maker sees them, "Where a link came
+  from" in site/SHARED_WISHES.md) are listed in the Ideas panel under the ideas, newest first ("Sam made a copy · changed
+  2 days ago", `Store.copies`, from `WishCopies`, asked when the ideas are), each with **Compare** (the chat says what it
+  does differently, as the Share popover's Compare asks), **Try It** (its latest file, fetched as following fetches it,
+  opened beside the wish after the review, `Store.tryCopy`) and **Hide** (off the list until it changes,
+  `WishIdeas.hideCopy`). A copy is new until the panel shows it, and again once it changes (`WishIdeas.isSeen`, by
+  its page and when it last changed, kept only for the copies listed now); new ones count with the ideas waiting, on the desk's Ideas line and as "1 new copy
+  made" under the app's row (`Store.newInIdeas`, `newCopies`).
 - **GitHub.** A pull request stays only as a quiet fallback behind the same Send to… button, for an app that came from
   someone's GitHub repository and has no lamp.dev link (`Contribute`). A maker whose app is mirrored on GitHub pushes
   what they took with their next Release Update.
@@ -650,7 +658,7 @@ It comes in phases: (1) the site, where an idea carries a private copy and its b
 link's secret, sending again moves the idea on, code needs a username and a change has a size cap (built); (2) Lamp's
 Send to… with Try It and Take It in `IdeasPanel`, and `lamp send`, in one change (built; Try It opens the copy beside the
 wish rather than in the suggested-change panel's trial, which is built around a pull request's commits); (3) the copies shared of a link folding into the
-same inbox ("Sam made a copy: 3 changes", with Compare and Try It); (4) Contribute kept only as the GitHub fallback, with
+same inbox (built, without a count of changes, which would mean fetching each copy); (4) Contribute kept only as the GitHub fallback, with
 Help and the guides changed to match. Later: the idea box on a shared page taking a file someone made elsewhere as the
 change.
 
