@@ -5,6 +5,23 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.37.0
+
+- Pick a username when you share, and your links read lamp.dev/your-name/your-app.
+- When someone shares their own copy of your app, you get an email, and the copy shows on your link's page and in the
+  chat's Share menu. Compare shows what they changed, and you can bring in the parts you like.
+- A link that took changes from other people's copies says whose.
+- A shared app's page has Make it your own, for a copy of your own without an idea first, and shows the app's icon.
+- Leave files out of what you share or export by naming them in a .lampignore file in the app's folder.
+- Apps you make can do more with their AI: answer in a set shape, think fast or hard, stop partway, take as long as
+  the work needs, say what each answer cost, look at pictures while they work, and let you pick the model. They do
+  bigger jobs in a turn, and act sooner on each step.
+- Codex builds with GPT-6.1-Sol when your account has it.
+- A shared page asks to reach the AI on your computer only once you use it, not when it loads.
+- Lamp no longer runs AI models on the Mac itself; apps answer through OpenRouter, Claude Code or Codex.
+- `lamp share` shares Lamp's web apps and games without Lamp open, and `lamp copies`, `lamp compare` and `lamp take`
+  find and bring in other people's copies from Terminal.
+
 ## 0.36.1
 
 - An app that asks its AI to do something big, like building a model piece by piece, no longer gives up partway: it
