@@ -624,8 +624,7 @@ the chat, compared and mixed in); an idea with a change joins the two rather tha
   the app's as the desk shows it (sent as a JPEG within the idea's limit), and the person can change the words, leave the
   picture out, or turn off "Include my changes" (then it's an idea of words and a picture). Changes need a confirmed
   username: without one the box is off, with Set Up… opening Share Link's card, which asks for one. The change is the
-  wish's shared file with its versions (`Sharing.export(withHistory: true)`, whatever the mixing switch says), and the
-  card says what `ShareCheck` says of it as Share Link does. The base is the version the wish last brought in from the
+  wish's shared file as Share… makes it (`Sharing.export`, with its versions while mixing is on), and the card says what `ShareCheck` says of it as Share Link does. The base is the version the wish last brought in from the
   link (`Following.brought`). What the site answers (the copy's id and secret, the idea's number) is kept in Lamp's own
   folder (`Sent Ideas.json`, by the wish's instance, readable only by the user), so the next send changes the same copy
   and moves the same idea on. The sending itself is lamp's, for Lamp's app and `lamp send` alike (`sendToMaker` in
@@ -636,8 +635,9 @@ the chat, compared and mixed in); an idea with a change joins the two rather tha
   changes · version 2 · 1.8 MB", or that it's gone) with **Try It** and **Take It**, both fetching the copy as the site
   has it now and opening it through the review any shared app gets (`Store.openIdeaChange`). Try It opens it as an app
   of its own beside the wish (`importApp(aside:)`, which never takes it for a copy of one here), for the maker to play
-  and delete. Take It opens it as a copy of the wish: the review offers Mix… when the two meet in their versions, so
-  parts can be left out, and Update otherwise; if the maker moved on since, the mix's timeline lines both up. Build It
+  and delete. Take It opens it as a copy of the wish: Update merges it, as any copy's file is (the maker's changes since stay,
+  and the agent settles what conflicts), or, with mixing on and both copies' files carrying their versions, the review
+  offers Mix… so parts can be left out, and the mix's timeline lines up a maker who moved on since. Build It
   stays: it asks the chat to do it the maker's own way, with the sender's copy laid out to read only beside the wish's
   other fetched copies (`SharedCopies.lay`, after `Sharing.open`'s checks), named in the request as someone else's work.
   A message sent with a new version says so in the conversation ("sent version 2"). It's In, Dismiss and notes work as

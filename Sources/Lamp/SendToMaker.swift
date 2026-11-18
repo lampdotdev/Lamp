@@ -142,8 +142,8 @@ import SwiftUI
                     pictureFile = work.appendingPathComponent("picture.jpg")
                     try picture.write(to: pictureFile!)
                 }
-                // The wish as it is now, with the versions it carries for mixing (`MixHistory`), which a maker's Take It lines up.
-                let file = values.includeChanges ? try await Store.offMain { Result { try Sharing.export(project, withHistory: true) } }.get() : nil
+                // The wish as it is now, as Share… makes it: with its versions for mixing (`MixHistory`) while that's on.
+                let file = values.includeChanges ? try await Store.offMain { Result { try Sharing.export(project) } }.get() : nil
                 defer { if let file { try? FileManager.default.removeItem(at: file) } }
                 let source = card.source
                 let sent = try await WishLink.sendIdea(source: source, text: values.words.trimmed, picture: pictureFile, file: file, base: card.base,

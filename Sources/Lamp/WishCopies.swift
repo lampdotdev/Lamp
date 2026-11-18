@@ -56,6 +56,8 @@ struct SharePopoverWithCopies: View {
     let link: URL?
     let act: (SharePopover.Action) -> Void
     @ObservedObject private var copies = WishCopies.shared
+    /// For the maker's name in Send to…, which comes as the popover opens.
+    @ObservedObject private var sendTo = SendToMaker.shared
 
     var body: some View {
         SharePopover(link: link, copies: copies.rows(for: project) ?? [], canContribute: Contribute.canContribute(project),
