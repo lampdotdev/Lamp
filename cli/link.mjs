@@ -3,7 +3,7 @@
 // page sent in parts, the ideas people send, and taking it down. Only the link's secret changes it; the secret is
 // whoever shared it's alone, and is kept by whoever asks, never here.
 
-import { FILE_LIMITS, LIMITS } from "../site/lib/shared-wishes.js";
+import { CHANGE_LIMITS, FILE_LIMITS, LIMITS } from "../site/lib/shared-wishes.js";
 import { Problem } from "./state.mjs";
 
 /** The site links are made on: lamp.dev, or another given for trying this against a copy of the site. */
@@ -25,6 +25,11 @@ const REFUSALS = {
   invalid_username: "a username is 2 to 30 lowercase letters, digits and dashes, starting and ending with a letter or digit, and not one of the site's own words",
   username_taken: "that username is someone else's: choose another",
   invalid_email: "that isn't an email address the site can write to",
+  account_required: "sending your changes needs a lamp.dev username: lamp account makes one",
+  invalid_change: "the site didn't take the changes: they have to be your own copy of this app, with its file",
+  change_too_large: `the changes are more than the ${megabytes(CHANGE_LIMITS.file)} the site takes with an idea`,
+  invalid_idea: `the site didn't take the idea: words of at most 1,000 characters`,
+  full: "the maker has as many ideas waiting as the site keeps: try again later",
 };
 
 /** The site couldn't be reached at all: offline, or the site is down. */
@@ -206,6 +211,20 @@ export async function makerOf({ site = siteOrigin(), link, email }) {
   const { said } = await call(email === undefined ? "GET" : "PUT", `${site}/api/wish-ideas?id=${encodeURIComponent(link.id)}&maker=1`,
     { secret: link.secret, ...(email === undefined ? {} : { json: { email } }) });
   return { email: typeof said.email === "string" ? said.email : null, confirmed: said.confirmed === true, ...(email ? { sent: said.sent === true } : {}) };
+}
+
+/**
+ * Sends an idea to a link's maker (`id`, the maker's link): `text`, and `picture` (PNG or JPEG bytes) if there is one;
+ * with `change`, the sender's own copy of the app (`copy`, its id, its file already up) and the version of the maker's
+ * file it starts from (`base`), which needs the account's key. With `n`, the idea is one the account sent before: it
+ * moves on to the copy's file as it is now, `text` going on its thread. Answers the idea's number, and the token a
+ * browser would keep for it.
+ */
+export async function sendIdea({ site = siteOrigin(), id, text, picture, change, n, account }) {
+  const json = { text, ...(picture ? { picture: Buffer.from(picture).toString("base64") } : {}), ...(change ? { change: { copy: change.copy, base: change.base } } : {}) };
+  const { said } = await call("POST", `${site}/api/wish-ideas?id=${encodeURIComponent(id)}${n ? `&n=${Number(n)}` : ""}`, { account, json });
+  if (!Number.isInteger(said.n)) throw new Problem("the site's answer couldn't be read");
+  return { n: said.n, ...(typeof said.token === "string" ? { token: said.token } : {}), ...(Number.isInteger(said.version) ? { version: said.version } : {}) };
 }
 
 /** Takes the link down, with its page and the ideas sent to it. A link the site no longer has is down already. */

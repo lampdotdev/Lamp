@@ -25,6 +25,7 @@ import { Away, OffNetwork, Refused, Rejected, Runner, StillWorking, answersOn, b
 import { adbCommand, connectTo, deviceListing, deviceProperties, displaySizeOf, dumpIn, installApk, installTools, launchApp, makeEmulator, pairWith, processIn, processOf,
   rowsOf, saveState, screenItems, screenshotOf, tellApp, toolsThere, useLamps } from "./android.mjs";
 import { accountFor, keepAccount } from "./share.mjs";
+import { sendToMaker } from "./send.mjs";
 import { Unreachable, accountName, askAccount, copiesOf, ideasOf, latestOf, pageUp, makerOf, publishLink, removeFile, removeIdea, removeLink, replyIdea, sendFile } from "./link.mjs";
 import { defaultRoute, homeNetwork, neighbours, samsungAt, subnetOn, tvsIn } from "./network.mjs";
 import { PUBLISHER, identityName, keptSigner, namesOf, packageOf, versionAfter } from "./msix.mjs";
@@ -255,6 +256,24 @@ export const CALLS = {
   /** The maker's own address for the link's ideas; with `email` (a string, "" for none), given, to be confirmed. */
   async linkMaker(given) {
     return makerOf({ site: siteOf(given), link: linkOf(given), ...(typeof given.email === "string" ? { email: given.email.trim() } : {}) });
+  },
+
+  /**
+   * An idea for the maker of the link `source` (`sendToMaker`): `text`, a picture from a file of Lamp's at `picture`,
+   * and with `file` (Lamp's shared file of the wish, with its history) the change, starting from the maker's version
+   * `base`, its copy's words in `body`. `earlier` is what the last
+   * send answered (`{ copy: { id, secret }, n }`). Sent with the maker's account key unless the call names another.
+   */
+  async ideaSend(given, how = {}) {
+    const site = siteOf(given);
+    const read = (name) => (typeof given[name] === "string" && given[name] ? readFileSync(given[name]) : null);
+    const bytes = read("file");
+    const change = bytes ? { bytes, base: Number.isInteger(given.base) ? given.base : 0, body: given.body ?? {} } : null;
+    const earlier = given.earlier && typeof given.earlier === "object" ? given.earlier : null;
+    const sent = await sendToMaker({ site, source: text(given, "source"), text: text(given, "text"), picture: read("picture"), change, earlier,
+      account: typeof given.account === "string" ? given.account : accountFor(site)?.key, said: (line) => how.event?.({ said: line }),
+      madeCopy: (copy) => how.event?.({ copy: { id: copy.id, secret: copy.secret } }) });
+    return { copy: sent.copy, n: sent.n, version: sent.version ?? null };
   },
 
   /** Takes the link down. */

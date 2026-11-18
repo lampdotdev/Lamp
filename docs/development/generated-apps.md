@@ -237,7 +237,8 @@ its caches folder, since Lamp's process draws every wish's chat and one wish's s
 replaces it in one step, `SharedCopy`, as Lamp's own Share… does; its popover, `SharePopover`, leads with the wish's link
 (`SidebarToolbar.shareLink`), lists under it the copies people shared of it (`SidebarToolbar.copies`, asked of the site
 with the link's secret, since only its maker sees them, by `WishCopies` every few minutes and as the popover opens, never per state), each with Compare, which asks the agent
-what that copy changed as if the person typed it (`SidebarCommand.compare`, `Sharing.compareRequest`), and sends the link with AirDrop, Messages, Mail or More, or the file when there's no link),
+what that copy changed as if the person typed it (`SidebarCommand.compare`, `Sharing.compareRequest`), and sends the link with AirDrop, Messages, Mail or More, or the file when there's no link;
+for a wish that started from a lamp.dev link it offers Send to <maker>…, `SendToMaker`),
 Agent Details and Delete, then Undo Last Change and Versions.
 A wish that opens anywhere but this Mac alone (a game, a screen, an app for both) has Try On's device button before
 Undo, which stays with it: where it opens, a tick on where Play puts it, and for a game or a screen "… Too" for each
@@ -542,9 +543,9 @@ carries it, `Upstream.filteredTree`); else nothing. A part the package brings th
 kept tree (staged as the app it will be) but not in what's merged. The review sheet says so (`ImportReviewCard.changedHere`, "Already here,
 changed here" in the gallery).
 
-An idea that carries a change is taking this over ("Ideas that carry a change" in [wishes](wishes.md)): Send Changes Back stays
-only as the fallback for an app from someone's GitHub repository with no lamp.dev link. Until then, a wish that came from
-a repository can send its changes back: Send Changes Back… in the chat's Share popover
+For a wish that started from a lamp.dev link, Send to <maker>… takes Send Changes Back's place in the Share popover: an
+idea that carries the change ("Ideas that carry a change" in [wishes](wishes.md)). Send Changes Back stays for an app from
+someone's GitHub repository with no lamp.dev link: Send Changes Back… in the chat's Share popover
 (`SidebarToolbar.canContribute`, `Contribute`, its card `ContributeCards` and `ContributeCard`, shaped as Put on
 GitHub's). What goes is only what the wish changed, on top of where the repository is now, worked out before the card
 offers to send (`Contribute.prepare`) from the saved version the card shows, which must still be the wish's when it

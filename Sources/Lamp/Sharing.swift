@@ -123,6 +123,7 @@ enum Sharing {
         case .copyLink: break
         case .makeLink, .editLink: WishLinkCards.shared.open(project)
         case .contribute: store.sendChangesBack(project)
+        case .sendTo: SendToMaker.shared.open(project)
         case .copyFile: store.copyAppFile(project)
         case .export: store.chooseExport(project)
         case .openCopy(let page): NSWorkspace.shared.open(page)

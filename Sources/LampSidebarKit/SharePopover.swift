@@ -24,6 +24,8 @@ public struct SharePopover: View {
     /// (More shows every copy in place, since the link's page doesn't list them); a Lamp still handles it from an older chat.
     public enum Action: Equatable {
         case copyLink, makeLink, editLink, send(Way), contribute, copyFile, export
+        /// Send to <maker>…: an idea, with the person's changes, for the maker of the link the wish came from.
+        case sendTo
         case openCopy(URL), allCopies, compare(URL)
     }
 
@@ -33,17 +35,20 @@ public struct SharePopover: View {
     let link: URL?
     let copies: [SharedCopyRow]
     let canContribute: Bool
+    /// "Send to Sam…", for a wish that came from a lamp.dev link: it takes Send Changes Back's place.
+    let sendTo: String?
     let now: Date
     let act: (Action) -> Void
     @State private var copied = false
     /// "N More" opened: every copy, in a list that scrolls. Only the link's maker sees them, never its page.
     @State private var allShown = false
 
-    public init(link: URL?, copies: [SharedCopyRow] = [], canContribute: Bool, now: Date = Date(), allShown: Bool = false, act: @escaping (Action) -> Void) {
+    public init(link: URL?, copies: [SharedCopyRow] = [], canContribute: Bool, sendTo: String? = nil, now: Date = Date(), allShown: Bool = false, act: @escaping (Action) -> Void) {
         _allShown = State(initialValue: allShown)
         self.link = link
         self.copies = copies.filter { URL(string: $0.url) != nil }
         self.canContribute = canContribute
+        self.sendTo = sendTo
         self.now = now
         self.act = act
     }
@@ -55,7 +60,8 @@ public struct SharePopover: View {
             ways
             Rectangle().fill(Paper.rule).frame(height: 1)
             VStack(alignment: .leading, spacing: 0) {
-                if canContribute { Row("Send Changes Back…", "arrow.triangle.branch") { act(.contribute) } }
+                if let sendTo { Row(sendTo, "paperplane") { act(.sendTo) } }
+                else if canContribute { Row("Send Changes Back…", "arrow.triangle.branch") { act(.contribute) } }
                 Row("Copy App File", "doc.on.doc") { act(.copyFile) }
                 Row("Export…", "square.and.arrow.down") { act(.export) }
             }

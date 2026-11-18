@@ -739,7 +739,9 @@ struct DeskWishMenu: View {
             Button("Previous Versions…") { SidebarServer.shared.showVersions(of: project) }
         }
         // Only once there's something of the person's to send.
-        if entry?.sendsBack == true, entry?.changedFromOriginal == true {
+        if entry?.changedFromOriginal == true, let sendTo = SendToMaker.menuTitle(project) {
+            Button(sendTo) { SendToMaker.shared.open(project) }
+        } else if entry?.sendsBack == true, entry?.changedFromOriginal == true {
             Button("Send Changes Back…") { store.sendChangesBack(project) }
         }
         // A wish from someone's repository on GitHub follows it: Check for Updates… asks, and once there's an update,

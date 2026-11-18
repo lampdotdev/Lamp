@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + shareEntries + wishLinkEntries + contributeEntries + remixEntries + transitionEntries + deviceEntries + suggestionEntries + ideaEntries
+    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + shareEntries + wishLinkEntries + contributeEntries + remixEntries + transitionEntries + deviceEntries + suggestionEntries + ideaEntries + sendToEntries
 
     private static let useRowStatuses: [EngineUseRow.Status] = [
         .use, .gettingReady, .downloading(0.4), .failed(ErrorMessages.noConnection),
@@ -980,6 +980,7 @@ enum Gallery {
         share("With a link", link: true),
         share("No link yet"),
         share("From a repository", link: true, canContribute: true),
+        share("From someone's link", link: true, sendTo: "Send to Sam Lee…"),
         share("Copies shared from it", link: true, copies: Array(shareCopies.prefix(3))),
         share("More copies than fit", link: true, copies: shareCopies),
         share("Every copy shown", link: true, copies: shareCopies, allShown: true),
@@ -996,9 +997,9 @@ enum Gallery {
         }
     }()
 
-    private static func share(_ name: String, link: Bool = false, canContribute: Bool = false, copies: [SharedCopyRow] = [], allShown: Bool = false) -> Entry {
+    private static func share(_ name: String, link: Bool = false, canContribute: Bool = false, sendTo: String? = nil, copies: [SharedCopyRow] = [], allShown: Bool = false) -> Entry {
         Entry(group: "Share", name: name) {
-            AnyView(SharePopover(link: link ? URL(string: "https://lamp.dev/w/AyTkit4xCc") : nil, copies: copies, canContribute: canContribute, allShown: allShown) { _ in }
+            AnyView(SharePopover(link: link ? URL(string: "https://lamp.dev/w/AyTkit4xCc") : nil, copies: copies, canContribute: canContribute, sendTo: sendTo, allShown: allShown) { _ in }
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)

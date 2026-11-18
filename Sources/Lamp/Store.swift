@@ -4221,8 +4221,9 @@ final class Store: ObservableObject {
     /// (`OnboardingView.arrive`); its review opens as the welcome ends.
     /// `outside`: a folder the person's own coding agent asked Lamp to take on (`OutsideWork`). It gets the same review as
     /// any app that comes to Lamp, always as a new app, and is told what came of it: the app made, or why there's none.
+    /// `aside` opens it as an app of its own whatever it's a copy of (Try It on an idea's change), never into one here.
     func importApp(from file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil,
-                   bringingIn: BringIn.Pull? = nil, trying: Bool = false, outside: OutsideImport? = nil) {
+                   bringingIn: BringIn.Pull? = nil, trying: Bool = false, outside: OutsideImport? = nil, aside: Bool = false) {
         NSApp.activate()
         Task {
             // Each file waits for Lamp's first look at setup on its own, before it takes the one review there is: files
@@ -4241,10 +4242,10 @@ final class Store: ObservableObject {
             }
             outsideReview = outside
             runReview(id, retry: { [weak self] in
-                self?.importApp(from: file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn, trying: trying, outside: outside)
+                self?.importApp(from: file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn, trying: trying, outside: outside, aside: aside)
             }) { [weak self] in
                 await self?.openForReview(file, updating: target, fetched: fetched, following: following, bringingIn: bringingIn, trying: trying,
-                                          waitForWelcome: false, id: id, outside: outside)
+                                          waitForWelcome: false, id: id, outside: outside, aside: aside)
                 // A review that ended before its sheet came up (it failed, or another took its place) is a no.
                 if let outside, self?.pendingImport?.outside !== outside { outside.finish(nil, "Lamp's review of it stopped before it could be shown.") }
             }
@@ -4272,7 +4273,7 @@ final class Store: ObservableObject {
     /// waited already (`importApp`) and for one kept during the welcome, taken only once that's over (`openWaitingImport`).
     private func openForReview(_ file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil, following: Following.Followed? = nil,
                                bringingIn: BringIn.Pull? = nil, trying: Bool = false, waitForWelcome: Bool = true, id: UUID,
-                               outside: OutsideImport? = nil) async {
+                               outside: OutsideImport? = nil, aside: Bool = false) async {
         if waitForWelcome {
             // A file that launched Lamp arrives before Lamp has looked at setup: the look is waited for, so
             // the same file on the same Mac always goes the same way.
@@ -4298,13 +4299,13 @@ final class Store: ObservableObject {
         guard owns(id) else { try? FileManager.default.removeItem(at: package.folder); return }
         // A folder taken on by the person's agent is always an app of its own: its workspace is what Lamp builds the folder in.
         var pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file),
-                                    existing: outside == nil ? existingCopy(of: package, updating: target) : nil)
+                                    existing: outside == nil && !aside ? existingCopy(of: package, updating: target) : nil)
         pending.following = following
         pending.bringingIn = bringingIn
         pending.trying = trying
         pending.outside = outside
         // Only where the two met: a wish that can't be lined up keeps Update.
-        if Mix.isOn, !trying, outside == nil, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
+        if Mix.isOn, !trying, !aside, outside == nil, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
            let into = Mix.copy(of: package, among: projects), await Mix.meeting(package, history: history, with: into) != nil {
             pending.existing = into
             pending.mixable = true
