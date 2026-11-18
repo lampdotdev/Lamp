@@ -6,7 +6,7 @@ import SwiftUI
 /// are drafted from what changed since the wish arrived (as Release Update drafts What's New), a picture of the app goes
 /// with them, and the wish itself goes as a copy shared privately on lamp.dev (the shared file with its versions, so the
 /// maker can mix it in), which only the maker sees, through the idea. Sending again moves the same idea on to the wish as
-/// it is now. It replaces Send Changes Back for a wish that came from a link; the site's side is "Ideas that carry a
+/// it is now. For a wish from someone's repository on GitHub with no such link, the same Send to… opens a pull request there instead (`Contribute`); the site's side is "Ideas that carry a
 /// change" in site/SHARED_WISHES.md, and the sending itself is lamp's (`sendToMaker` in cli/send.mjs).
 @MainActor final class SendToMaker: ObservableObject {
     static let shared = SendToMaker()
@@ -25,10 +25,12 @@ import SwiftUI
     /// Who each maker's link says it's by, by the link's id, asked as the share menu opens.
     @Published private(set) var makers: [String: String] = [:]
 
-    /// The share menu's "Send to Sam…", for a wish that came from a lamp.dev link; nil for any other.
+    /// The share menu's "Send to Sam…": for a wish that came from a lamp.dev link, its maker; else, for one from someone's
+    /// repository on GitHub, the repository's owner, whose card opens a pull request there (`Contribute`); nil for any other.
     static func menuTitle(_ project: LampProject) -> String? {
-        guard let id = source(of: project)?.place.link else { return nil }
-        return title(shared.makers[id])
+        if let id = source(of: project)?.place.link { return title(shared.makers[id]) }
+        if let repository = Contribute.origin(of: project) { return title(repository.owner) }
+        return nil
     }
 
     func refreshMaker(_ project: LampProject) {
@@ -50,8 +52,13 @@ import SwiftUI
         return "Send to \(maker)…"
     }
 
+    /// Send to…: an idea for the maker of the lamp.dev link the wish came from, or, for a wish from someone's repository on
+    /// GitHub with no such link, the pull-request card (`ContributeCards`, in the chat's place).
     func open(_ project: LampProject) {
-        guard let source = Self.source(of: project), let id = source.place.link else { return }
+        guard let source = Self.source(of: project), let id = source.place.link else {
+            if Contribute.canContribute(project) { Store.shared.sendChangesBack(project) }
+            return
+        }
         if cards[project.id] != nil { refreshAccount(project) }
         if cards[project.id] == nil {
             let earlier = Self.sent(for: project)

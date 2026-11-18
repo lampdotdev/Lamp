@@ -26,8 +26,6 @@ struct DeskEntry: Equatable, Sendable {
     var pictureDate: Date?
     /// The changes its starter suggests, as the change box's ideas.
     var ideas: [String] = []
-    /// It came from a repository on GitHub and can offer its changes there (`Contribute.canContribute`).
-    var sendsBack = false
     /// It arrived from somewhere (a starter, GitHub, a shared file) and has been changed in place since: Start Over
     /// takes it back (`Store.original(toStartAgain:)`). Read after the rest, since it asks git.
     var changedFromOriginal = false
@@ -71,7 +69,6 @@ struct DeskEntry: Equatable, Sendable {
                          picture: picture,
                          pictureDate: picture.flatMap { (try? fm.attributesOfItem(atPath: $0.path))?[.modificationDate] as? Date },
                          ideas: Starters.starter(of: project)?.tweaks.map(\.title) ?? [],
-                         sendsBack: Contribute.canContribute(project),
                          shipsOriginal: starter != nil, starter: starter,
                          newerOriginal: Starters.newer(for: project) != nil,
                          followsRepository: AppUpdates.route(for: AppUpdates.located(credits), own: GitHubRepo.kept(for: project)?.url) != nil
@@ -523,7 +520,7 @@ struct DeskListRow: View {
 /// Duplicate…. A starter not on the desk yet shows the same, and is copied as it opens or its remix is sent.
 struct DeskDetail: View {
     @EnvironmentObject private var store: Store
-    /// The Send Changes Back cards publish on their own: the line beside the wish follows them as they're prepared and
+    /// The pull-request cards publish on their own: the line beside the wish follows them as they're prepared and
     /// closed (`AppUpdates.DeskLine`).
     @ObservedObject private var contributeCards = ContributeCards.shared
     let item: DeskList.Item
@@ -748,8 +745,6 @@ struct DeskWishMenu: View {
         // Only once there's something of the person's to send.
         if entry?.changedFromOriginal == true, let sendTo = SendToMaker.menuTitle(project) {
             Button(sendTo) { SendToMaker.shared.open(project) }
-        } else if entry?.sendsBack == true, entry?.changedFromOriginal == true {
-            Button("Send Changes Back…") { store.sendChangesBack(project) }
         }
         // A wish from someone's repository on GitHub follows it: Check for Updates… asks, and once there's an update,
         // Review Update… brings it in (`AppUpdates`). A starter's copy follows the starter this Lamp ships instead

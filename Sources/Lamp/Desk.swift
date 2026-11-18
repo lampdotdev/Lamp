@@ -1426,7 +1426,7 @@ extension Store {
             log(project, .error, "Lamp couldn't save the unfinished change, so it didn't start over.")
             return
         }
-        // A Send Changes Back card holds the changes being taken back: there's nothing left to send.
+        // A pull-request card holds the changes being taken back: there's nothing left to send.
         ContributeCards.shared.close(project)
         if opening { open(fromDesk: project) }
         if let shipped {
@@ -1468,7 +1468,7 @@ extension Store {
         }
     }
 
-    /// Send Changes Back… from the desk: the wish's chat in front, wherever it is now, with the card that sends them
+    /// Send to… for a wish from someone's repository on GitHub (`SendToMaker.open`): the wish's chat in front, wherever it is now, with the card that sends them
     /// (`ContributeCards`) in the chat's place, as the chat's Share menu opens it. A card already open comes to the front
     /// as it is.
     func sendChangesBack(_ project: LampProject) {

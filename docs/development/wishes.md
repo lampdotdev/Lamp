@@ -297,8 +297,8 @@ goes, credited and named; with no license it goes too, once the person has been 
 Share…, Copy App File, Export… and a drag from the desk ask once with Share Anyway (`Sharing.askToShare`), and the answer
 is kept for the wish until it takes in more such work (`ShareCheck.accepted`, in Lamp's settings rather than the wish's
 folder, where the agent writes); an app's File ▸ Share… gets the same question from `/app/share` and asks again with
-`anyway` and the work it was shown (an answer covers only that, by the wish's `instance`); Share Link (with the wish itself ticked), Send to…'s changes, Send Changes Back… and Also put on GitHub to a public repository (a game's page with it) say it
-as a line among their facts, and a private repository says nothing, since nothing is passed on. Send Changes Back and
+`anyway` and the work it was shown (an answer covers only that, by the wish's `instance`); Share Link (with the wish itself ticked), Send to… (its changes, and its pull request) and Also put on GitHub to a public repository (a game's page with it) say it
+as a line among their facts, and a private repository says nothing, since nothing is passed on. Send to…'s pull-request card and
 Also put on GitHub fold the lines of sources only credited under their own terms (`ShareCheck.cardNotes`: own terms that
 aren't non-commercial or no-derivatives, and share-alike data) under one line, keeping the rest in sight, and in the
 chat's place scroll their words while their buttons stay at the bottom (`GitHubCardLayout`), so a wish built on many
@@ -449,7 +449,7 @@ over a newer push's. GitHub says how it went in a line of its own (`WishLinkCard
 hides the link's, which works whatever GitHub does; Try GitHub Again runs that half alone with the same version and
 lines, and only while the wish is still at the version released (else the card says to release again).
 A repository that has moved on from the last commit the wish has of it (`Repo.expected`: what Lamp pushed, or what the
-wish brought in since, `taken`) is never gone over (`GitHubRepo.Moved`): someone's pull request from Send Changes Back,
+wish brought in since, `taken`) is never gone over (`GitHubRepo.Moved`): someone's pull request from Send to…,
 merged by the owner, or an edit made on GitHub. Finding it asks GitHub (`GitHubRelease.isBehind`, `ls-remote`), and the
 card shows Bring In Changes in the box's place (`gitHubBehind`), so a release goes to the link alone; a release that
 finds it moved meanwhile says so with Bring In Changes, not Try GitHub Again. Bring In Changes (`BringIn`) fetches the
@@ -593,7 +593,7 @@ address) and the lamp.dev links among the credits' `upstream` (`Credits.takenLin
 copy's maker is told once ("Where a link came from" in site/SHARED_WISHES.md). One that names none keeps what the link had.
 
 **Ideas that carry a change.** An idea is words, an optional picture and an optional change, and one sent with a change
-is how someone gives a maker what they made of their app, GitHub or not. It replaces Send Changes Back ("Generated
+is how someone gives a maker what they made of their app, GitHub or not. It takes the place of Send Changes Back ("Generated
 apps"), which only worked by forking the app's repository and opening a pull request, so someone who copied an app
 without GitHub couldn't send anything back. Ideas already carry delivery and the conversation (the thread, email both
 ways, an outcome), and shared copies already carry the change (a shared file with History/ since the copies met, never
@@ -617,8 +617,7 @@ the chat, compared and mixed in); an idea with a change joins the two rather tha
   maker's panel as answered, outcome or not, so one change is one conversation: a review without a pull request. The
   maker's emails say so as for any reply.
 - **Sending, from Lamp.** "Send to <maker>…" in the Share popover (the chat's, `SidebarToolbar.sendTo`, and Lamp's own),
-  for a wish that started from a lamp.dev link (`SendToMaker.source`: the copy it follows with `startedFrom`), takes
-  Send Changes Back's place; the maker's name is what their link says, asked as the popover opens. It opens a card in a
+  for a wish that started from a lamp.dev link (`SendToMaker.source`: the copy it follows with `startedFrom`); the maker's name is what their link says, asked as the popover opens. It opens a card in a
   window of its own, as Share Link's is (`SendToMaker`, `SendIdeaCard`): Lamp drafts the words from the versions saved
   since the wish arrived (`WishReleases.changes`, the helper model in one call, as What's New is drafted), the picture is
   the app's as the desk shows it (sent as a JPEG within the idea's limit), and the person can change the words, leave the
@@ -651,7 +650,9 @@ the chat, compared and mixed in); an idea with a change joins the two rather tha
   its page and when it last changed, kept only for the copies listed now); new ones count with the ideas waiting, on the desk's Ideas line and as "1 new copy
   made" under the app's row (`Store.newInIdeas`, `newCopies`).
 - **GitHub.** A pull request stays only as a quiet fallback behind the same Send to… button, for an app that came from
-  someone's GitHub repository and has no lamp.dev link (`Contribute`). A maker whose app is mirrored on GitHub pushes
+  someone's GitHub repository and has no lamp.dev link: Send to <owner>… opens the pull-request card that was Send
+  Changes Back (`SendToMaker.menuTitle`, `SendToMaker.open`, `Contribute`), which says "Send to <owner>" and sends with
+  Send. A maker whose app is mirrored on GitHub pushes
   what they took with their next Release Update.
 
 It comes in phases: (1) the site, where an idea carries a private copy and its base, the maker reads it with the
@@ -659,7 +660,7 @@ link's secret, sending again moves the idea on, code needs a username and a chan
 Send to… with Try It and Take It in `IdeasPanel`, and `lamp send`, in one change (built; Try It opens the copy beside the
 wish rather than in the suggested-change panel's trial, which is built around a pull request's commits); (3) the copies shared of a link folding into the
 same inbox (built, without a count of changes, which would mean fetching each copy); (4) Contribute kept only as the GitHub fallback, with
-Help and the guides changed to match. Later: the idea box on a shared page taking a file someone made elsewhere as the
+Help and the guides changed to match (built). Later: the idea box on a shared page taking a file someone made elsewhere as the
 change.
 
 The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,

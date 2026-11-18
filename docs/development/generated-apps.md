@@ -336,7 +336,7 @@ release updates GitHub too, staged and uploaded as the first time with the choic
 what's there (a shallow clone, the tree replaced; unchanged when only the export's own marks differ; never over commits
 the wish hasn't brought in, nor undoing a README or other file edited there: Bring In Changes, `BringIn`, in
 [wishes](wishes.md)), never the wish's
-own history, which holds every version and the chat's attachments. Its commits, the page's and Send Changes Back's
+own history, which holds every version and the chat's attachments. Its commits, the page's and Send to…'s pull request's
 are made as `GitHubRepo.author` says: someone whose git signs commits (`commit.gpgSign`, read where the commit is made, so
 conditional settings for a folder, branch or remote count) gets them as their git makes them, their name, address and
 key, since GitHub verifies a signature only under an address its key names (signed under the private address, it reads
@@ -390,7 +390,7 @@ in the wish's record (`GitHubRepo.Repo.commit`), and an export names the kept re
 its caller names no place (`Sharing.export`), so a file shared from a wish that's on GitHub says where it lives too.
 A wish opened from one repository and put on another gets a second link for the new place (`Credits.remixed`,
 `Remix.sameLink`): the chain keeps where it came from, and `Credits.origin(own:)`, the last link naming a repository
-that isn't the wish's own, is what Check for Updates… and Send Changes Back go by
+that isn't the wish's own, is what Check for Updates… and Send to…'s pull request go by
 (`AppUpdates.origin`).
 
 A Mac without Apple's tools has no git (`/usr/bin/git` only opens their installer), so a repository link fetches the
@@ -487,7 +487,7 @@ since the copy was made (`AppUpdates.isStale`), Update This App offers to prepar
 keeps the copy as an app of its own, renamed after the wish; Cancel deletes it. Review Update… while a copy exists shows
 its chat, or its review once it's ready. Beside the wish, the desk says how it's going with one button to the right chat
 (`AppUpdates.deskLine`): Updating… and Your update needs a decision. go to the copy's chat, Update applied. and
-Preparing your changes… (a Send Changes Back card working out what goes) to the wish's, and Separate app added. picks
+Preparing your changes… (a pull-request card working out what goes) to the wish's, and Separate app added. picks
 the app it was kept as. What came of the update (`Store.updateOutcomes`) lasts until the wish is checked or reviewed
 again, and isn't kept across launches. A base that's no longer on GitHub fails the fetch rather than making up a change. File → Open
 from GitHub… on a project that isn't a wish offers Make App, a new wish whose first request is to make it into one.
@@ -517,7 +517,7 @@ repository is (`RepoImport.open`) and staged as the import would install it, and
 moves it, the app's files, its notes and declarations, never Lamp's own files or the icon's pictures), each a tree in
 the wish's git made in an index of the merge's own (`.lamp/merge`), the second committed on top of the first at
 `refs/lamp/upstream`, and kept as well at `refs/lamp/snapshot/<commit>` for the commit the credits move on to with it
-(`Upstream.snapshot`, with the manifest and credits.json the update came with beside it), which Send Changes Back
+(`Upstream.snapshot`, with the manifest and credits.json the update came with beside it), which Send to…'s pull request
 measures the wish's own changes from. `git merge-tree` merges the wish's files, the base and that commit three ways and the result
 goes into the index and the files (`git read-tree --reset -u`), with the version saved first so Versions can bring the
 wish back. What changed only upstream or only here is in place with no agent; the icon's pictures follow when the
@@ -543,9 +543,10 @@ carries it, `Upstream.filteredTree`); else nothing. A part the package brings th
 kept tree (staged as the app it will be) but not in what's merged. The review sheet says so (`ImportReviewCard.changedHere`, "Already here,
 changed here" in the gallery).
 
-For a wish that started from a lamp.dev link, Send to <maker>… takes Send Changes Back's place in the Share popover: an
-idea that carries the change ("Ideas that carry a change" in [wishes](wishes.md)). Send Changes Back stays for an app from
-someone's GitHub repository with no lamp.dev link: Send Changes Back… in the chat's Share popover
+Send to… in the Share popover sends a wish's changes to whoever it came from (`SendToMaker.open`): for a wish that started
+from a lamp.dev link, an idea that carries the change ("Ideas that carry a change" in [wishes](wishes.md)); for an app from
+someone's GitHub repository with no lamp.dev link, named for the repository's owner ("Send to mrdoob…"), a pull request.
+That one is Send Changes Back as it was, under the new name (a chat from before Send to… still shows Send Changes Back…): the chat's Share popover
 (`SidebarToolbar.canContribute`, `Contribute`, its card `ContributeCards` and `ContributeCard`, shaped as Put on
 GitHub's). What goes is only what the wish changed, on top of where the repository is now, worked out before the card
 offers to send (`Contribute.prepare`) from the saved version the card shows, which must still be the wish's when it

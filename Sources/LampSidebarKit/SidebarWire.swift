@@ -96,7 +96,7 @@ public struct SidebarState: Codable, Equatable {
     /// How many times making the wish's file for Share… failed (the chat says why): each one ends a wait for it, as the
     /// file arriving does. Missing from a Lamp before it.
     public var shareFailures: Int?
-    /// The Send Changes Back card, while it's open in this chat (`SidebarCommand.contribute`): shown in the chat's place.
+    /// The pull-request card (Send to… on GitHub), while it's open in this chat (`SidebarCommand.contribute`): shown in the chat's place.
     public var contribute: SidebarContribute?
     /// Try On's choices, for a wish that opens anywhere but this Mac alone (an iPhone app, a TV app, a game, a screen):
     /// the bar's device button opens them, and a click is `SidebarCommand.tryOn`. Nil for a Mac app, which has none.
@@ -235,9 +235,10 @@ public struct SidebarToolbar: Codable, Equatable {
     public var canUndo: Bool
     /// The wish has been made: there's a file to share.
     public var canShare: Bool
-    /// Its changes can go back to the repository it came from: the share menu offers Send Changes Back.
+    /// Its changes can go back to the repository it came from: a chat from before `sendTo` offers Send Changes Back….
     public var canContribute: Bool?
-    /// "Send to Sam…" for a wish that came from a lamp.dev link: the share menu offers it in Send Changes Back's place.
+    /// "Send to Sam…": the maker of the lamp.dev link the wish came from, or the owner of the GitHub repository it came from
+    /// (a pull request, `Contribute`). The share menu offers it in Send Changes Back's place.
     public var sendTo: String?
     /// Always true now: a chat of an earlier Lamp then leaves Put on GitHub… out of its share menu, since putting a wish
     /// on GitHub is Release Update's (`WishLinkCard`). This chat doesn't read it.
@@ -641,7 +642,7 @@ public enum SidebarCommand: Codable, Equatable {
     /// What a chat of an earlier Lamp sends from its Put on GitHub card, which is gone: its open opens Share Link's card,
     /// where Release Update puts the wish on GitHub, and the rest are left alone.
     case repo(SidebarRepoCommand)
-    /// The Send Changes Back card: open it, or what was done on it.
+    /// The pull-request card (Send to… on GitHub): open it, or what was done on it.
     case contribute(SidebarContributeCommand)
     /// Send to <maker>…: Lamp opens its card, in a window of its own.
     case sendTo
@@ -770,7 +771,7 @@ public enum SidebarWishLinkCommand: Codable, Equatable {
     case open
 }
 
-/// The Send Changes Back card as Lamp has it (`ContributeCard`): everything on it is Lamp's, worked out before the
+/// The pull-request card as Lamp has it (`ContributeCard`): everything on it is Lamp's, worked out before the
 /// person confirms.
 public struct SidebarContribute: Codable, Equatable {
     public var name: String
@@ -786,7 +787,7 @@ public struct SidebarContribute: Codable, Equatable {
     public var terms: [String]?
     public var size: String?
     public var copied: Bool
-    /// Send Changes Back can be pressed: it's ready, or a try failed and can be made again.
+    /// Send can be pressed: it's ready, or a try failed and can be made again.
     public var canSend: Bool
     /// The screenshot the pull request can show; nil from a Lamp before it could, and for a chat before it could show one.
     public var screenshot: ContributeScreenshot?
@@ -813,7 +814,7 @@ public enum SidebarContributeCommand: Codable, Equatable {
     case open, send, fix, openRequest, copy, close
     /// A blocked card's first button: Review Update…, Check Update History or Try Again (`ContributeBlock.Reason`).
     case settle
-    /// Send Changes Back, with the screenshot the chat showed ticked (`ContributeScreenshot.digest`), or nil to send
+    /// Send, with the screenshot the chat showed ticked (`ContributeScreenshot.digest`), or nil to send
     /// without one. A screenshot goes only when this names the one Lamp holds.
     case sendShowing(String?)
     /// Include Screenshot ticked for the screenshot the chat showed (its digest), or nil when it's cleared.

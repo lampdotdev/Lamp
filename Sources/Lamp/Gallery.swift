@@ -979,7 +979,7 @@ enum Gallery {
     private static let shareEntries: [Entry] = [
         share("With a link", link: true),
         share("No link yet"),
-        share("From a repository", link: true, canContribute: true),
+        share("From a repository", link: true, canContribute: true, sendTo: "Send to someone…"),
         share("From someone's link", link: true, sendTo: "Send to Sam Lee…"),
         share("Copies shared from it", link: true, copies: Array(shareCopies.prefix(3))),
         share("More copies than fit", link: true, copies: shareCopies),
@@ -1208,7 +1208,7 @@ enum Gallery {
         "Park Benches", "River Gauge", "Snow Routes",
     ].map { "\($0) is used under its own terms (LicenseRef-City-Open-Data)." }
     private static let unlicensedData = "River Sampling by the State, Live Bus Positions by the Transit Authority, and Road Closures by the City came with no license. Make sure you're comfortable sharing them."
-    private static let longFailure = "GitHub didn't take it: the branch couldn't be pushed to else/new-york because the fork is behind someone/new-york and was changed since it was checked. Review Update… brings their changes in first, then Send Changes Back tries again."
+    private static let longFailure = "GitHub didn't take it: the branch couldn't be pushed to else/new-york because the fork is behind someone/new-york and was changed since it was checked. Review Update… brings their changes in first, then Send tries again."
 
     /// The card in the chat's place, in a chat too short for all of it: its words scroll and its buttons stay.
     private static func contributeScreen(_ name: String, stage: ContributeCard.Stage) -> Entry {

@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// Send Changes Back: a wish's changes offered to the repository it came from, as a pull request from the person's
+/// Send to… for an app from someone's repository on GitHub: a wish's changes offered to the repository it came from, as a pull request from the person's
 /// own fork. Laid out to be read before anything leaves the Mac: where it
 /// goes, through which fork, the credit it carries, what its licenses ask and how many files it changes; then the pull request and
 /// what can be done with it. Drawn from plain values, so the chat (in its place) and the gallery show the same card.
@@ -37,7 +37,7 @@ public struct ContributeCard: View {
     let terms: [String]
     let size: String?
     let copied: Bool
-    /// Send Changes Back can be pressed now (ready, or after a failed try).
+    /// Send can be pressed now (ready, or after a failed try).
     let canSend: Bool
     let send: () -> Void
     let fix: () -> Void
@@ -125,7 +125,7 @@ public struct ContributeCard: View {
                         Text(block.text).font(.callout).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
-                        Text("Send \(name)'s changes back").font(.title3.bold())
+                        Text(upstream.flatMap { $0.split(separator: "/").first }.map { "Send to \($0)" } ?? "Send your changes").font(.title3.bold())
                         // What the person accepts: what goes, and where.
                         Text("Your changes go to the repository this app came from, as a pull request its owner can take: what a shared app file holds, on your own GitHub account first. Never your chat, and none of the app's data unless a screenshot you include shows it.")
                             .font(.callout).foregroundStyle(.secondary)
@@ -278,14 +278,14 @@ public struct ContributeCard: View {
             Button("Retry Upload", action: send).keyboardShortcut(.defaultAction).disabled(!canSend)
         default:
             Button("Cancel", role: .cancel, action: close).keyboardShortcut(.cancelAction).disabled(busy && stage != .preparing)
-            Button("Send Changes Back", action: send)
+            Button("Send", action: send)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canSend)
         }
     }
 }
 
-/// The screenshot a Send Changes Back card offers to put in its pull request: the app's own window, taken when the card
+/// The screenshot a pull-request card offers to put in its pull request: the app's own window, taken when the card
 /// opens or on Retake, never a picture from before. It goes only when ticked, and only the one the card showed.
 public struct ContributeScreenshot: Codable, Equatable {
     /// The picture as the card shows it: the one that goes, made smaller for the chat. Nil when there's none.
@@ -316,7 +316,7 @@ public struct ContributeScreenshot: Codable, Equatable {
     }
 }
 
-/// Why a Send Changes Back card can't go on, as far as Lamp could establish it (`Contribute.Blocked`): the repository
+/// Why a pull-request card can't go on, as far as Lamp could establish it (`Contribute.Blocked`): the repository
 /// changed the same parts since the last update the app took in; Lamp can't tell which version of theirs the app is
 /// based on (or couldn't put that right); or the repository hasn't moved and the changes still don't combine with it.
 public struct ContributeBlock: Codable, Equatable {

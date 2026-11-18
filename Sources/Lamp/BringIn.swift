@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 
 /// Bringing into a wish what changed in its own repository on GitHub since Lamp put it there: someone's pull request
-/// (Send Changes Back, `Contribute`) merged by the owner, or an edit made on GitHub. A release never goes over commits
+/// (Send to… on GitHub, `Contribute`) merged by the owner, or an edit made on GitHub. A release never goes over commits
 /// the wish doesn't have (`GitHubRepo.upload`), so the Share Link card offers Bring In Changes in their place
 /// (`GitHubRelease.find`), and the next Release Update goes on top of them.
 ///
