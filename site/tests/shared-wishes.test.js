@@ -836,10 +836,19 @@ test("an idea can carry a change: its sender's private copy, read only by the ma
   const again = await post(samKey, { text: "Softer rain", change }, sent.n);
   assert.deepEqual(await again.json(), { n: sent.n, version: 2 });
   const [moved] = await list();
+  assert.equal(moved.wantsNews, true, "its sender hears back again, though the dismissal let their address go");
   assert.deepEqual([moved.waiting, moved.change.sent, moved.thread.at(-1)], [true, 2, { by: "sender", text: "Softer rain", at: moved.thread.at(-1).at, version: 2 }]);
   assert.match(mail.at(-1).text, /new version of their changes/);
 
+  // A listed copy made private stops playing its page.
+  const listed = await (await send(shares, "POST", { ...share, from: source.id })).json();
+  store.records.get(listed.id).page = { version: 1, files: { "index.html": "memory:x" } };
+  await send(shares, "PUT", { ...share, private: true }, { id: listed.id, secret: listed.secret });
+  assert.equal(store.records.get(listed.id).page, undefined);
+  const play = await createPlayHandler({ store, anyHost: true })(new Request(`https://x.play.lamp.dev/?id=${listed.id}&v=1`));
+  assert.equal(play.status, 404);
+
   // Listed later, it's a copy like any other.
   await send(shares, "PUT", { ...share, private: false }, { id: copy.id, secret: copy.secret });
-  assert.equal((await (await shares(new Request(`https://lamp.dev/api/wishes?id=${source.id}&copies=1`))).json()).copies.length, 1);
+  assert.deepEqual((await (await shares(new Request(`https://lamp.dev/api/wishes?id=${source.id}&copies=1`))).json()).copies.map((one) => one.url), [`https://lamp.dev/sam/plant-pal`]);
 });

@@ -478,6 +478,7 @@ export function cloudStore(env, fetcher = fetch) {
           table.insert(thread, given.said)
           idea.thread = thread
           idea.change = given.change
+          if given.email then idea.email = given.email end
           idea.last = given.said.at
           idea.waiting = true
         elseif op == "box" then
@@ -694,7 +695,7 @@ export function memoryStore() {
       } else if (op === "settle") delete idea.waiting;
       else if (op === "resend") {
         if (!idea.user || idea.user !== value.user || (idea.thread ?? []).length >= IDEA_LIMITS.thread) return null;
-        Object.assign(idea, { thread: [...(idea.thread ?? []), value.said], change: value.change, last: value.said.at, waiting: true });
+        Object.assign(idea, { thread: [...(idea.thread ?? []), value.said], change: value.change, last: value.said.at, waiting: true, ...(value.email ? { email: value.email } : {}) });
       } else if (op === "box") { if (!idea.mailbox) Object.assign(idea, { mailbox: value, subject: extra }); }
       else if (op === "makerbox") { if (!idea.makerBox) idea.makerBox = value; }
       else if (op === "stop" && idea.mailbox === value) delete idea.email;
@@ -906,6 +907,12 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       if (method === "PUT") {
         const record = { ...earlier, ...words, ...named, updated: time };
         if (!record.private) delete record.private;
+        // Made private, it gives up the page it played: a private copy has none.
+        const pageGone = record.private ? [...pageBlobs(earlier), ...partBlobs(earlier.pageParts)] : [];
+        if (record.private) {
+          for (const key of ["page", "previousPage", "pageParts"]) delete record[key];
+          if (earlier.page) record.pageVersion = Math.max(earlier.page.version, earlier.pageVersion ?? 0);
+        }
         await kept.replace(record);
         // A private copy is kept off its source's list; one listed now is told about as a new copy would be.
         if (record.from && record.private) { try { await kept.removeCopy(record.from, id); } catch {} }
@@ -914,7 +921,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
         // Kept: the name is the record's now, whatever the cleanup after it does.
         uploaded = [];
         claimed = null;
-        await kept.removeImages(oldImages);
+        await kept.removeImages([...oldImages, ...pageGone]);
         await kept.forget(id);
         return reply(200, { id, url: linkOf(url.origin, record) });
       }
@@ -1198,7 +1205,9 @@ export function createIdeasHandler({ env = process.env, fetcher = fetch, store, 
           const n = Number(again);
           if (!Number.isInteger(n) || n < 1 || !change) return reply(400, { error: "invalid_idea" });
           const said = { by: "sender", text: idea.text, at: now().toISOString(), version: change.version };
-          const was = await kept.talk(id, n, "resend", { user, said, change });
+          // Back from their account, they hear about it there again, even once a quiet dismissal let their address go.
+          const email = (await kept.account(user))?.email;
+          const was = await kept.talk(id, n, "resend", { user, said, change, ...(email ? { email } : {}) });
           if (!was) return (await kept.ideas(id)).some((one) => one.n === n && one.user === user) ? reply(429, { error: "full" }) : reply(404, { error: "not_found" });
           try {
             const maker = await kept.maker(id);
@@ -1693,6 +1702,8 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
     // folder's index.html by the folder, with its slash or without (a rewrite may not keep it): without, the page is
     // given its folder as its base, so its own files resolve there and not one folder up.
     // The page as it is, or the version before it, for a game that was open on that when this one went up.
+    // A private copy plays nowhere, whatever page it had before it was made private.
+    if (record?.private) return missing();
     const served = record?.page?.version === version ? record.page : record?.previousPage?.version === version ? record.previousPage : null;
     const files = served?.files ?? {};
     const folder = path.replace(/\/$/, "");
@@ -1897,7 +1908,7 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
             console.log(`Page ${version} of ${id}: all ${files.length} stored in ${Math.round((Date.now() - began) / 1000)}s`);
             // As the record is now, not as it was when the parts were read: the link may have changed meanwhile.
             const current = await kept.get(id);
-            if (!current || !secretMatches(bearer(request), current.secret)) throw new Error("Gone");
+            if (!current || !secretMatches(bearer(request), current.secret) || current.private) throw new Error("Gone");
             // The page it replaces stays playable as the version before, so a game open on it goes on finding its
             // files (a game loads its map as the player moves); the one before that goes now.
             const { pageParts: _pageParts, ...rest } = current;
