@@ -9,7 +9,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createShareHandler, createFileHandler, createIdeasHandler, createPlayHandler, memoryStore } from "../../site/lib/shared-wishes.js";
+import { createShareHandler, createFileHandler, createIdeasHandler, createPlayHandler, IDEA_LIMITS, memoryStore } from "../../site/lib/shared-wishes.js";
 import { createAccountHandler } from "../../site/lib/accounts.js";
 
 const home = mkdtempSync(join(tmpdir(), "lamp-share-test-"));
@@ -178,7 +178,7 @@ test("with an account, a link goes under its maker's username, and moves there a
   await unshare(layout.folder);
 });
 
-test("lamp send gives the maker an idea with the sender's own copy, and sending again moves the same idea on", async () => {
+test("lamp send retries with the copy from a rejected send, and sending again moves the same idea on", async () => {
   const { latestOf, ideasOf } = await import("../link.mjs");
   const { unpack } = await import("../lampapp.mjs");
   // The account from the test before signs the copy; the maker's link is the folder's, shared again.
@@ -192,15 +192,27 @@ test("lamp send gives the maker an idea with the sender's own copy, and sending 
   const { execFile } = await import("node:child_process");
   const send = (...words) => new Promise((done) => execFile(process.execPath, [join(import.meta.dirname, "..", "lamp.mjs"), "send", theirs, ...words],
     { env: process.env }, (error, _out, stderr) => done({ status: error ? error.code ?? 1 : 0, stderr })));
+
+  // The site accepts the copy and its file before rejecting the idea because the inbox is full.
+  for (let i = 0; i < IDEA_LIMITS.kept; i++) await store.addIdea(source.id, { text: "Add another boat." });
+  const rejected = await send("Rain on the harbor");
+  assert.equal(rejected.status, 1);
+  assert.match(rejected.stderr, /the maker has as many ideas waiting/);
+  const [uploaded] = [...store.records.values()].filter((record) => record.from === source.id);
+  assert.equal(uploaded?.file?.version, 1, "the copy's file reached the site before the idea was refused");
+  await finishIdea(layout.folder, 1, false);
+
+  const received = async () => (await ideasOf({ site: origin, link: source })).filter((idea) => idea.change);
   const first = await send("Rain on the harbor");
   assert.equal(first.status, 0, first.stderr);
-  const [idea] = await ideasOf({ site: origin, link: source });
-  assert.deepEqual([idea.text, idea.user, idea.change.version], ["Rain on the harbor", "alex-kim", 1]);
+  const [idea] = await received();
+  assert.equal(idea.change.copy, uploaded.id, "the retry uses the copy from the rejected send");
+  assert.deepEqual([idea.text, idea.user, idea.change.version], ["Rain on the harbor", "alex-kim", 2]);
   assert.equal(store.records.get(idea.change.copy).private, true, "only the maker sees the copy");
   assert.ok(!readFileSync(join(theirs, "credits.json"), "utf8").includes(idea.change.copy), "nothing of the copy's link in the folder");
   const again = await send("Softer rain");
   assert.equal(again.status, 0, again.stderr);
-  const [moved] = await ideasOf({ site: origin, link: source });
-  assert.deepEqual([moved.n, moved.change.copy, moved.change.version, moved.thread.at(-1).text], [idea.n, idea.change.copy, 2, "Softer rain"]);
+  const [moved] = await received();
+  assert.deepEqual([moved.n, moved.change.copy, moved.change.version, moved.thread.at(-1).text], [idea.n, idea.change.copy, 3, "Softer rain"]);
   await unshare(layout.folder);
 });
